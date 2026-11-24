@@ -248,6 +248,24 @@ impl Heap {
 }
 
 impl Heap {
+    /// `array_storage_span` for an array whose backing holds raw doubles (`Elements::is_double`):
+    /// its first word, the words a read may reach, and those a store of a Number may replace in
+    /// place (zero where none may). A hole is `Value::DELETED`'s word (`decode_double`), which
+    /// the span's reader tests for. A tagged backing is no span here, and this widens none.
+    /// Valid until the next change that retires proofs, as `array_storage_span` is.
+    pub fn array_double_span(&mut self, base: Value) -> Option<(NonNull<u64>, usize, usize)> {
+        let record_id = base.direct_array_index()?;
+        // SAFETY: as in `prove_array_storage`.
+        let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        let length = array.elements().len().min(i32::MAX as usize);
+        let values = array.elements().double_values()?;
+        let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
+            && !array.was_used_as_prototype() && array.elements().owns_double_words();
+        // SAFETY: a slice's pointer is never null.
+        let words = unsafe { NonNull::new_unchecked(values.as_ptr().cast_mut().cast::<u64>()) };
+        Some((words, length, if replaces { length } else { 0 }))
+    }
+
     /// The dense storage of the record array `base` names, as `ArrayStorageProofs::prove`
     /// would prove it: its first element, the elements a read may reach, and those a store
     /// of a Number may replace in place (zero where none may). `None` for any other value,

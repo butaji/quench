@@ -19,6 +19,7 @@ use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
+use super::double_word;
 
 /// A backing's header: its words are `ArrayHeaderHead` (`staged::record_heads`), which the
 /// stencils read by offset. `capacity` takes `BIASED` when the header was moved past values a
@@ -165,12 +166,6 @@ thread_local! {
 #[inline(always)]
 fn decode_double(word: u64) -> Value {
     if word == Value::DELETED.to_bits() { Value::DELETED } else { Value::number(f64::from_bits(word)) }
-}
-
-/// The word a double backing holds for the Number `number`: its bits, NaN canonical.
-#[inline(always)]
-fn double_word(number: f64) -> u64 {
-    if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() }
 }
 
 /// The block step of the allocator backings come from (`quench_alloc`'s size classes): a
@@ -482,6 +477,13 @@ impl ArrayElements {
     pub fn double_values(&self) -> Option<&[f64]> {
         // SAFETY: a double backing's first `len` words are initialized f64 bits.
         self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
+    }
+
+    /// Whether this array alone owns its double backing's words, so a store replaces them
+    /// in place (a shared double backing copies before its store, `replace_in_place`).
+    #[inline]
+    pub(crate) fn owns_double_words(&self) -> bool {
+        self.is_double() && self.header().owners == 1
     }
 
     #[inline(always)]
