@@ -131,7 +131,7 @@ impl Vm {
             .intl_datetime_format_prototypes
             .insert(global, prototype);
         let fallback_symbol = self
-            .allocate_symbol(quench_runtime::heap::SymbolData::public(Some(
+            .allocate_symbol(quench_runtime::library_surface::SymbolData::public(Some(
                 INTL_LEGACY_CONSTRUCTED_SYMBOL.into(),
             )));
         self.realm
@@ -1463,7 +1463,7 @@ impl Vm {
             }
             entries.push(entry);
         }
-        Ok(self.allocate_array(quench_runtime::heap::ArrayObject::new(
+        Ok(self.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 entries,
             )))
@@ -1603,7 +1603,7 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
             calendar,
             ..
         } => {
-            let quench_runtime::heap::IsoDateTimeFields { date, time } = **date_time;
+            let quench_runtime::library_surface::IsoDateTimeFields { date, time } = **date_time;
             (fields.year, fields.month, fields.day) = date;
             (
                 fields.hour,

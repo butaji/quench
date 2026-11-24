@@ -414,7 +414,7 @@ const COLLECTION_ARMS: [u8; Native::COUNT as usize] = {
 /// it has no `return` (`Vm::iterator_close_in_place`), and a legacy `RegExp` static getter
 /// (`Vm::regexp_legacy_getter_in_place`). Any other receiver leaves the native to throw.
 fn internal_slot_value(vm: &mut Vm, native: Native, callee: Value, receiver: Value) -> Option<Value> {
-    use quench_runtime::heap::IteratorKind;
+    use quench_runtime::tier_surface::IteratorKind;
     let kind = match native {
         Native::MapKeys => IteratorKind::MapKeys,
         Native::MapValues => IteratorKind::MapValues,

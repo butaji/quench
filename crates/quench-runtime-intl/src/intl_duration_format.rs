@@ -351,7 +351,7 @@ impl Vm {
             }
             values.push(object);
         }
-        Ok(self.allocate_array(quench_runtime::heap::ArrayObject::new(
+        Ok(self.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 values,
             )))

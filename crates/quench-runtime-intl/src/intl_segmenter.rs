@@ -145,7 +145,7 @@ impl Vm {
                             kind: IteratorKind::IntlSegments,
                             index: 0,
                             done: false,
-                            ext: quench_runtime::heap::IteratorExt::default(),
+                            ext: quench_runtime::library_surface::IteratorExt::default(),
                         }));
                     }
                     let index =

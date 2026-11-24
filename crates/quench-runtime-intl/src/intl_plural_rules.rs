@@ -576,7 +576,7 @@ impl Vm {
             .into_iter()
             .map(|category| self.allocate_string(category.into()))
             .collect::<Vec<_>>();
-        let categories = self.allocate_array(quench_runtime::heap::ArrayObject::new(
+        let categories = self.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 categories,
             ));

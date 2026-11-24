@@ -197,7 +197,7 @@ impl Vm {
         };
         Ok(self.allocate_cell(Cell::TemporalPlainDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            date_time: Box::new(quench_runtime::heap::IsoDateTimeFields {
+            date_time: Box::new(quench_runtime::library_surface::IsoDateTimeFields {
                 date: (date.year, date.month, date.day),
                 time: time.map(|value| value as u32),
             }),
