@@ -159,7 +159,7 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         }
         IcOp::LoadSlot { slot, form, storage_len, rep } => return Break(load_slot(stage, at, (slot, rep), form, storage_len, miss)),
         IcOp::LoadPrototypeSlot(slot) => return Break(prototype_slot(stage, at.shaped.expect("a prototype slot read follows the guard of the holder's shape"), slot, miss)),
-        IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.record, values, miss)),
+        IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.shaped.expect("a prototype's constants follow the guard of the receiver's shape"), values, miss)),
         IcOp::Held { guard, watch, value } => return Break(holder_read(stage, at.record, guard, watch, value, miss)),
         IcOp::OwnConstant { record, watch, value } => return Break(own_constant_read(stage, at.record, record, watch, value, miss)),
         IcOp::ArrayLength { records } => {
@@ -367,10 +367,10 @@ mod tests {
         let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
         let object = heap.alloc_object(Object::new(prototype));
-        let link = heap.object(object).unwrap().proto_link().bits();
+        let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
         let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
-        assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
-        assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
+        assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
+        assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
     }
 
     /// The interpreter keeps its typed prototype read (`Heap::holder_property_get_flat`),

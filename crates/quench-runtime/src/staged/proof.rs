@@ -274,3 +274,19 @@ impl<W: Copy> Shaped<W> {
     #[inline]
     pub fn fact(self) -> ShapeFact { ShapeFact(()) }
 }
+
+/// An object record whose exact shape and prototype link one guard proved together
+/// (`entry::shape_link_matches`): its holder is the one a prototype-held read was folded
+/// against, so the read's constant answers for it (`entry::held_constant`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Linked<W>(W);
+
+impl<W: Copy> Linked<W> {
+    /// A record the shape-and-link guard just tested.
+    #[inline]
+    pub(crate) fn of_guard(record: W) -> Self { Linked(record) }
+    /// The record's shape proof, which the link proof includes.
+    #[inline]
+    pub fn shaped(self) -> Shaped<W> { Shaped(self.0) }
+}
