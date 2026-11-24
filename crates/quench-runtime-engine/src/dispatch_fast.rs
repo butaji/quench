@@ -9007,7 +9007,7 @@ macro_rules! lane_plain_activation {
 use lane_plain_activation;
 
 pub(crate) mod leaf_calls;
-use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
+use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, AdmittedWindow, materialize_running_leaf_in_lane, leaf_call_handler};
 
 /// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
 /// leaf's activation is pending (`script_call_leaf_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
@@ -13467,8 +13467,7 @@ fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers, target: &
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
     unsafe {
-        lane_enter_leaf(cx, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
-        ((*cx).registers, (*cx).base) = (window, (*target.view).records());
+        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
     }
 }
 
@@ -16133,16 +16132,11 @@ fn return_script_frame_in_lane(
         if matches!(call.completion, CallCompletion::DerivedConstructor) && !vm.is_object_like(value) {
             value = completed.this;
         }
-        match call.completion.take_generator() {
-            Some(resume) => {
-                let stop = quench_runtime::vm::generator::MaterializedStop::Returned;
-                value = vm.finish_materialized_generator_step(completed, resume, value, stop);
-                note_allocation(vm);
-            }
-            None => {
-                vm.finish_frame_scopes(&completed);
-                vm.pool_frame(completed);
-            }
+        // Retired as the general loop's return retires it (`Vm::retire_returned_frame`).
+        let (retired_value, generator) = vm.retire_returned_frame(completed, &mut call.completion, value, None);
+        value = retired_value;
+        if generator {
+            note_allocation(vm);
         }
         retired = true;
         // A call into another program returns to the caller's, which the loop executes again.
