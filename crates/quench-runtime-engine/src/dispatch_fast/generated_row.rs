@@ -211,7 +211,7 @@ lane_handler! {
                 let others = const { crate::dispatch_fast::inherited_other_site(FLAG) };
                 let Some((guard, watch, value)) = machine.inherited_hint_operands(i.call_link.get(), i.imm(), others) else { property_miss!() };
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
-                let other = if others { Some(&raw const machine.heap) } else { None };
+                let other = if others { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
             } else if const { FLAG == crate::dispatch_fast::NESTED_SITE || crate::dispatch_fast::sink_site(FLAG) } {
                 // A nested read's two own hops: the record's hint is the first step's layout and
@@ -267,9 +267,9 @@ lane_handler! {
                 // A fixed form is the hint layout's own (the decision chose the row by it).
                 let form = const { crate::dispatch_fast::own_site_form(FLAG) };
                 frame.plan = Some(if form == HINTED_FORM {
-                    RecordPlan::own_other(hint.receiver, hint.slot, records, &raw const machine.heap)
+                    RecordPlan::own_other(hint.receiver, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 } else {
-                    RecordPlan::own_other_formed(hint.receiver, form & !quench_runtime::staged::TAGGED_SLOTS, hint.slot, records, &raw const machine.heap)
+                    RecordPlan::own_other_formed(hint.receiver, form & !quench_runtime::staged::TAGGED_SLOTS, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 });
             } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
                 // One object's own constant: its record's address, then the watch on its values.
@@ -333,7 +333,7 @@ lane_handler! {
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 // A direct object's record is addressed in the table after its family test; at the
                 // held-other site, any other receiver's object part is resolved out of line.
-                let other = if const { crate::dispatch_fast::held_other_site(FLAG) } { Some(&raw const machine.heap) } else { None };
+                let other = if const { crate::dispatch_fast::held_other_site(FLAG) } { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
             } else {
             let records = unsafe { (*script).binding.object_base } as u64;

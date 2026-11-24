@@ -83,12 +83,12 @@ impl BoundCalls {
     /// `DirectCallee` address (the native header's descriptor word), and the identity last, which admits
     /// the rows and the AOT lane body's native call (`call_frames::push_native`). `None` where the site has
     /// bound its `POLYMORPHISM` closures already.
-    pub(crate) fn bind(&self, key: usize, direct: DirectCallee, heap: &mut quench_runtime::heap::Heap) -> Option<()> {
+    pub(crate) fn bind(&self, key: usize, direct: DirectCallee, vm: &mut quench_runtime::vm::Vm) -> Option<()> {
         let (record, mut held) = (self.records().get(key)?.get(), self.held.descriptors.get(key)?.borrow_mut());
         if held.len() >= POLYMORPHISM { return None; }
         if !self.rooted.replace(true) {
             let code: Rc<dyn RootedCode> = self.held.clone();
-            heap.hold_folded_roots(&code);
+            vm.hold_folded_roots(&code);
         }
         let identity = self.held.callees.borrow_mut().embed_heap_identity(direct.callee);
         held.push(Box::new(direct));

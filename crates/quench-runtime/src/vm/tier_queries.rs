@@ -46,6 +46,18 @@ impl Vm {
     #[inline(always)]
     pub fn allocate_string(&mut self, string: JsString) -> Value { self.heap.alloc_string(string) }
 
+    /// A new object of a construct plan's `header` and `prototype` holding the first `len` of `values`
+    /// (`Heap::alloc_planned_object`).
+    #[inline(always)]
+    pub fn allocate_planned_object<const N: usize>(&mut self, header: crate::heap::InlineObjectHeader, prototype: Value,
+        values: &[Value; N], len: usize) -> Value {
+        self.heap.alloc_planned_object(header, prototype, values, len)
+    }
+
+    /// Holds the roots `code` folded into its machine code until the code is dropped (`Heap::hold_folded_roots`).
+    #[inline(always)]
+    pub fn hold_folded_roots(&mut self, code: &std::rc::Rc<dyn crate::folded_roots::RootedCode>) { self.heap.hold_folded_roots(code) }
+
     /// A new cell (`Heap::alloc`).
     #[inline(always)]
     pub fn allocate_cell(&mut self, cell: Cell) -> Value { self.heap.alloc(cell) }
@@ -175,6 +187,12 @@ heap_reads! {
     fn slot_holds_raw_doubles(shape: u32, slot: usize) -> bool;
     /// A v128 cell's bytes (`Heap::v128`).
     fn v128(value: Value) -> Option<[u8; crate::wasm::V128_BYTES]>;
+    /// The object part of a function receiver (`Heap::function_receiver`).
+    fn function_receiver(value: Value) -> Option<&'a Object>;
+    /// The object part of an array, function or builtin receiver (`Heap::held_other_receiver`).
+    fn held_other_receiver(value: Value) -> Option<&'a Object>;
+    /// Whether storing `stored` into the array `base` in place needs no store log (`Heap::array_store_unlogged`).
+    fn array_store_unlogged(base: Value, stored: Value) -> bool;
     /// The cell of a heap value (`Heap::get`).
     fn get(value: Value) -> Option<&'a Cell>;
     /// An object's record (`Heap::object`).

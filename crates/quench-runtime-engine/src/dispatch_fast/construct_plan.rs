@@ -93,20 +93,20 @@ impl ConstructPlan {
     /// past them, which is how unused inline slots start: gathered into the receiver's inline
     /// slots where they fit, else into the arena run's values.
     #[inline(always)]
-    pub(crate) fn allocate(&self, heap: &mut quench_runtime::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
+    pub(crate) fn allocate(&self, vm: &mut Vm, field: impl Fn(usize) -> Value) -> Value {
         let fields = usize::from(self.fields);
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        heap.alloc_planned_object(self.header, self.prototype, &values, fields)
+        vm.allocate_planned_object(self.header, self.prototype, &values, fields)
     }
 
     /// The receiver this plan allocates with `values`, as `values` computed them: no second
     /// array gathered from them.
     #[inline(always)]
-    pub(crate) fn allocate_values(&self, heap: &mut quench_runtime::heap::Heap, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
-        heap.alloc_planned_object(self.header, self.prototype, values, usize::from(self.fields))
+    pub(crate) fn allocate_values(&self, vm: &mut Vm, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
+        vm.allocate_planned_object(self.header, self.prototype, values, usize::from(self.fields))
     }
 
     /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
@@ -255,7 +255,7 @@ pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn
         if len > 1 { inline[1] = plan.passed_value(1, &argument); }
         return Some(vm.allocate_planned_inline(plan.header, plan.prototype, inline, len));
     }
-    Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
+    Some(vm.allocate_planned_object(plan.header, plan.prototype, &std::array::from_fn::<_, CONSTRUCT_PLAN_FIELDS, _>(|index| if index < len { plan.passed_value(index, &argument) } else { Value::UNDEFINED }), len))
 }
 
 /// Whether the running lane's frame constructs in place (`LaneContext::script_constructs`),
@@ -304,7 +304,7 @@ pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value) -> Option<Value>
     if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
         return None;
     }
-    let this = plan.allocate(&mut vm.heap, |_| Value::UNDEFINED);
+    let this = vm.allocate_planned_object(plan.header, plan.prototype, &[Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS], 0);
     note_allocation(vm);
     Some(this)
 }
@@ -345,7 +345,7 @@ fn defaulted_construction_in_lane(vm: &mut Vm, index: usize, argument: impl Fn(u
             values[usize::from(nested.field)] = nested_construction(vm, nested.constructor, &nested.arguments)?;
         }
     }
-    Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
+    { let plan = vm.lane_stack.construct_plans[index]; Some(plan.allocate_values(vm, &values)) }
 }
 
 /// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined

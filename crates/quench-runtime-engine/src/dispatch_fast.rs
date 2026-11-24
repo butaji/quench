@@ -11965,7 +11965,7 @@ fn forwarded_fields_in_lane(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -
             values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
         }
     }
-    Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
+    { let plan = vm.lane_stack.construct_plans[index]; Some(plan.allocate_values(vm, &values)) }
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
@@ -13991,7 +13991,7 @@ fn planned_receiver_in_lane(
     plan: Option<&ConstructPlan>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
-        return Some(plan.allocate(&mut vm.heap, |_| Value::UNDEFINED));
+        return Some(plan.allocate(vm, |_| Value::UNDEFINED));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());

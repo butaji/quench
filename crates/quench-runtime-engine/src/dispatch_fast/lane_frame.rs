@@ -377,7 +377,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     capture_slots: Option<*const usize>,
     /// The heap whose records a row reads in place (`Frame::heap_records`), where the row is one
     /// that does (`Decoder::Names`).
-    heap: Option<*const quench_runtime::heap::Heap>,
+    heap: Option<*const Vm>,
     /// The running frame's `this` where the lane's context word does not hold it (`this_in_lane`),
     /// read only by a row that asks for `this`.
     frame_this: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
@@ -642,7 +642,7 @@ pub(crate) struct RecordPlan {
     /// The heap whose arrays, functions and ordinary builtins a plan any receiver runs
     /// (`IcOp::Held`) finds the object part of (`Heap::held_other_receiver`); `None` where the
     /// plan runs over direct objects alone.
-    other: Option<*const quench_runtime::heap::Heap>,
+    other: Option<*const Vm>,
     /// Whether the plan starts from the receiver's word rather than its object record
     /// (`IcOp::HeldString`).
     word: bool,
@@ -713,7 +713,7 @@ impl RecordPlan {
     /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
     /// takes the same layout compare.
     #[inline(always)]
-    pub(crate) fn own_other(layout: u32, slot: u16, records: u64, heap: *const quench_runtime::heap::Heap) -> Self {
+    pub(crate) fn own_other(layout: u32, slot: u16, records: u64, heap: *const Vm) -> Self {
         Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
     }
 
@@ -736,7 +736,7 @@ impl RecordPlan {
     /// `own_other` of a layout whose storage form `form` the row's site fixed.
     #[inline(always)]
     pub(crate) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
-        heap: *const quench_runtime::heap::Heap) -> Self {
+        heap: *const Vm) -> Self {
         let mut plan = Self::own_other(layout, slot, records, heap);
         plan.ops[0] = quench_runtime::staged::ic::IcOp::GuardFormed { id: layout, form };
         plan
@@ -746,7 +746,7 @@ impl RecordPlan {
     /// (`IcOp::Held`).
     #[inline(always)]
     pub(crate) fn held(guard: u64, watch: u64, value: u64, records: u64,
-        other: Option<*const quench_runtime::heap::Heap>) -> Self {
+        other: Option<*const Vm>) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
         Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
@@ -1165,7 +1165,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             // A string or another cell the word leaves: its cell decides it in place, where the
             // row carries the heap (a truthiness jump's, `row_frame_of`).
             // SAFETY: the heap outlives the row's step.
-            None => self.heap.map(|heap| quench_runtime::vm::coercion::heap_cell_truthy_in(unsafe { &*heap }, value)),
+            None => self.heap.map(|heap| unsafe { &*heap }.heap_cell_truthy(value)),
         }
     }
 
@@ -1286,7 +1286,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
         // SAFETY: the running lane's heap, live for the row's step.
-        let heap = unsafe { &*self.heap? };
+        let heap = unsafe { &*self.heap? }.heap_reads();
         Some((heap.array_record_base()? as u64, heap.object_record_base()? as u64, heap.collection_epoch()))
     }
 
@@ -1830,14 +1830,14 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
             return quench_runtime::staged::property::receiver(stage, self, object, miss);
         };
         // SAFETY: the heap is the lane's, live for the read.
-        if functions && let Some(record) = unsafe { &*heap }.function_receiver(Value::from_bits(object)) {
+        if functions && let Some(record) = unsafe { &*heap }.heap_reads().function_receiver(Value::from_bits(object)) {
             return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
         }
         if let Some(id) = Value::from_bits(object).direct_object_index() {
             return Some(quench_runtime::staged::ic::Reached::bare(quench_runtime::staged::object::object_record_at(stage, records, u64::from(id))));
         }
         // SAFETY: as above.
-        let record = unsafe { &*heap }.held_other_receiver(Value::from_bits(object))?;
+        let record = unsafe { &*heap }.heap_reads().held_other_receiver(Value::from_bits(object))?;
         Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64))
     }
 
@@ -1981,7 +1981,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
         // SAFETY: the heap is the lane's, live for the row.
         // The live table: a direct array receiver proves it reserved, and any other receiver
         // leaves at the access's family test before it is addressed.
-        self.heap.map(|heap| unsafe { (*heap).live_array_records() } as u64)
+        self.heap.map(|heap| unsafe { &*heap }.heap_reads().live_array_records() as u64)
     }
 
     /// The VM's element store at the row's site (`row_index_write`): an added element, a hole, a
@@ -2028,7 +2028,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
     #[inline(always)]
     fn array_store_gate(&mut self, _stage: &mut Concrete, base: u64, value: u64, _miss: ()) -> Option<()> {
         // SAFETY: as `array_records`.
-        let heap = unsafe { &*self.heap? };
+        let heap = unsafe { &*self.heap? }.heap_reads();
         heap.array_store_unlogged(Value::from_bits(base), Value::from_bits(value)).then_some(())
     }
 }
@@ -2339,14 +2339,14 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { quench_runtime::staged::truth_jump(LaneFields::<OP>::OPCODE).is_some() } {
         // A jump on a string's (or another cell's) truth decides it from the heap (`truthiness`).
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: *const Vm = unsafe { vm(cx) };
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
     }
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
         let script = view.memory.bytes.cast::<LaneContext>();
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(script) }.heap;
+        let heap: *const Vm = unsafe { vm(script) };
         // A read's host path is its miss sibling (`row_index_read_miss`): a call inside the row
         // would cost its fast path a stack frame.
         let reads = const { matches!(LaneFields::<OP>::OPCODE.field_layout(quench_runtime::bytecode::InstructionField::A), quench_runtime::bytecode::FieldLayout::ResultRegister) };
@@ -2382,7 +2382,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         return LaneFrame::<ACC> { gc_values: Some((cx.cast(), next, step)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: *const Vm = unsafe { vm(cx) };
         // A count the view proved to read its function's kept arguments (`FLAG_SET`) takes a
         // keeping activation's count without finding the function.
         let count: unsafe fn(*mut (), u16) -> Option<Value> = if FLAG == FLAG_SET {
@@ -2435,8 +2435,8 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         } else {
             None
         };
-        let heap: Option<*const quench_runtime::heap::Heap> = if string_case {
-            let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: Option<*const Vm> = if string_case {
+            let heap: *const Vm = unsafe { vm(cx) };
             Some(heap)
         } else {
             None
@@ -2446,7 +2446,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
         let context = view.memory.bytes;
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(context.cast::<LaneContext>()) }.heap;
+        let heap: *const Vm = unsafe { vm(context.cast::<LaneContext>()) };
         // A row a proof names (`FLAG_SET`) reads and stores its array through the proof's span.
         let element_span = if const { FLAG == FLAG_SET } { Some((context, proof_span as ElementSpan)) } else { None };
         return LaneFrame::<ACC> { heap: Some(heap), element_span, ..LaneFrame::<ACC>::new(r, view) };
@@ -2507,7 +2507,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmInt)) } {
         // An integer row reads its operands from the register file: the carried accumulator stands for
         // one field only, and a row reads two registers (`LaneFrame::read`).
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: *const Vm = unsafe { vm(cx) };
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmMemory)) } {
