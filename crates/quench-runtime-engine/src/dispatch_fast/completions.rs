@@ -70,43 +70,49 @@ fn complete_trapped_read_in_lane(cx: *mut LaneContext, ip: Ip, value: Value) -> 
     Some(resume_after_call_in_lane(&frame, caller_memory, value))
 }
 
-/// `complete_activation_in_lane`'s commonest completion: a JavaScript activation of the
-/// running program whose call keeps its result (`Completion::Plain`, a result register). It
-/// restores what that completion restores, without moving the activation out of the stack:
-/// the caller's registers, records, receiver and environments, and the call's result. `None`
-/// leaves every other completion to the returns past it, which take another program's
-/// activation the same way (`complete_cross_activation_in_lane`).
-#[inline(always)]
-pub(crate) fn return_plain_in_lane(cx: *mut LaneContext, value: Value) -> Option<(Registers, Ip)> {
-    // The header's plain return first (`lane_return_header`), then a run of returning plain
-    // frames, then the side record's.
-    let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-    if let Some(returned) = lane_return_header::<false>(cx, window, value) {
-        return Some(returned);
-    }
-    // A plain activation whose call returns its callee's completion (`return f()`) completes with
-    // the same value: where a run of such plain frames ends in a call that keeps it, they pop
-    // header by header (`call_complete::step_returning_pop_of`) and the outermost returns into it.
-    if let Some(above) = returning_plain_run(cx, window) {
-        let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
+/// The lane's primitives of a script activation's return (`call_complete::ScriptReturn`), for a
+/// record of leaf form `LEAF`: `window` is the running plain frame's, which a returning run moves.
+pub(crate) struct LaneScriptReturn<const LEAF: u8> { pub(crate) cx: *mut LaneContext, pub(crate) window: Registers }
+
+impl<const LEAF: u8> LaneScriptReturn<LEAF> {
+    /// The return of the running activation, from the lane stack's running plain window.
+    #[inline(always)]
+    pub(crate) fn running(cx: *mut LaneContext) -> Self { Self { cx, window: Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get()) } }
+}
+
+impl<const LEAF: u8> quench_runtime::staged::call_complete::ScriptReturn for LaneScriptReturn<LEAF> {
+    type Value = Value;
+    type Returned = (Registers, Ip);
+    #[inline(always)]
+    fn leaf(&self) -> bool { LEAF != NOT_LEAF }
+    #[inline(always)]
+    fn leaf_header(&mut self, value: Value) -> Option<(Registers, Ip)> { super::leaf_calls::lane_return_leaf_header(self.cx, value, LEAF) }
+    #[inline(always)]
+    fn complete_leaf(&mut self, value: Value) -> Option<(Registers, Ip)> { complete_leaf_in_lane(self.cx, value, LEAF) }
+    #[inline(always)]
+    fn plain_header(&mut self, value: Value) -> Option<(Registers, Ip)> { lane_return_header::<false>(self.cx, self.window, value) }
+    #[inline(always)]
+    fn returning_run(&mut self) -> Option<usize> { returning_plain_run(self.cx, self.window) }
+    #[inline(always)]
+    fn pop_returning(&mut self, above: usize) {
+        let stack: &mut LaneStack = &mut unsafe { vm(self.cx) }.lane_stack;
         let plain = (&raw const stack.plain).expose_provenance() as u64;
-        let mut released = window.0;
-        let mut caller = None;
+        let (mut released, mut caller) = (self.window.0, None);
         for _ in 0..above {
             released = stack.plain.registers.get();
             caller = quench_runtime::staged::call_complete::step_returning_pop_of(&mut Concrete::new(std::ptr::null()), plain,
                 released.expose_provenance() as u64, plain_destination, ());
             debug_assert!(caller.is_some(), "`returning_plain_run` proved this many returning plain frames");
         }
-        let caller = caller?;
+        let Some(caller) = caller else { return };
         stack.frames_changed();
         // SAFETY: plain windows are the lane stack's own, so the outermost one's release is the top's move.
         unsafe { stack.values.set_top(released) };
-        let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
-        unsafe { ((*cx).registers, (*cx).base) = (registers, std::ptr::with_exposed_provenance(caller.base as usize)) };
-        return lane_return_header::<false>(cx, registers, value);
+        self.window = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
+        unsafe { ((*self.cx).registers, (*self.cx).base) = (self.window, std::ptr::with_exposed_provenance(caller.base as usize)) };
     }
-    return_from_in_lane::<false, false, false, false>(cx, value)
+    #[inline(always)]
+    fn side_return(&mut self, value: Value) -> Option<(Registers, Ip)> { return_from_in_lane::<false, false, false, false>(self.cx, value) }
 }
 
 /// How many plain activations, innermost first from the one on `window`, return their callee's
@@ -213,7 +219,7 @@ pub(crate) fn frame_return(vm: &mut Vm, call: Ip, value: Value) -> Ip {
 }
 
 /// Complete the innermost lane activation with `value` when it is the common return
-/// (`return_plain_in_lane`): a JavaScript activation of the running program's caller yielding
+/// (`call_complete::step_activation_return_of`): a JavaScript activation of the running program's caller yielding
 /// `value` to its call's result register. Each step loads or stores, so a handler returning
 /// through it saves no registers. `None`, which changes nothing, leaves every other completion
 /// to `complete_activation_in_lane`. A return record of a leaf's records (`LEAF`,
@@ -221,20 +227,14 @@ pub(crate) fn frame_return(vm: &mut Vm, call: Ip, value: Value) -> Ip {
 /// (`complete_leaf_in_lane`); no other record runs while one does.
 #[inline(always)]
 pub(crate) fn complete_plain_activation_in_lane<const LEAF: u8>(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
-    let completed = match LEAF {
-        NOT_LEAF => None,
-        form => complete_leaf_in_lane(cx, value, form),
-    };
-    let (registers, next) = match completed {
-        Some(completed) => completed,
-        None => return_plain_in_lane(cx, value)?,
-    };
-    let view = Carried {
-        memory: MemoryView::script(cx),
-        integers: quench_runtime::value::IntegerEncoding::TAG,
-        acc: Slot::of(Value::UNDEFINED),
-    };
-    Some(Resumed::At(registers, next, view))
+    let returned = quench_runtime::staged::call_complete::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), value)?;
+    Some(resumed_script(cx, returned))
+}
+
+/// Where a script return continues: its caller's registers and next record, in script memory.
+#[inline(always)]
+pub(crate) fn resumed_script(cx: *mut LaneContext, (registers, next): (Registers, Ip)) -> Resumed {
+    Resumed::At(registers, next, Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) })
 }
 
 /// `complete_activation_in_lane` of a run of JavaScript activations, of one program or several,

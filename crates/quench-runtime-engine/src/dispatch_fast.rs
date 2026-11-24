@@ -14210,19 +14210,12 @@ return_handler! {
     }
 }
 
-/// The return of the record of form `LEAF` with `value` as one op, making no call: a running
-/// leaf of the caller's program completes (`lane_return_leaf_header`), a plain activation pops
-/// its header from `window`, the running one (`completions::lane_return_header`, the first
-/// step of `return_plain_in_lane`). `None`,
-/// which changes nothing, for any other, which `complete_plain_activation_in_lane` and the
-/// general returns decide as before.
+/// The return of the record of form `LEAF` with `value` as one op, making no call
+/// (`call_complete::step_return_one_op_of`), from the running plain frame's `window`. `None`,
+/// which changes nothing, for any other, which `lane_return_records` decides.
 #[inline(always)]
 fn lane_return_one_op<const LEAF: u8>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<(Registers, Ip)> {
-    if LEAF == NOT_LEAF {
-        lane_return_header::<false>(cx, window, value)
-    } else {
-        leaf_calls::lane_return_leaf_header(cx, value, LEAF)
-    }
+    quench_runtime::staged::call_complete::step_return_one_op_of(&mut LaneScriptReturn::<LEAF> { cx, window }, value)
 }
 
 return_handler! {
@@ -14230,8 +14223,9 @@ return_handler! {
     /// record's (`complete_plain_activation_in_lane`), else the returns past the common one.
     #[inline(never)]
     fn lane_return_records<LEAF: u8>(cx, r, ip, i, view) {
-        if let Some(resumed) = complete_plain_activation_in_lane::<LEAF>(cx, r.get(i.a)) {
-            resume!(cx, resumed)
+        let returned = quench_runtime::staged::call_complete::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), r.get(i.a));
+        if let Some(returned) = returned {
+            resume!(cx, completions::resumed_script(cx, returned))
         }
         sibling!(return_general_in_lane, r, ip, view)
     }
