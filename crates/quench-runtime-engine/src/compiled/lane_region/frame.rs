@@ -1,4 +1,5 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
+use quench_runtime::staged::{Float64, Int32};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -455,28 +456,32 @@ impl quench_runtime::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand,
-        miss: ir::Block) -> Option<ir::Value> {
-        Some(operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate"))
+        miss: ir::Block) -> Option<Int32<ir::Value>> {
+        // Fact: `operand_int` emitted the tag guard, which branches to `miss`, or read a register its facts prove.
+        Some(unsafe { Int32::proven(operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate")) })
     }
 
     /// A register its facts prove an int32: its int view, whose test (if any) never fails.
-    fn held_int(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand) -> Option<ir::Value> {
+    fn held_int(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand) -> Option<Int32<ir::Value>> {
         let register = operand.register_index()?;
         if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::INT32) { return None; }
         let miss = quench_runtime::staged::NumericFrame::miss(self);
-        Some(register_int_value(stage.builder, self.registers, self.state, register, miss))
+        // Fact: the register's type is a subtype of INT32.
+        Some(unsafe { Int32::proven(register_int_value(stage.builder, self.registers, self.state, register, miss)) })
     }
 
     fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand,
-        miss: ir::Block) -> Option<ir::Value> {
-        Some(operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate"))
+        miss: ir::Block) -> Option<Float64<ir::Value>> {
+        // Fact: `operand_number` emitted the Number guard, which branches to `miss`, or read a register its facts prove.
+        Some(unsafe { Float64::proven(operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate")) })
     }
 
     fn int32_operand(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand,
-        miss: ir::Block) -> Option<ir::Value> {
-        operand_to_int32(stage.builder, self.registers, self.state, self.constants, operand, miss)
+        miss: ir::Block) -> Option<Int32<ir::Value>> {
+        // Fact: `operand_to_int32` emitted the Number guard and the ToInt32 conversion.
+        operand_to_int32(stage.builder, self.registers, self.state, self.constants, operand, miss).map(|int| unsafe { Int32::proven(int) })
     }
 
     fn prove_number(&mut self, stage: &mut Emit<'_, '_>, register: Register, miss: ir::Block) -> Option<()> {

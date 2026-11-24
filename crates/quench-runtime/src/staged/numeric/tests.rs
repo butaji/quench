@@ -77,17 +77,18 @@ impl crate::staged::PropertyFrame<Concrete> for NumberFrame {
 impl crate::staged::ElementFrame<Concrete> for NumberFrame {}
 
 impl NumericFrame<Concrete> for NumberFrame {
-    fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        Some(match self.values[usize::from(operand.register_index().expect("a register operand"))] {
+    fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> {
+        // Fact: the test frame holds each register's representation.
+        Some(unsafe { crate::staged::Int32::proven(match self.values[usize::from(operand.register_index().expect("a register operand"))] {
             NumberWord::Int(value) => int_word(value),
             NumberWord::Float(value) => int_word(value as i32),
-        })
+        }) })
     }
-    fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        Some(match self.values[usize::from(operand.register_index().expect("a register operand"))] {
+    fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> {
+        Some(unsafe { crate::staged::Float64::proven(match self.values[usize::from(operand.register_index().expect("a register operand"))] {
             NumberWord::Int(value) => f64::from(value).to_bits(),
             NumberWord::Float(value) => value.to_bits(),
-        })
+        }) })
     }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { Some(()) }
     fn miss(&self) {}

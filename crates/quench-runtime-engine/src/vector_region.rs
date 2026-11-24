@@ -184,10 +184,10 @@ impl staged::ElementFrame<staged::Concrete> for RegionFrame<'_> {}
 /// The numeric operands of a run: its rows read none, since a run's numeric work is its Wasm
 /// rows and its moves, which read the register file through `Frame`.
 impl staged::NumericFrame<staged::Concrete> for RegionFrame<'_> {
-    fn int_operand(&mut self, _stage: &mut staged::Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, _stage: &mut staged::Concrete, _operand: Operand, _miss: ()) -> Option<staged::Int32<u64>> {
         None
     }
-    fn number_operand(&mut self, _stage: &mut staged::Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
+    fn number_operand(&mut self, _stage: &mut staged::Concrete, _operand: Operand, _miss: ()) -> Option<staged::Float64<u64>> {
         None
     }
     fn prove_number(&mut self, _stage: &mut staged::Concrete, _register: Register, _miss: ()) -> Option<()> {

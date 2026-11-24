@@ -12,7 +12,7 @@ use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
 use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
-use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
+use crate::staged::{Concrete, Constant, Float64, Int32, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
 use crate::typed_ir::{Representation, Type};
 use crate::words::*;
 
@@ -530,19 +530,22 @@ impl crate::staged::PropertyFrame<Concrete> for Places {
 impl NumericFrame<Concrete> for Places {
     /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).
     #[inline(always)]
-    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        by_place!(self, operand.register_index()?, bitwise_place(&self.s, true))
+    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
+        // Fact: the place's fixed representation, or `bitwise_place`'s tag test and ToInt32.
+        by_place!(self, operand.register_index()?, bitwise_place(&self.s, true)).map(|word| unsafe { Int32::proven(word) })
     }
 
     #[inline(always)]
-    fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
         let (register, proved) = (operand.register_index()?, self.proved);
-        by_place!(self, register, int_place(&self.s, proved))
+        // Fact: the place's fixed representation, the caller's guard (`proved`), or `int_place`'s tag test.
+        by_place!(self, register, int_place(&self.s, proved)).map(|word| unsafe { Int32::proven(word) })
     }
 
     #[inline(always)]
-    fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        by_place!(self, operand.register_index()?, number_place(&self.s))
+    fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Float64<u64>> {
+        // Fact: the place's fixed representation, or `number_place`'s tag test.
+        by_place!(self, operand.register_index()?, number_place(&self.s)).map(|word| unsafe { Float64::proven(word) })
     }
 
     #[inline(always)]

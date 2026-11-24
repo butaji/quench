@@ -106,6 +106,9 @@ impl NumericStage for super::super::Concrete {
     }
     #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
+        // SAFETY: the trait's contract: every row guards the divisor nonzero before this step,
+        // so no tier carries a divide-by-zero trap of its own.
+        unsafe { core::hint::assert_unchecked(int32(right) != 0) };
         u64::from(int32(left).wrapping_rem(int32(right)) as u32)
     }
     #[inline(always)]

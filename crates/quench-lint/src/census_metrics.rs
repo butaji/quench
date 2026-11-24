@@ -114,6 +114,14 @@ pub fn runtime_internals(text: &str) -> usize {
     reaches + surface_names(text)
 }
 
+/// The int32 and binary64 operands a frame outside `staged` asserts with no staged guard
+/// (`Int32::proven`, `Float64::proven`; S1.5, TOD-2076): each is a frame's own test or fact that the
+/// staged guard (`checked`) or a typed fact replaces, so the counter only falls.
+pub fn unguarded_number_proofs(text: &str) -> usize {
+    text.lines().map(str::trim).filter(|line| !line.starts_with("//"))
+        .map(|line| line.matches("Int32::proven(").count() + line.matches("Float64::proven(").count()).sum()
+}
+
 /// The heap items a `pub use crate::heap::...;` re-exports (`quench_runtime::tier_surface`): each is an
 /// internal the tiers can still name, so the counter falls only when an item leaves the surface.
 fn surface_names(text: &str) -> usize {

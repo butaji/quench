@@ -622,15 +622,15 @@ impl crate::staged::PropertyFrame<Concrete> for InterpreterFrame<'_> {
 impl NumericFrame<Concrete> for InterpreterFrame<'_> {
     /// An int32 operand's word, from its register's tagged word.
     #[inline(always)]
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> {
         let word = self.operand_word(stage, operand)?;
-        Value::from_bits(word).as_int().map(|int| u64::from(int as u32))
+        crate::staged::Int32::checked(Value::from_bits(word))
     }
 
     #[inline(always)]
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> {
         let word = self.operand_word(stage, operand)?;
-        Value::from_bits(word).as_number().map(f64::to_bits)
+        crate::staged::Float64::checked(Value::from_bits(word))
     }
 
     #[inline(always)]
