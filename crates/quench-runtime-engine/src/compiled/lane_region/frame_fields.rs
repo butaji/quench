@@ -57,7 +57,7 @@ pub(crate) struct StableHold<'a> {
     /// Exact shapes of the prototypes whose values the code holds (`StableUses::holders`).
     pub(crate) holders: &'a mut quench_runtime::bitset::BitSet,
     /// Exact shapes of the objects whose shape the code holds past a call (`StableUses::shapes`).
-    pub(crate) shapes: &'a mut quench_runtime::bitset::BitSet,
+    pub(crate) shapes: &'a mut quench_runtime::staged::HeldShapes,
     /// The loops that hold every Stable fact (`StableUses::stable_loops`).
     pub(crate) loops: &'a [(usize, usize)],
     /// The facts of the VM the code depends on; none for code shared across VMs.

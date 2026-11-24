@@ -200,7 +200,9 @@ impl Stage for Emit<'_, '_> {
         (zero, never)
     }
     fn assumption(&mut self, _watch: EmitImm) -> ir::Value {
-        // No assumption registry reaches emitted code yet: the read leaves at its miss.
+        // A watched op never reaches emitted code: the specializer holds the watch's subject as a
+        // code dependency instead (`StableHold::hold_holder`, `HeldShapes`), the invalidation hook
+        // that replaces the test. An op that reached here anyway leaves at its miss.
         let zero = self.constant(0);
         self.ne_imm(zero, 0u32)
     }

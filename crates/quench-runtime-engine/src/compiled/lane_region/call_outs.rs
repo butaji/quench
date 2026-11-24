@@ -71,7 +71,7 @@ impl Lowering<'_, '_> {
 
     /// The site of the call-out record at `pc`: where the helper decodes it, the registers the body
     /// wrote, and where a status other than completion or a miss ends the body.
-    pub(crate) fn call_out_site(&mut self, pc: usize, record: u32, cell: Option<GlobalSlot>) -> frame::call_out::CallOutSite {
+    pub(crate) fn call_out_site(&mut self, pc: usize, record: u32, cell: Option<(GlobalSlot, quench_runtime::staged::ShapeFact)>) -> frame::call_out::CallOutSite {
         frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc), cell }
     }
