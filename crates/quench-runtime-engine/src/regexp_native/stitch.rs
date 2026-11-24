@@ -75,6 +75,11 @@ fn stencil(name: &str) -> Option<Stencil> {
     quench_bjit::rustc::stencil(name)
 }
 
+/// Whether this target's library has the regexp rows (x86-64 builds them; `regexp_entry.rs`).
+pub(crate) fn available() -> bool {
+    stencil("entry_regexp").is_some()
+}
+
 /// One placed row: a library row by its codes or a routine, its operand holes (2 to 4) and the
 /// pc its taken successor is.
 struct Planned {

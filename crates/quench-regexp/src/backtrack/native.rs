@@ -123,6 +123,9 @@ pub struct NativeCompiler {
     pub runs: u32,
     /// Starts compiling a plan, which the search polls for its code while the interpreter runs.
     pub start: fn(NativePlan) -> NativeBuild,
+    /// The optimizing tier, where the mode has one above the first: the searches (counted from
+    /// the program's first) after which its code replaces the first tier's, and its compiler.
+    pub optimize: Option<(u32, fn(NativePlan) -> NativeBuild)>,
 }
 
 /// A compile in progress: polled for the code, or `Ready(None)` where it has none.
@@ -155,6 +158,10 @@ pub(super) struct NativeSlot {
     runs: Cell<u32>,
     code: OnceCell<Option<NativeCode>>,
     building: RefCell<Option<NativeBuild>>,
+    /// The optimizing tier's code, which replaces `code` once it arrives.
+    optimized: OnceCell<NativeCode>,
+    /// The first tier's code stays: no optimizing tier, or its compile gave no code.
+    settled: Cell<bool>,
 }
 
 /// The frames a native search starts with room for; it grows to `MAXIMUM_STACK_FRAMES`.
@@ -208,7 +215,13 @@ impl Program {
     #[inline(always)]
     fn native_code(&self) -> Option<&NativeCode> {
         if let Some(code) = self.native.code.get() {
-            return code.as_ref();
+            if let Some(optimized) = self.native.optimized.get() {
+                return Some(optimized);
+            }
+            if self.native.settled.get() {
+                return code.as_ref();
+            }
+            return self.native_optimizing(code.as_ref());
         }
         // An interpreted run compiles no native search: no call to count its searches.
         if !ENABLED.get() {
@@ -235,7 +248,41 @@ impl Program {
             return None;
         };
         *building = None;
+        // A program with no first-tier code has no tier above it either.
+        self.native.settled.set(code.is_none() || compiler.optimize.is_none());
         self.native.code.get_or_init(|| code).as_ref()
+    }
+
+    /// The first tier's `code` while the optimizing tier counts the program's searches toward
+    /// its compile, then compiles it, polled as the first tier's compile is.
+    #[inline(never)]
+    fn native_optimizing<'a>(&'a self, code: Option<&'a NativeCode>) -> Option<&'a NativeCode> {
+        let Some((threshold, start)) = COMPILER.get().and_then(|compiler| compiler.optimize) else {
+            self.native.settled.set(true);
+            return code;
+        };
+        let runs = self.native.runs.get().saturating_add(1);
+        self.native.runs.set(runs);
+        if runs < threshold {
+            return code;
+        }
+        let mut building = self.native.building.borrow_mut();
+        if building.is_none() {
+            *building = Some(start(self.native_plan()));
+        } else if runs % POLL_EVERY != 0 {
+            return code;
+        }
+        let Some(Poll::Ready(optimized)) = building.as_mut().map(|build| build()) else {
+            return code;
+        };
+        *building = None;
+        match optimized {
+            Some(optimized) => Some(self.native.optimized.get_or_init(|| optimized)),
+            None => {
+                self.native.settled.set(true);
+                code
+            }
+        }
     }
 
     /// `run`'s search of an ASCII subject from the search start `start` in native code: the
