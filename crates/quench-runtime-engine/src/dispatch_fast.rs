@@ -16135,16 +16135,11 @@ fn return_script_frame_in_lane(
         if matches!(call.completion, CallCompletion::DerivedConstructor) && !vm.is_object_like(value) {
             value = completed.this;
         }
-        match call.completion.take_generator() {
-            Some(resume) => {
-                let stop = quench_runtime::vm::generator::MaterializedStop::Returned;
-                value = vm.finish_materialized_generator_step(completed, resume, value, stop);
-                note_allocation(vm);
-            }
-            None => {
-                vm.finish_frame_scopes(&completed);
-                vm.pool_frame(completed);
-            }
+        // Retired as the general loop's return retires it (`Vm::retire_returned_frame`).
+        let (retired_value, generator) = vm.retire_returned_frame(completed, &mut call.completion, value, None);
+        value = retired_value;
+        if generator {
+            note_allocation(vm);
         }
         retired = true;
         // A call into another program returns to the caller's, which the loop executes again.
