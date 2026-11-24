@@ -155,7 +155,8 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "tier_runtime_internals",
         direction: Direction::Down,
-        sources: &[Source::Tree(ENGINE, &[]), Source::Tree("crates/quench-bjit/src", &[]), Source::Tree("crates/quench-bjit/stencils", &[])],
+        sources: &[Source::Tree(ENGINE, &[]), Source::Tree("crates/quench-bjit/src", &[]), Source::Tree("crates/quench-bjit/stencils", &[]),
+            Source::File("crates/quench-runtime/src/tier_surface.rs")],
         extract: Extract::Text(extract::runtime_internals),
     },
     Metric {
