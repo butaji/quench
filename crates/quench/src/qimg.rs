@@ -6,7 +6,7 @@
 
 use quench_runtime::{AheadImages, Runtime};
 use quench_layers::engine::AheadImagesOps1;
-use std::{cell::RefCell, process::ExitCode};
+use std::{process::ExitCode, sync::Mutex};
 
 use crate::host::NodeHost;
 
@@ -19,7 +19,8 @@ const PAYLOAD_LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 const TRAILER_BYTES: usize = PAYLOAD_LENGTH_BYTES + TRAILER_MAGIC.len();
 const EXECUTABLE_MODE: u32 = 0o755;
 
-thread_local! { static STAGED: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) }; }
+/// The staged image file, process-wide: the entry runs on a worker thread (`run_shared_cli`), not the one that read the file.
+static STAGED: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
 /// The payload length a trailer states, or `None` where it is not one.
 fn payload_length(trailer: &[u8]) -> Option<u64> {
@@ -101,7 +102,7 @@ fn run_file(image: &str, file: &[u8], arguments: impl IntoIterator<Item = String
     let length = u32::from_le_bytes(length.try_into().map_err(|_| "truncated image file")?) as usize;
     let (entry, bundle) = body.split_at_checked(length).ok_or("truncated image file")?;
     match AheadImages::unbundle(bundle) {
-        Ok(_) => STAGED.with(|staged| *staged.borrow_mut() = bundle.to_vec()),
+        Ok(_) => *STAGED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = bundle.to_vec(),
         Err(error) => eprintln!("quench: {image}: {error}; running without images"),
     }
     let entry = String::from_utf8(entry.to_vec()).map_err(|error| error.to_string())?;
@@ -110,11 +111,9 @@ fn run_file(image: &str, file: &[u8], arguments: impl IntoIterator<Item = String
 
 /// Hands the staged images, if any, to a freshly built runtime.
 pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
-    STAGED.with(|staged| {
-        let staged = staged.borrow();
-        if staged.is_empty() { return; }
-        for images in AheadImages::unbundle(&staged).unwrap_or_default() { runtime.load_ahead_images(images); }
-    });
+    let staged = STAGED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if staged.is_empty() { return; }
+    for images in AheadImages::unbundle(&staged).unwrap_or_default() { runtime.load_ahead_images(images); }
 }
 
 /// The image command line, if it is one: an executable with an embedded image, or `<x>.qimg ...`.

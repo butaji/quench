@@ -1201,19 +1201,6 @@ pub(crate) enum LaneHelpers {
     Linked(u32, u32),
     Bound(ir::Value, u32),
 }
-/// Whether an image body (`LaneHelpers::Ahead`) runs a record no row takes as its generic semantic row
-/// (`base_region::steps::generic`) instead of leaving at it. Its semantic entry steps a VM frame (`js_semantic_callout`),
-/// which no lane activation has, and an image's bodies run on the lane runner (`Vm::install_ahead_body`), so they
-/// leave as a JIT body does and the lane's interpreter takes the record.
-const AHEAD_GENERIC_ROWS: bool = false;
-
-impl LaneHelpers {
-    /// Whether a record no row takes runs as the generic semantic row (`AHEAD_GENERIC_ROWS`), which never leaves.
-    pub(crate) fn generic_rows(self) -> bool {
-        AHEAD_GENERIC_ROWS && matches!(self, Self::Ahead)
-    }
-}
-
 /// The process helper table a JIT publication binds.
 pub(crate) fn process_lane_helpers() -> LaneHelpers {
     LaneHelpers::Process(LaneHelper::addresses())
@@ -1488,7 +1475,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize))?;
-    let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Aot, facts: Default::default() }).compiled()?;
+    let admitted = admission::ahead_unit(function_id)?;
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[], admitted,
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,

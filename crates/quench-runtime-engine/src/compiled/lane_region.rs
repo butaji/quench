@@ -100,7 +100,6 @@ use captures::RootedRead;
 use call_frames::{CallSite, DirectSite, Leave, ReturnSite, Site};
 pub(crate) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] pub(crate) mod call_outs;
-#[path = "lane_region/general_steps.rs"] pub(crate) mod general_steps;
 #[path = "lane_region/jumps.rs"] pub(crate) mod jumps;
 #[path = "lane_region/call_rows.rs"] pub(crate) mod call_rows;
 #[path = "lane_region/register_rows.rs"] pub(crate) mod register_rows;
@@ -3164,10 +3163,6 @@ impl Lowering<'_, '_> {
                 if falls { self.conform_declared_definitions(state, pc, instruction); }
                 falls
             }
-            None if let Some(falls) = self.general_step(state, pc, instruction) => {
-                self.native += 1;
-                falls
-            }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
                 if self.helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
@@ -3788,9 +3783,7 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
-        // An image body makes a call its helper misses by the interpreter's step, and continues (`fill_stepped_miss`).
-        let stepped = self.stepped_record(pc);
-        let missed = if stepped.is_none() { self.guard_exit(state, pc as u32) } else { cold_block(&mut self.builder) };
+        let missed = self.guard_exit(state, pc as u32);
         self.home_written(state, pc);
         let completed = self.builder.create_block();
         let raised = cold_block(&mut self.builder);
@@ -3798,7 +3791,6 @@ impl Lowering<'_, '_> {
         // The callee's exception block is filled before the call's blocks, from the state the call is made in.
         self.goto(entered, &[]);
         self.raised_call(state, pc, record, raised);
-        if let Some(record) = stepped { self.fill_stepped_miss(state, pc, record, missed, completed); }
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns its callees for as long as its code runs.
         let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
@@ -4884,9 +4876,7 @@ impl Lowering<'_, '_> {
         // again.
         // The site's own shapes still store in place first: a body that left here once (before
         // the site cached a shape, say) keeps its arms, and only their miss adds.
-        // An image body has no runtime feedback to say a store adds: every store may, and its
-        // miss of the site's own shapes adds through the VM's entries rather than leaving.
-        if (self.generic.contains(&pc) || self.helpers == LaneHelpers::Ahead) && self.completion.status_and_pc() {
+        if self.generic.contains(&pc) && self.completion.status_and_pc() {
             let (arms, _) = self.site_store_plan(instruction.cache_site_index(), ty);
             let admitted = (!arms.is_empty()).then(|| self.store_atom_admitted(state, instruction.atom_index(), exit));
             state.proofs.write_field(instruction.atom_index());

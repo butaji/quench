@@ -13,8 +13,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{AotFunction, AotImage, base::NO_ENTRY, file, symbols::{Symbol, SymbolTable}};
-use quench_runtime::bytecode::opcode_name;
-use crate::compiled::native_js_operation_signature;
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::native_object::{NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeDataAddress, NativeFunctionAddress, NativeJsModule, NativeReloc};
 use cranelift_codegen::{ir, isa::{CallConv, TargetIsa}};
@@ -30,16 +28,12 @@ const ABI_DECLARATION: u32 = 0;
 const IMAGE_RECORD: u32 = 0;
 /// The entry table's data record, after the image record.
 const ENTRY_TABLE_RECORD: usize = 1;
-/// The operand records' data record, after the entry table.
-const OPERANDS_RECORD: u32 = 2;
-/// The proven calls' records, after the operand records.
-const CALL_RECORDS_RECORD: u32 = 3;
+/// The proven calls' records, after the entry table.
+const CALL_RECORDS_RECORD: u32 = 2;
 /// The object's copy of the narrow decode's upper-word table (`Symbol::NarrowUpperWords`), after the call records.
-const NARROW_WORDS_RECORD: u32 = 4;
+const NARROW_WORDS_RECORD: u32 = 3;
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
-/// The bytes of one operand record (`NativeJsOperands`).
-const OPERAND_RECORD_BYTES: i64 = std::mem::size_of::<[u64; 2]>() as i64;
 
 /// The declarations an image's code names, and where its definitions are.
 struct Targets<'a> {
@@ -68,7 +62,7 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
     functions.extend(definitions);
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), file.len())?;
-    let data = vec![image_data(namespace, file), table, operand_data(namespace, image), call_data(namespace, image), narrow_data(namespace)];
+    let data = vec![image_data(namespace, file), table, call_data(namespace, image), narrow_data(namespace)];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
@@ -90,10 +84,9 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
         }
         let import = match SymbolTable::decode(image, key.0, key.1) {
             Some(Symbol::Helper(helper)) => helper_import(isa, helper)?,
-            Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
             // The runtime exports the byte by name; the system linker resolves the word to it.
             Some(Symbol::Attention) => NativeFunction::Import { name: quench_runtime::execution_interrupt::ATTENTION_SYMBOL.into(), signature: ir::Signature::new(isa.default_call_conv()) },
-            Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. } | Symbol::NarrowUpperWords) => continue,
+            Some(Symbol::BasePc { .. } | Symbol::CallRecord { .. } | Symbol::NarrowUpperWords) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),
             None => return Err("an AOT image names an unknown symbol".into()),
         };
@@ -108,13 +101,6 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
 fn helper_import(isa: &dyn TargetIsa, helper: u32) -> Result<NativeFunction, String> {
     let name = crate::compiled::lane_helper_symbol(helper as usize).ok_or("an AOT image names an unknown lane helper")?;
     Ok(NativeFunction::Import { name, signature: ir::Signature::new(isa.default_call_conv()) })
-}
-
-fn operation_import(isa: &dyn TargetIsa, op: u16) -> NativeFunction {
-    NativeFunction::Import {
-        name: format!("{}{}", quench_runtime::NATIVE_JS_OPERATION_PREFIX, opcode_name(op as usize)),
-        signature: native_js_operation_signature(isa),
-    }
 }
 
 /// The declaration index of each function's base body, which is its entry (`codes`): `first` plus the ID.
@@ -154,7 +140,6 @@ impl Targets<'_> {
                 let base = *self.bases.get(function as usize).ok_or("a lane leaves to an unknown function")?;
                 Ok((NATIVE_FUNCTION_NAMESPACE, base, addend + i64::from(offset)))
             }
-            Some(Symbol::Operands { .. }) => Ok((NATIVE_DATA_NAMESPACE, OPERANDS_RECORD, addend + i64::from(key) * OPERAND_RECORD_BYTES)),
             Some(Symbol::CallRecord { .. }) => Ok((NATIVE_DATA_NAMESPACE, CALL_RECORDS_RECORD, addend + i64::from(key) * CALL_RECORD_BYTES)),
             Some(Symbol::NarrowUpperWords) => Ok((NATIVE_DATA_NAMESPACE, NARROW_WORDS_RECORD, addend)),
             _ => self.imports.get(&(namespace, key)).map(|index| (NATIVE_FUNCTION_NAMESPACE, *index, addend)).ok_or_else(|| "an AOT image symbol has no object form".into()),
@@ -168,19 +153,6 @@ fn image_data(namespace: &str, file: Vec<u8>) -> NativeData {
     NativeData {
         name: format!("{namespace}_image"),
         bytes: file,
-        alignment: std::mem::align_of::<u64>() as u64,
-        writable: false,
-        function_addresses: Vec::new(),
-        data_addresses: Vec::new(),
-    }
-}
-
-/// The operand records, each its words in host order (the object targets this host, as
-/// `NativeJsOperands::append_native_bytes` does).
-fn operand_data(namespace: &str, image: &AotImage) -> NativeData {
-    NativeData {
-        name: format!("{namespace}_operands"),
-        bytes: image.operands.iter().flat_map(|record| record.words).flat_map(u64::to_ne_bytes).collect(),
         alignment: std::mem::align_of::<u64>() as u64,
         writable: false,
         function_addresses: Vec::new(),
@@ -233,8 +205,8 @@ fn record_bytes(record: &CallRecord) -> Vec<u8> {
 
 /// The entry table (`crate::native_program::LinkedTable` reads it): the ABI header word; one
 /// entry per function, each the address of its entry definition (`first` plus the ID); one base body
-/// address per function (`bases`, by declaration); then the image file's address and length, the
-/// operand records' address and the call records' address.
+/// address per function (`bases`, by declaration); then the image file's address and length and the
+/// call records' address.
 fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u32), file_length: usize) -> Result<NativeData, String> {
     let pointer_bytes = usize::from(isa.pointer_bytes());
     if pointer_bytes != std::mem::size_of::<usize>() {
@@ -250,10 +222,9 @@ fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u3
     let tail = header + 2 * count;
     let data_addresses = vec![
         NativeDataAddress { offset: offset(tail)?, data: IMAGE_RECORD, addend: 0 },
-        NativeDataAddress { offset: offset(tail + 2)?, data: OPERANDS_RECORD, addend: 0 },
-        NativeDataAddress { offset: offset(tail + 3)?, data: CALL_RECORDS_RECORD, addend: 0 },
+        NativeDataAddress { offset: offset(tail + 2)?, data: CALL_RECORDS_RECORD, addend: 0 },
     ];
-    let mut bytes = vec![0; (tail + 4) * pointer_bytes];
+    let mut bytes = vec![0; (tail + 3) * pointer_bytes];
     bytes[(tail + 1) * pointer_bytes..(tail + 2) * pointer_bytes].copy_from_slice(&file_length.to_ne_bytes());
     Ok(NativeData {
         name: format!("{namespace}_entries"),

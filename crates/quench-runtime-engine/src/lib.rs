@@ -134,7 +134,6 @@ pub(crate) mod engine_prelude {
 /// engine adds to the core's types read as inherent ones.
 #[allow(unused_imports)]
 pub(crate) mod ext_traits {
-    pub use crate::aot_image::OperandRecordOps1 as _;
     pub use crate::aot_image::AotImageOps1 as _;
     pub use crate::aot_image::base::BaseImageOps1 as _;
     pub use crate::aot_image::bound::BoundCallsOps1 as _;

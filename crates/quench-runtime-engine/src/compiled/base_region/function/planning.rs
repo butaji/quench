@@ -87,17 +87,9 @@ pub(crate) fn leaves(layout: &Layout, row: &Decoded) -> bool {
     row.step == Some(Step::Leave) || !framed(&layout.homes, row)
 }
 
-/// The caller records that run as the generic semantic row (`steps::generic_row`), ascending: under
-/// `LaneHelpers::Ahead`, every reached row that is a `Step::Generic`, would leave (`leaves`) or guards
-/// (`Step::Guard`, whose miss is that row); elsewhere the rows that leave, where the interpreter runs them.
-pub(crate) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bits, helpers: LaneHelpers) -> Box<[u32]> {
-    let ahead = helpers.generic_rows();
-    let generic = |row: &Decoded| match row.step {
-        Some(Step::Generic | Step::Guard(_)) => ahead,
-        _ if ahead => leaves(layout, row),
-        step => step == Some(Step::Leave),
-    };
-    (0..decoded.len()).filter(|&k| reached.contains(k) && generic(&decoded[k]) && !layout.inlined(k as u32))
+/// The caller records whose rows leave, ascending, where the interpreter runs them: an image body's as a JIT body's.
+pub(crate) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bits) -> Box<[u32]> {
+    (0..decoded.len()).filter(|&k| reached.contains(k) && decoded[k].step == Some(Step::Leave) && !layout.inlined(k as u32))
         .map(|k| layout.record(k as u32)).collect()
 }
 
@@ -116,7 +108,7 @@ pub(crate) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bi
 pub(crate) fn interprets(row: &Decoded) -> bool {
     match row.step {
         Some(Step::Helper) => row.packed.is_none(),
-        Some(Step::CallOut | Step::Generic) => true,
+        Some(Step::CallOut) => true,
         _ => false,
     }
 }
@@ -131,14 +123,11 @@ pub(crate) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&Operand
         return super::switch::switch_run(layout, (reprs, kinds), rows, pc, row, helpers);
     }
     if leaves(layout, row) {
-        // Under `LaneHelpers::Ahead` nothing leaves: the record is its generic row, which completes the activation itself.
-        let step = Decoded { completes: row.completes, ..Decoded::step(unplaced(helpers), None) };
-        return plan_step(&step, layout, pc, helpers);
+        return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);
     }
     // The preludes come before the row's own run (a chain's spills): their leaves write the pinned registers back themselves.
     let mut planned = plan(row, layout, pc, (is_general(row, reprs), variant_of(row.kind, kinds)), helpers)?.after(preludes(layout, row, pc)?);
-    // A generic row's entry completes the activation where its record returns (`semantic_stop::settle`).
-    if row.completes && row.step != Some(Step::Generic) {
+    if row.completes {
         planned = completing(planned, layout, pc, row.dst)?;
     }
     Ok(planned)

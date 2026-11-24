@@ -48,17 +48,6 @@ pub(crate) fn unbound_callee() -> u64 {
     quench_runtime::Value::DELETED.to_bits()
 }
 
-pub(crate) use quench_runtime::vm::engine_types::OperandRecord;
-
-#[quench_macros::ext(OperandRecordOps1)]
-impl OperandRecord {
-    /// The record of `(function, pc)` in `program`.
-    fn of(program: &ResidualProgram, (function, pc): (u32, u32)) -> Self {
-        let instruction = program.function(function as usize).instruction_at(pc as usize);
-        Self { function, pc, words: quench_runtime::vm::NativeJsOperands::of(instruction).words() }
-    }
-}
-
 pub(crate) use quench_runtime::vm::engine_types::AotFunction;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneImage;
@@ -69,6 +58,8 @@ pub(crate) use quench_runtime::vm::jit_backend::NativeTarget as ImageTarget;
 
 /// Lowers every function of `program` under `facts` for `target`.
 pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageTarget) -> Result<AotImage, String> {
+    // Every function lowers as a VM that loads the image runs it (`lowered_function`), so the image's PCs are its.
+    for index in 0..program.function_count() { program.lowered_function(index); }
     let mut symbols = symbols::SymbolTable::new(program);
     let frozen = crate::compiled::ClosedFrozen::of(program);
     let mut sites = std::collections::BTreeMap::new();
@@ -79,7 +70,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
         eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body", program.source_name, functions.len());
     }
-    let symbols::Finished { shapes, heap_values, atoms, labels, operands, calls } = symbols.finish();
+    let symbols::Finished { shapes, heap_values, atoms, labels, calls } = symbols.finish();
     let calls = calls.into_iter().map(|site| sites.get(&site).copied().ok_or("a body names a call record no base body planned"))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(AotImage {
@@ -90,7 +81,6 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         heap_values,
         atoms,
         labels,
-        operands: operands.into_iter().map(|site| OperandRecord::of(program, site)).collect(),
         calls,
     })
 }

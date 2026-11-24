@@ -706,7 +706,7 @@ impl LaneView {
 
     /// Whether its body left too often and specializes again at its next entry.
     #[inline]
-    fn respecializes(&self) -> bool {
+    pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
@@ -6828,12 +6828,11 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
-    // A function of a program with a loaded AOT image takes the image's body and no other
-    // (`install_ahead_lane_body`): no warm-up, no runtime tier.
-    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead
-    // image, the stencil tier at once, a wait for callees still compiling, or the lane body tier.
+    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
+    // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
+    // tier at once, a wait for callees still compiling, or the lane body tier.
     let base_only = crate::compiled::admission::stencil_only();
-    let ahead_image = vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    let ahead_image = !own.respecializes() && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
