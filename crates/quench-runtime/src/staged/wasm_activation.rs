@@ -341,6 +341,82 @@ fn native_outcome<S: WasmNativeEntry>(stage: &mut S, native: NativeCall) -> Opti
     }
 }
 
+/// The primitives of a Wasm activation's return (`step_wasm_return_of`) and of a JavaScript
+/// import's return to its Wasm caller (`step_import_return_of`): the lane's innermost activation
+/// and its caller's state. Every method is one read or one step the lane takes; the rules decide
+/// their order.
+pub trait WasmReturn {
+    /// Where the caller continues (the lane's `Resumed`).
+    type Resume;
+    /// The activation popped off the lane's stack, with what its caller resumes in.
+    type Popped;
+    /// A value: the return's, and the caller's form of it.
+    type Value: Copy;
+    /// The result type an export's caller converts the value to.
+    type Export: Copy;
+    /// What an import's Wasm caller resumes in: its result type, program, instance and memory.
+    type Import: Copy;
+    /// The innermost activation's completion test: whether it has a script completion of its
+    /// own, and its call record's result word. `None` where no activation runs.
+    fn innermost(&mut self) -> Option<(bool, u64)>;
+    /// Pops the innermost activation and restores its caller's registers, records and memory.
+    fn pop(&mut self) -> Self::Popped;
+    /// The result type of the export whose activation `popped` was, if it was one.
+    fn export_result(&mut self, popped: &Self::Popped) -> Option<Self::Export>;
+    /// Enters the caller's own program as the run's JavaScript (an export's caller).
+    fn enter_script_caller(&mut self, popped: &Self::Popped);
+    /// The JavaScript form of the Wasm result `value` of type `export`.
+    fn export_value(&mut self, value: Self::Value, export: Self::Export) -> Self::Value;
+    /// The innermost activation's import caller, read before it pops.
+    fn import(&mut self) -> Self::Import;
+    /// The import's result in its Wasm caller's form (`import_result`), or `None` where the
+    /// conversion could run guest code or throw.
+    fn import_value(&mut self, import: Self::Import, value: Self::Value) -> Option<Self::Value>;
+    /// Enters the caller's own program, instance and memory as the run's Wasm (an import's caller);
+    /// the caller resumes in that memory, which the callee may have grown.
+    fn enter_wasm_caller(&mut self, import: Self::Import, popped: &mut Self::Popped);
+    /// Leaves the return to the callee's frame, whose pending call converts `value`.
+    fn return_from_frame(&mut self, value: Self::Value) -> Self::Resume;
+    /// Resumes the caller past its call with `value` in the call's result register.
+    fn resume_caller(&mut self, popped: Self::Popped, value: Self::Value) -> Self::Resume;
+}
+
+/// The return with `value` of the innermost activation, a Wasm one whose call keeps its result
+/// (no script completion, and a call that does not return its callee's completion): it pops, and
+/// its caller, Wasm, or JavaScript for an export's activation, resumes after the call with
+/// `value`, in its JavaScript form for an export. `None`, which changes nothing, for any other.
+#[inline(always)]
+pub fn step_wasm_return_of<S: WasmReturn>(stage: &mut S, value: S::Value) -> Option<S::Resume> {
+    let (completes, result) = stage.innermost()?;
+    if completes || super::call_complete::returns_callee_completion(&mut super::Concrete::new(core::ptr::null()), result) {
+        return None;
+    }
+    let popped = stage.pop();
+    let value = match stage.export_result(&popped) {
+        Some(export) => {
+            stage.enter_script_caller(&popped);
+            stage.export_value(value, export)
+        }
+        None => value,
+    };
+    Some(stage.resume_caller(popped, value))
+}
+
+/// The return with `value` of the innermost activation, a JavaScript import's callee: its Wasm
+/// caller resumes after the call with the value's Wasm form, in its own program, instance and
+/// memory. A value whose conversion could run guest code or throw returns from the callee's
+/// frame, whose pending call converts it.
+#[inline(always)]
+pub fn step_import_return_of<S: WasmReturn>(stage: &mut S, value: S::Value) -> S::Resume {
+    let import = stage.import();
+    let Some(converted) = stage.import_value(import, value) else {
+        return stage.return_from_frame(value);
+    };
+    let mut popped = stage.pop();
+    stage.enter_wasm_caller(import, &mut popped);
+    stage.resume_caller(popped, converted)
+}
+
 /// The JavaScript number an import passes for a Wasm scalar argument of type `ty` whose word is
 /// `word`: an i32 or f32 as its number, an f64 as its bits (ToJSValue, which allocates nothing for
 /// these types). The lane reads the word from the register, which may be a Value's payload.
