@@ -4,6 +4,11 @@
 use super::*;
 
 pub trait NumericStage: Stage {
+    /// The lowering of `Float64::guard` this stage takes: `true` tests the word as a binary64 for
+    /// an ordered value first (a JIT's one float compare of the register), `false` reads the
+    /// shifted tag field first (the interpreter's and a stencil's integer test). Both are the
+    /// guard's one definition; only the order of its tests differs.
+    const ORDERED_FIRST: bool = false;
     /// `relation` of two words in `domain`.
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: Self::Word, right: Self::Word) -> Self::Cond;

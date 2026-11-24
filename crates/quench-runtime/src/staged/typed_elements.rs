@@ -217,7 +217,7 @@ fn read_element_value<S: NumericStage>(stage: &mut S, values: S::Word, index: S:
         return Some(super::value::int_word(stage, payload));
     }
     let number = read_element(stage, values, index, native)?;
-    Some(stage.box_number(number))
+    Some(stage.box_number(super::Float64::of_row(number)))
 }
 
 /// Stores `number` at element `index` of `values` for `native`.

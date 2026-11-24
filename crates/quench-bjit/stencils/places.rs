@@ -12,7 +12,7 @@ use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
 use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
-use crate::staged::{Concrete, Constant, Float64, Int32, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
+use crate::staged::{Concrete, Constant, Float64, Int32, IntFact, NumberFact, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
 use crate::typed_ir::{Representation, Type};
 use crate::words::*;
 
@@ -65,46 +65,48 @@ pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
     }
 }
 
-/// The int32 an operand holds, proved here: a tagged word must be an int word (`proved` where
-/// the caller tested that already), a double an exact int32.
+/// The int32 an operand holds, proved here: an int place by its representation, a tagged word by
+/// the int32 guard (or the pair guard the row already ran, `ints`), a double exactly an int32.
 #[inline]
-fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
+fn int_place<const P: u8, const H: u8>(s: &S, ints: Option<(Int32<u64>, Int32<u64>)>) -> Option<Int32<u64>> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Representation::Int32 | Representation::Int64 => Some(word),
-        Representation::Tagged if proved => Some(word as u32 as u64),
-        Representation::Tagged => Int32::guard(&mut stage(), word, ()).map(Int32::word),
-        Representation::Float64 => {
-            let narrow = truncate32(f64::from_bits(word));
-            (widen(narrow as u32 as u64) == word).then_some(narrow as u32 as u64)
-        }
+        Representation::Int32 | Representation::Int64 => Some(Int32::by_fact(word, IntFact::int32_home())),
+        Representation::Tagged => match ints {
+            Some((left, right)) if H == HOLE_A || H == HOLE_B => Some(if H == HOLE_A { left } else { right }),
+            _ => Int32::guard(&mut stage(), word, ()),
+        },
+        Representation::Float64 => Int32::exact_by(Float64::by_fact(word, NumberFact::float64_home()), truncate32),
     }
 }
 
 /// The binary64 bits of an operand, proved a Number. A constant place holds a Number the int32
 /// immediate cannot (`base_region/plan.rs` sends an int word to `IMM`): its word is the bits.
 #[inline]
-pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
+pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<Float64<u64>> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        _ if P == CONST => Some(word),
-        Representation::Float64 => Some(word),
-        Representation::Int32 | Representation::Int64 => Some(widen(word)),
-        Representation::Tagged => Float64::guard(&mut stage(), word, ()).map(Float64::word),
+        _ if P == CONST => Some(Float64::by_fact(word, NumberFact::float64_home())),
+        Representation::Float64 => Some(Float64::by_fact(word, NumberFact::float64_home())),
+        Representation::Int32 | Representation::Int64 => Some(Float64::of_int(&mut stage(), Int32::by_fact(word, IntFact::int32_home()))),
+        Representation::Tagged => Float64::guard(&mut stage(), word, ()),
     }
 }
 
 /// The int32 a bitwise operand speculates: an int word, or (where `numbers`) a double whose
 /// truncation fits an int32, which is its ToInt32.
 #[inline(always)]
-fn bitwise_place<const P: u8, const H: u8>(s: &S, numbers: bool) -> Option<u64> {
+fn bitwise_place<const P: u8, const H: u8>(s: &S, numbers: bool) -> Option<Int32<u64>> {
     let word = read_place::<P, H>(s);
-    let truncated = |bits: u64| f64_to_i32(f64::from_bits(bits)).map(|int| int as u32 as u64);
     match rep_of(P) {
-        Representation::Int32 | Representation::Int64 => Some(word),
-        Representation::Float64 => truncated(word),
-        Representation::Tagged if has_int_high(word) => Some(word as u32 as u64),
-        Representation::Tagged => (numbers && is_double(word)).then(|| truncated(word)).flatten(),
+        Representation::Int32 | Representation::Int64 => Some(Int32::by_fact(word, IntFact::int32_home())),
+        Representation::Float64 => Int32::exact_truncation(Float64::by_fact(word, NumberFact::float64_home())),
+        // A `match`, not `or_else`: a closure can't be marked always-inline, and a call is no stencil's.
+        Representation::Tagged => match Int32::guard(&mut stage(), word, ()) {
+            Some(int) => Some(int),
+            None if numbers => Float64::guard(&mut stage(), word, ()).and_then(Int32::exact_truncation),
+            None => None,
+        },
     }
 }
 
@@ -112,7 +114,7 @@ fn bitwise_place<const P: u8, const H: u8>(s: &S, numbers: bool) -> Option<u64> 
 #[inline(always)]
 pub(crate) fn index_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
     if rep_of(P) != Representation::Float64 {
-        return int_place::<P, H>(s, false).map(|word| word as u32 as i32);
+        return int_place::<P, H>(s, None).map(|int| int.word() as u32 as i32);
     }
     let f = f64::from_bits(read_place::<P, H>(s));
     let narrow = truncate32(f);
@@ -271,8 +273,8 @@ fn string_truthy(s: &S, word: u64) -> Option<bool> {
     Some(string.length != 0)
 }
 
-/// A row's three places over the machine state. `proved` records that a dispatch already
-/// tested both operands for int words, so a frame slot is read as an int without a second
+/// A row's three places over the machine state. `ints` holds the int32s of both operands where a
+/// dispatch ran the pair guard (`prove_ints`), so a frame slot is read as an int without a second
 /// test; `refused` that a result did not fit its place, so the row leaves; `taken` that a
 /// branch the row decided goes to its taken successor.
 ///
@@ -282,7 +284,7 @@ fn string_truthy(s: &S, word: u64) -> Option<bool> {
 /// instances in a Number shard of 1536 rows, most of its compile time in rustc's collector).
 pub(crate) struct Places {
     pub(crate) s: S,
-    pub(crate) proved: bool,
+    pub(crate) ints: Option<(Int32<u64>, Int32<u64>)>,
     pub(crate) refused: bool,
     pub(crate) taken: bool,
     pub(crate) d: u8,
@@ -354,7 +356,7 @@ macro_rules! by_place {
 impl Places {
     #[inline(always)]
     pub(crate) fn new<const D: u8, const A: u8, const B: u8>(s: S) -> Self {
-        Self { s, proved: false, refused: false, taken: false, d: D, a: A, b: B }
+        Self { s, ints: None, refused: false, taken: false, d: D, a: A, b: B }
     }
 
     /// The place `register` names: an operand at its hole, any other register the destination at hole 0.
@@ -367,16 +369,12 @@ impl Places {
         }
     }
 
-    /// Records that a dispatch proved both operand words int words.
+    /// The pair guard on both operands' tagged words (`Int32::guard_pair`): whether both are int
+    /// words, keeping their int32s for the row's operands so no second test runs.
     #[inline(always)]
-    pub(crate) fn prove_ints(&mut self) {
-        self.proved = true;
-    }
-
-    /// Whether both operands are int words, from their tagged words.
-    #[inline(always)]
-    pub(crate) fn both_int(&self) -> bool {
-        both_int(by_place!(self, LEFT, tagged_place(&self.s)), by_place!(self, RIGHT, tagged_place(&self.s)))
+    pub(crate) fn prove_ints(&mut self) -> bool {
+        self.ints = Int32::guard_pair(by_place!(self, LEFT, tagged_place(&self.s)), by_place!(self, RIGHT, tagged_place(&self.s)));
+        self.ints.is_some()
     }
 
     /// Whether the row may continue: nothing the staged row did was refused by a place.
@@ -564,21 +562,18 @@ impl NumericFrame<Concrete> for Places {
     /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).
     #[inline(always)]
     fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
-        // Fact: the place's fixed representation, or `bitwise_place`'s tag test and ToInt32.
-        by_place!(self, operand.register_index()?, bitwise_place(&self.s, true)).map(|word| unsafe { Int32::proven(word) })
+        by_place!(self, operand.register_index()?, bitwise_place(&self.s, true))
     }
 
     #[inline(always)]
     fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
-        let (register, proved) = (operand.register_index()?, self.proved);
-        // Fact: the place's fixed representation, the caller's guard (`proved`), or `int_place`'s tag test.
-        by_place!(self, register, int_place(&self.s, proved)).map(|word| unsafe { Int32::proven(word) })
+        let (register, ints) = (operand.register_index()?, self.ints);
+        by_place!(self, register, int_place(&self.s, ints))
     }
 
     #[inline(always)]
     fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Float64<u64>> {
-        // Fact: the place's fixed representation, or `number_place`'s tag test.
-        by_place!(self, operand.register_index()?, number_place(&self.s)).map(|word| unsafe { Float64::proven(word) })
+        by_place!(self, operand.register_index()?, number_place(&self.s))
     }
 
     #[inline(always)]

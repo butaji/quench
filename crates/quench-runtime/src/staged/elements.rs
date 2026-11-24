@@ -80,7 +80,7 @@ fn double_element<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, miss
     let present = stage.ne_imm(word, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
     let number = stage.load_f64(Region::Elements.mutable(), address, 0);
-    Some(stage.box_number(number))
+    Some(stage.box_number(super::Float64::of_row(number)))
 }
 
 /// The guard of an `index` against `length` a view did not prove below it (`DenseView::within`).

@@ -4,7 +4,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{
-    concrete_admits_returning_call, concrete_plain_return_admits, concrete_returning_this, concrete_returns_callee_completion,
+    concrete_admits_returning_call, concrete_returning_this, concrete_returns_callee_completion,
     concrete_settles_in_lane, concrete_settles_without_promise, concrete_side_completion, concrete_write_call_result, frame_packed,
 };
 use quench_runtime::staged::Concrete;
@@ -86,16 +86,25 @@ pub(crate) fn return_plain_in_lane(cx: *mut LaneContext, value: Value) -> Option
     }
     // A plain activation whose call returns its callee's completion (`return f()`) completes with
     // the same value: where a run of such plain frames ends in a call that keeps it, they pop
-    // header by header and the outermost returns into that call, with no frame walk.
+    // header by header (`call_complete::step_returning_pop_of`) and the outermost returns into it.
     if let Some(above) = returning_plain_run(cx, window) {
+        let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
+        let plain = (&raw const stack.plain).expose_provenance() as u64;
+        let mut released = window.0;
+        let mut caller = None;
         for _ in 0..above {
-            let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-            // SAFETY: `returning_plain_run` proved this many plain activations, innermost first.
-            let (_call, caller_registers, caller_base) = unsafe { vm(cx).lane_stack.pop_plain(window.0) };
-            unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
+            released = stack.plain.registers.get();
+            caller = quench_runtime::staged::call_complete::step_returning_pop_of(&mut Concrete::new(std::ptr::null()), plain,
+                released.expose_provenance() as u64, plain_destination, ());
+            debug_assert!(caller.is_some(), "`returning_plain_run` proved this many returning plain frames");
         }
-        let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-        return lane_return_header::<false>(cx, window, value);
+        let caller = caller?;
+        stack.frames_changed();
+        // SAFETY: plain windows are the lane stack's own, so the outermost one's release is the top's move.
+        unsafe { stack.values.set_top(released) };
+        let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
+        unsafe { ((*cx).registers, (*cx).base) = (registers, std::ptr::with_exposed_provenance(caller.base as usize)) };
+        return lane_return_header::<false>(cx, registers, value);
     }
     return_from_in_lane::<false, false, false, false>(cx, value)
 }
@@ -123,31 +132,32 @@ fn returning_plain_run(cx: *mut LaneContext, mut window: Registers) -> Option<us
     None
 }
 
-/// The plain return of the innermost activation where it is a plain one running on `window`
-/// whose header completes it (`staged::call_complete::plain_return_admits`: no side flag, and
-/// a call that keeps its result, or any call where `INTO_BODY`): the header's pop row
-/// (`staged::protocol::pop_plain`, `LaneStack::pop_plain`) names the caller, whose result
-/// register takes `value` (`staged::call_complete::write_call_result`). `None`, which changes
-/// nothing, for any other frame: a side record's completion (`return_from_in_lane`), a returning
-/// call's chain (`return_chain_in_lane`), or a record. It reads no record and makes no call.
+/// The result word of the call record `call` a plain frame's header names, for the staged returns.
+#[inline(always)]
+fn plain_destination(_: &mut Concrete, call: u64) -> u64 {
+    // SAFETY: a plain frame's call record belongs to the caller's live view (a trampoline's header
+    // names the trampoline's record, which keeps its result).
+    u64::from(unsafe { (*std::ptr::with_exposed_provenance::<LaneInstruction>(call as usize)).a })
+}
+
+/// The plain return of the innermost activation running on `window` (`call_complete::step_plain_return_of`):
+/// a plain frame whose header completes it (no side flag, and a call that keeps its result, or any call
+/// where `INTO_BODY`) pops, its caller's result register takes `value`, and its window is released.
+/// `None`, which changes nothing, for any other frame: a side record's completion (`return_from_in_lane`),
+/// a returning call's chain (`return_chain_in_lane`), or a record. It makes no call.
 #[inline(always)]
 pub(crate) fn lane_return_header<const INTO_BODY: bool>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<(Registers, Ip)> {
     let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
-    if stack.plain.depth.get() == 0 {
-        return None;
-    }
-    debug_assert!(stack.plain.registers.get() == window.0 && unsafe { (*cx).registers }.0 == window.0, "the innermost plain activation runs");
-    // SAFETY: the call record belongs to the caller's live view (a trampoline's header names
-    // the trampoline's record, which keeps its result).
-    let destination = unsafe { (*window.plain_caller().0).a };
-    if !concrete_plain_return_admits(window.0.expose_provenance() as u64, destination, INTO_BODY) {
-        return None;
-    }
-    // SAFETY: a plain activation runs on `window`, checked above.
-    let (call, caller_registers, caller_base) = unsafe { stack.pop_plain(window.0) };
-    unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
-    concrete_write_call_result(caller_registers.0.expose_provenance() as u64, destination & quench_runtime::bytecode::REGISTER_MASK, value);
-    Some((caller_registers, following(call)))
+    debug_assert!(stack.plain.depth.get() == 0 || (stack.plain.registers.get() == window.0 && unsafe { (*cx).registers }.0 == window.0));
+    let plain = (&raw const stack.plain).expose_provenance() as u64;
+    let caller = quench_runtime::staged::call_complete::step_plain_return_of(&mut Concrete::new(std::ptr::null()), plain,
+        window.0.expose_provenance() as u64, value.to_bits(), INTO_BODY, plain_destination, ())?;
+    stack.frames_changed();
+    // SAFETY: a plain window is the lane stack's own, so its release is the top's move.
+    unsafe { stack.values.set_top(window.0) };
+    let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
+    unsafe { ((*cx).registers, (*cx).base) = (registers, std::ptr::with_exposed_provenance(caller.base as usize)) };
+    Some((registers, following(std::ptr::with_exposed_provenance(caller.call as usize))))
 }
 
 /// `return_plain_in_lane` into a running lane body's call (`body_call_helper`): a returning

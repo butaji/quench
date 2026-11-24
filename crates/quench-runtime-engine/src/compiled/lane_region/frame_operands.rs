@@ -171,9 +171,17 @@ fn float_home_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, 
 }
 
 /// The binary64 view a test already proved of tagged `bits` in this block (`LocalProofs::numbers`), if any.
-pub(crate) fn known_number(builder: &FunctionBuilder<'_>, state: &State, bits: ir::Value) -> Option<Float64<ir::Value>> {
+fn known_number(builder: &FunctionBuilder<'_>, state: &State, bits: ir::Value) -> Option<Float64<ir::Value>> {
     let bits = builder.func.dfg.resolve_aliases(bits);
     state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number)
+}
+
+/// Tagged `bits`' binary64 word: the view this block already proved, else the staged Number guard.
+pub(crate) fn number_word(builder: &mut FunctionBuilder<'_>, state: &State, bits: ir::Value, exit: ir::Block) -> ir::Value {
+    match known_number(builder, state, bits) {
+        Some(number) => number.word(),
+        None => Float64::guard(&mut emit(builder), bits, exit).expect("an emitted guard continues").word(),
+    }
 }
 
 /// `register`'s binary64 value: by its fact, as a conversion of the integer it holds, or by the

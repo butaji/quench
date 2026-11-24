@@ -8,7 +8,7 @@ use super::lane_reads::Reads;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -2053,9 +2053,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         // (`Registers::int`), not the whole word loaded and masked.
         if ACC == ACC_NONE && let Some(register) = operand.register_index() {
             if self.operands_int {
-                return Some(unsafe { Int32::proven(u64::from(self.registers.get(register).to_bits() as u32)) }); // Fact: `operands_int`.
+                return Some(Int32::by_fact(u64::from(self.registers.get(register).to_bits() as u32), IntFact::int32_home())); // The operand form fixed int32 homes.
             }
-            return self.registers.int(register).map(|int| unsafe { Int32::proven(u64::from(int as u32)) }); // Fact: `Registers::int` tested the tag half-word.
+            return self.registers.int(register); // The staged guard, lowered to the register's two dwords.
         }
         let word = self.operand_word(stage, operand)?;
         Int32::checked(Value::from_bits(word))

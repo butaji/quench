@@ -28,12 +28,12 @@ pub(crate) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
         Representation::Int64 => {
             let variable = frame::register_long(builder, registers, index);
             let word = builder.use_var(variable);
-            let number = super::object_slots::emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
+            let number = quench_runtime::staged::Float64::of_long(&mut super::object_slots::emit(builder), word);
             emit_js_box_number(builder, number)
         }
         Representation::Float64 => {
             let variable = frame::register_float(builder, registers, index);
-            let number = builder.use_var(variable);
+            let number = quench_runtime::staged::Float64::by_fact(builder.use_var(variable), quench_runtime::staged::NumberFact::float64_home());
             emit_js_box_number(builder, number)
         }
         Representation::Tagged => unreachable!("a tagged register's bits are current"),

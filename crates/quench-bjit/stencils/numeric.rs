@@ -103,8 +103,7 @@ fn arith_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: boo
     } else if SPEC {
         arithmetic::<K>(&mut frame, Domain::Int32)
     } else {
-        let ints = frame.both_int();
-        frame.prove_ints();
+        let ints = frame.prove_ints();
         (ints && arithmetic::<K>(&mut frame, Domain::Int32)) || arithmetic::<K>(&mut frame, Domain::Float64)
     };
     finish(frame, done)
@@ -128,8 +127,7 @@ fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: b
         Domain::Float64
     } else if SPEC {
         Domain::Int32
-    } else if frame.both_int() {
-        frame.prove_ints();
+    } else if frame.prove_ints() {
         Domain::Int32
     } else {
         Domain::Float64
@@ -366,8 +364,7 @@ fn remainder_row<const SPEC: bool>(mut frame: Places) -> Out {
     let done = if SPEC {
         remainder(&mut frame, Domain::Int32)
     } else {
-        let ints = frame.both_int();
-        frame.prove_ints();
+        let ints = frame.prove_ints();
         if ints { remainder(&mut frame, Domain::Int32) } else { remainder(&mut frame, Domain::Float64) }
     };
     finish(frame, done)
@@ -393,8 +390,7 @@ fn imul_row<const SPEC: bool>(mut frame: Places) -> Out {
     let done = if SPEC {
         product(&mut frame)
     } else {
-        let ints = frame.both_int();
-        frame.prove_ints();
+        let ints = frame.prove_ints();
         ints && product(&mut frame)
     };
     finish(frame, done)
