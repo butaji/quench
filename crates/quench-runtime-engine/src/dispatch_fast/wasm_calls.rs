@@ -5,7 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::machine::{Machine, MachineStage};
-use quench_runtime::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation};
+use quench_runtime::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation, WasmNativeEntry};
 use super::lane_stack_growth::LaneStackFull;
 use quench_runtime::vm::JsError;
 
@@ -67,8 +67,67 @@ impl MachineStage for LaneCall<'_> {
     }
 }
 
-impl WasmActivation for LaneCall<'_> {
+impl WasmNativeEntry for LaneCall<'_> {
     type Resume = Resumed;
+    #[inline(always)]
+    fn native_mode(&mut self) -> bool {
+        unsafe { vm(self.cx) }.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
+    }
+
+    #[inline(always)]
+    fn has_native(&mut self, function: u32) -> bool {
+        let (vm, program, function) = (unsafe { vm(self.cx) }, unsafe { (*self.cx).program }, function as usize);
+        vm.programs.has_compiled_function_or_note_fallback(program, function)
+            || vm.programs.has_wasm_tier_containing(program, function)
+    }
+
+    #[inline(always)]
+    fn enter_compiled(&mut self, function: u32) -> NativeCall {
+        // SAFETY: the window is the caller's registers, read into raw words before native code
+        // runs, so before guest code could make the activations frames.
+        let args = unsafe { call_window_in_lane(self.r, self.i) };
+        let (program, env) = (unsafe { (*self.cx).program }, instance_env_in_lane(self.cx));
+        let called = in_place_in_lane(self.cx, self.ip, |vm, _| {
+            vm.run_compiled(program, env, function, args).transpose()
+        });
+        match called {
+            None => NativeCall::Left,
+            Some(None) => NativeCall::Declined,
+            Some(Some(value)) => NativeCall::Ran(value.to_bits()),
+        }
+    }
+
+    #[inline(always)]
+    fn left(&mut self) -> Resumed {
+        Resumed::Exit(exit(self.ip))
+    }
+
+    #[inline(always)]
+    fn complete_call(&mut self, word: u64) -> Resumed {
+        let vm = unsafe { vm(self.cx) };
+        // The caller's view is of the run's resolved binding, which its return reads again: the
+        // callee may have grown the memory.
+        let (binding, resolved) = unsafe { (*self.cx).resolved };
+        let memory = if self.memory.bytes == resolved.bytes {
+            let fresh = memory_view(vm, binding);
+            unsafe { (*self.cx).resolved = (binding, fresh) };
+            fresh
+        } else {
+            MemoryView::NONE
+        };
+        // SAFETY: guest code the callee ran may have made the activations frames, whose
+        // registers the context then names.
+        let r = unsafe {
+            (*self.cx).memory = memory;
+            (*self.cx).registers
+        };
+        r.set(self.i.a, Value::from_bits(word));
+        let view = Carried { memory, integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+        Resumed::At(r, following(self.ip), view)
+    }
+}
+
+impl WasmActivation for LaneCall<'_> {
     type Shape = (ActivationShape, Ip);
     type Full = LaneStackFull;
     type Guard = quench_runtime::stack::GuestCallGuard;
@@ -97,40 +156,10 @@ impl WasmActivation for LaneCall<'_> {
     }
 
     #[inline(always)]
-    fn native_mode(&mut self) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        vm.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
-    }
-
-    #[inline(always)]
-    fn has_native(&mut self, function: u32) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        let (program, function) = (unsafe { (*self.cx).program }, function as usize);
-        vm.programs.has_compiled_function_or_note_fallback(program, function)
-            || vm.programs.has_wasm_tier_containing(program, function)
-    }
-
-    #[inline(always)]
     fn note_tier_entry(&mut self, function: u32) -> bool {
         let vm = unsafe { vm(self.cx) };
         let program = unsafe { (*self.cx).program };
         vm.programs.note_wasm_tier_lane_entry(program, function)
-    }
-
-    #[inline(always)]
-    fn enter_compiled(&mut self, function: u32) -> NativeCall {
-        // SAFETY: the window is the caller's registers, read into raw words before native code
-        // runs, so before guest code could make the activations frames.
-        let args = unsafe { call_window_in_lane(self.r, self.i) };
-        let (program, env) = (unsafe { (*self.cx).program }, instance_env_in_lane(self.cx));
-        let called = in_place_in_lane(self.cx, self.ip, |vm, _| {
-            vm.run_compiled(program, env, function, args).transpose()
-        });
-        match called {
-            None => NativeCall::Left,
-            Some(None) => NativeCall::Declined,
-            Some(Some(value)) => NativeCall::Ran(value.to_bits()),
-        }
     }
 
     #[inline(always)]
@@ -311,34 +340,6 @@ impl WasmActivation for LaneCall<'_> {
         }
     }
 
-    #[inline(always)]
-    fn left(&mut self) -> Resumed {
-        Resumed::Exit(exit(self.ip))
-    }
-
-    #[inline(always)]
-    fn complete_call(&mut self, word: u64) -> Resumed {
-        let vm = unsafe { vm(self.cx) };
-        // The caller's view is of the run's resolved binding, which its return reads again: the
-        // callee may have grown the memory.
-        let (binding, resolved) = unsafe { (*self.cx).resolved };
-        let memory = if self.memory.bytes == resolved.bytes {
-            let fresh = memory_view(vm, binding);
-            unsafe { (*self.cx).resolved = (binding, fresh) };
-            fresh
-        } else {
-            MemoryView::NONE
-        };
-        // SAFETY: guest code the callee ran may have made the activations frames, whose
-        // registers the context then names.
-        let r = unsafe {
-            (*self.cx).memory = memory;
-            (*self.cx).registers
-        };
-        r.set(self.i.a, Value::from_bits(word));
-        let view = Carried { memory, integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
-        Resumed::At(r, following(self.ip), view)
-    }
 }
 
 lane_handler! {

@@ -40,25 +40,34 @@ pub enum NativeCall {
     Ran(u64),
 }
 
+/// The primitives of a Wasm call's native entry (`enter_native`), which both interpreters make: the
+/// lane (`vm/dispatch_fast/wasm_calls.rs`) and the general loop (`vm/dispatch/call_forms.rs`).
+pub trait WasmNativeEntry {
+    /// Where a call continues (the lane's `Resumed`, the general loop's step result).
+    type Resume;
+    /// Whether the call may run natively: the execution mode is compiled and the call keeps its result.
+    fn native_mode(&mut self) -> bool;
+    /// Whether a native tier holds `function`, noting a fallback where it has none.
+    fn has_native(&mut self, function: u32) -> bool;
+    /// Runs `function` in native code, with the call's window as its arguments.
+    fn enter_compiled(&mut self, function: u32) -> NativeCall;
+    /// Leaves for the general loop, at the call (the general loop: raises what the native run raised).
+    fn left(&mut self) -> Self::Resume;
+    /// Completes the call with the word of its result, in the caller.
+    fn complete_call(&mut self, word: u64) -> Self::Resume;
+}
+
 /// The primitives a Wasm call's rules run on: the lane's state, its activations and its native
 /// tiers. Every method is one check or one step the lane takes; the rules decide their order.
-pub trait WasmActivation: WasmStage {
-    /// Where a call continues in the lane (`Resumed`).
-    type Resume;
+pub trait WasmActivation: WasmStage + WasmNativeEntry {
     /// The activation shape a callee's frame takes, copied out of its view.
     type Shape: Copy;
     /// The callee of the reference the call names.
     fn reference(&mut self) -> CallTarget;
     /// Whether the lane may make calls inline (the frame is not leaving for native code).
     fn inline_calls(&mut self) -> bool;
-    /// Whether the call may run natively: the execution mode is compiled and the call keeps its result.
-    fn native_mode(&mut self) -> bool;
-    /// Whether a native tier holds `function`, noting a fallback where it has none.
-    fn has_native(&mut self, function: u32) -> bool;
     /// Notes a lane entry of `function` in its wasm tier; true where the general loop must enter it.
     fn note_tier_entry(&mut self, function: u32) -> bool;
-    /// Runs `function` in native code, with the call's window as its arguments.
-    fn enter_compiled(&mut self, function: u32) -> NativeCall;
     /// The activation shape of `function`, where the lane has derived one.
     fn shape(&mut self, function: u32) -> Option<Self::Shape>;
     /// The registers the shape's frame holds.
@@ -77,10 +86,6 @@ pub trait WasmActivation: WasmStage {
     fn activate_import(&mut self) -> Option<Self::Resume>;
     /// Calls the import the call names through its native boundary.
     fn import_native(&mut self) -> NativeCall;
-    /// Leaves the lane for the general loop, at the call.
-    fn left(&mut self) -> Self::Resume;
-    /// Completes the call with the word of its result, in the caller.
-    fn complete_call(&mut self, word: u64) -> Self::Resume;
     /// Which of the lane stack's arrays lack room for a frame call's window.
     type Full;
     /// The guard of a callee's frame.
@@ -133,17 +138,22 @@ pub(crate) fn enter_function<S: WasmActivation>(stage: &mut S, function: u32) ->
     if !stage.inline_calls() {
         return CallOutcome::Exit;
     }
-    if stage.native_mode() {
-        if stage.has_native(function) {
-            if let Some(resumed) = call_compiled(stage, function) {
-                return CallOutcome::Resume(resumed);
-            }
-        }
-        if stage.note_tier_entry(function) {
-            return CallOutcome::Exit;
-        }
+    if let Some(resumed) = enter_native(stage, function) {
+        return CallOutcome::Resume(resumed);
+    }
+    if stage.native_mode() && stage.note_tier_entry(function) {
+        return CallOutcome::Exit;
     }
     enter_activation(stage, function)
+}
+
+/// A known call's native entry, the rule both interpreters make first: where the call may run
+/// natively and a tier holds `function`, native code runs it, and the caller resumes with its
+/// result or leaves. `None` where the call does not run natively (the mode, no tier, or the tier
+/// declines): the lane then activates it, the general loop pushes its frame.
+#[inline(always)]
+pub fn enter_native<S: WasmNativeEntry>(stage: &mut S, function: u32) -> Option<S::Resume> {
+    if stage.native_mode() && stage.has_native(function) { call_compiled(stage, function) } else { None }
 }
 
 /// The activation of `function` where the lane has its shape and room for it.
@@ -194,7 +204,7 @@ pub fn call_reference<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
 /// native tier declines the call.
 #[cold]
 #[inline(never)]
-pub(crate) fn call_compiled<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
+pub(crate) fn call_compiled<S: WasmNativeEntry>(stage: &mut S, function: u32) -> Option<S::Resume> {
     let native = stage.enter_compiled(function);
     native_outcome(stage, native)
 }
@@ -213,7 +223,7 @@ pub(crate) fn call_import<S: WasmActivation>(stage: &mut S) -> Option<S::Resume>
 
 /// Where a native run's outcome continues the caller.
 #[inline(always)]
-fn native_outcome<S: WasmActivation>(stage: &mut S, native: NativeCall) -> Option<S::Resume> {
+fn native_outcome<S: WasmNativeEntry>(stage: &mut S, native: NativeCall) -> Option<S::Resume> {
     match native {
         NativeCall::Declined => None,
         NativeCall::Left => Some(stage.left()),

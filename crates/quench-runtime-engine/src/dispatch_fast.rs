@@ -842,9 +842,6 @@ pub(crate) unsafe fn set_frame_word(registers: *mut Value, index: usize, word: u
     // SAFETY: as the caller promises.
     unsafe { *registers.cast::<u64>().sub(index) = word }
 }
-/// `CONTEXT_PACKED`'s flag of a plain frame.
-pub(crate) const PLAIN_FRAME_FLAG: u64 = quench_runtime::staged::frame::PLAIN_FLAG;
-
 use quench_runtime::vm::engine_types::Registers;
 
 #[quench_macros::ext(RegistersOps1)]
@@ -2756,11 +2753,10 @@ use local_fields::{local_field_handler, local_field_miss};
 pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
-use lane_reads::RecordOperand;
 pub(crate) mod loop_body;
 pub(crate) mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 pub(crate) mod capture_append;
@@ -3734,29 +3730,6 @@ fn requicken_typed(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
 }
 
 script_handler! {
-    /// A kind variant's miss (`lane_get_index_typed_kind`): the site becomes any-kind.
-    #[inline(never)]
-    fn get_index_typed_mixed_in_lane<>(cx, r, ip, i, view) {
-        // merge: `lane_get_index_typed` is undefined in theirs; the generic keyed read row takes its place.
-        requicken(ip, element_read_row());
-        sibling!(element_read_row(), r, ip, view)
-    }
-}
-
-script_handler! {
-    /// `lane_get_index_typed` past its quick read (`Vm::typed_element_quick`): any typed
-    /// array read that allocates nothing (`Vm::plain_typed_element`), or the generic order.
-    #[inline(never)]
-    fn get_index_typed_full_in_lane<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(element_read_row(), r, ip, view)
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `delete base[key]` by the staged row: a string key on an ordinary object runs no guest
     /// code (`delete_value_in_lane`); any other deletion takes the general path.
     #[inline(never)]
@@ -3886,118 +3859,6 @@ fn row_typed_store(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value)
         requicken_typed(ip, false, vm.typed_array_kind_of(object));
     }
     stored
-}
-
-/// A plain string-keyed write (`Vm::try_plain_string_key_set`), which every array, symbol
-/// and typed-array path before it declines: the site then tries it first
-/// (`set_index_string_in_lane`).
-fn string_key_store_in_lane(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
-    let stored = vm.try_plain_string_key_set(object, key, value);
-    if stored {
-        requicken(ip, set_index_string_in_lane);
-    }
-    stored
-}
-
-script_handler! {
-    /// `set_index_slot_miss` at a site that made a plain string-keyed write: that write is
-    /// the whole store, as the generic order reaches it once every array, symbol and typed
-    /// path declines a string key; any other store takes the generic order.
-    fn set_index_string_in_lane<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        let vm = unsafe { vm(cx) };
-        if !vm.try_plain_string_key_set(object, key, value) {
-            sibling!(set_index_slot_miss, r, ip, view)
-        }
-        // Adding a property can allocate.
-        note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `set_index_slot_miss` at a site that stored into a typed array: a number stored at an
-    /// index of one is the whole store, as the generic order reaches it once every array and
-    /// symbol path declines a typed array; any other store takes the generic order.
-    fn set_index_typed_in_lane<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_cached_store::<{ quench_runtime::vm::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(set_index_typed_fill_in_lane::<{ quench_runtime::vm::typed_array_access::ANY_TYPED_KIND }>, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `set_index_typed_in_lane` at a site that has stored into typed arrays of one kind only,
-    /// `KIND` (as `lane_get_index_typed_kind`).
-    fn set_index_typed_kind_in_lane<KIND: usize>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_cached_store::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(set_index_typed_fill_in_lane::<KIND>, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `set_index_typed_kind_in_lane` at a site that has stored a double into its integer kind:
-    /// any Number converts in place (`Vm::typed_cached_store_number`).
-    fn set_index_typed_number_kind_in_lane<KIND: usize>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_cached_store_number::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(set_index_typed_fill_in_lane::<KIND>, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A typed store whose view has no current cached entry (as `lane_get_index_typed_fill`).
-    #[inline(never)]
-    fn set_index_typed_fill_in_lane<KIND: usize>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (base, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        // A double into an integer kind misses the hot store only: the entry is current, and a
-        // kind variant's site moves to the variant that converts doubles in place.
-        if vm.typed_cached_store_number::<KIND>(base, key, value) {
-            if KIND != quench_runtime::vm::typed_array_access::ANY_TYPED_KIND {
-                requicken(ip, set_index_typed_number_kind_in_lane::<KIND>);
-            }
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        vm.fill_typed_view(base);
-        if !vm.typed_cached_store_number::<KIND>(base, key, value) {
-            if KIND == quench_runtime::vm::typed_array_access::ANY_TYPED_KIND {
-                sibling!(set_index_typed_full_in_lane, r, ip, view)
-            }
-            sibling!(set_index_typed_mixed_in_lane, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A kind variant's miss (`set_index_typed_kind_in_lane`): the site becomes any-kind.
-    #[inline(never)]
-    fn set_index_typed_mixed_in_lane<>(cx, r, ip, i, view) {
-        requicken(ip, set_index_typed_in_lane);
-        sibling!(set_index_typed_in_lane, r, ip, view)
-    }
-}
-
-script_handler! {
-    /// `set_index_typed_in_lane` past its quick store (`Vm::typed_cached_store_number` after `fill_typed_view`): any Number stored
-    /// at an index of a typed array (`Vm::typed_array_set_number`), or the generic order.
-    #[inline(never)]
-    fn set_index_typed_full_in_lane<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        let vm = unsafe { vm(cx) };
-        let stored = vm
-            .array_index_key(key)
-            .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
-        if !stored {
-            sibling!(set_index_slot_miss, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
 }
 
 /// A capture of a root environment's global var or global lexical
@@ -4558,14 +4419,6 @@ const FIELD_LEAF_READ: u16 = {
         }
     }
 };
-
-/// The generated keyed write (`generated_row` of `ELEMENT_WRITE`): a present dense element replaced in
-/// place, any other write `set_index_slot_miss`.
-/// The write's boolean immediate (its strictness) is no operand of the in-place row, whose misses
-/// read it from the record: the row is installed at its cleared flag, so the passes that
-/// recognise the record's handler (`specialize_proved_arrays`) find it before a first run
-/// would requicken it.
-const fn element_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, FLAG_CLEAR) }
 
 /// The site fact of a keyed access of a typed array's element (`requicken_typed`): the row proves
 /// the array's view for the element kind its record's immediate holds (`LaneFrame::kept_view`),
@@ -16433,9 +16286,6 @@ pub(crate) const ELEMENT_READ: u16 = {
     }
 };
 
-/// The generated keyed read (`generated_row` of `ELEMENT_READ`) of a register base and key.
-const fn element_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, FLAG_UNREAD) }
-
 /// The opcode of the catalog's keyed store: the element row whose record defines no result register
 /// (`Decoder::Element`), whose generated row (`generated_row`) a register-keyed store runs.
 pub(crate) const ELEMENT_WRITE: u16 = {
@@ -16923,58 +16773,6 @@ fn binding_step_in_lane(decoded: &[WideInstruction], pc: usize) -> bool {
         && value.result_register() != done
         && value.result_register() != flag.a()
         && pc + BINDING_VALUE_READ + 1 < decoded.len()
-}
-
-/// Whether `instruction` is an element read: the decoder's `ElementRead` for a register base, or
-/// its `ElementReadOperand` for a frame local base.
-fn decoded_element_read(instruction: WideInstruction) -> bool {
-    matches!(
-        crate::compiled::decoded_completed(instruction),
-        Some(quench_runtime::staged::Operation::ElementRead { .. } | quench_runtime::staged::Operation::ElementReadOperand { .. })
-    )
-}
-
-/// Whether `instruction` is an element store the decoder takes as `ElementWrite`.
-fn decoded_element_write(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::ElementWrite { .. }))
-}
-
-/// Whether `instruction` is a named field read the decoder takes as `GetField`. Where it
-/// rejects the record (`decoded_completed` is `None`: no field lookup), the opcode test keeps
-/// the read.
-fn decoded_field_read(instruction: WideInstruction) -> bool {
-    match crate::compiled::decoded_completed(instruction) {
-        Some(quench_runtime::staged::Operation::GetField { .. }) => true,
-        _ => false,
-    }
-}
-
-/// Whether `instruction` is a named field store (`SetField`, the decoder takes every one).
-fn decoded_field_store(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. }))
-}
-
-/// Whether `instruction` is a capture read the decoder takes as `LoadCapture`.
-fn decoded_capture_load(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. }))
-}
-
-/// Whether `instruction` is a plain local load the decoder takes as `LoadLocalPlain`. The decode
-/// rejects only a slot past `u16`, which the class test keeps as the load the lane always made.
-fn decoded_local_plain_load(instruction: WideInstruction) -> bool {
-    match crate::compiled::decoded_completed(instruction) {
-        Some(quench_runtime::staged::Operation::LoadLocalPlain { .. }) => true,
-        _ => false,
-    }
-}
-
-/// Whether `instruction` is a plain local store the decoder takes as `StoreLocalPlain`. As
-/// `decoded_local_plain_load`, the class test keeps a slot past `u16`.
-fn decoded_local_plain_store(instruction: WideInstruction) -> bool {
-    match crate::compiled::decoded_completed(instruction) {
-        Some(quench_runtime::staged::Operation::StoreLocalPlain { .. }) => true,
-        _ => false,
-    }
 }
 
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
