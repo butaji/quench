@@ -25,6 +25,7 @@ pub enum Call {
 
 #[cfg(not(stencil_build))]
 impl Call {
+    #[inline(always)]
     pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::CallKnown => Some(Self::Known),
@@ -32,16 +33,6 @@ impl Call {
             Class::WasmRefFunc => Some(Self::RefFunc),
             Class::Call => Some(Self::Reference),
             _ => None,
-        }
-    }
-
-    /// The one opcode of an instance read (`IndirectTarget`, `RefFunc`), for a tier that rebuilds its
-    /// instruction from a record; `None` for a call, which several opcodes make.
-    pub const fn instance_read_op(self) -> Option<Op> {
-        match self {
-            Self::IndirectTarget => Some(Op::WasmIndirectTarget),
-            Self::RefFunc => Some(Op::WasmRefFunc),
-            Self::Known | Self::Reference => None,
         }
     }
 

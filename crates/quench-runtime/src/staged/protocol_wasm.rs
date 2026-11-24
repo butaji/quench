@@ -68,9 +68,9 @@ host_steps! {
     WasmAtomicAccess, WasmAtomicFence,
     WasmDescriptorCast, WasmDescriptorTest,
     WasmExceptionMatch, WasmExceptionNew, WasmExceptionPayload,
-    WasmExternalConversion, WasmI31,
+    WasmExternalConversion, WasmI31, WasmIndirectTarget,
     WasmMemoryInit,
-    WasmRefAsNonNull, WasmRefCast, WasmRefEq, WasmRefGetDesc, WasmRefIsNull, WasmRefTest,
+    WasmRefAsNonNull, WasmRefCast, WasmRefEq, WasmRefFunc, WasmRefGetDesc, WasmRefIsNull, WasmRefTest,
     WasmStructGet, WasmStructGetS, WasmStructGetU, WasmStructNew, WasmStructNewDefault,
     WasmStructNewDefaultDesc, WasmStructNewDesc, WasmStructSet, WasmStructGetRaw, WasmStructSetRaw,
     WasmTableCopy, WasmTableFill, WasmTableGet, WasmTableGrow, WasmTableInit, WasmTableSet,
@@ -89,7 +89,7 @@ pub(crate) fn operands(instruction: WideInstruction) -> [Option<Register>; 2] {
         | Op::WasmTableInit | Op::WasmMemoryInit => [Some(a), Some(b)],
         Op::WasmArrayGet | Op::WasmArrayGetRaw | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArrayNew
         | Op::WasmDescriptorCast | Op::WasmDescriptorTest | Op::WasmExceptionMatch | Op::WasmRefEq
-        | Op::WasmTableGet | Op::WasmTableSet | Op::WasmTableGrow => [Some(b), Some(c)],
+        | Op::WasmTableGet | Op::WasmTableSet | Op::WasmTableGrow | Op::WasmIndirectTarget => [Some(b), Some(c)],
         Op::WasmThrowRef => [Some(a), None],
         Op::WasmArrayLen | Op::WasmArrayNewDefault | Op::WasmExceptionPayload | Op::WasmExternalConversion
         | Op::WasmI31 | Op::WasmRefAsNonNull | Op::WasmRefCast | Op::WasmRefGetDesc | Op::WasmRefIsNull
@@ -118,16 +118,13 @@ pub(super) fn decode(instruction: WideInstruction) -> Option<(Protocol, Option<R
 
 #[cfg(not(stencil_build))]
 impl Protocol {
-    /// The Wasm GC value instruction this step makes (`GcStep::of` names its opcode), rebuilt from
-    /// the step's fields, for a tier whose host runs it over its own registers
-    /// (`Vm::wasm_gc_value_step`); `None` for every other step.
+    /// The Wasm instruction this step makes, rebuilt from the step's fields, for a tier whose host
+    /// runs it over its own registers (a GC value step, `Vm::wasm_gc_value_step`); `None` for a
+    /// step that is no Wasm host step.
     #[inline(always)]
-    pub fn wasm_gc_instruction(self) -> Option<WideInstruction> {
+    pub fn wasm_instruction(self) -> Option<WideInstruction> {
         match self {
-            Protocol::Wasm(step) => {
-                let instruction = step.fields().instruction();
-                super::wasm_gc::GcStep::of(instruction.op()).map(|_| instruction)
-            }
+            Protocol::Wasm(step) => Some(step.fields().instruction()),
             _ => None,
         }
     }

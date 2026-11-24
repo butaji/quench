@@ -10864,7 +10864,6 @@ pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
 use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler};
 pub(crate) mod wasm_gc;
-use wasm_gc::wasm_gc_handler;
 
 #[quench_macros::ext(DispatchFastVm4)]
 impl Vm {
@@ -16370,7 +16369,7 @@ const fn other_handler(opcode: Op) -> Option<Handler> {
         _ if quench_runtime::staged::forwarded_call_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::FORWARDED_CALL as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 })),
         _ if quench_runtime::staged::return_family(opcode) => Some(return_row!(quench_runtime::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF))),
         _ if generator_yields::suspend_handler(opcode).is_some() => generator_yields::suspend_handler(opcode),
-        _ => wasm_gc_handler(opcode),
+        _ => None,
     }
 }
 
@@ -16791,13 +16790,7 @@ fn returns_in_lane(instruction: WideInstruction) -> bool {
 /// memory32 memory once per call.
 pub(crate) fn memory_register(function: &Function) -> Option<u16> {
     let instructions = || function.code.iter().map(|packed| function.widened(*packed));
-    let direct = instructions().filter_map(|instruction| match instruction.op() {
-        op if MemoryLoad::from_direct_op(op).is_some()
-            || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
-        op if quench_runtime::staged::wasm_memory_size(op) => Some(instruction.b()),
-        op if quench_runtime::staged::wasm_memory_fill(op) => Some(instruction.a()),
-        _ => None,
-    });
+    let direct = instructions().filter_map(quench_runtime::staged::wasm_memory::bound_memory_register);
     single_register(direct).or_else(|| {
         let vector = single_register(
             instructions().filter(|instruction| quench_runtime::staged::wasm_memory_address(instruction.op())).map(|instruction| instruction.c()),

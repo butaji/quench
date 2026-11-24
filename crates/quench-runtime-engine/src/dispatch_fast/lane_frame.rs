@@ -407,6 +407,10 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The lane context and the fast answers of an iteration or for-in call-out (`fast_names_step`), for
     /// the row that makes one (`Decoder::Names`).
     names: Option<(*mut (), NamesStep)>,
+    /// The lane context a Wasm GC value row's call-out runs in (`wasm_gc_in_lane`), and the record an
+    /// indirect target's reference call is at (two records on: the receiver's constant, then the call),
+    /// where the row is one.
+    gc_values: Option<(*mut (), super::Ip, GcValueStep)>,
     /// The environment clone a `CloneEnv` row makes (`clone_environment_of`).
     clones: Option<EnvironmentClones>,
     /// The iterator cleanup stack an `IteratorCleanupPush`/`Pop` row keeps (`iterator_push_in_lane`).
@@ -545,6 +549,9 @@ type ElementSpan = unsafe fn(*mut u8, u16, Value, bool) -> Option<(std::ptr::Non
 struct WasmMemories {
     context: *mut (),
     resolve: unsafe fn(*mut (), Value) -> Option<(*mut u8, usize, bool)>,
+    /// The page size (log2) of the memory a value names (`wasm_memory_page_bits_of`), which only a
+    /// `memory.size` row reads.
+    page_bits: unsafe fn(*mut (), Value) -> Option<u32>,
 }
 
 /// `WasmMemories::resolve`: the bytes of the Wasm memory `value` names, as `direct_memory` gives
@@ -558,6 +565,18 @@ unsafe fn wasm_memory_of(context: *mut (), value: Value) -> Option<(*mut u8, usi
     let wide = vm.wasm_memory_index_type(value).ok()? == quench_runtime::WasmType::I64;
     Some((bytes, length, wide))
 }
+
+/// The page size (log2) of the Wasm memory `value` names (`Vm::wasm_memory_page_bits`).
+///
+/// # Safety
+/// `context` is the running lane's context.
+unsafe fn wasm_memory_page_bits_of(context: *mut (), value: Value) -> Option<u32> {
+    unsafe { vm(context.cast::<LaneContext>()) }.wasm_memory_page_bits(value)
+}
+
+/// A Wasm GC value row's step over the lane context and register file (`wasm_gc_in_lane`), one per
+/// opcode.
+type GcValueStep = unsafe fn(*mut LaneContext, Registers, WideInstruction, super::Ip) -> Option<Value>;
 
 /// The lane context's Wasm global rules for a staged instance-state row: the VM's load of the
 /// global bound in a binding and its store (`wasm_global_load`, `wasm_global_store`).
@@ -865,7 +884,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1327,10 +1346,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             // A Wasm GC value step: the interpreter's own (`Vm::wasm_gc_value_step`) over the running
             // frame's registers, inlined, so a row of one opcode keeps only that opcode's arm. A trap or
             // miss, which writes nothing, is the row's miss: the general step raises it.
-            CallOut::Protocol { step, .. } if let Some(instruction) = step.wasm_gc_instruction() => {
-                let (context, _) = self.names?;
+            // The frame carries `gc_values` only for a GC value row (`row_frame_of`), whose opcode the
+            // step is instantiated for, so the test folds.
+            CallOut::Protocol { step, .. } if let Some((context, next, gc_step)) = self.gc_values
+                && let Some(instruction) = step.wasm_instruction() => {
                 // SAFETY: the running lane's context and register file, live for the row's step.
-                unsafe { super::wasm_gc::wasm_gc_in_lane(context.cast(), self.registers, instruction) }.map(|value| (value.to_bits(), Boxing::Value))
+                unsafe { gc_step(context.cast(), self.registers, instruction, next) }.map(|value| (value.to_bits(), Boxing::Value))
             }
             CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
@@ -1609,7 +1630,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     /// (`wasm_memory_of`), and its index type. A memory the lane cannot address leaves the row.
     #[inline(always)]
     fn wasm_memory(&mut self, _stage: &mut Concrete, register: Register) -> Option<(&mut [u8], bool)> {
-        let WasmMemories { context, resolve } = self.memories?;
+        let WasmMemories { context, resolve, .. } = self.memories?;
         // SAFETY: the context is the running lane's, live for the row's step.
         let (bytes, length, wide) = unsafe { resolve(context, self.registers.get(register)) }?;
         if length == 0 {
@@ -1618,6 +1639,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: `bytes` is the memory the value names in this lane run, `length` bytes long; the
         // frame holds no other borrow of it.
         Some((unsafe { std::slice::from_raw_parts_mut(bytes, length) }, wide))
+    }
+
+    /// The page size of the Wasm memory value in `register`, through the lane context.
+    #[inline(always)]
+    fn wasm_memory_page_bits(&mut self, _stage: &mut Concrete, register: Register) -> Option<u32> {
+        let WasmMemories { context, page_bits, .. } = self.memories?;
+        // SAFETY: the context is the running lane's, live for the row's step.
+        unsafe { page_bits(context, self.registers.get(register)) }
     }
 }
 
@@ -2341,11 +2370,16 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             None => frame,
         };
     }
-    if const { quench_runtime::staged::wasm_gc::GcStep::of(LaneFields::<OP>::OPCODE).is_some() } {
+    if const { quench_runtime::staged::wasm_gc::gc_value_op(LaneFields::<OP>::OPCODE) } {
         // A Wasm GC value row reads nothing of the frame but its registers and the lane context its
-        // call-out runs in (`wasm_gc_in_lane`): none of the name rows' hosts below.
-        let names: NamesStep = fast_names_step;
-        return LaneFrame::<ACC> { names: Some((cx.cast(), names)), ..LaneFrame::<ACC>::new(r, view) };
+        // call-out runs in (`wasm_gc_in_lane`): none of the name rows' hosts below. Lowering emits an
+        // indirect target only before its call, as the receiver's constant and then the call, so the
+        // reference call that reads the target's row is two records on; a record that is not that
+        // call finds the slot's record, register or reference differ, and resolves the reference itself.
+        let next = super::following(super::following(ip));
+        // The step of this row's opcode (`wasm_gc_in_lane::<OP>`), so only its arm is compiled.
+        let step: GcValueStep = super::wasm_gc::wasm_gc_in_lane::<OP>;
+        return LaneFrame::<ACC> { gc_values: Some((cx.cast(), next, step)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
         let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
@@ -2481,7 +2515,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         // SAFETY: the view resolved this memory in the current lane run (`MemoryView::extent`).
         let memory = unsafe { view.memory.extent() };
         // A generic access names its memory by register, which `wasm_memory_of` resolves.
-        let memories = WasmMemories { context: cx.cast(), resolve: wasm_memory_of };
+        let memories = WasmMemories { context: cx.cast(), resolve: wasm_memory_of, page_bits: wasm_memory_page_bits_of };
         return LaneFrame::<ACC> { memory: Some(memory), memories: Some(memories), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmState)) } {
