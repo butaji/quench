@@ -180,6 +180,13 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         self.push_lazy_back(pc, test, floor, position);
     }
 
+    fn follower(&mut self, pc: u32) -> Option<UnitTest> {
+        match self.plan.insts.get(pc as usize) {
+            Some(Inst::Unit(test)) => Some(*test),
+            _ => None,
+        }
+    }
+
     fn guard(&mut self, guard: u32) -> Admission<UnitTest> {
         self.plan.guards[guard as usize]
     }

@@ -2,7 +2,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, FIRST_OPERAND, SECOND_OPERAND};
-use quench_regexp::backtrack::machine as m;
+use quench_regexp::backtrack::machine::{self as m, Resumed};
 use quench_regexp::backtrack::matcher::MatchStage;
 use quench_runtime::staged::machine::{Binary, Lane, Relation};
 use quench_regexp::backtrack::{Inst, UnitTest};
@@ -72,34 +72,22 @@ impl<M: RegexpMachine> Emit<'_, M> {
         let flags = self.flags;
         let first = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
         let second = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
-        match resume {
-            Resume::Choice(target) => {
-                self.set_position(second);
-                self.goto(target);
-            }
-            Resume::Greedy(pc) => {
-                let follower = match self.plan.insts.get(pc as usize + 1) {
-                    Some(Inst::Unit(test)) => Some(*test),
-                    _ => None,
-                };
-                let step = m::give_back(self, pc + 1, follower, (first, second));
-                self.finish_step(step);
-            }
+        // A repeat's frame names the repeat; the shared row resumes after it.
+        let entry = match resume {
+            Resume::Choice(pc) => Resumed::Choice { pc, position: second },
+            Resume::Greedy(pc) => Resumed::Greedy { pc: pc + 1, floor: first, position: second },
             Resume::Lazy(pc) => {
                 let Inst::UnitRepeat { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a lazy frame names a repeat") };
-                let step = m::take_more(self, pc + 1, test, (first, second));
-                self.finish_step(step);
+                Resumed::Lazy { pc: pc + 1, test, ceiling: first, position: second }
             }
-            Resume::GreedyBack(pc) => {
-                let step = m::give_back_back(self, pc + 1, (first, second));
-                self.finish_step(step);
-            }
+            Resume::GreedyBack(pc) => Resumed::GreedyBack { pc: pc + 1, ceiling: first, position: second },
             Resume::LazyBack(pc) => {
                 let Inst::UnitRepeatBack { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a backward lazy frame names a backward repeat") };
-                let step = m::take_more_back(self, pc + 1, test, (first, second));
-                self.finish_step(step);
+                Resumed::LazyBack { pc: pc + 1, test, floor: first, position: second }
             }
-            Resume::LookFail(pc) => self.look_failed(pc, first),
-        }
+            Resume::LookFail(pc) => return self.look_failed(pc, first),
+        };
+        let step = m::resume(self, entry);
+        self.finish_step(step);
     }
 }

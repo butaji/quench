@@ -1,4 +1,4 @@
-//! `Stage` on the interpreter's machine: every operation on its own state, inlined into
+//! `Machine` on the interpreter's machine: every operation on its own state, inlined into
 //! `Program::run`.
 #[allow(clippy::wildcard_imports)]
 use super::*;
@@ -165,6 +165,14 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn follower(&mut self, pc: u32) -> Option<UnitTest> {
+        match self.program.instructions[pc as usize] {
+            Inst::Unit(test) => Some(test),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
     fn guard(&mut self, guard: u32) -> Admission<UnitTest> {
         self.program.guards[guard as usize]
     }
@@ -267,14 +275,15 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 }
 
-impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
+/// The interpreter's frame stack and register writes, which `replay` runs.
+impl<T: Text + ?Sized> Concrete<'_, T> {
     #[inline(always)]
-    fn assign(&mut self, register: u32, value: usize) {
+    pub(in crate::backtrack) fn assign(&mut self, register: u32, value: usize) {
         self.registers[register as usize] = value;
     }
 
     #[inline(always)]
-    fn push(&mut self, frame: Frame) {
+    pub(in crate::backtrack) fn push(&mut self, frame: Frame) {
         let length = self.stack.len();
         if length == self.stack.capacity() && !reserve_frames(self.stack) {
             return;
@@ -289,7 +298,7 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn keep(&mut self, frame: Frame) {
+    pub(in crate::backtrack) fn keep(&mut self, frame: Frame) {
         let length = self.stack.len();
         debug_assert!(length < self.stack.capacity());
         // SAFETY: `keep` follows the `pop` that freed this slot, so it lies within the
@@ -301,17 +310,10 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn pop(&mut self) -> Option<Frame> {
+    pub(in crate::backtrack) fn pop(&mut self) -> Option<Frame> {
         self.stack.pop()
     }
 
-    #[inline(always)]
-    fn unit_follower(&self, pc: u32) -> Option<UnitTest> {
-        match self.program.instructions[pc as usize] {
-            Inst::Unit(test) => Some(test),
-            _ => None,
-        }
-    }
 }
 
 impl<T: Text + ?Sized> Concrete<'_, T> {

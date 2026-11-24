@@ -22,42 +22,23 @@
 //! operations are exactly the dynamic accesses; a static operand is an argument, so an emitting
 //! machine sees it as a constant and folds it.
 //!
-//! Here stays what only the interpreter runs: `Stage`, the operations on frames themselves
-//! (backtracking as `replay`). Each instruction's row is `machine::step`.
+//! Each instruction's row is `machine::step`, and each backtrack entry that offers a way on is
+//! resumed by `machine::resume`. Here stays only the interpreter's own frame stack: `replay`
+//! pops a `Frame`, undoes a restore, and hands the rest to `resume`.
 
 use crate::in_units;
 // The interpreter's stage: the operations on the machine's own state.
 #[path = "backtrack/concrete.rs"]
 mod concrete;
 pub(super) use concrete::Concrete;
-use super::machine::{self as m, Machine};
+use super::machine::{self as m, Machine, Resumed};
 pub(super) use super::machine::{start_register, step, Cursor, Step};
 use super::matcher::{Admission, MatchStage};
 use super::{equal, Frame, Inst, Program, Text, UnitTest, UNSET};
 
-/// The dynamic accesses the instructions make. Positions are `usize` here; a code-generating
-/// stage keeps the same operations over its own values.
-///
-/// Not folded into the engine's `staged::Stage`: `quench-runtime` depends on this crate, so the
-/// engine's trait cannot be named here. The native driver (`vm/regexp_native`) already emits
-/// through the engine's `staged::machine` traits, and implements this trait over them. A fold
-/// needs the matcher moved into `quench-runtime` or `staged::machine` moved below both crates.
-pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> + quench_stack::projection::Sealed {
-    /// Writes a register with no restore entry.
-    fn assign(&mut self, register: u32, value: usize);
-    fn push(&mut self, frame: Frame);
-    /// Puts back the entry `pop` just took, changed: a repeat that can still give or take
-    /// a unit stays on the stack one position on, in the slot it was popped from.
-    fn keep(&mut self, frame: Frame);
-    /// The latest backtrack entry, if the stack holds one.
-    fn pop(&mut self) -> Option<Frame>;
-    /// The test of the instruction at `pc` where it takes one unit (`Inst::Unit`).
-    fn unit_follower(&self, pc: u32) -> Option<UnitTest>;
-}
-
 /// Puts back the registers a restore entry saved; any other entry restores nothing.
 #[inline(always)]
-fn undo<S: Stage>(stage: &mut S, frame: Frame) {
+fn undo<T: Text + ?Sized>(stage: &mut Concrete<'_, T>, frame: Frame) {
     match frame {
         Frame::Restore { register, value } => stage.assign(register, value),
         Frame::RestoreCapture { capture, start, end } => {
@@ -88,34 +69,31 @@ fn resumed(step: Step) -> Replay {
     }
 }
 
-/// Backtracks one entry: the same machine read backwards, with each entry's meaning written
-/// once over the stage. A greedy or lazy repeat that may still give or take a unit stays on the
-/// stack, one position on.
+/// Backtracks one entry of the interpreter's stack: a restore undone here, an entry that
+/// offers a way on resumed by the row both machines share (`machine::resume`).
 #[inline(always)]
-pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
+pub(super) fn replay<T: Text + ?Sized>(stage: &mut Concrete<'_, T>) -> Replay {
     match stage.pop() {
         None | Some(Frame::Barrier) => Replay::Exhausted,
         Some(frame @ (Frame::Restore { .. } | Frame::RestoreCapture { .. })) => {
             undo(stage, frame);
             Replay::Undone
         }
-        Some(Frame::Choice { pc, position }) => Replay::Resume(Cursor::at(pc, position)),
-        Some(Frame::Greedy { pc, floor, position }) => {
-            let follower = stage.unit_follower(pc);
-            resumed(m::give_back(stage, pc, follower, (floor, position)))
-        }
+        Some(Frame::Choice { pc, position }) => resumed(m::resume(stage, Resumed::Choice { pc, position })),
+        Some(Frame::Greedy { pc, floor, position }) => resumed(m::resume(stage, Resumed::Greedy { pc, floor, position })),
+        Some(Frame::Lazy { pc, test, ceiling, position }) => resumed(m::resume(stage, Resumed::Lazy { pc, test, ceiling, position })),
         Some(frame @ (Frame::GreedyBack { .. } | Frame::LazyBack { .. })) => replay_back(stage, frame),
-        Some(Frame::Lazy { pc, test, ceiling, position }) => resumed(m::take_more(stage, pc, test, (ceiling, position))),
     }
 }
 
 /// Backtracks a backward repeat's entry, as `replay` does a forward one's. Out of line: a
 /// lookbehind's repeats are rare, and the interpreter's loop stays tight without them.
 #[inline(never)]
-fn replay_back<S: Stage>(stage: &mut S, frame: Frame) -> Replay {
-    match frame {
-        Frame::GreedyBack { pc, ceiling, position } => resumed(m::give_back_back(stage, pc, (ceiling, position))),
-        Frame::LazyBack { pc, test, floor, position } => resumed(m::take_more_back(stage, pc, test, (floor, position))),
+fn replay_back<T: Text + ?Sized>(stage: &mut Concrete<'_, T>, frame: Frame) -> Replay {
+    let entry = match frame {
+        Frame::GreedyBack { pc, ceiling, position } => Resumed::GreedyBack { pc, ceiling, position },
+        Frame::LazyBack { pc, test, floor, position } => Resumed::LazyBack { pc, test, floor, position },
         _ => unreachable!("`replay` hands over only backward repeats"),
-    }
+    };
+    resumed(m::resume(stage, entry))
 }

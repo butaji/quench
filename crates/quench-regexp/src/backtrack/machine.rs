@@ -100,6 +100,9 @@ pub trait Machine: MatchStage {
     fn keep_lazy(&mut self, pc: u32, test: Self::Test, ceiling: Self::Pos, position: Self::Pos);
     /// The `index`th entry of the program's capture lists (`Program::lists`), static.
     fn listed(&mut self, index: u32) -> u32;
+    /// The test of the instruction at `pc` where it takes one unit (`Inst::Unit`), static:
+    /// the follower a greedy repeat gives units back to.
+    fn follower(&mut self, pc: u32) -> Option<Self::Test>;
     /// The positions the body behind `GuardedSplit` guard `guard` can start at (static).
     fn guard(&mut self, guard: u32) -> Admission<Self::Test>;
     /// `Inst::Look`: the lookaround whose body follows, matching going on at `end` where it
@@ -367,6 +370,40 @@ pub fn loop_tail<M: Machine>(machine: &mut M, (counter, start, min, head): (u32,
     let next = machine.offset(count, 1);
     set(machine, counter, next);
     Step::Continue(at.jump(head))
+}
+
+/// A backtrack entry that offers a way on, as backtracking pops it: each machine keeps its
+/// entries its own way (the interpreter as `Frame`s, native code as words), and both resume
+/// them here.
+#[derive(Clone, Copy)]
+pub enum Resumed<P, T> {
+    /// A choice: the run continues at `pc` from `position`.
+    Choice { pc: u32, position: P },
+    /// A greedy repeat before `pc` that ended at `position` and may give units back to `floor`.
+    Greedy { pc: u32, floor: P, position: P },
+    /// A lazy repeat before `pc` that ended at `position` and may take units of `test` up to
+    /// `ceiling`.
+    Lazy { pc: u32, test: T, ceiling: P, position: P },
+    /// `Greedy` of a backward repeat, which gives units back up to `ceiling`.
+    GreedyBack { pc: u32, ceiling: P, position: P },
+    /// `Lazy` of a backward repeat, which takes units down to `floor`.
+    LazyBack { pc: u32, test: T, floor: P, position: P },
+}
+
+/// Backtracking to `entry`: where the run goes on, or `Step::Fail` where the repeat it names
+/// cannot give or take another unit. A repeat that still can stays on the stack.
+#[inline(always)]
+pub fn resume<M: Machine>(machine: &mut M, entry: Resumed<M::Pos, M::Test>) -> Next<M> {
+    match entry {
+        Resumed::Choice { pc, position } => Step::Continue(Cursor::at(pc, position)),
+        Resumed::Greedy { pc, floor, position } => {
+            let follower = machine.follower(pc);
+            give_back(machine, pc, follower, (floor, position))
+        }
+        Resumed::Lazy { pc, test, ceiling, position } => take_more(machine, pc, test, (ceiling, position)),
+        Resumed::GreedyBack { pc, ceiling, position } => give_back_back(machine, pc, (ceiling, position)),
+        Resumed::LazyBack { pc, test, floor, position } => take_more_back(machine, pc, test, (floor, position)),
+    }
 }
 
 /// Backtracking a greedy repeat before `pc` that ended at `position`: it gives back a unit and
