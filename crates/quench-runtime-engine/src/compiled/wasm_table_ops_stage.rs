@@ -124,7 +124,7 @@ impl Vm {
     /// Drops the segment bound at environment slot `slot` of `environment`: the binding holds the
     /// undefined value afterwards, which `memory.init` reads as a dropped segment.
     pub(crate) fn wasm_segment_drop(&mut self, environment: super::Value, slot: usize) {
-        if let Some(bound) = self.heap.environment_slot_mut(environment, slot) {
+        if let Some(bound) = self.environment_slot_mut(environment, slot) {
             *bound = super::Value::UNDEFINED;
         }
     }

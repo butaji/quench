@@ -26,7 +26,7 @@ pub(crate) fn loop_field_stores(
     };
     // Every receiver's slots get addresses before the first is taken (`spill_inline_properties`).
     for field in &region.field_store_sites {
-        vm.heap.spill_inline_properties(receiver(field.receiver)?);
+        vm.spill_inline_properties(receiver(field.receiver)?);
     }
     for field in &region.field_store_sites {
         let object = receiver(field.receiver)?;
@@ -35,7 +35,7 @@ pub(crate) fn loop_field_stores(
         // Numeric cells cannot create heap edges. Reference-capable stores log their
         // owner once at admission; nothing collects before the run ends.
         if !writes.is_subtype(quench_runtime::typed_ir::Type::NUMBER) {
-            vm.heap.object_store_mut(object, object)?;
+            vm.object_store_mut(object, object)?;
         }
         entry.push_field_store(pointer);
     }

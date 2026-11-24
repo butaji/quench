@@ -14,6 +14,7 @@ use super::{
 };
 use quench_runtime::Value;
 use quench_runtime::heap::{Cell, TableWords};
+use quench_runtime::vm::tier_queries::WasmBindingArea;
 use cranelift_codegen::ir::{self, types};
 use std::rc::Rc;
 
@@ -212,8 +213,8 @@ impl Vm {
             return None;
         };
         let record = InstanceRecord::new(env, program, slots.len());
-        let record = self.heap.alloc(Cell::WasmInstance(record));
-        *self.heap.environment_slot_mut(env, slot)? = record;
+        let record = self.allocate_cell(Cell::WasmInstance(record));
+        *self.environment_slot_mut(env, slot)? = record;
         Some(())
     }
 
@@ -226,19 +227,15 @@ impl Vm {
             let Some(binding) = self.heap_reads().environment_slot(env, slot) else {
                 continue;
             };
-            match self.heap.get_mut(binding) {
-                Some(Cell::WasmGlobal { bits, .. }) => globals.push((slot, bits as *mut u64)),
-                Some(Cell::WasmTable { elements, .. }) => {
-                    tables.push((slot, elements.words() as *const TableWords));
-                }
-                _ => {}
+            match self.wasm_binding_area(binding) {
+                Some(WasmBindingArea::Global(bits)) => globals.push((slot, bits)),
+                Some(WasmBindingArea::Table(words)) => tables.push((slot, words)),
+                None => {}
             }
         }
         let context = self.wasm_context_slot(env, program)?;
         let record = self.heap_reads().environment_slot(env, context)?;
-        let Some(Cell::WasmInstance(record)) = self.heap.get_mut(record) else {
-            return None;
-        };
+        let record = self.wasm_instance_record_mut(record)?;
         record.bind(globals, tables);
         Some(())
     }
@@ -275,9 +272,7 @@ impl Vm {
         let memory = self.memory_binding(compiled, env)?;
         let context = self.wasm_context_slot(env, program)?;
         let record = self.heap_reads().environment_slot(env, context)?;
-        let Some(Cell::WasmInstance(record)) = self.heap.get_mut(record) else {
-            return None;
-        };
+        let record = self.wasm_instance_record_mut(record)?;
         let address = &**record as *const InstanceContext as usize;
         let changed = record.publish(compiled, &memory);
         if changed {
@@ -290,7 +285,7 @@ impl Vm {
     /// `address`: the bodies `compiled` publishes for it. Called when a publication changes the
     /// artifact, so no row keeps a body the record no longer publishes.
     fn refresh_wasm_bodies(&mut self, address: usize, compiled: &CompiledProgram) {
-        self.heap.for_each_wasm_table_mut(|elements| {
+        self.for_each_wasm_table_mut(|elements| {
             elements.refresh_bodies(|row| {
                 (row.instance == address as u64)
                     .then(|| compiled.table.get(row.entry as usize).copied().unwrap_or(0))

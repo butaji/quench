@@ -1042,7 +1042,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         code: &ResidualProgram, object: Value, atom: quench_runtime::bytecode::Atom) -> Option<Value> {
         let slot = Self::private_slot(cx, site, code, object, atom)?;
         let vm = unsafe { vm(cx) };
-        vm.heap.property_get(vm.object_data(object)?, slot)
+        vm.heap_reads().property_get(vm.object_data(object)?, slot)
     }
 
     /// The store of private field `atom` of `object` at the record address `site`, under its
@@ -1054,7 +1054,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         let Some(slot) = Self::private_slot(cx, site, code, object, atom) else {
             return false;
         };
-        (unsafe { vm(cx) }).heap.property_set(object, slot, value);
+        (unsafe { vm(cx) }).store_property_slot(object, slot, value);
         true
     }
 }
@@ -1722,7 +1722,7 @@ unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::heap::Env
 /// `cx` is the running lane's context.
 unsafe fn environment_write_storage(cx: *mut (), slot: u16) -> Option<*mut quench_runtime::heap::EnvironmentSlots> {
     let (storage, environment) = unsafe { environment_of(cx.cast(), Some(slot)) }?;
-    unsafe { vm(cx.cast::<LaneContext>()) }.heap.remember_cell(environment);
+    unsafe { vm(cx.cast::<LaneContext>()) }.write_barrier(environment);
     Some(storage)
 }
 
@@ -4052,7 +4052,7 @@ unsafe fn fast_names_step(cx: *mut (), call: CallOut, [first, second]: [Option<V
             let source = vm.to_property_key(program, source).ok()?;
             let key = if let Some(atom) = vm.string_key_atom(source) {
                 quench_runtime::vm::PropertyKey::string(atom)
-            } else if vm.heap.is_symbol(source) {
+            } else if vm.heap_reads().is_symbol(source) {
                 quench_runtime::vm::PropertyKey::symbol(source)
             } else {
                 return None;

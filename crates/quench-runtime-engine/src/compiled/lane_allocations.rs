@@ -70,7 +70,7 @@ pub(crate) unsafe extern "C" fn scalar_native_in_lane(vm: u64, residual: u64, pa
     }
     let arguments = [first, second];
     // A native that allocated nothing (a lookup: `Map.prototype.get`) moved no base the code holds.
-    let unchanged = |vm: &Vm| (vm.heap.allocated_weight(), vm.heap_reads().native_layout_epoch(), vm.heap.store_watch_word(), vm.method_cache_atoms.words().len());
+    let unchanged = |vm: &Vm| (vm.heap_reads().allocated_weight(), vm.heap_reads().native_layout_epoch(), vm.heap_reads().store_watch_word(), vm.method_cache_atoms.words().len());
     let before = unchanged(vm);
     let Some(value) = vm.in_place_native_value(residual, native, callee, Value::from_bits(receiver), &arguments[..argc as usize]) else {
         return Value::DELETED.to_bits();
@@ -159,7 +159,7 @@ pub(crate) unsafe extern "C" fn new_object_literal_in_lane(vm: u64, residual: u6
         &mut *(payload as *mut JsStepDispatch), std::slice::from_raw_parts(parts as *const Value, count as usize)) };
     if vm.collection_due() { return Value::DELETED.to_bits(); }
     let shape = vm.object_site_shape(residual, site as usize);
-    let object = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+    let object = vm.allocate_object_with_properties(vm.object_proto, shape, properties);
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     object.to_bits()
@@ -239,7 +239,7 @@ pub(crate) unsafe extern "C" fn flatten_string_in_lane(vm: u64, _residual: u64, 
     if vm.collection_due() { return Value::DELETED.to_bits(); }
     let Some(flat) = vm.heap_reads().string(Value::from_bits(string)).map(|text| text.unkept_flat()).filter(|flat| flat.holds_record_form())
         else { return Value::DELETED.to_bits() };
-    let value = vm.heap.alloc_string(flat);
+    let value = vm.allocate_string(flat);
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     value.to_bits()

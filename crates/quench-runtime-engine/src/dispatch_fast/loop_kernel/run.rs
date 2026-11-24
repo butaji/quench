@@ -710,7 +710,7 @@ fn overlaps((a, a_length): (usize, usize), (b, b_length): (usize, usize)) -> boo
 
 /// The span of an array kernel accesses: a record array's or a typed array's elements.
 fn span(vm: &mut Vm, base: Value) -> Option<Span> {
-    if let Some((values, readable, writable)) = vm.heap.array_storage_span(base) {
+    if let Some((values, readable, writable)) = vm.array_storage_span(base) {
         return Some(Span { base, values: values.as_ptr(), readable, writable, typed: None });
     }
     let typed = vm.typed_array_span(base)?;

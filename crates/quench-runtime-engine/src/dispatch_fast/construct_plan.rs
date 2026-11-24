@@ -234,7 +234,7 @@ pub(crate) fn planned_inline_quick(vm: &mut Vm, callee: Value, argument: impl Fn
     if len > 0 { inline[0] = plan.passed_value(0, &argument); }
     if len > 1 { inline[1] = plan.passed_value(1, &argument); }
     let header = plan.header;
-    vm.heap.alloc_planned_inline_quick(header, inline, len)
+    vm.allocate_planned_inline_quick(header, inline, len)
 }
 
 /// `planned_construction_in_lane` from the parameters' values `argument` gives.
@@ -253,7 +253,7 @@ pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn
         let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
         if len > 0 { inline[0] = plan.passed_value(0, &argument); }
         if len > 1 { inline[1] = plan.passed_value(1, &argument); }
-        return Some(vm.heap.alloc_planned_inline(plan.header, plan.prototype, inline, len));
+        return Some(vm.allocate_planned_inline(plan.header, plan.prototype, inline, len));
     }
     Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
 }
@@ -461,7 +461,7 @@ pub(crate) fn initialize_stores_in_lane(
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template_by(callee, constructor)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
-    let this = vm.heap.alloc_object(template);
+    let this = vm.allocate_object(template);
     let mut planned = Some(ConstructPlan {
         callee,
             callee_layout: (0, 0),

@@ -253,7 +253,7 @@ fn heap_value(image: &AotImage, vm: &mut Vm, key: u32) -> Option<Value> {
         HeapValueRecipe::ClosureOf(function) => closure_of(vm, function),
         HeapValueRecipe::String(atom) => {
             let text = image.atoms.get(atom as usize)?;
-            Some(vm.heap.alloc_string(quench_runtime::vm::wtf16::JsString::from_str(text)))
+            Some(vm.allocate_string(quench_runtime::vm::wtf16::JsString::from_str(text)))
         }
     }
 }

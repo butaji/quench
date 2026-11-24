@@ -64,7 +64,7 @@ fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
     let prototype = vm.heap_reads().object(instance).unwrap().proto();
     let shape = vm.heap_reads().object(prototype).unwrap().shape();
     let slot = vm.shape_slot(shape, k).unwrap();
-    vm.heap.property_set(prototype, slot, Value::integer(6));
+    vm.store_property_slot(prototype, slot, Value::integer(6));
     assert!(published.lease().is_none(), "the prototype's write retires the code that folded its value");
     assert!(invalidation.is_set());
 }
@@ -90,7 +90,7 @@ fn a_folded_prototype_value_survives_other_prototypes_and_retires_at_its_chain()
     let invalidation = method.invalidation.clone();
     let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let other = prototype_of(&mut vm, "d");
-    vm.heap.mark_prototype(other);
+    vm.mark_prototype(other);
     let w = vm.intern_atom("w");
     vm.set_property(other, w, Value::integer(2)).unwrap();
     assert!(published.lease().is_some() && !invalidation.is_set(), "another prototype's new property leaves the code");
@@ -145,7 +145,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let globals = vm.realm.globals;
     let slot = vm.shape_slot(vm.heap_reads().object(globals).unwrap().shape(), k).unwrap();
     let value = vm.own_property(globals, k).unwrap();
-    vm.heap.property_set(globals, slot, value);
+    vm.store_property_slot(globals, slot, value);
     assert!(published.lease().is_none(), "the global's write retires the code that folded its value");
     assert!(invalidation.is_set());
     let function = program.functions.iter().position(|body|
@@ -153,7 +153,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let recompile = |vm: &mut Vm| vm.compile_lane_method(&program, function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     assert_eq!(recompile(&mut vm).stable.globals.len(), 1, "written once, the global still folds");
-    vm.heap.property_set(globals, slot, value);
+    vm.store_property_slot(globals, slot, value);
     assert!(recompile(&mut vm).stable.globals.is_empty(), "written twice, the global is read at run time");
 }
 

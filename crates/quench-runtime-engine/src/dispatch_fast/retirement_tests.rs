@@ -34,7 +34,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     // A receiver departure falls out at its use guard; only compaction renumbers embedded IDs.
     let added = vm.intern_atom("added");
     let next = vm.transition_shape(shape, added);
-    vm.heap.property_add(owner, Value::integer(2), next);
+    vm.add_property(owner, Value::integer(2), next);
     assert!(publications.iter().all(|code| code.is_published() && code.lease().is_some()),
         "a receiver shape departure must fall out at its guard, not retire the code");
     vm.programs.invalidate_shape_bindings();
@@ -74,7 +74,7 @@ fn store_edge_value(vm: &mut Vm, value: f64) {
     let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
     let atom = vm.intern_atom("edgeValue");
     let slot = vm.shape_slot(vm.heap_reads().object(owner).unwrap().shape(), atom).unwrap();
-    vm.heap.property_set(owner, slot, Value::number(value));
+    vm.store_property_slot(owner, slot, Value::number(value));
 }
 
 #[cfg(test)]

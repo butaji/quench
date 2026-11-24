@@ -67,7 +67,7 @@ fn vector_bytes(memory: MemoryView, address: u64) -> Option<*mut [u8; quench_run
 struct RegionFrame<'a> {
     bank: &'a mut Bank,
     registers: Registers,
-    heap: &'a quench_runtime::heap::Heap,
+    heap: quench_runtime::vm::tier_queries::HeapReads<'a>,
     memory: MemoryView,
     integers: quench_runtime::value::IntegerEncoding,
 }
@@ -223,7 +223,7 @@ impl VectorRegion {
         for &register in &self.spills[leave.start as usize..leave.end as usize] {
             // SAFETY: a leaving set names registers the bank holds there.
             let bits = unsafe { bank[usize::from(register)].assume_init() };
-            r.set(register, vm.heap.alloc_v128(bits.to_le_bytes()));
+            r.set(register, vm.allocate_v128(bits.to_le_bytes()));
         }
         note_allocation(vm);
     }
@@ -277,13 +277,13 @@ impl VectorRegion {
                     // A repeated iteration's bank already holds every register the run unboxes,
                     // newest (`vector_regions` admits only such loops).
                     Step::Unbox { .. } if repeated => {}
-                    Step::Unbox { register, at, leave } => match vm.heap.v128(r.get(register)) {
+                    Step::Unbox { register, at, leave } => match vm.heap_reads().v128(r.get(register)) {
                         Some(bytes) => put!(register, u128::from_le_bytes(bytes)),
                         None => leave!(leave, at),
                     },
                     Step::Row { op, at, leave } => {
                         let outcome = {
-                            let mut frame = RegionFrame { bank: &mut bank, registers: r, heap: &vm.heap, memory, integers };
+                            let mut frame = RegionFrame { bank: &mut bank, registers: r, heap: vm.heap_reads(), memory, integers };
                             run_row(&mut stage, &mut frame, self.rows[op as usize])
                         };
                         match outcome {
@@ -405,7 +405,7 @@ fn decode_row(instruction: WideInstruction, constants: &[Value]) -> Option<Row> 
 fn admit(
     instruction: WideInstruction,
     constants: &[Value],
-    heap: &quench_runtime::heap::Heap,
+    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
     memory: Option<u16>,
 ) -> Option<Admitted> {
     let op = instruction.op();
@@ -702,7 +702,7 @@ impl Builder<'_> {
 pub(crate) fn vector_regions(
     decoded: &[WideInstruction],
     constants: &[Value],
-    heap: &quench_runtime::heap::Heap,
+    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
     memory_register: Option<u16>,
     live: &RegisterMasks,
     jump_targets: &InstructionSet,

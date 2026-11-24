@@ -98,7 +98,7 @@ impl Vm {
             };
             let storage = slots.dense_storage()?;
             if stores != 0 {
-                self.heap.remember_cell(env);
+                self.write_barrier(env);
             }
             storage.map_addr(|address| address | stores)
         };
@@ -160,7 +160,7 @@ impl Vm {
         let storage = slots.dense_storage()?;
         let stores = entry.capture.addr() & CAPTURE_STORES;
         if stores != 0 {
-            self.heap.remember_cell(env);
+            self.write_barrier(env);
         }
         Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
     }

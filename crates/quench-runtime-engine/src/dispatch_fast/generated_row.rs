@@ -280,9 +280,9 @@ lane_handler! {
                 // A register's `length`: an array's or a string's, as the site's tier decided.
                 let machine = unsafe { vm(script) };
                 frame.plan = Some(RecordPlan::length(if const { FLAG == crate::dispatch_fast::ARRAY_LENGTH_SITE } {
-                    quench_runtime::staged::ic::IcOp::ArrayLength { records: machine.heap.live_array_records() as u64 }
+                    quench_runtime::staged::ic::IcOp::ArrayLength { records: machine.heap_reads().live_array_records() as u64 }
                 } else {
-                    quench_runtime::staged::ic::IcOp::StringLength { records: machine.heap.live_string_records() as u64 }
+                    quench_runtime::staged::ic::IcOp::StringLength { records: machine.heap_reads().live_string_records() as u64 }
                 }));
             } else if const { crate::dispatch_fast::host_read_site(FLAG) } {
                 // A read the VM's geometry or length answers from the receiver's word (`FieldPlan::Length`,

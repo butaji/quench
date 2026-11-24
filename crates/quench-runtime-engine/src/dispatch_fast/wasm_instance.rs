@@ -82,7 +82,7 @@ pub(crate) unsafe fn wasm_instance_slot(context: *mut (), slot: u32) -> Option<V
 /// `context` is the running lane's context.
 pub(crate) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<[u8; 16]> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
-    vm.heap.v128(value)
+    vm.heap_reads().v128(value)
 }
 
 /// A fresh vector cell holding `bytes` for the vector rows of the lane context `context`
@@ -92,7 +92,7 @@ pub(crate) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<
 /// `context` is the running lane's context.
 pub(crate) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Option<Value> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
-    let value = vm.heap.alloc_v128(bytes);
+    let value = vm.allocate_v128(bytes);
     note_allocation(vm);
     Some(value)
 }

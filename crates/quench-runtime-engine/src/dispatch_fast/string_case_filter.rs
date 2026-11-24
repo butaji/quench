@@ -72,7 +72,7 @@ impl StringCaseFilter {
         };
         for case in self.group(key) {
             // SAFETY: the original constant run retains every resolved record.
-            if unsafe { vm.heap.string_record_by_id(case.record) } == text {
+            if unsafe { vm.heap_reads().string_record_by_id(case.record) } == text {
                 return u32::from(case.index);
             }
         }

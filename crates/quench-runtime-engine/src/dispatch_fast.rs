@@ -2130,7 +2130,7 @@ fn find_frame_storage_in_lane(
     env: Value,
 ) -> *mut quench_runtime::heap::EnvironmentSlots {
     let vm = unsafe { vm(cx) };
-    let slots = match vm.heap.environment_mut(env) {
+    let slots = match vm.environment_mut(env) {
         Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) => std::ptr::from_mut(slots),
         _ => std::ptr::null_mut(),
     };
@@ -3895,7 +3895,7 @@ fn frame_capture_in_lane(cx: *mut LaneContext) -> Option<*const usize> {
     // SAFETY: the context's program outlives the lane run.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     if vm.admits_every_direct_store(code, program, env) {
-        vm.heap.remember_cell(env);
+        vm.write_barrier(env);
         return Some(dense.map_addr(|address| address | CAPTURE_STORES));
     }
     Some(dense)
@@ -4150,7 +4150,7 @@ fn object_literal_value_in_lane(cx: *mut LaneContext, r: Registers, site: u32,
     // SAFETY: `fields_fit_in_lane` admitted the window inside the register file, and no
     // other reference into it is live while the object is allocated.
     let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window.base)), usize::from(window.count)) };
-    let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+    let value = vm.allocate_object_with_properties(vm.object_proto, shape, properties);
     note_allocation(vm);
     value
 }
@@ -4233,7 +4233,7 @@ unsafe fn literal_value_in_lane(
         start,
         usize::from(array.element_count()),
     )?;
-    let array_value = vm.heap.alloc_array(quench_runtime::heap::ArrayObject::new(Vm::empty_object(vm.array_proto), elements));
+    let array_value = vm.allocate_array(quench_runtime::heap::ArrayObject::new(Vm::empty_object(vm.array_proto), elements));
     r.set(array.result_register(), array_value);
     for part in [first, second] {
         let left = operand_value_in_lane(cx, r, part.operand_b().0)?;
@@ -4400,7 +4400,7 @@ fn own_entry_hit(vm: &mut Vm, code: &ResidualProgram, object: Value, site: u16) 
         return Some(value);
     }
     let entry = vm.field_cache_entry(site);
-    let receiver = vm.heap.record_object_value(object)?;
+    let receiver = vm.heap_reads().record_object_value(object)?;
     if entry.holder != quench_runtime::vm::NO_FIELD_HOLDER || receiver.exact_shape() != entry.receiver {
         return None;
     }
@@ -6122,7 +6122,7 @@ script_handler! {
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
             && vm.private_element_addable(data)
         {
-            vm.heap.property_add(object, r.get(i.a), next);
+            vm.add_property(object, r.get(i.a), next);
             note_allocation(vm);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -6159,7 +6159,7 @@ script_handler! {
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
             && vm.private_element_addable(data)
         {
-            vm.heap.property_add(object, Value::UNDEFINED, next);
+            vm.add_property(object, Value::UNDEFINED, next);
             note_allocation(vm);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -6317,7 +6317,7 @@ script_handler! {
                     let shape = data.shape();
                     let hint = i.field_hint();
                     if shape == hint.receiver {
-                        return vm.heap.property_get(data, usize::from(hint.slot)).map(PrivateRead::Value);
+                        return vm.heap_reads().property_get(data, usize::from(hint.slot)).map(PrivateRead::Value);
                     }
                     if let Some(element) = vm.private_site_homes.unique_element(ip.addr(), shape) {
                         return Some(element_read(element, object));
@@ -6328,7 +6328,7 @@ script_handler! {
                 let vm = unsafe { vm(cx) };
                 let data = vm.object_data(object)?;
                 hint_private_field(vm, ip, i.imm(), data.shape(), slot);
-                return vm.heap.property_get(data, slot).map(PrivateRead::Value);
+                return vm.heap_reads().property_get(data, slot).map(PrivateRead::Value);
             }
             let brand = private_brand_in_lane(cx, ip, code, i.imm())?;
             let vm = unsafe { vm(cx) };
@@ -7421,7 +7421,7 @@ fn loop_entry_checked_in_lane(
     if region.reads_heap_natively() {
         let object_base = vm.heap_reads().object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap_reads().native_property_values();
-        let array_base = vm.heap.array_record_base().unwrap_or(std::ptr::null());
+        let array_base = vm.heap_reads().array_record_base().unwrap_or(std::ptr::null());
         entry.push_native_heap(object_base, properties_base, properties_len, array_base);
     }
     if let Some(inlining) = &region.inlining {
@@ -7785,7 +7785,7 @@ fn frame_state_in_lane(
                     function,
                     code,
                     constants,
-                    &vm.heap,
+                    vm.heap_reads(),
                     kind,
                     live,
                     sites,
@@ -7851,7 +7851,7 @@ impl Vm {
     fn steps_beside_activations(&self, native: Native, receiver: Value) -> bool {
         use quench_runtime::heap::IteratorKind;
         native == Native::IteratorNext
-            && self.heap.iterator(receiver).is_some_and(|iterator| {
+            && self.heap_reads().iterator(receiver).is_some_and(|iterator| {
                 matches!(
                     iterator.kind,
                     IteratorKind::Array
@@ -8654,7 +8654,7 @@ impl Vm {
         if quench_runtime::vm::environment::direct_store_owner(code, program, *function, scope)
             .is_some_and(quench_runtime::vm::environment::owner_admits_every_direct_store)
         {
-            self.heap.remember_cell(env);
+            self.write_barrier(env);
             return capture.map_addr(|address| address | CAPTURE_STORES);
         }
         capture
@@ -8731,7 +8731,7 @@ impl Vm {
                 function,
                 code,
                 constants,
-                &self.heap,
+                self.heap_reads(),
                 kind,
                 live,
                 sites,
@@ -8780,7 +8780,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, &self.heap, kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
+                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -9405,7 +9405,7 @@ script_handler! {
                 return exit(ip);
             };
             note_allocation(vm);
-            Some(vm.heap.root(promise))
+            Some(vm.hold_root(promise))
         };
         let (registers, base) = if target.settles_in_environment() {
             // SAFETY: the call's window is registers of the running function.
@@ -9415,7 +9415,7 @@ script_handler! {
                 Err(next) => {
                     // A refused activation releases the promise's root before any effect.
                     if let Some(root) = root {
-                        vm.heap.release_root(root);
+                        vm.drop_root(root);
                     }
                     return next;
                 }
@@ -12070,7 +12070,7 @@ fn forwarded_resolution(
         }
         let slot = vm.shape_slot(shape, atom)?;
         // SAFETY: the slot exists in the non-dictionary shape that names it.
-        let value = unsafe { vm.heap.property_get_shaped(owner, slot) }?;
+        let value = unsafe { vm.heap_reads().property_get_shaped(owner, slot) }?;
         (!value.is_deleted()).then_some((u16::try_from(slot).ok()?, value))
     };
     let data = |owner: Value, atom, slot: usize| {
@@ -13894,7 +13894,7 @@ unsafe fn window_environment(
             bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
         }
         let scope = window_scope_ref(program, bindings);
-        let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
+        let (environment, storage) = vm.allocate_environment(parent, function, slots, scope);
         // Its storage links to its parent's for its closures' outer captures
         // (`EnvironmentSlots::link`), as a capture walk would find the parent's.
         if let Some(quench_runtime::heap::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = vm.heap_reads().environment(parent)
@@ -13995,7 +13995,7 @@ fn planned_receiver_in_lane(
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
-    let this = vm.heap.alloc_object(template);
+    let this = vm.allocate_object(template);
     if let Some(index) = construct_plan_index(callee)
         && let Some(callee_layout) = vm.function_prototype_layout(callee)
     {
@@ -16859,7 +16859,7 @@ fn derive_lane_view<'live>(
     function_id: u32,
     function: &Function,
     constants: &[Value],
-    heap: &quench_runtime::heap::Heap,
+    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
     kind: quench_runtime::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
@@ -17662,7 +17662,7 @@ unsafe fn proof_span(context: *mut u8, register: u16, base: Value, writable: boo
     let cx = context.cast::<LaneContext>();
     // SAFETY: the context's proofs and its VM are distinct, both live for the run.
     let (proofs, vm) = unsafe { (&mut (*cx).proofs, vm(cx)) };
-    if !proofs.holds(register, base) && !vm.heap.prove_array_storage(proofs, register, base) {
+    if !proofs.holds(register, base) && !vm.prove_array_storage(proofs, register, base) {
         return None;
     }
     if writable { proofs.write_span(register, base) } else { proofs.read_span(register, base) }
@@ -18376,7 +18376,7 @@ impl Vm {
                     function,
                     code,
                     constants,
-                    &self.heap,
+                    self.heap_reads(),
                     kind,
                     live,
                     sites,

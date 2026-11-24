@@ -157,7 +157,7 @@ pub(crate) fn spread_set_native_call_in_lane(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if !vm.heap.is_set(list) {
+    if !vm.heap_reads().is_set(list) {
         return None;
     }
     let native = spread_native_in_lane(vm, callee)?;
@@ -167,7 +167,7 @@ pub(crate) fn spread_set_native_call_in_lane(
     if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.set_entries(list)?.iter().collect();
+    let args: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap_reads().set_entries(list)?.iter().collect();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
     Some(native_complete_in_lane(cx, ip, i, value))
 }

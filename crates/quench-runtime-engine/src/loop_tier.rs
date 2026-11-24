@@ -431,7 +431,7 @@ fn push_double_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopE
 fn push_dense_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
     if !written {
         // A region reads the values in place: a narrow backing widens first.
-        vm.heap.widen_array_elements(value);
+        vm.widen_array_elements(value);
         let elements = vm.heap_reads().record_array(value)?.elements().wide_values()?;
         return entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len());
     }
@@ -439,7 +439,7 @@ fn push_dense_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopEn
         return None;
     }
     // A Number store logs nothing.
-    let elements = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?.elements_mut();
+    let elements = vm.record_array_store_mut_unlogged(value, Value::integer(0))?.elements_mut();
     if elements.owner_count() != 1 {
         return None;
     }

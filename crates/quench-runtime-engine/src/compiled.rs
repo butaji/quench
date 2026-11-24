@@ -2528,7 +2528,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // A re-entrant import can mutate the table and collect while this
             // body is running. Keep its function cell alive until the call
             // returns.
-            let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
+            let callee_root = unsafe { &mut *vm_pointer }.hold_root(callee);
             direct_target_root = Some(callee_root);
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
@@ -2598,7 +2598,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     ACTIVE_CONTEXT.with(|current| current.set(active));
     let vm = unsafe { &mut *vm_pointer };
     if let Some(root) = direct_target_root {
-        vm.heap.release_root(root);
+        vm.drop_root(root);
     }
     if DIAGNOSTICS {
         note_reference_call_site(
@@ -2716,7 +2716,7 @@ fn stitched_entry(
     let function = code.function_get(index)?;
     let constant = |at: usize| {
         let value = vm.programs.constant(program, at)?;
-        if vm.heap.v128(value).is_some() {
+        if vm.heap_reads().v128(value).is_some() {
             return None;
         }
         Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
@@ -2738,7 +2738,7 @@ fn stitched_entry(
     };
     let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
     let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
-    let vector_constant = |at: usize| vm.heap.v128(vm.programs.constant(program, at)?);
+    let vector_constant = |at: usize| vm.heap_reads().v128(vm.programs.constant(program, at)?);
     let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
     // A growth leaves the base in place only for a reserved (guarded) memory.
     let memory_stable = memory_slot.is_none_or(|slot| {
@@ -3509,7 +3509,7 @@ unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shap
     let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    u64::from(vm.heap.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
+    u64::from(vm.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
 }
 
 /// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
@@ -3742,7 +3742,7 @@ impl Vm {
         let length = self.dense_array_length(array)?;
         if length >= osr_loop::MAX_INDEXED_LENGTH || !self.prototypes_hold_no_index(array) { return None; }
         // A Number store logs nothing.
-        let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
+        let elements = self.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
         if elements.owner_count() != 1 { return None; }
         // A double backing keeps its kind (`ArrayElements::reserve_double`).
         let (before, room) = if elements.is_double() {
@@ -3755,7 +3755,7 @@ impl Vm {
             elements.reserve(1);
             (before, elements.capacity())
         };
-        self.heap.charge_payload_growth((room - before) * size_of::<Value>());
+        self.charge_payload_growth((room - before) * size_of::<Value>());
         (!self.collection_due()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
     }
 }
@@ -3818,7 +3818,7 @@ impl Vm {
     fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
         view: Option<&crate::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
-            .map(|(site, _)| site).collect(), self.heap.function_shapes());
+            .map(|(site, _)| site).collect(), self.heap_reads().function_shapes());
         // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
         let view = view.filter(|_| !crate::compiled::admission::stencil_regions());
         let sites = unit.instructions
@@ -4248,7 +4248,7 @@ impl JsStepDispatch {
         if self.vm == (vm as *const Vm).addr() && self.layout_seen == layout
             && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
-            && self.store_watch == vm.heap.store_watch_word()
+            && self.store_watch == vm.heap_reads().store_watch_word()
             && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
             && self.empty_object_proto == vm.realm_object_prototype(vm.realm.globals).to_bits()
             && self.empty_array_proto == vm.array_prototype_for_realm(vm.realm.globals).to_bits()
@@ -4266,28 +4266,28 @@ impl JsStepDispatch {
         // makes an object again, which captures the template anew (`capture_empty_object`).
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_layout, self.empty_object_payload) = (0, 0);
-        self.object_cursor = vm.heap.native_object_cursor();
+        self.object_cursor = vm.heap_reads().native_object_cursor();
         // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
-        self.array_cursor = vm.heap.native_array_cursor();
+        self.array_cursor = vm.heap_reads().native_array_cursor();
         self.object_record_base = vm.heap_reads().object_record_base().map_or(0, |base| base as usize);
-        self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
-        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
-        self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
-        self.ascii_unit_strings = vm.heap.ascii_unit_strings_base().map_or(0, |base| base as usize);
+        self.function_record_base = vm.heap_reads().function_record_base().map_or(0, |base| base as usize);
+        self.array_record_base = vm.heap_reads().array_record_base().map_or(0, |base| base as usize);
+        self.string_record_base = vm.heap_reads().string_record_base().map_or(0, |base| base as usize);
+        self.ascii_unit_strings = vm.heap_reads().ascii_unit_strings_base().map_or(0, |base| base as usize);
         let (directory, pages) = vm.heap_reads().typed_view_directory();
         (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
         self.buffer_relocations = quench_runtime::heap::buffer_relocations_address().addr();
         self.epoch = vm.heap_reads().collection_epoch();
-        let (blocks, count) = vm.heap.native_object_mark_blocks();
+        let (blocks, count) = vm.heap_reads().native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
-        let (blocks, count) = vm.heap.native_function_mark_blocks();
+        let (blocks, count) = vm.heap_reads().native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
-        let (blocks, count) = vm.heap.native_array_mark_blocks();
+        let (blocks, count) = vm.heap_reads().native_array_mark_blocks();
         (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
-        self.store_watch = vm.heap.store_watch_word();
+        self.store_watch = vm.heap_reads().store_watch_word();
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
@@ -5243,7 +5243,7 @@ impl Analysis<'_> {
 
     /// The slot a constant defines: a vector's, or its machine kind's (`constant_kind`).
     fn constant_slot(&self, value: Value) -> Slot {
-        if self.vm.heap.v128(value).is_some() {
+        if self.vm.heap_reads().v128(value).is_some() {
             Slot::Vector
         } else {
             Slot::Value(self.constant_kind(value))
@@ -5252,7 +5252,7 @@ impl Analysis<'_> {
 
     /// A vector constant's bits.
     fn constant_vector(&self, value: Value) -> Option<u128> {
-        self.vm.heap.v128(value).map(u128::from_le_bytes)
+        self.vm.heap_reads().v128(value).map(u128::from_le_bytes)
     }
 
     /// Check `register` names the function's memory for a vector access: the memory
@@ -5287,7 +5287,7 @@ impl Analysis<'_> {
 
     /// A shuffle's lane selectors: sixteen byte indices into its two operands.
     fn shuffle_lanes(&self, index: usize) -> Option<[u8; quench_runtime::wasm::V128_BYTES]> {
-        self.vm.heap.v128(self.constant(index)?)
+        self.vm.heap_reads().v128(self.constant(index)?)
     }
 
     fn constant_bits(&self, value: Value) -> i64 {
@@ -7583,7 +7583,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode; crate::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
-        self.heap.set_narrow_runs(mode == ExecutionMode::Interpreted);
+        self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -10161,11 +10161,11 @@ mod tests {
         let atom = vm.intern_atom("edgeValue");
         let shape = vm.heap_reads().object(receiver).unwrap().shape();
         let slot = vm.shape_slot(shape, atom).unwrap();
-        vm.heap.property_set(receiver, slot, Value::integer(2));
+        vm.store_property_slot(receiver, slot, Value::integer(2));
         assert!(published.lease().is_some());
-        vm.heap.property_set(receiver, slot, Value::number(0.5));
+        vm.store_property_slot(receiver, slot, Value::number(0.5));
         assert!(published.lease().is_none(), "widening retires future entry at the write");
-        assert_eq!(vm.heap.property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
         assert!(weak.upgrade().is_none());
@@ -10251,8 +10251,8 @@ mod tests {
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
-            assert_eq!(vm.heap.property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
-            vm.heap.property_set(receiver, slot, Value::number(0.5));
+            assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
+            vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.heap.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
             assert_eq!(vm.heap.unrepresented_slots(), 0);

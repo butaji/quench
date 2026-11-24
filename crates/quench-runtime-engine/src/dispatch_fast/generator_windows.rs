@@ -372,7 +372,7 @@ pub(crate) fn open_window_locals(vm: &mut Vm, frame: *mut FrameRecord, locals: W
     // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
     let frame = unsafe { &mut *frame };
     if locals.own_slots.is_some() {
-        vm.heap.remember_cell(frame.env);
+        vm.write_barrier(frame.env);
     }
     frame.open_environment_window(locals.captured, locals.own_slots);
 }

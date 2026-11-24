@@ -299,7 +299,7 @@ impl Vm {
     /// The exact shape of `holder`, an object whose own native functions code calls inline,
     /// made a watched prototype so that a write to one of its values retires that code.
     fn native_holder(&mut self, holder: Value) -> Option<u32> {
-        self.heap.mark_prototype(holder);
+        self.mark_prototype(holder);
         Some(self.object_data(holder)?.shape())
     }
 }
