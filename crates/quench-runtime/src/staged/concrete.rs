@@ -32,9 +32,14 @@ impl Concrete {
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut T).write_unaligned(value) }
     }
 
+    /// `storing` over the running VM's heap.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn storing_in(vm: &crate::vm::Vm) -> Self { Self::storing(&raw const vm.heap) }
+
     /// The stage of stores into `heap`'s objects.
     #[inline(always)]
-    pub fn storing(heap: *const crate::heap::Heap) -> Self {
+    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
         // SAFETY: the caller's heap is live.
         Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
     }

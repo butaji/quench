@@ -53,7 +53,7 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
             }
             LeafRead::Private { base, site, environment, .. } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
                 let answer = vm.site_private_field_entry(site, environment)?;
-                let receiver = vm.heap.object_record(object)?;
+                let receiver = vm.heap_reads().object_record(object)?;
                 (answer.receiver == receiver.exact_shape()).then_some(AccessorForward::Field(answer))
             }
             _ => None,
@@ -125,7 +125,7 @@ pub(crate) fn lane_read_getter(
     let reads = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
     // A native getter is answered or called in place; a script getter's target, resolved
     // once, is answered by its read or activated.
-    if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.heap.function(getter) {
+    if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.function_record(getter) {
         let native = *native;
         if reads {
             if let Some(value) = unsafe { vm(cx) }.pure_native_getter_value(getter, base) {

@@ -214,15 +214,15 @@ const fn string_leaf(native: Native) -> bool {
 fn primitive_leaf_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: Value,
     args: &[Value]) -> Option<Value> {
     // Immediates, strings and BigInts: values whose conversions run no guest code.
-    let primitive = |value: Value| !value.is_heap() || vm.heap.is_string(value) || matches!(vm.heap.get(value), Some(Cell::BigInt(_)));
+    let primitive = |value: Value| !value.is_heap() || vm.heap_reads().is_string(value) || matches!(vm.heap_reads().get(value), Some(Cell::BigInt(_)));
     if !primitive(receiver) || !args.iter().all(|argument| primitive(*argument))
-        || (string_leaf(native) && !vm.heap.is_string(receiver))
+        || (string_leaf(native) && !vm.heap_reads().is_string(receiver))
     {
         return None;
     }
     let result = vm.call_primitive_native(code, native, receiver, args).ok();
     // A string method reads its receiver as text, which it may make on demand.
-    vm.heap.charge_materialized_text();
+    vm.charge_materialized_text();
     result
 }
 
@@ -291,7 +291,7 @@ fn object_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: V
             let listed = vm.plain_enumerable_own_properties(argument, kind);
             vm.fast_declined(native, listed)
         }
-        Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
+        Native::ReflectGetPrototypeOf => Some(vm.heap_reads().ordinary_object(*args.first()?)?.proto()),
         Native::ObjectGetPrototypeOf => {
             let prototype = vm.plain_object_get_prototype_of(args);
             vm.fast_declined(native, prototype)
@@ -299,7 +299,7 @@ fn object_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: V
 
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
-        Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>
+        Native::SymbolFor if args.first().is_some_and(|key| vm.heap_reads().is_string(*key)) =>
             vm.call_symbol_native(code, Native::SymbolFor, args).ok(),
         _ => None,
     }
@@ -310,8 +310,8 @@ fn object_value(vm: &mut Vm, code: &ResidualProgram, native: Native, receiver: V
 /// keyed read. An accessor is a present property, whose getter only `get` calls.
 fn reflect_value(vm: &mut Vm, native: Native, args: &[Value]) -> Option<Value> {
     let (target, key) = (*args.first()?, *args.get(1)?);
-    if native == Native::ReflectGet && !vm.heap.is_string(key) {
-        vm.heap.ordinary_object(target)?;
+    if native == Native::ReflectGet && !vm.heap_reads().is_string(key) {
+        vm.heap_reads().ordinary_object(target)?;
         return vm.plain_keyed_get(target, key);
     }
     match (native, vm.reflect_chain_read(target, key)?) {
@@ -329,7 +329,7 @@ fn reflect_value(vm: &mut Vm, native: Native, args: &[Value]) -> Option<Value> {
 /// target, and a primitive, which the tag reads through its wrapper, take the native.
 fn object_to_string_in_place(vm: &mut Vm, code: &ResidualProgram, receiver: Value) -> Option<Value> {
     if receiver.is_heap() {
-        if matches!(vm.heap.get(receiver), Some(Cell::Proxy { .. })) || !vm.is_object_like(receiver) {
+        if matches!(vm.heap_reads().get(receiver), Some(Cell::Proxy { .. })) || !vm.is_object_like(receiver) {
             return None;
         }
         let tag = vm.well_known_symbols.get(quench_runtime::vm::WellKnownSymbol::ToStringTag)?;
@@ -420,12 +420,12 @@ fn internal_slot_value(vm: &mut Vm, native: Native, callee: Value, receiver: Val
         Native::MapValues => IteratorKind::MapValues,
         Native::MapEntries => IteratorKind::MapEntries,
         Native::IteratorClose => return vm.iterator_close_in_place(receiver),
-        Native::StringToString | Native::StringValueOf => return vm.heap.is_string(receiver).then_some(receiver),
+        Native::StringToString | Native::StringValueOf => return vm.heap_reads().is_string(receiver).then_some(receiver),
         Native::FunctionToString => return vm.is_function(receiver).then(|| vm.function_source_value(receiver)).flatten(),
         Native::RegExpLegacyGetter => return vm.regexp_legacy_getter_in_place(callee, receiver),
         _ => return None,
     };
-    vm.heap.is_map(receiver).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
+    vm.heap_reads().is_map(receiver).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
 }
 
 /// A dense array's `splice`, `unshift`, `shift` and `lastIndexOf`, and the array-building and
@@ -461,9 +461,9 @@ fn primitive_value(vm: &mut Vm, native: Native, receiver: Value, args: &[Value])
     match native {
         Native::StringFromCharCode => vm.from_char_code_numbers(args),
         Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
-        Native::String if vm.heap.string(argument).is_some() => Some(argument),
+        Native::String if vm.heap_reads().string(argument).is_some() => Some(argument),
         Native::String if let Some(number) = argument.as_number() => Some(decimal_text(vm, number)),
-        Native::String if !args.is_empty() => Some(vm.heap.alloc_string(quench_runtime::vm::coercion::immediate_to_string(argument)?)),
+        Native::String if !args.is_empty() => Some(vm.allocate_string(quench_runtime::vm::coercion::immediate_to_string(argument)?)),
         Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
         Native::NumberString if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(DECIMAL)) =>
             Some(decimal_text(vm, receiver.as_number()?)),
@@ -487,7 +487,7 @@ fn default_locale_compare(vm: &Vm, receiver: Value, args: &[Value]) -> Option<Va
         return None;
     }
     let collation = vm.default_collation.as_ref()?;
-    let (left, right) = (vm.heap.string(receiver)?, vm.heap.string(*other)?);
+    let (left, right) = (vm.heap_reads().string(receiver)?, vm.heap_reads().string(*other)?);
     Some(Value::number(collation.compare(left.host_string(), right.host_string())))
 }
 
@@ -500,9 +500,9 @@ const DECIMAL: f64 = 10.0;
 fn decimal_text(vm: &mut Vm, number: f64) -> Value {
     if (0.0..DECIMAL).contains(&number) && number.fract() == 0.0 {
         let digit = [b'0' + number as u8];
-        return vm.heap.alloc_unit_run(quench_runtime::vm::wtf16::Units::Ascii(&digit[..]));
+        return vm.allocate_unit_run(quench_runtime::vm::wtf16::Units::Ascii(&digit[..]));
     }
-    vm.heap.alloc_string(quench_runtime::vm::wtf16::JsString::from_number(number))
+    vm.allocate_string(quench_runtime::vm::wtf16::JsString::from_number(number))
 }
 
 #[cfg(test)]

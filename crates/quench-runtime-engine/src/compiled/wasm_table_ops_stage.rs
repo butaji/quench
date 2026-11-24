@@ -23,7 +23,7 @@ const WORD: u32 = size_of::<u64>() as u32;
 /// The environment slot of a binding word `slot` names, or the undefined value when the
 /// environment holds no binding there (which the analysis never admits).
 fn bound(vm: &Vm, environment: super::Value, slot: u64) -> super::Value {
-    vm.heap
+    vm.heap_reads()
         .environment_slot(environment, slot as usize)
         .unwrap_or(super::Value::UNDEFINED)
 }

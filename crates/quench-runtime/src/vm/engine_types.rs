@@ -4407,7 +4407,7 @@ impl LaneStack {
     ) -> Option<ParameterHome> {
         let (body, entries) = self.window_at(code, heap.object(object)?.window_depth()?)?;
         // SAFETY: an environment activation's window holds a local for each slot the function binds.
-        let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(heap);
+        let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(crate::vm::tier_queries::HeapReads::of(heap));
         (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })
     }
 
@@ -5271,7 +5271,7 @@ impl ParameterHome {
 
     /// The parameter's binding as it stands, `DELETED` for one not initialized.
     #[inline]
-    pub fn read(self, heap: &crate::heap::Heap) -> Value {
+    pub fn read(self, heap: crate::vm::tier_queries::HeapReads<'_>) -> Value {
         match self {
             // SAFETY: a local of a live window.
             Self::Local(binding) => unsafe { *binding },

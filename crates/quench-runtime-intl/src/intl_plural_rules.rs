@@ -53,8 +53,7 @@ impl Vm {
         let constructor = self.native_with_realm(Native::IntlPluralRules, global, global);
         self.set_builtin_function_name(constructor, "PluralRules")?;
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_plural_rules_prototypes
@@ -95,7 +94,7 @@ impl Vm {
                     .unwrap_or_else(|| DEFAULT_PLURAL_RULES_LOCALE.into());
                 let options = vm.plural_rules_options(p, args.get(1).copied())?;
 
-                let instance = vm.heap.alloc_object(Self::empty_object(prototype));
+                let instance = vm.allocate_object(Self::empty_object(prototype));
                 vm.set_hidden_string(instance, PLURAL_RULES_LOCALE_SLOT, &locale)?;
                 vm.set_hidden_string(instance, PLURAL_RULES_TYPE_SLOT, &options.rule_type)?;
                 vm.set_hidden_string(instance, PLURAL_RULES_NOTATION_SLOT, &options.notation)?;
@@ -163,8 +162,7 @@ impl Vm {
     ) -> Result<PluralRulesOptions, JsError> {
         let options = match options.filter(|value| !value.is_undefined()) {
             None => self
-                .heap
-                .alloc_object(Self::empty_object(Value::NULL)),
+                .allocate_object(Self::empty_object(Value::NULL)),
             Some(value) if value.is_null() => {
                 return Err(self.type_error(p, "options must not be null".into()));
             }
@@ -415,7 +413,7 @@ impl Vm {
             quench_intl::plural_category_decimal(&locale, &rule_type, &number)
         }
         .unwrap_or("other");
-        Ok(self.heap.alloc_string(category.into()))
+        Ok(self.allocate_string(category.into()))
     }
 
     fn plural_rules_select_range(
@@ -440,7 +438,7 @@ impl Vm {
         let category =
             quench_intl::plural_category_range_decimal(&locale, &rule_type, &start, &end)
                 .unwrap_or("other");
-        Ok(self.heap.alloc_string(category.into()))
+        Ok(self.allocate_string(category.into()))
     }
 
     fn round_plural_rules_number(&self, this: Value, number: f64) -> String {
@@ -540,14 +538,13 @@ impl Vm {
             DEFAULT_MAXIMUM_FRACTION_DIGITS,
         );
         let result = self
-            .heap
-            .alloc_object(Self::empty_object(self.object_proto));
+            .allocate_object(Self::empty_object(self.object_proto));
         for (key, value) in [
             ("locale", locale.clone()),
             ("type", rule_type.clone()),
             ("notation", notation.clone()),
         ] {
-            let value = self.heap.alloc_string(value.into());
+            let value = self.allocate_string(value.into());
             self.set_plural_result_property(result, key, value)?;
         }
         for (key, value) in [
@@ -577,9 +574,9 @@ impl Vm {
         let categories = quench_intl::plural_categories(&locale, &rule_type)
             .unwrap_or_else(|| vec!["other"])
             .into_iter()
-            .map(|category| self.heap.alloc_string(category.into()))
+            .map(|category| self.allocate_string(category.into()))
             .collect::<Vec<_>>();
-        let categories = self.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+        let categories = self.allocate_array(quench_runtime::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 categories,
             ));
@@ -613,14 +610,14 @@ impl Vm {
             let value = self
                 .hidden_string(this, slot)
                 .unwrap_or_else(|| default.into());
-            let value = self.heap.alloc_string(value.into());
+            let value = self.allocate_string(value.into());
             self.set_plural_result_property(result, key, value)?;
         }
         if notation == "compact" {
             let display = self
                 .hidden_string(this, PLURAL_RULES_COMPACT_DISPLAY_SLOT)
                 .unwrap_or_else(|| "short".into());
-            let display = self.heap.alloc_string(display.into());
+            let display = self.allocate_string(display.into());
             self.set_plural_result_property(result, "compactDisplay", display)?;
         }
         Ok(result)

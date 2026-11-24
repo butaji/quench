@@ -17,8 +17,7 @@ impl Vm {
         let constructor = self.native_with_realm(Native::IntlRelativeTimeFormat, global, global);
         self.set_builtin_function_name(constructor, "RelativeTimeFormat")?;
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_relative_time_format_prototypes
@@ -111,7 +110,7 @@ impl Vm {
             .ok_or_else(|| self.range_error(p, "invalid unit".into()))?;
         let parts = relative_time_parts(value, unit, &style, &numeric, &locale, &numbering_system);
         match native {
-            Native::IntlRelativeTimeFormatFormat => Ok(self.heap.alloc_string(
+            Native::IntlRelativeTimeFormatFormat => Ok(self.allocate_string(
                 parts
                     .into_iter()
                     .map(|part| part.value)
@@ -123,18 +122,18 @@ impl Vm {
                     .into_iter()
                     .map(|part| {
                         let object = self.object();
-                        let part_type = self.heap.alloc_string(part.kind.into());
+                        let part_type = self.allocate_string(part.kind.into());
                         self.set_named(p, object, "type", part_type)?;
-                        let part_value = self.heap.alloc_string(part.value.into());
+                        let part_value = self.allocate_string(part.value.into());
                         self.set_named(p, object, "value", part_value)?;
                         if part.unit {
-                            let part_unit = self.heap.alloc_string(unit.into());
+                            let part_unit = self.allocate_string(unit.into());
                             self.set_named(p, object, "unit", part_unit)?;
                         }
                         Ok(object)
                     })
                     .collect::<Result<Vec<_>, JsError>>()?;
-                Ok(self.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+                Ok(self.allocate_array(quench_runtime::heap::ArrayObject::new(
                         Self::empty_object(self.array_proto),
                         values,
                     )))
@@ -160,7 +159,7 @@ impl Vm {
                         return Err(vm.type_error(p, "options must not be null".into()));
                     }
                     Some(value) => vm.box_object(value)?,
-                    None => vm.heap.alloc_object(Self::empty_object(Value::NULL)),
+                    None => vm.allocate_object(Self::empty_object(Value::NULL)),
                 };
                 vm.with_call_roots([options], |vm| {
                     let locale_matcher = vm.string_option(
@@ -209,7 +208,7 @@ impl Vm {
                     let numeric =
                         vm.string_option(p, options, "numeric", "always", &["always", "auto"])?;
 
-                    let instance = vm.heap.alloc_object(Self::empty_object(prototype));
+                    let instance = vm.allocate_object(Self::empty_object(prototype));
                     vm.set_hidden_string(instance, RELATIVE_LOCALE_SLOT, &locale)?;
                     vm.set_hidden_string(instance, RELATIVE_STYLE_SLOT, &style)?;
                     vm.set_hidden_string(instance, RELATIVE_NUMERIC_SLOT, &numeric)?;
@@ -243,7 +242,7 @@ impl Vm {
             let value = self
                 .hidden_string(this, slot)
                 .unwrap_or_else(|| locale.clone());
-            let value = self.heap.alloc_string(value.into());
+            let value = self.allocate_string(value.into());
             self.set_named(p, result, property, value)?;
         }
         Ok(result)

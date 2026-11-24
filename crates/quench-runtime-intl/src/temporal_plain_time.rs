@@ -121,7 +121,7 @@ impl Vm {
         }
         self.set_builtin_named(p, prototype, "valueOf", Native::TemporalPlainTimeValueOf)?;
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let value = self.heap.alloc_string("Temporal.PlainTime".into());
+            let value = self.allocate_string("Temporal.PlainTime".into());
             self.set_symbol_property(prototype, symbol, value)?;
             self.set_property_attributes(
                 prototype,
@@ -353,7 +353,7 @@ impl Vm {
     }
 
     pub(super) fn temporal_plain_time_object(&mut self, time: [i32; 6]) -> Result<Value, JsError> {
-        let object = self.heap.alloc_object(Self::empty_object(
+        let object = self.allocate_object(Self::empty_object(
             self.temporal_plain_time_proto,
         ));
         for (name, value) in PLAIN_TIME_FIELDS.into_iter().zip(time) {
@@ -634,8 +634,7 @@ impl Vm {
             }
         };
         Ok(self
-            .heap
-            .alloc_string(format!("{time}{fraction}").into()))
+            .allocate_string(format!("{time}{fraction}").into()))
     }
 
     fn temporal_plain_time_with(
@@ -646,7 +645,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let fields = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(fields)
-            || self.heap.array(fields).is_some()
+            || self.heap_reads().array(fields).is_some()
             || self.is_temporal_object(fields)
         {
             return Err(self.type_error(p, "Invalid time-like object".into()));
@@ -716,7 +715,7 @@ impl Vm {
     fn is_temporal_object(&self, value: Value) -> bool {
         self.temporal_plain_time_has_brand(value)
             || matches!(
-                self.heap.get(value),
+                self.heap_reads().get(value),
                 Some(
                     Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }

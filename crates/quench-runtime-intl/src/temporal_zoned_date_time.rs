@@ -286,8 +286,7 @@ impl Vm {
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let tag = self
-                .heap
-                .alloc_string("Temporal.ZonedDateTime".into());
+                .allocate_string("Temporal.ZonedDateTime".into());
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -312,8 +311,8 @@ impl Vm {
         new_target: Value,
     ) -> Result<Value, JsError> {
         let epoch = match args.first().copied().unwrap_or(Value::UNDEFINED) {
-            value if matches!(self.heap.get(value), Some(Cell::BigInt(_))) => {
-                let Some(Cell::BigInt(text)) = self.heap.get(value) else {
+            value if matches!(self.heap_reads().get(value), Some(Cell::BigInt(_))) => {
+                let Some(Cell::BigInt(text)) = self.heap_reads().get(value) else {
                     unreachable!()
                 };
                 i128::try_from(&text.to_num())
@@ -336,7 +335,7 @@ impl Vm {
         let calendar_value = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let calendar = if calendar_value.is_undefined() {
             "iso8601".to_owned()
-        } else if self.heap.is_string(calendar_value) {
+        } else if self.heap_reads().is_string(calendar_value) {
             let text = self.to_string(p, calendar_value)?;
             crate::temporal_date_parse::parse_calendar_identifier_name(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -349,7 +348,7 @@ impl Vm {
         } else {
             self.object_proto
         };
-        Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
+        Ok(self.allocate_cell(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
             instant: Box::new(quench_runtime::heap::ZonedInstant {
                 epoch_nanoseconds: epoch,
@@ -364,10 +363,10 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(value) {
+        if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap_reads().get(value) {
             return Ok(instant.time_zone.clone());
         }
-        let Some(_) = self.heap.string(value) else {
+        let Some(_) = self.heap_reads().string(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
         };
         let text = self.to_string(p, value)?;
@@ -457,7 +456,7 @@ impl Vm {
         if native == Native::TemporalZonedDateTimeEquals {
             let Some(Cell::TemporalZonedDateTime {
                 instant, calendar, ..
-            }) = self.heap.get(this)
+            }) = self.heap_reads().get(this)
             else {
                 return Err(self.type_error(
                     p,
@@ -497,7 +496,7 @@ impl Vm {
         if native == Native::TemporalZonedDateTimeWithTimeZone {
             let Some(Cell::TemporalZonedDateTime {
                 instant, calendar, ..
-            }) = self.heap.get(this)
+            }) = self.heap_reads().get(this)
             else {
                 return Err(self.type_error(
                     p,
@@ -549,7 +548,7 @@ impl Vm {
         ) {
             let Some(Cell::TemporalZonedDateTime {
                 instant, calendar, ..
-            }) = self.heap.get(this)
+            }) = self.heap_reads().get(this)
             else {
                 return Err(self.type_error(
                     p,
@@ -591,13 +590,13 @@ impl Vm {
                 Value::number(f64::from(fields[6])),
                 Value::number(f64::from(fields[7])),
                 Value::number(f64::from(fields[8])),
-                self.heap.alloc_string(calendar.into()),
+                self.allocate_string(calendar.into()),
             ];
             return self.temporal_plain_date_time_construct(p, &args, constructor);
         }
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -611,7 +610,7 @@ impl Vm {
         );
         match native {
             Native::TemporalZonedDateTimeEpochNanosecondsGetter => {
-                Ok(self.heap.alloc(Cell::bigint(epoch.into())))
+                Ok(self.allocate_cell(Cell::bigint(epoch.into())))
             }
             Native::TemporalZonedDateTimeEpochMillisecondsGetter => Ok(Value::number(
                 epoch.div_euclid(i128::from(NANOSECONDS_PER_MILLISECOND)) as f64,
@@ -636,17 +635,16 @@ impl Vm {
                     .ok_or_else(|| self.range_error(p, "Invalid time-zone offset".into()))?;
                 if native == Native::TemporalZonedDateTimeOffsetGetter {
                     Ok(self
-                        .heap
-                        .alloc_string(format_offset_nanoseconds(offset).into()))
+                        .allocate_string(format_offset_nanoseconds(offset).into()))
                 } else {
                     Ok(Value::number(offset as f64))
                 }
             }
             Native::TemporalZonedDateTimeTimeZoneIdGetter => {
-                Ok(self.heap.alloc_string(zone.into()))
+                Ok(self.allocate_string(zone.into()))
             }
             Native::TemporalZonedDateTimeCalendarIdGetter => {
-                Ok(self.heap.alloc_string(calendar.into()))
+                Ok(self.allocate_string(calendar.into()))
             }
             _ => {
                 let fields = zoned_date_time_fields(epoch, &zone)
@@ -658,7 +656,7 @@ impl Vm {
                     &calendar,
                 );
                 if native == Native::TemporalZonedDateTimeMonthCodeGetter {
-                    return Ok(self.heap.alloc_string(
+                    return Ok(self.allocate_string(
                         calendar_fields
                             .map_or_else(
                                 || format!("M{:0width$}", fields[1], width = ISO_MONTH_DIGITS),
@@ -689,7 +687,7 @@ impl Vm {
                             Native::TemporalZonedDateTimeEraGetter => calendar_fields
                                 .and_then(|fields| fields.era)
                                 .map_or(Value::UNDEFINED, |era| {
-                                    self.heap.alloc_string(era.into())
+                                    self.allocate_string(era.into())
                                 }),
                             _ => calendar_fields
                                 .and_then(|fields| fields.era_year)
@@ -792,7 +790,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -823,7 +821,7 @@ impl Vm {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap.alloc_string(calendar.clone().into()),
+            self.allocate_string(calendar.clone().into()),
         ];
         let local_date_time =
             self.temporal_plain_date_time_construct(p, &date_time_args, date_time_constructor)?;
@@ -838,7 +836,7 @@ impl Vm {
         let internal_options = self.object();
         let overflow_key = self.intern_atom("overflow");
         let overflow = if constrain { "constrain" } else { "reject" };
-        let overflow = self.heap.alloc_string(overflow.into());
+        let overflow = self.allocate_string(overflow.into());
         self.set_property(internal_options, overflow_key, overflow)?;
         let local_date_time = self.temporal_plain_date_time_arithmetic(
             p,
@@ -882,7 +880,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -896,10 +894,10 @@ impl Vm {
             .first()
             .copied()
             .ok_or_else(|| self.type_error(p, "Missing options".into()))?;
-        if self.heap.is_symbol(options) {
+        if self.heap_reads().is_symbol(options) {
             return Err(self.type_error(p, "Invalid options".into()));
         }
-        let direction = if let Some(value) = self.heap.string(options) {
+        let direction = if let Some(value) = self.heap_reads().string(options) {
             value.to_string()
         } else {
             if !self.is_object_like(options) {
@@ -907,7 +905,7 @@ impl Vm {
             }
             let direction_atom = self.intern_atom("direction");
             let direction = self.get_property(p, options, direction_atom)?;
-            if self.heap.is_symbol(direction) {
+            if self.heap_reads().is_symbol(direction) {
                 return Err(self.type_error(p, "Invalid direction".into()));
             }
             self.to_string(p, direction)?
@@ -941,7 +939,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -983,7 +981,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -997,11 +995,11 @@ impl Vm {
             .first()
             .copied()
             .ok_or_else(|| self.type_error(p, "Missing rounding options".into()))?;
-        if options.is_null() || self.heap.is_symbol(options) {
+        if options.is_null() || self.heap_reads().is_symbol(options) {
             return Err(self.type_error(p, "Invalid rounding options".into()));
         }
         let (smallest_unit, increment, rounding_mode) =
-            if let Some(value) = self.heap.string(options) {
+            if let Some(value) = self.heap_reads().string(options) {
                 (
                     value.to_string(),
                     MIN_ROUNDING_INCREMENT,
@@ -1084,7 +1082,7 @@ impl Vm {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(this) else {
+        let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap_reads().get(this) else {
             return Err(self.type_error(
                 p,
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
@@ -1093,8 +1091,8 @@ impl Vm {
         let record_epoch = instant.epoch_nanoseconds;
         let record_time_zone = instant.time_zone.clone();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let calendar = match self.heap.get(calendar_like) {
-            _ if self.heap.is_string(calendar_like)  => {
+        let calendar = match self.heap_reads().get(calendar_like) {
+            _ if self.heap_reads().is_string(calendar_like)  => {
                 let text = self.to_string(p, calendar_like)?;
                 crate::temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -1129,7 +1127,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -1146,7 +1144,7 @@ impl Vm {
             round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
                 .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?
         } else {
-            if self.heap.is_symbol(argument) {
+            if self.heap_reads().is_symbol(argument) {
                 return Err(self.type_error(p, "Invalid time".into()));
             }
             if !self.is_string(argument) && !self.is_object_like(argument) {
@@ -1172,7 +1170,7 @@ impl Vm {
                 time_zone.clone(),
                 "compatible",
             )?;
-            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(resolved) else {
+            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap_reads().get(resolved) else {
                 return Err(self.type_error(p, "Invalid ZonedDateTime".into()));
             };
             instant.epoch_nanoseconds
@@ -1209,7 +1207,7 @@ impl Vm {
 
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -1223,14 +1221,14 @@ impl Vm {
         );
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
         let is_plain_time = self
-            .heap
+            .heap_reads()
             .object_record(partial)
             .is_some_and(|object| object.proto() == self.temporal_plain_time_proto);
         if !self.is_object_like(partial)
-            || self.heap.array(partial).is_some()
+            || self.heap_reads().array(partial).is_some()
             || is_plain_time
             || matches!(
-                self.heap.get(partial),
+                self.heap_reads().get(partial),
                 Some(
                     Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
@@ -1276,8 +1274,8 @@ impl Vm {
                 FieldValue::Undefined
             } else if matches!(name, "monthCode" | "offset" | "era") {
                 if name == "offset"
-                    && !self.heap.is_string(value)
-                    && self.heap.object_record(value).is_none()
+                    && !self.heap_reads().is_string(value)
+                    && self.heap_reads().object_record(value).is_none()
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
                 }
@@ -1338,7 +1336,7 @@ impl Vm {
             microsecond,
             nanosecond,
         ] = fields;
-        let base_date = self.heap.alloc(Cell::TemporalPlainDate {
+        let base_date = self.allocate_cell(Cell::TemporalPlainDate {
             object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
             year,
             month: month as u32,
@@ -1357,7 +1355,7 @@ impl Vm {
                 let value = match value {
                     FieldValue::Number(value) => Value::number(*value),
                     FieldValue::String(value) => {
-                        self.heap.alloc_string(value.clone().into())
+                        self.allocate_string(value.clone().into())
                     }
                     FieldValue::Undefined => Value::UNDEFINED,
                 };
@@ -1367,7 +1365,7 @@ impl Vm {
         }
         let internal_options = self.object();
         let overflow_key = self.intern_atom("overflow");
-        let overflow_value = self.heap.alloc_string(overflow.clone().into());
+        let overflow_value = self.allocate_string(overflow.clone().into());
         self.set_property(internal_options, overflow_key, overflow_value)?;
         let date = if has_date_change {
             self.temporal_plain_date_with(p, base_date, &[changes, internal_options])?
@@ -1463,7 +1461,7 @@ impl Vm {
             instant,
             calendar: left_calendar,
             ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -1552,7 +1550,7 @@ impl Vm {
             ("roundingMode", options.rounding_mode.as_str()),
         ] {
             let atom = self.intern_atom(name);
-            let value = self.heap.alloc_string(value.into());
+            let value = self.allocate_string(value.into());
             self.set_property(internal_options, atom, value)?;
         }
         let increment_atom = self.intern_atom("roundingIncrement");
@@ -1836,8 +1834,7 @@ impl Vm {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap
-                .alloc_string(value.calendar.clone().into()),
+            self.allocate_string(value.calendar.clone().into()),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -1896,7 +1893,7 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
-        if self.heap.is_string(value) {
+        if self.heap_reads().is_string(value) {
             let text = self.to_string(p, value)?;
             crate::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
             let parsed = parse_zoned_date_time_string(&text)
@@ -1913,10 +1910,10 @@ impl Vm {
         value: Value,
         options: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
-        if self.heap.object_record(value).is_some() || self.heap.is_function_value(value) {
+        if self.heap_reads().object_record(value).is_some() || self.heap_reads().is_function_value(value) {
             return self.temporal_zoned_date_time_property_bag(p, value, options);
         }
-        match self.heap.get(value).cloned() {
+        match self.heap_reads().get(value).cloned() {
             Some(Cell::TemporalZonedDateTime {
                 instant, calendar, ..
             }) => {
@@ -1927,7 +1924,7 @@ impl Vm {
                     calendar: *calendar,
                 })
             }
-            _ if self.heap.is_string(value)  => {
+            _ if self.heap_reads().is_string(value)  => {
                 let text = self.to_string(p, value)?;
                 crate::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
                 let parsed = parse_zoned_date_time_string(&text)
@@ -2005,7 +2002,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
             instant, calendar, ..
-        }) = self.heap.get(this)
+        }) = self.heap_reads().get(this)
         else {
             return Err(self.type_error(
                 p,
@@ -2054,7 +2051,7 @@ impl Vm {
             fields[1],
             fields[2],
         );
-        Ok(self.heap.alloc_string(result.into()))
+        Ok(self.allocate_string(result.into()))
     }
 
     fn temporal_zoned_date_time_string_options(
@@ -2168,9 +2165,9 @@ impl Vm {
     ) -> Result<ZonedDateTimeRecord, JsError> {
         let calendar_atom = self.intern_atom("calendar");
         let calendar_value = self.get_property(p, value, calendar_atom)?;
-        let calendar = match self.heap.get(calendar_value) {
+        let calendar = match self.heap_reads().get(calendar_value) {
             None if calendar_value.is_undefined() => "iso8601".to_owned(),
-            _ if let Some(value) = self.heap.string(calendar_value)  => {
+            _ if let Some(value) = self.heap_reads().string(calendar_value)  => {
                 crate::temporal_date_parse::calendar_identifier_from_string(value.host_string())
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
@@ -2195,7 +2192,7 @@ impl Vm {
         let offset = if offset_value.is_undefined() {
             None
         } else {
-            if !self.heap.is_string(offset_value)
+            if !self.heap_reads().is_string(offset_value)
                 && !self.is_object_like(offset_value)
             {
                 return Err(self.type_error(p, "Invalid offset".into()));
@@ -2316,7 +2313,7 @@ impl Vm {
         } else {
             self.object_proto
         };
-        Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
+        Ok(self.allocate_cell(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
             instant: Box::new(quench_runtime::heap::ZonedInstant {
                 epoch_nanoseconds: record.epoch_nanoseconds,
