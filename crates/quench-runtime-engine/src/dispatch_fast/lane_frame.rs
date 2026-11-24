@@ -3057,7 +3057,7 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     None
 }
 
-sharded_handler! { lane_handler, row_jump_shards, row_jump_handler;
+sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
@@ -3297,14 +3297,17 @@ const fn accumulator_readable(op: Op, acc: u8) -> bool {
     acc == ACC_PAIR && matches!(op.immediate_layout(), ImmediateLayout::RegisterPair)
 }
 
-/// The shard module of `generated_row!(OP, ACC, FLAG)`'s body (`generated_rows_*`).
+/// The shard module of `generated_row!(OP, ACC, FLAG)`'s body (`generated_rows_*`): 16 to 19 for a numeric row
+/// (`numeric_row`), so an edit to the Number step recompiles only those units (its 75 rows were in all 16 beside
+/// 1,224 others); every other row keeps its module, so its unit's inlining stays as it was.
 const fn generated_row_shard(op: u16, acc: u8, flag: u8) -> usize {
-    (op as usize * 7 + flag as usize * 3 + acc as usize) % 16
+    let hash = op as usize * 7 + flag as usize * 3 + acc as usize;
+    if crate::dispatch_fast::numeric_row(&[op]) { 16 + hash % 4 } else { hash % 16 }
 }
 
 /// The lane handler of opcode `OP`'s staged row at accumulator field `ACC` and site fact `FLAG`
 /// (`generated_row!`, `generated_row.rs`). Its instances are many and large, and rustc keeps all
-/// instances of one function in its module's codegen unit, so the body lives in 16 shard modules.
+/// instances of one function in its module's codegen unit, so the body lives in 20 shard modules.
 /// Only constant evaluation may call this (`generated_row!`): a compiled call would name every shard's instance.
 pub(crate) const fn generated_row_handler<const OP: u16, const ACC: u8, const FLAG: u8>() -> Handler {
     match generated_row_shard(OP, ACC, FLAG) {
@@ -3323,7 +3326,11 @@ pub(crate) const fn generated_row_handler<const OP: u16, const ACC: u8, const FL
         12 => generated_rows_12::generated_row::<OP, ACC, FLAG>,
         13 => generated_rows_13::generated_row::<OP, ACC, FLAG>,
         14 => generated_rows_14::generated_row::<OP, ACC, FLAG>,
-        _ => generated_rows_15::generated_row::<OP, ACC, FLAG>,
+        15 => generated_rows_15::generated_row::<OP, ACC, FLAG>,
+        16 => generated_rows_16::generated_row::<OP, ACC, FLAG>,
+        17 => generated_rows_17::generated_row::<OP, ACC, FLAG>,
+        18 => generated_rows_18::generated_row::<OP, ACC, FLAG>,
+        _ => generated_rows_19::generated_row::<OP, ACC, FLAG>,
     }
 }
 
@@ -3411,7 +3418,7 @@ pub(crate) const fn protocol_handler<const OP: u16, const ACC: u8, const MISS: u
     }
 }
 
-sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler;
+sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP];
     /// The lane handler of a protocol record (a call, a construction, a return, an iterator or
     /// generator step, a frame or tier protocol record), generated from its staged row as
     /// `generated_row` is but with no site plan: the record decodes by its opcode's decoder, the row
@@ -3619,7 +3626,7 @@ pub(crate) fn getter_frame(cx: *mut LaneContext, r: Registers, ip: Ip, target: &
     frame
 }
 
-sharded_handler! { script_handler, returning_row_shards, returning_row_handler;
+sharded_handler! { script_handler, returning_row_shards, returning_row_handler, [OP];
     /// The lane handler of a returning record of opcode `OP` at leaf form `LEAF`, whose RETURN
     /// parameter is `MISS` (`protocol_misses::returning_code`). It is generated from its staged row as
     /// `protocol_row` is, but its value completes the activation (`lane_return_value!`) instead of
@@ -4291,6 +4298,22 @@ mod generated_rows_14 {
     include!("generated_row.rs");
 }
 mod generated_rows_15 {
+    use super::*;
+    include!("generated_row.rs");
+}
+mod generated_rows_16 {
+    use super::*;
+    include!("generated_row.rs");
+}
+mod generated_rows_17 {
+    use super::*;
+    include!("generated_row.rs");
+}
+mod generated_rows_18 {
+    use super::*;
+    include!("generated_row.rs");
+}
+mod generated_rows_19 {
     use super::*;
     include!("generated_row.rs");
 }

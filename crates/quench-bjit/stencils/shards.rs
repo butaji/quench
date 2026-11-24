@@ -17,9 +17,10 @@ pub const SHARD_WEIGHT: usize = 1536;
 pub const NUMBER_WEIGHT: usize = 1;
 pub const HEAP_WEIGHT: usize = 8;
 pub const ELEMENT_WEIGHT: usize = 14;
-/// A plain index read or store row (`INDEX_ROW`, `STORE_ROW`) inlines the generic element read and write
-/// over every backing: 109 index rows peaked near 7.2 GB alone (about 66 MB a row), so it weighs 44 units.
-pub const INDEX_WEIGHT: usize = 44;
+/// A plain index read or store row (`INDEX_ROW`, `STORE_ROW`): 476 store rows took 14 s and peaked at 613 MB in
+/// one shard (Nov 24), about 1.3 number rows each, so it weighs 2 units (it weighed 44 when it inlined every
+/// backing's element read and write, and its 34-row shards each paid rustc's fixed 2.5 s).
+pub const INDEX_WEIGHT: usize = 2;
 
 /// Most shard compilations running at once: four shards of `SHARD_WEIGHT` (near 10 GB together) fit a
 /// 16 GB, 4-core machine beside the linker and the other crates cargo builds in parallel. LLVM is about 90%
