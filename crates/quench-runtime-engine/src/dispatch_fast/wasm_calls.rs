@@ -143,7 +143,7 @@ impl WasmActivation for LaneCall<'_> {
         }
         let vm = unsafe { vm(self.cx) };
         let running = (unsafe { (*self.cx).program }, Some(instance_env_in_lane(self.cx)));
-        match vm.heap.function(self.r.get(self.i.b)) {
+        match vm.function_record(self.r.get(self.i.b)) {
             Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
                 if (*program, Some(*env)) == running =>
             {
@@ -569,7 +569,7 @@ fn js_import_of(vm: &mut Vm, wrapper: Value) -> Option<JsImportPlan> {
 /// host-backed or memcpy import, or a signature past the scalars the activation converts.
 #[inline(never)]
 fn js_import_plan(vm: &Vm, wrapper: Value) -> Option<JsImportPlan> {
-    let record = vm.heap.function(wrapper)?;
+    let record = vm.function_record(wrapper)?;
     let (callee, capture, signature) = vm.host_import_js_target(wrapper)?;
     if capture.is_some() {
         return None;

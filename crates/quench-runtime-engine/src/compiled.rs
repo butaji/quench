@@ -2459,7 +2459,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             let signature_index = u32::try_from(signature_index)
                 .map_err(|_| wasm_callout_error("invalid Wasm signature index"))?;
             let table = vm
-                .heap
+                .heap_reads()
                 .environment_slot(context.env, table_slot as usize)
                 .ok_or_else(|| wasm_callout_error("invalid Wasm table binding"))?;
             let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
@@ -4220,7 +4220,7 @@ impl JsStepDispatch {
     /// shared borrow that later mutable callouts would invalidate. Rebind on
     /// every entry, including reuse of the thread-local lane frame by another VM.
     fn bind_native_storage(&mut self, vm: *mut Vm) {
-        let offset = std::mem::offset_of!(Vm, heap) + quench_runtime::heap::Heap::PROPERTY_BUFFER_OFFSET;
+        let offset = Vm::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
         self.frameless = frameless::general_frameless_admit as *const () as usize;
         // SAFETY: the VM outlives this entry; the eval flags hold through it (`function_matches_in_lane`).
@@ -8254,7 +8254,7 @@ impl Vm {
             // Accesses may rely on the guard when the memory has one and
             // this host resumes guard faults.
             let stable_memory = memory_slot.is_some_and(|slot| {
-                self.heap
+                self.heap_reads()
                     .environment_slot(env, slot as usize)
                     .and_then(|binding| guarded_memory(self, binding))
                     .is_some()
@@ -8268,7 +8268,7 @@ impl Vm {
             analysis.callouts = false;
         }
         let memory_shared = memory_slot.is_some_and(|slot| {
-            self.heap
+            self.heap_reads()
                 .environment_slot(env, slot as usize)
                 .and_then(|binding| self.heap_reads().get(binding))
                 .is_some_and(|cell| matches!(cell, Cell::WasmMemory { bytes, .. } if matches!(**bytes, quench_runtime::wasm::memory::MemoryStorage::Shared(_))))

@@ -736,7 +736,7 @@ pub(crate) fn native_call_handler(native: Native, i: &LaneInstruction, result_de
 pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
     use crate::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.

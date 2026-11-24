@@ -16,8 +16,7 @@ impl Vm {
         let constructor = self.native_with_realm(Native::IntlSegmenter, global, global);
         self.set_builtin_function_name(constructor, "Segmenter")?;
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_segmenter_prototypes
@@ -35,8 +34,7 @@ impl Vm {
             self.set_builtin_value_named(prototype, name, method)?;
         }
         let segments_prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_segments_prototypes
@@ -44,8 +42,7 @@ impl Vm {
         let iterator_prototype =
             self.realm.intrinsics.builtin_prototypes[&(global, Native::Iterator)];
         let iterator_prototype = self
-            .heap
-            .alloc_object(Self::empty_object(iterator_prototype));
+            .allocate_object(Self::empty_object(iterator_prototype));
         self.realm
             .intrinsics
             .intl_segment_iterator_prototypes
@@ -86,7 +83,7 @@ impl Vm {
                     .unwrap_or_else(|| "en-US".into());
                 let granularity = vm.segmenter_granularity(p, args.get(1).copied())?;
 
-                let segmenter = vm.heap.alloc_object(Self::empty_object(prototype));
+                let segmenter = vm.allocate_object(Self::empty_object(prototype));
                 vm.set_hidden_string(segmenter, SEGMENTER_LOCALE_SLOT, &locale)?;
                 vm.set_hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT, &granularity)?;
                 Ok(segmenter)
@@ -142,7 +139,7 @@ impl Vm {
                     if native == Native::IntlSegmenterSegmentsIterator {
                         let prototype =
                             vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
-                        return Ok(vm.heap.alloc_iterator(IteratorRecord {
+                        return Ok(vm.allocate_iterator(IteratorRecord {
                             object: Self::empty_object(prototype),
                             source: data,
                             kind: IteratorKind::IntlSegments,
@@ -170,7 +167,7 @@ impl Vm {
             .hidden_string(this, SEGMENTER_GRANULARITY_SLOT)
             .unwrap_or_else(|| "grapheme".into());
         if native == Native::IntlSegmenterResolvedOptions {
-            let result = self.heap.alloc_object(Self::empty_object(
+            let result = self.allocate_object(Self::empty_object(
                 self.realm_object_prototype(self.realm.globals),
             ));
             self.set_intl_string_property(result, "locale", &locale)?;
@@ -185,9 +182,9 @@ impl Vm {
                 .map(|index| Value::number(index as f64))
                 .collect();
             let boundaries = vm.new_array(boundaries);
-            let input = vm.heap.alloc_string(input);
+            let input = vm.allocate_string(input);
             let prototype = vm.realm.intrinsics.intl_segments_prototypes[&vm.realm.globals];
-            let object = vm.heap.alloc_object(Self::empty_object(prototype));
+            let object = vm.allocate_object(Self::empty_object(prototype));
             let data = vm.new_array(vec![this, input, boundaries]);
             vm.set_hidden_value(object, SEGMENTS_DATA_SLOT, data)?;
             Ok(object)
@@ -202,7 +199,7 @@ impl Vm {
     ) -> Result<Option<(Value, usize)>, JsError> {
         // The private state tuple owns [segmenter, input, boundaries]; public
         // Segments and cursors share it without retaining one another.
-        let Some(elements) = self.heap.array_elements(data) else {
+        let Some(elements) = self.heap_reads().array_elements(data) else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
         let held_values = elements.as_slice();
@@ -210,13 +207,13 @@ impl Vm {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
         let (segmenter, input, boundaries) = (*segmenter, *input, *boundaries);
-        let Some(text) = self.heap.string(input) else {
+        let Some(text) = self.heap_reads().string(input) else {
             return Ok(None);
         };
         if index >= text.units().len() {
             return Ok(None);
         }
-        let Some(elements) = self.heap.array_elements(boundaries) else {
+        let Some(elements) = self.heap_reads().array_elements(boundaries) else {
             return Ok(None);
         };
         let end = elements
@@ -239,10 +236,10 @@ impl Vm {
             .as_deref()
             == Some("word");
         let word_like = text.host_string().chars().any(char::is_alphanumeric);
-        let object = self.heap.alloc_object(Self::empty_object(
+        let object = self.allocate_object(Self::empty_object(
             self.realm_object_prototype(self.realm.globals),
         ));
-        let text = self.heap.alloc_string(text);
+        let text = self.allocate_string(text);
         self.set_named(p, object, "segment", text)?;
         self.set_named(p, object, "index", Value::number(start as f64))?;
         self.set_named(p, object, "input", input)?;
@@ -263,7 +260,7 @@ impl Vm {
         iterator: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots([iterator], |vm| {
-            let (data, index, done) = match vm.heap.iterator(iterator) {
+            let (data, index, done) = match vm.heap_reads().iterator(iterator) {
                 Some(IteratorRecord {
                     source,
                     index,
@@ -279,13 +276,13 @@ impl Vm {
             }
             match vm.segment_data(p, data, index)? {
                 Some((value, end)) => {
-                    if let Some(IteratorRecord { index, ext, .. }) = vm.heap.iterator_mut(iterator) {
+                    if let Some(IteratorRecord { index, ext, .. }) = vm.iterator_mut(iterator) {
                         ext.store_position(index, end);
                     }
                     vm.iterator_result(value, false)
                 }
                 None => {
-                    if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(iterator) {
+                    if let Some(IteratorRecord { done, .. }) = vm.iterator_mut(iterator) {
                         *done = true;
                     }
                     vm.iterator_result(Value::UNDEFINED, true)

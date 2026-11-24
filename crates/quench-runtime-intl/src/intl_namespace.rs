@@ -23,8 +23,7 @@ impl Vm {
         object_prototype: Value,
     ) -> Result<Value, JsError> {
         let intl = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
         let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
         self.realm
@@ -33,15 +32,13 @@ impl Vm {
             .insert(global, constructor);
         self.set_builtin_function_name(constructor, "NumberFormat")?;
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_number_format_prototypes
             .insert(global, prototype);
         let fallback_symbol = self
-            .heap
-            .alloc_symbol(quench_runtime::heap::SymbolData::public(Some(
+            .allocate_symbol(quench_runtime::heap::SymbolData::public(Some(
                 "IntlLegacyConstructedSymbol".into(),
             )));
         self.realm
@@ -166,8 +163,7 @@ impl Vm {
 
         let locale = self.native_with_realm(Native::IntlLocale, global, global);
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_locale_prototypes
@@ -342,7 +338,7 @@ impl Vm {
             _ => None,
         };
         if let Some(value) = property {
-            return Ok(self.heap.alloc_string(value.into()));
+            return Ok(self.allocate_string(value.into()));
         }
         if matches!(
             native,
@@ -367,7 +363,7 @@ impl Vm {
                     Value::FALSE
                 },
             ),
-            Native::IntlLocaleToString => Ok(self.heap.alloc_string(locale.into())),
+            Native::IntlLocaleToString => Ok(self.allocate_string(locale.into())),
             Native::IntlLocaleMaximize => {
                 let maximized = maximize_locale(&locale);
                 self.new_intl_locale_object(
@@ -465,7 +461,7 @@ impl Vm {
         prototype: Value,
         locale: String,
     ) -> Result<Value, JsError> {
-        let result = self.heap.alloc_object(Self::empty_object(prototype));
+        let result = self.allocate_object(Self::empty_object(prototype));
         self.set_hidden_string(result, INTL_LOCALE_SLOT, &locale)?;
         Ok(result)
     }
@@ -602,15 +598,14 @@ impl Vm {
     ) -> Result<Value, JsError> {
         match options.filter(|value| !value.is_undefined()) {
             None => Ok(self
-                .heap
-                .alloc_object(Self::empty_object(Value::NULL))),
+                .allocate_object(Self::empty_object(Value::NULL))),
             Some(value) if self.is_object_like(value) => Ok(value),
             Some(_) => Err(self.type_error(p, "options must be an object".into())),
         }
     }
 
     fn locale_tag_string(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
-        if !self.heap.is_string(value) && !self.is_object_like(value) {
+        if !self.heap_reads().is_string(value) && !self.is_object_like(value) {
             return Err(self.type_error(p, "locale tag must be a string or object".into()));
         }
         match self.hidden_string(value, INTL_LOCALE_SLOT) {
@@ -638,7 +633,7 @@ impl Vm {
                     canonical_locale(&locale)
                         .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?,
                 );
-            } else if self_.heap.is_string(locales) {
+            } else if self_.heap_reads().is_string(locales) {
                 let locale = self_.to_string(p, locales)?;
                 canonical.push(
                     canonical_locale(&locale)
@@ -703,9 +698,9 @@ impl Vm {
     fn string_array(&mut self, values: Vec<String>) -> Value {
         let elements = values
             .into_iter()
-            .map(|value| self.heap.alloc_string(value.into()))
+            .map(|value| self.allocate_string(value.into()))
             .collect::<Vec<_>>();
-        self.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+        self.allocate_array(quench_runtime::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements,
             ))

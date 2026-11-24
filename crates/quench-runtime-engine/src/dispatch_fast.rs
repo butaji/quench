@@ -3383,7 +3383,7 @@ unsafe fn binary_values_classified(
 /// immediate operands' tests, which a string fails; else `Vm::immediate_binary`.
 #[inline(always)]
 fn concat_or_immediate(cx: *mut LaneContext, operator: u32, left: Value, right: Value) -> Option<Value> {
-    let heap = &unsafe { vm(cx) }.heap;
+    let heap = unsafe { vm(cx) }.heap_reads();
     if operator == quench_runtime::vm::operations::ADDITION && (heap.is_string(left) || heap.is_string(right))
         && let Some(value) = concat_value(cx, left, right)
     {
