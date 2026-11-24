@@ -16,7 +16,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     vm.execute(&program).unwrap();
     let atom = vm.intern_atom("owner");
     let owner = vm.own_property(vm.realm.globals, atom).unwrap();
-    let shape = vm.heap.object(owner).unwrap().shape();
+    let shape = vm.heap_reads().object(owner).unwrap().shape();
     let mut publications = Vec::new();
     for view in vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
         .iter().filter_map(super::program_store::derived_lane_view) {
@@ -34,7 +34,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     // A receiver departure falls out at its use guard; only compaction renumbers embedded IDs.
     let added = vm.intern_atom("added");
     let next = vm.transition_shape(shape, added);
-    vm.heap.property_add(owner, Value::integer(2), next);
+    vm.add_property(owner, Value::integer(2), next);
     assert!(publications.iter().all(|code| code.is_published() && code.lease().is_some()),
         "a receiver shape departure must fall out at its guard, not retire the code");
     vm.programs.invalidate_shape_bindings();
@@ -73,8 +73,8 @@ fn store_edge_value(vm: &mut Vm, value: f64) {
     let owner_atom = vm.intern_atom("owner");
     let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
     let atom = vm.intern_atom("edgeValue");
-    let slot = vm.shape_slot(vm.heap.object(owner).unwrap().shape(), atom).unwrap();
-    vm.heap.property_set(owner, slot, Value::number(value));
+    let slot = vm.shape_slot(vm.heap_reads().object(owner).unwrap().shape(), atom).unwrap();
+    vm.store_property_slot(owner, slot, Value::number(value));
 }
 
 #[cfg(test)]
@@ -85,14 +85,14 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let leaf_method = vm.compile_lane_method(&program, target.function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     assert!(!leaf_method.dependencies.slots.is_empty());
-    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let leaf_publication = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(leaf_method, &mut facts) }.unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
     let pc = code.instructions().position(|instruction| instruction.op().is_call()).unwrap();
     let mut direct = vec![super::compiled::DirectCandidates::new(); code.code.len()];
     // Resolve the capture view exactly as production direct-call publication does.
-    let (capture_values, capture_len) = unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     direct[pc].push(super::compiled::DirectCallee {
         target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
@@ -106,7 +106,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.dependencies.slots, leaf_body.dependencies.slots);
-    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let root_publication = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(root_method, &mut facts) }.unwrap();
     let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);
     drop(leaf_body);

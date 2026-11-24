@@ -1216,10 +1216,10 @@ impl LoopEntry {
     /// code.
     pub(crate) fn push_native_heap(
         &mut self,
-        objects: *const quench_runtime::heap::Object,
+        objects: *const quench_runtime::tier_surface::Object,
         properties: *const Value,
         property_len: usize,
-        arrays: *const quench_runtime::heap::ArrayObject,
+        arrays: *const quench_runtime::tier_surface::ArrayObject,
     ) {
         self.push(objects.addr() as u64);
         self.push(properties.addr() as u64);

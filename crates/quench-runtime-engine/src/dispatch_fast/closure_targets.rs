@@ -68,7 +68,7 @@ impl Vm {
         // SAFETY: no program is installed or retired while a call resolves.
         let code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
         let target = self.closure_target(code, program, callee, env, known)?;
-        self.lane_stack.remember_script_target(target, self.heap.memory_policy());
+        self.lane_stack.remember_script_target(target, self.heap_reads().memory_policy());
         self.script_call_index(callee)
     }
 
@@ -93,12 +93,12 @@ impl Vm {
                 return None;
             }
             let stores = entry.capture.addr() & CAPTURE_STORES;
-            let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
+            let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
                 return None;
             };
             let storage = slots.dense_storage()?;
             if stores != 0 {
-                self.heap.remember_cell(env);
+                self.write_barrier(env);
             }
             storage.map_addr(|address| address | stores)
         };
@@ -147,11 +147,11 @@ impl Vm {
         if entry.capture.is_null() {
             return None;
         }
-        let Some(quench_runtime::heap::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap.reachable_environment(entry.env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap_reads().reachable_environment(entry.env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
-        let Some(quench_runtime::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.reachable_environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function, slots, scope, .. }) = self.heap_reads().reachable_environment(env) else {
             return None;
         };
         if *function != old || scope.program() != old_program {
@@ -160,7 +160,7 @@ impl Vm {
         let storage = slots.dense_storage()?;
         let stores = entry.capture.addr() & CAPTURE_STORES;
         if stores != 0 {
-            self.heap.remember_cell(env);
+            self.write_barrier(env);
         }
         Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
     }

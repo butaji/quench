@@ -543,7 +543,7 @@ pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
     // A helper may have changed the backing's storage form in place (narrow or double kind,
     // a flagged length word): the view then reads as empty, so every access through it
     // misses its bounds test and leaves.
-    let encoded = stage.ugt_imm(length, u64::from(!quench_runtime::heap::ENCODED_LEN));
+    let encoded = stage.ugt_imm(length, u64::from(!quench_runtime::tier_surface::ENCODED_LEN));
     let empty = stage.constant(0);
     let length = stage.select(encoded, empty, length);
     (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
@@ -723,7 +723,7 @@ fn emit_js_cached_field_slot(
     header: Option<object_slots::ObjectHeader>,
     packed_slot: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
-    use quench_runtime::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
     use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
     use quench_runtime::staged::region::Region;
@@ -1003,7 +1003,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
     use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
-    let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
@@ -2290,7 +2290,7 @@ fn refresh_memory_length(context: &mut CallContext, vm: &Vm) {
 /// Publishes the Wasm GC record range's base (`CallContext::wasm_gc_records`) after a callout that may
 /// have reserved it: the base is fixed once reserved, so zero means the range is not yet made.
 pub(crate) fn refresh_wasm_gc_records(context: &mut CallContext, vm: &Vm) {
-    context.wasm_gc_records = vm.heap.wasm_gc_record_base().map_or(0, |base| base as usize);
+    context.wasm_gc_records = vm.heap_reads().wasm_gc_record_base().map_or(0, |base| base as usize);
 }
 
 fn finish_callout(
@@ -2478,9 +2478,9 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
                     signature.results.first().copied(),
                 )
             };
-            let same_program_function = match vm.heap.function(callee) {
+            let same_program_function = match vm.function_record(callee) {
                 Some(FunctionRecord {
-                    kind: quench_runtime::heap::FunctionKind::User(target_program, function),
+                    kind: quench_runtime::tier_surface::FunctionKind::User(target_program, function),
                     env,
                     ..
                 }) if *target_program == program => Some((*target_program, *function, *env)),
@@ -2528,7 +2528,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // A re-entrant import can mutate the table and collect while this
             // body is running. Keep its function cell alive until the call
             // returns.
-            let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
+            let callee_root = unsafe { &mut *vm_pointer }.hold_root(callee);
             direct_target_root = Some(callee_root);
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
@@ -2598,7 +2598,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     ACTIVE_CONTEXT.with(|current| current.set(active));
     let vm = unsafe { &mut *vm_pointer };
     if let Some(root) = direct_target_root {
-        vm.heap.release_root(root);
+        vm.drop_root(root);
     }
     if DIAGNOSTICS {
         note_reference_call_site(
@@ -2716,7 +2716,7 @@ fn stitched_entry(
     let function = code.function_get(index)?;
     let constant = |at: usize| {
         let value = vm.programs.constant(program, at)?;
-        if vm.heap.v128(value).is_some() {
+        if vm.heap_reads().v128(value).is_some() {
             return None;
         }
         Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
@@ -2732,17 +2732,17 @@ fn stitched_entry(
             return None;
         }
         let Slot::Binding(slot) = full_plan.operand(pc) else { return None };
-        let binding = vm.heap.environment_slot(env, slot as usize)?;
-        let Some(Cell::WasmGlobal { ty, .. }) = vm.heap.get(binding) else { return None };
+        let binding = vm.heap_reads().environment_slot(env, slot as usize)?;
+        let Some(Cell::WasmGlobal { ty, .. }) = vm.heap_reads().get(binding) else { return None };
         Some((slot, quench_runtime::staged::wasm_instance::Storage::of(*ty)))
     };
     let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
     let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
-    let vector_constant = |at: usize| vm.heap.v128(vm.programs.constant(program, at)?);
+    let vector_constant = |at: usize| vm.heap_reads().v128(vm.programs.constant(program, at)?);
     let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
     // A growth leaves the base in place only for a reserved (guarded) memory.
     let memory_stable = memory_slot.is_none_or(|slot| {
-        vm.heap.environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
+        vm.heap_reads().environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
     });
     // A table or segment operation names its bindings in the full plan, as the u-jit reads them.
     let table_bindings = |pc: usize| -> Option<(Option<u32>, Option<u32>)> {
@@ -2825,7 +2825,7 @@ fn direct_reference_entry(
     }
     let entry = native.entry;
     if let Some(slot) = compiled.memory_slot
-        && vm.heap.environment_slot(env, slot as usize)? != context_memory
+        && vm.heap_reads().environment_slot(env, slot as usize)? != context_memory
     {
         return None;
     }
@@ -3071,7 +3071,7 @@ impl EntryStamp {
 /// retires or moves the frame's slots changes one of the two.
 fn captures_key(vm: &Vm, frame: usize) -> (usize, u64) {
     let slots = vm.current_capture_slots(frame).filter(|(_, root)| root.is_none()).map_or(0, |(slots, _)| slots.addr());
-    (slots, vm.heap.native_layout_epoch())
+    (slots, vm.heap_reads().native_layout_epoch())
 }
 
 
@@ -3456,7 +3456,7 @@ unsafe extern "C" fn method_exit_in_lane(_context: u64, pc: u64, result: u64, _u
 /// A lane body's field read where its own-slot path does not apply: the VM's cache probe
 /// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
 /// leaves native code for the lane's full read.
-unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: Value, read: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
@@ -3468,26 +3468,26 @@ unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: u64, re
 ///
 /// # Safety
 /// `vm` and `residual` are the running VM and residual, live and unborrowed for the call.
-unsafe fn cached_field_read(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+unsafe fn cached_field_read(vm: u64, residual: u64, receiver: Value, read: u64) -> u64 {
     let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: as the caller promises; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
     // An array's `length`, an own data property no shape holds, answers first: a loop's
     // condition reads it every iteration (`Vm::array_length_field`).
-    if let Some(length) = vm.array_length_field(Value::from_bits(receiver), atom) {
+    if let Some(length) = vm.array_length_field(receiver, atom) {
         return length.to_bits();
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
-    if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
+    if let Some(value) = vm.cached_string_field_hit(residual, receiver, atom, site) { return value.to_bits(); }
     // A typed array's geometry, which no field cache records, as the lane's (`LaneFrame::cached_read`).
     if vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::VIRTUAL_FIELD)
-        && let Some(value) = vm.typed_array_geometry_read(Value::from_bits(receiver), atom) { return value.to_bits(); }
+        && let Some(value) = vm.typed_array_geometry_read(receiver, atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
-    if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
+    if let Some(value) = vm.proved_inherited_field_hit(residual, receiver, site) {
         return value.to_bits();
     }
-    let receiver = Value::from_bits(receiver); // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
+    // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
     match vm.compiled_field_hit(residual, receiver, site) {
         quench_runtime::vm::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         quench_runtime::vm::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
@@ -3497,9 +3497,9 @@ unsafe fn cached_field_read(vm: u64, residual: u64, receiver: u64, read: u64) ->
 
 /// ToBoolean of `bits`, a value whose cell decides it (`Vm::truthy`): a read, which neither
 /// allocates nor runs guest code.
-unsafe extern "C" fn truthy_in_lane(vm: u64, _residual: u64, bits: u64) -> u64 {
+unsafe extern "C" fn truthy_in_lane(vm: u64, _residual: u64, bits: Value) -> u64 {
     // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
-    u64::from(unsafe { &*(vm as *const Vm) }.heap_cell_truthy(Value::from_bits(bits)))
+    u64::from(unsafe { &*(vm as *const Vm) }.heap_cell_truthy(bits))
 }
 
 /// Admit a bound slot's write domain before any guest effect or raw store.
@@ -3509,7 +3509,7 @@ unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shap
     let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    u64::from(vm.heap.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
+    u64::from(vm.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
 }
 
 /// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
@@ -3519,17 +3519,17 @@ pub(crate) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
 /// store to the lane at its original PC after retiring dependent native entries.
-unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
+unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, atom: u64, site: u64, value: Value) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
     #[cfg(feature = "profile-native-ops")]
     let storage = {
         use quench_runtime::vm::native_op_profile::StoreStorage;
-        match Value::from_bits(receiver).direct_object_index() {
+        match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
             Some(id) => {
-                let object = vm.heap.object_record_by_id(id);
+                let object = vm.heap_reads().object_record_by_id(id);
                 if object.plain_storage_start().is_some() { StoreStorage::Arena }
                 else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
                 else { StoreStorage::OtherRecord }
@@ -3538,7 +3538,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: u64, at
     };
     // A receiver of another shape the site met stores through its polymorphic entries, as
     // long as the store keeps the record's layout, which the caller's proofs rely on.
-    let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), quench_runtime::heap::PropertyStoreLayout::PreserveNative);
+    let (receiver, value, layout) = (receiver, value, quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative);
     // Only the primary entry's hit proves its slot's representation (`general_store`).
     let primary = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
     if primary { general_store::record_store_class(vm, site as u16, value); }
@@ -3570,10 +3570,9 @@ pub(crate) fn raise_site_parts(site: u64) -> (u32, u32) {
 /// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
 /// The interpreter's `Throw` makes the same error; its source location is captured only if it
 /// escapes native code (`dispatch_fast::raised_exit_in_lane`).
-unsafe extern "C" fn compiled_raise(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
+unsafe extern "C" fn compiled_raise(vm: u64, _residual: u64, value: Value, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the message of a value reads no guest code.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    let value = Value::from_bits(value);
     let message = vm.detail_string(value);
     vm.lane_completion.raise(JsError::thrown(value, message));
     vm.lane_raise_site = site;
@@ -3598,21 +3597,20 @@ unsafe extern "C" fn global_get_in_lane(vm: u64, residual: u64, atom: u64, site:
 
 /// A lane body's strict equality of two distinct heap values of one content-compared family
 /// (`Vm::heap_values_strictly_equal`): 1 for equal strings or BigInts, else 0.
-unsafe extern "C" fn strict_equal_cells_in_lane(vm: u64, _residual: u64, left: u64, right: u64) -> u64 {
+unsafe extern "C" fn strict_equal_cells_in_lane(vm: u64, _residual: u64, left: Value, right: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; the comparison reads the heap and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm) };
-    u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
+    u64::from(vm.heap_values_strictly_equal(left, right))
 }
 
 /// A lane body's `value instanceof constructor`, decided as the interpreter's own record
 /// decides it (`lane_instanceof_value`): the constructor's proof (`Vm::record_instanceof`),
 /// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
 /// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
-unsafe extern "C" fn instance_of_in_lane(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
+unsafe extern "C" fn instance_of_in_lane(vm: u64, _residual: u64, value: Value, constructor: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; both reads walk the heap, call nothing and allocate nothing
     // (the walk only fills the constructor-layout memo).
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    let (value, constructor) = (Value::from_bits(value), Value::from_bits(constructor));
     vm.record_instanceof(value, constructor)
         .or_else(|| vm.ordinary_instanceof(value, constructor))
         .map_or_else(|| Value::DELETED.to_bits(), u64::from)
@@ -3627,18 +3625,18 @@ unsafe extern "C" fn box_number_in_lane(_vm: u64, _residual: u64, bits: u64) -> 
     Value::number(f64::from_bits(bits)).to_bits()
 }
 
-unsafe extern "C" fn typeof_is_in_lane(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
+unsafe extern "C" fn typeof_is_in_lane(vm: u64, _residual: u64, value: Value, index: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm) };
-    u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
+    u64::from(vm.typeof_test_value(value, index as usize, false) == Value::TRUE)
 }
 
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof value` (`Vm::typeof_index_value`): a heap value's by its
 /// cell. Reads the cell and allocates nothing.
-unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: u64) -> u64 {
+unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: Value) -> u64 {
     // SAFETY: as `typeof_is_in_lane`.
     let vm = unsafe { &*(vm as *const Vm) };
-    vm.typeof_index_value(Value::from_bits(value)).as_int().map_or(0, |index| index as u64)
+    vm.typeof_index_value(value).as_int().map_or(0, |index| index as u64)
 }
 
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
@@ -3648,22 +3646,21 @@ unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: u64) -
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
-unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, receiver: Value, write: u64, value: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running one.
     let (vm, residual, dispatch) = unsafe {
         (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
     };
     let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
-    let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
-    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::heap::PropertyStoreLayout::Preserve) {
+    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
         return 1;
     }
-    if vm.heap.should_collect() {
+    if vm.collection_due() {
         return 0;
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
     // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, quench_runtime::heap::PropertyStoreLayout::MayWiden).is_none()
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden).is_none()
         && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }
@@ -3676,24 +3673,23 @@ unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, rec
 /// the typed array's elements in its record, which the proof then reads; zero where the loop
 /// cannot address them in place, which leaves at the loop's header. The count is below 2^31
 /// (`staged::typed_elements::TypedView`): a longer array leaves too.
-unsafe extern "C" fn typed_array_view_in_lane(vm: u64, _residual: u64, object: u64) -> u64 {
+unsafe extern "C" fn typed_array_view_in_lane(vm: u64, _residual: u64, object: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; the publication reads cells and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    u64::from(vm.publish_typed_view(Value::from_bits(object)))
+    u64::from(vm.publish_typed_view(object))
 }
 
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
-unsafe extern "C" fn index_set_in_lane(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
+unsafe extern "C" fn index_set_in_lane(vm: u64, _residual: u64, object: Value, key: Value, value: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm) };
     // Collection debt leaves before the store, as the verified lowering's Grow exit does:
     // the lane performs the store and the VM collects at its rooted safepoint.
-    if vm.heap.should_collect() {
+    if vm.collection_due() {
         return 0;
     }
-    let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
     u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
 }
 
@@ -3709,23 +3705,23 @@ unsafe extern "C" fn pop_observed_header_in_lane(vm: u64, _residual: u64) -> u64
 }
 
 unsafe extern "C" fn retire_array_proofs_in_lane(_vm: u64, _residual: u64) -> u64 {
-    quench_runtime::heap::retire_array_storage_proofs();
+    quench_runtime::tier_surface::retire_array_storage_proofs();
     0
 }
 
 /// A lane loop's room for appending to the dense array `object` (`Vm::reserve_native_array_append`):
 /// the room its backing holds, or zero, which leaves the append to `index_set_in_lane`.
-unsafe extern "C" fn array_append_room_in_lane(vm: u64, _residual: u64, object: u64) -> u64 {
+unsafe extern "C" fn array_append_room_in_lane(vm: u64, _residual: u64, object: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; a growth moves only this array's backing.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    vm.reserve_native_array_append(Value::from_bits(object)).map_or(0, |room| room as u64)
+    vm.reserve_native_array_append(object).map_or(0, |room| room as u64)
 }
 
 /// 1 where no prototype of the array `object` holds an index (`Vm::prototypes_hold_no_index`), else 0.
-unsafe extern "C" fn prototypes_hold_no_index_in_lane(vm: u64, _residual: u64, object: u64) -> u64 {
+unsafe extern "C" fn prototypes_hold_no_index_in_lane(vm: u64, _residual: u64, object: Value) -> u64 {
     // SAFETY: as `array_append_room_in_lane`; the check reads the heap and writes nothing.
     let vm = unsafe { &*(vm as *const Vm) };
-    u64::from(vm.prototypes_hold_no_index(Value::from_bits(object)))
+    u64::from(vm.prototypes_hold_no_index(object))
 }
 
 #[quench_macros::ext(CompiledVm2)]
@@ -3738,11 +3734,11 @@ impl Vm {
     /// array, and where collection is due, before or after a growth: the store leaves for
     /// the VM, which collects at its safepoint.
     fn reserve_native_array_append(&mut self, array: Value) -> Option<usize> {
-        if self.heap.should_collect() { return None; }
+        if self.collection_due() { return None; }
         let length = self.dense_array_length(array)?;
         if length >= osr_loop::MAX_INDEXED_LENGTH || !self.prototypes_hold_no_index(array) { return None; }
         // A Number store logs nothing.
-        let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
+        let elements = self.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
         if elements.owner_count() != 1 { return None; }
         // A double backing keeps its kind (`ArrayElements::reserve_double`).
         let (before, room) = if elements.is_double() {
@@ -3755,20 +3751,20 @@ impl Vm {
             elements.reserve(1);
             (before, elements.capacity())
         };
-        self.heap.charge_payload_growth((room - before) * size_of::<Value>());
-        (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
+        self.charge_payload_growth((room - before) * size_of::<Value>());
+        (!self.collection_due()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
     }
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking
 /// guest code. Owned slots and plain root projections use the lane's shared reads;
 /// accessors, uninitialized bindings and other projections decline at the read.
-unsafe extern "C" fn function_capture_read_in_lane(vm: u64, callee: u64, slot: u64) -> u64 {
+unsafe extern "C" fn function_capture_read_in_lane(vm: u64, callee: Value, slot: u64) -> u64 {
     // SAFETY: the lane owns this VM while generated code runs; no collection or
     // reentry occurs while it holds the closure's environment slots.
     let vm = unsafe { &*(vm as *const Vm) };
     let read = || {
-        let env = vm.heap.function(Value::from_bits(callee))?.env;
+        let env = vm.function_record(callee)?.env;
         let slot = u16::try_from(slot).ok()?;
         let (slots, root) = vm.environment_capture_slots(env, false, 0)?;
         vm.owned_capture(slots, root, slot)
@@ -3818,7 +3814,7 @@ impl Vm {
     fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
         view: Option<&crate::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
-            .map(|(site, _)| site).collect(), self.heap.function_shapes());
+            .map(|(site, _)| site).collect(), self.heap_reads().function_shapes());
         // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
         let view = view.filter(|_| !crate::compiled::admission::stencil_regions());
         let sites = unit.instructions
@@ -4195,15 +4191,15 @@ impl JsStepDispatch {
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),
-                environment_storage: quench_runtime::heap::absent_environment_storage(),
+                environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
                 array_mark_blocks: 0, array_mark_block_count: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
                 object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
                 array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
                 ascii_unit_strings: 0,
-                armed_array_proofs: quench_runtime::heap::armed_proofs_address(),
-                array_chain_index_free_address: quench_runtime::heap::index_free_chain_link_address(),
+                armed_array_proofs: quench_runtime::tier_surface::armed_proofs_address(),
+                array_chain_index_free_address: quench_runtime::tier_surface::index_free_chain_link_address(),
                 plain_depth: 0, plain_depth_limit: 0, body_table: 0, activation_count: 0, body_top: 0, native_table: 0,
                 pop_observed_header: pop_observed_header_in_lane as *const () as usize,
             },
@@ -4242,13 +4238,13 @@ impl JsStepDispatch {
     /// rereads every allocating, call or step helper ends with.
     #[inline]
     fn refresh_object_bases(&mut self, vm: &Vm) {
-        let layout = vm.heap.native_layout_epoch();
+        let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
-        let (directory, pages) = vm.heap.typed_view_directory();
+        let (directory, pages) = vm.heap_reads().typed_view_directory();
         if self.vm == (vm as *const Vm).addr() && self.layout_seen == layout
             && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
-            && self.store_watch == vm.heap.store_watch_word()
+            && self.store_watch == vm.heap_reads().store_watch_word()
             && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
             && self.empty_object_proto == vm.realm_object_prototype(vm.realm.globals).to_bits()
             && self.empty_array_proto == vm.array_prototype_for_realm(vm.realm.globals).to_bits()
@@ -4266,28 +4262,28 @@ impl JsStepDispatch {
         // makes an object again, which captures the template anew (`capture_empty_object`).
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_layout, self.empty_object_payload) = (0, 0);
-        self.object_cursor = vm.heap.native_object_cursor();
+        self.object_cursor = vm.heap_reads().native_object_cursor();
         // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
-        self.array_cursor = vm.heap.native_array_cursor();
-        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
-        self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
-        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
-        self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
-        self.ascii_unit_strings = vm.heap.ascii_unit_strings_base().map_or(0, |base| base as usize);
-        let (directory, pages) = vm.heap.typed_view_directory();
+        self.array_cursor = vm.heap_reads().native_array_cursor();
+        self.object_record_base = vm.heap_reads().object_record_base().map_or(0, |base| base as usize);
+        self.function_record_base = vm.heap_reads().function_record_base().map_or(0, |base| base as usize);
+        self.array_record_base = vm.heap_reads().array_record_base().map_or(0, |base| base as usize);
+        self.string_record_base = vm.heap_reads().string_record_base().map_or(0, |base| base as usize);
+        self.ascii_unit_strings = vm.heap_reads().ascii_unit_strings_base().map_or(0, |base| base as usize);
+        let (directory, pages) = vm.heap_reads().typed_view_directory();
         (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
-        self.buffer_relocations = quench_runtime::heap::buffer_relocations_address().addr();
-        self.epoch = vm.heap.collection_epoch();
-        let (blocks, count) = vm.heap.native_object_mark_blocks();
+        self.buffer_relocations = quench_runtime::tier_surface::buffer_relocations_address().addr();
+        self.epoch = vm.heap_reads().collection_epoch();
+        let (blocks, count) = vm.heap_reads().native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
-        let (blocks, count) = vm.heap.native_function_mark_blocks();
+        let (blocks, count) = vm.heap_reads().native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
-        let (blocks, count) = vm.heap.native_array_mark_blocks();
+        let (blocks, count) = vm.heap_reads().native_array_mark_blocks();
         (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
-        self.store_watch = vm.heap.store_watch_word();
+        self.store_watch = vm.heap_reads().store_watch_word();
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
@@ -4300,7 +4296,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap.object_record(object) else { return };
+        let Some(record) = vm.heap_reads().object_record(object) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
@@ -4314,7 +4310,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap.object(array) else { return };
+        let Some(record) = vm.heap_reads().object(array) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4341,7 +4337,7 @@ impl JsStepDispatch {
         self.set_captures_word(0);
         (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
-        self.environment_storage = quench_runtime::heap::absent_environment_storage();
+        self.environment_storage = quench_runtime::tier_surface::absent_environment_storage();
         self.outcome = None;
     }
 
@@ -4545,7 +4541,7 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
     if receiver.direct_object_index().is_none() {
         return "non-direct-object";
     }
-    let Some(object) = vm.heap.object(receiver) else { return "missing-object"; };
+    let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
     if object.inline_properties().is_some() {
         "inline-storage"
     } else if object.plain_storage_start().is_none() {
@@ -4559,7 +4555,7 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
             if cache.receiver != object.exact_shape() {
                 "prototype-receiver-shape-miss"
             } else if let Some(record) = object.proto_link().object_record_id() {
-                let holder = vm.heap.object_record_by_id(record);
+                let holder = vm.heap_reads().object_record_by_id(record);
                 if holder.exact_shape() != cache.holder {
                     "prototype-holder-shape-miss"
                 } else if holder.inline_properties().is_some() {
@@ -4841,9 +4837,9 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                     .registers
                     .get(usize::from(current_instruction.register_b()))
                     .copied()
-                    .and_then(|callee| vm.heap.function(callee))
+                    .and_then(|callee| vm.function_record(callee))
                     .and_then(|record| match &record.kind {
-                        quench_runtime::heap::FunctionKind::User(program, function) => {
+                        quench_runtime::tier_surface::FunctionKind::User(program, function) => {
                             Some((program.raw(), *function))
                         }
                         _ => None,
@@ -5243,7 +5239,7 @@ impl Analysis<'_> {
 
     /// The slot a constant defines: a vector's, or its machine kind's (`constant_kind`).
     fn constant_slot(&self, value: Value) -> Slot {
-        if self.vm.heap.v128(value).is_some() {
+        if self.vm.heap_reads().v128(value).is_some() {
             Slot::Vector
         } else {
             Slot::Value(self.constant_kind(value))
@@ -5252,7 +5248,7 @@ impl Analysis<'_> {
 
     /// A vector constant's bits.
     fn constant_vector(&self, value: Value) -> Option<u128> {
-        self.vm.heap.v128(value).map(u128::from_le_bytes)
+        self.vm.heap_reads().v128(value).map(u128::from_le_bytes)
     }
 
     /// Check `register` names the function's memory for a vector access: the memory
@@ -5287,7 +5283,7 @@ impl Analysis<'_> {
 
     /// A shuffle's lane selectors: sixteen byte indices into its two operands.
     fn shuffle_lanes(&self, index: usize) -> Option<[u8; quench_runtime::wasm::V128_BYTES]> {
-        self.vm.heap.v128(self.constant(index)?)
+        self.vm.heap_reads().v128(self.constant(index)?)
     }
 
     fn constant_bits(&self, value: Value) -> i64 {
@@ -5302,8 +5298,8 @@ impl Analysis<'_> {
 
     /// The type of the global bound at environment slot `slot`.
     fn global_type(&self, slot: u32) -> Option<quench_runtime::WasmType> {
-        let binding = self.vm.heap.environment_slot(self.env, slot as usize)?;
-        match self.vm.heap.get(binding)? {
+        let binding = self.vm.heap_reads().environment_slot(self.env, slot as usize)?;
+        match self.vm.heap_reads().get(binding)? {
             Cell::WasmGlobal { ty, .. } => Some(*ty),
             _ => None,
         }
@@ -5311,11 +5307,11 @@ impl Analysis<'_> {
 
     /// Whether `slot` binds a memory compiled code can view (`MemoryStorage::is_direct`).
     fn binds_direct_memory(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
+        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
             return false;
         };
         matches!(
-            self.vm.heap.get(binding),
+            self.vm.heap_reads().get(binding),
             Some(Cell::WasmMemory { bytes, .. }) if bytes.is_direct()
         )
     }
@@ -5323,11 +5319,11 @@ impl Analysis<'_> {
     /// Whether a bound memory has the representation supported by native
     /// linear-memory operations: direct memory32 with ordinary Wasm pages.
     fn supports_compiled_memory(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
+        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
             return false;
         };
         matches!(
-            self.vm.heap.get(binding),
+            self.vm.heap_reads().get(binding),
             Some(Cell::WasmMemory { bytes, header, .. })
                 if bytes.is_direct()
                     && !header.ty.memory64
@@ -5337,11 +5333,11 @@ impl Analysis<'_> {
     }
 
     fn binds_table32(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
+        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
             return false;
         };
         matches!(
-            self.vm.heap.get(binding),
+            self.vm.heap_reads().get(binding),
             Some(Cell::WasmTable { table64: false, .. })
         )
     }
@@ -7583,7 +7579,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode; crate::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
-        self.heap.set_narrow_runs(mode == ExecutionMode::Interpreted);
+        self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -8274,7 +8270,7 @@ impl Vm {
         let memory_shared = memory_slot.is_some_and(|slot| {
             self.heap
                 .environment_slot(env, slot as usize)
-                .and_then(|binding| self.heap.get(binding))
+                .and_then(|binding| self.heap_reads().get(binding))
                 .is_some_and(|cell| matches!(cell, Cell::WasmMemory { bytes, .. } if matches!(**bytes, quench_runtime::wasm::memory::MemoryStorage::Shared(_))))
         });
         analysis.grows_memory = wasm_growth::growing_functions(&code, count, memory_shared);
@@ -8286,7 +8282,7 @@ impl Vm {
         }
         let fixed_base = guarded
             .then(|| {
-                let binding = self.heap.environment_slot(env, memory_slot? as usize)?;
+                let binding = self.heap_reads().environment_slot(env, memory_slot? as usize)?;
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
@@ -8986,7 +8982,7 @@ impl Vm {
                 instance: std::ptr::null(),
                 native_roots: &mut *self.native_roots,
                 memory_grow: wasm_memory_stage::memory_grow_callout as *const () as usize,
-                wasm_gc_records: self.heap.wasm_gc_record_base().map_or(0, |base| base as usize),
+                wasm_gc_records: self.heap_reads().wasm_gc_record_base().map_or(0, |base| base as usize),
             };
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
@@ -10241,19 +10237,19 @@ mod tests {
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+        let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
         let receiver_atom = vm.intern_atom("receiver");
         let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
         let atom = vm.intern_atom("edgeValue");
-        let shape = vm.heap.object(receiver).unwrap().shape();
+        let shape = vm.heap_reads().object(receiver).unwrap().shape();
         let slot = vm.shape_slot(shape, atom).unwrap();
-        vm.heap.property_set(receiver, slot, Value::integer(2));
+        vm.store_property_slot(receiver, slot, Value::integer(2));
         assert!(published.lease().is_some());
-        vm.heap.property_set(receiver, slot, Value::number(0.5));
+        vm.store_property_slot(receiver, slot, Value::number(0.5));
         assert!(published.lease().is_none(), "widening retires future entry at the write");
-        assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
         assert!(weak.upgrade().is_none());
@@ -10316,11 +10312,11 @@ mod tests {
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
-            let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+            let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-            let shape = vm.heap.object(receiver).unwrap().shape();
+            let shape = vm.heap_reads().object(receiver).unwrap().shape();
             let slot = vm.shape_slot(shape, store.atom_index()).unwrap();
             let residual = (&program as *const ResidualProgram).addr() as u64;
             let machine = (&mut vm as *mut Vm).addr() as u64;
@@ -10339,8 +10335,8 @@ mod tests {
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
-            assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
-            vm.heap.property_set(receiver, slot, Value::number(0.5));
+            assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
+            vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.heap.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
             assert_eq!(vm.heap.unrepresented_slots(), 0);
@@ -10391,7 +10387,7 @@ mod tests {
             // never dereferences the synthetic arena or returned address.
             let run = unsafe { std::mem::transmute::<*mut u8,
                 unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
-            let width = quench_runtime::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
+            let width = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
             let base = width;
             for (length, storage, slot) in [
                 (0, 0, 0), (1, 0, 0), (1, 0, 1), (1, 0, 2),
@@ -10436,7 +10432,7 @@ mod tests {
         vm.execute(&program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap.object(receiver).unwrap().inline_properties().is_some());
+        assert!(vm.heap_reads().object(receiver).unwrap().inline_properties().is_some());
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let function = program.functions.iter().position(|function|
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
@@ -10446,8 +10442,8 @@ mod tests {
         let cache = vm.field_cache_entry(site);
         assert_ne!(cache.holder, quench_runtime::NO_FIELD_HOLDER);
         assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap.object(receiver).unwrap().proto();
-        let holder = vm.heap.object(prototype).unwrap();
+        let prototype = vm.heap_reads().object(receiver).unwrap().proto();
+        let holder = vm.heap_reads().object(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
@@ -10489,8 +10485,8 @@ mod tests {
         // receiver. No guest call or collection occurs while the code runs.
         let run = unsafe { std::mem::transmute::<*mut u8,
             unsafe extern "C" fn(usize, *const Value, usize, u64) -> u64>(memory.pointer()) };
-        let (values, length) = vm.heap.native_property_values();
-        let records = vm.heap.object_record_base().unwrap() as usize;
+        let (values, length) = vm.heap_reads().native_property_values();
+        let records = vm.heap_reads().object_record_base().unwrap() as usize;
         assert_eq!(Value::from_bits(unsafe { run(records, values, length, receiver.to_bits()) }), Value::number(42.0));
         // A receiver that has not proved the cached shape cannot read this slot.
         assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
@@ -10508,7 +10504,7 @@ mod tests {
             assert!(activation.fixed_this_slot.is_null());
         }).unwrap();
         vm.frames[0].fixed_this = true;
-        let slots = quench_runtime::heap::EnvironmentSlots::from(vec![Value::number(7.0)]);
+        let slots = quench_runtime::tier_surface::EnvironmentSlots::from(vec![Value::number(7.0)]);
         vm.frames[0].capture_cache = quench_runtime::CaptureCache {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
             epoch: vm.cache_epochs.gc, slots: &slots, root: None,
@@ -10753,14 +10749,14 @@ mod tests {
     fn native_object_table_binding_tracks_heap_lifetime() {
         let source = "globalThis.tableProbe=0; throw 7;";
         let mut vm = semantic_vm(source);
-        let original = vm.heap.object_record_base().unwrap() as usize;
+        let original = vm.heap_reads().object_record_base().unwrap() as usize;
         let probe = vm.lookup_atom("tableProbe").unwrap();
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let assert_binding = |vm: &mut Vm, expected| {
             JsStepDispatch::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 assert_ne!(expected, 0);
                 assert_eq!(activation.object_record_base, expected);
-                assert_eq!(vm.heap.object_record_base().unwrap() as usize, expected);
+                assert_eq!(vm.heap_reads().object_record_base().unwrap() as usize, expected);
             }).unwrap();
         };
         assert_binding(&mut vm, original);
@@ -10772,7 +10768,7 @@ mod tests {
         assert_eq!(vm.own_property(vm.realm.globals, probe), Some(Value::number(1.5)));
 
         let mut other = semantic_vm(source);
-        let other_base = other.heap.object_record_base().unwrap() as usize;
+        let other_base = other.heap_reads().object_record_base().unwrap() as usize;
         // Reentry in another VM admits that VM's table, without changing the
         // outer activation's admitted base or retaining it for later entries.
         JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
@@ -10792,7 +10788,7 @@ mod tests {
         frame.initialized_registers = frame.registers.len();
         vm.frames.push(frame);
         vm.active_registers = vm.frames[0].registers.as_mut_ptr();
-        let reset_base = vm.heap.object_record_base().unwrap() as usize;
+        let reset_base = vm.heap_reads().object_record_base().unwrap() as usize;
         assert_binding(&mut vm, reset_base);
         assert_binding(&mut other, other_base);
     }

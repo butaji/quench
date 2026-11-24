@@ -31,7 +31,7 @@ impl Vm {
         };
         // SAFETY: an environment activation's window holds a local for each slot the function binds.
         let arguments = unsafe { ParameterHome::of(entries, body, usize::from(slot)) }.read(&self.heap);
-        if let Some(object) = self.heap.object_mut(arguments) {
+        if let Some(object) = self.object_mut(arguments) {
             object.set_window_depth(depth);
         }
     }

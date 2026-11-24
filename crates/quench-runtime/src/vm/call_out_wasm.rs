@@ -114,9 +114,9 @@ impl Vm {
                 let exception = read(&*self, i.register_a());
                 Err(self.wasm_throw_ref(exception))
             }
-            // Every other host step is a GC value step: the group `GcStep::of` names.
+            // Every other host step is a GC value step or an instance read (`gc_value_op`).
             _ => {
-                debug_assert!(crate::staged::wasm_gc::GcStep::of(i.op()).is_some(), "{:?} is no GC value step", i.op());
+                debug_assert!(crate::staged::wasm_gc::gc_value_op(i.op()), "{:?} is no GC value step", i.op());
                 self.wasm_gc_value_step(program, env, i, read)
             }
         }

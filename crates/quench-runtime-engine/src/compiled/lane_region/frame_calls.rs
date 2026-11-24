@@ -179,7 +179,7 @@ struct Template {
 const EMPTY_OBJECT: Template = Template {
     cursor: std::mem::offset_of!(JsStepDispatch, head.object_cursor),
     records: std::mem::offset_of!(JsStepDispatch, head.object_record_base),
-    record_size: quench_runtime::heap::NATIVE_OBJECT_LAYOUT.record_size,
+    record_size: quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.record_size,
     tag: quench_runtime::value::ValueLayout::DIRECT_OBJECT_TAG,
     layout: std::mem::offset_of!(JsStepDispatch, head.empty_object_layout),
     words: std::mem::offset_of!(JsStepDispatch, head.empty_object_payload),
@@ -190,7 +190,7 @@ const EMPTY_OBJECT: Template = Template {
 const EMPTY_ARRAY: Template = Template {
     cursor: std::mem::offset_of!(JsStepDispatch, head.array_cursor),
     records: std::mem::offset_of!(JsStepDispatch, head.array_record_base),
-    record_size: quench_runtime::heap::NATIVE_ARRAY_LAYOUT.record_size,
+    record_size: quench_runtime::tier_surface::NATIVE_ARRAY_LAYOUT.record_size,
     tag: quench_runtime::value::ValueLayout::DIRECT_ARRAY_TAG,
     layout: std::mem::offset_of!(JsStepDispatch, head.empty_array_layout),
     words: std::mem::offset_of!(JsStepDispatch, head.empty_array_payload),
@@ -203,7 +203,7 @@ const EMPTY_ARRAY: Template = Template {
 /// first, and a spent run is refilled only there, so every run is checked once before it is used.
 fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, template: Template,
     helper: LaneHelper, arguments: &[ir::Value], proof: EmitProof) -> Option<ir::Value> {
-    use quench_runtime::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR};
+    use quench_runtime::tier_surface::{NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR};
     use quench_runtime::staged::region::Region;
     use quench_runtime::staged::Stage;
     let EmitProof::Allocation { miss } = proof else { return None };

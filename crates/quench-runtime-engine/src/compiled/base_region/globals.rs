@@ -24,7 +24,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::code_dependencies::SlotDependency;
-use quench_runtime::heap::{GlobalFact, GlobalLayoutFact};
+use quench_runtime::tier_surface::{GlobalFact, GlobalLayoutFact};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot, StableCell};
 use quench_bjit::{padded_holes, HOLES};
@@ -47,7 +47,7 @@ impl Access {
 
     /// The byte offset of the slot's value in the arena run behind the object's extras.
     fn offset(self) -> u64 {
-        u64::from(self.slot.slot) * quench_runtime::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64
+        u64::from(self.slot.slot) * quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64
     }
 
     /// Whether the slot's observed type is Numbers only, which a load of it yields.

@@ -23,11 +23,11 @@ pub(crate) struct StableUses {
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
-    globals: BTreeSet<quench_runtime::heap::GlobalFact>,
+    globals: BTreeSet<quench_runtime::tier_surface::GlobalFact>,
     /// The heap identities the code embeds: callees, prototypes' values, constants.
     pub(crate) roots: quench_runtime::folded_roots::FoldedRoots,
     /// Global objects whose layout the code held.
-    layouts: BTreeSet<quench_runtime::heap::GlobalLayoutFact>,
+    layouts: BTreeSet<quench_runtime::tier_surface::GlobalLayoutFact>,
     /// Global slots whose observed type the code relied on, each once.
     slots: Vec<quench_runtime::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
@@ -179,7 +179,7 @@ impl Lowering<'_, '_> {
     /// Holds the value of global cell `fact` (`hold_stable`), read from the global object
     /// `global` of the realm compiled against: a realm reads its own global's cells, so a block
     /// first proves that realm active (`prove_realm`).
-    pub(crate) fn hold_global(&mut self, state: &mut State, exit: ir::Block, fact: quench_runtime::heap::GlobalFact,
+    pub(crate) fn hold_global(&mut self, state: &mut State, exit: ir::Block, fact: quench_runtime::tier_surface::GlobalFact,
         realm: (Value, i32)) {
         self.hold_stable(state, exit);
         self.stable.globals.insert(fact);

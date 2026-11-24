@@ -92,7 +92,7 @@ impl OperandKinds {
     /// The kind of one operand: int32 and double by their tags, a string or record by its handle's
     /// family, the rest out of line.
     #[inline(always)]
-    fn of(heap: &quench_runtime::heap::Heap, value: Value) -> Self {
+    fn of(heap: quench_runtime::vm::tier_queries::HeapReads<'_>, value: Value) -> Self {
         if value.as_int().is_some() {
             Self::INT32
         } else if value.is_double() {
@@ -111,8 +111,8 @@ impl OperandKinds {
     /// The kind of a value whose family does not decide it: a legacy cell, a BigInt or other.
     #[cold]
     #[inline(never)]
-    fn of_cell(heap: &quench_runtime::heap::Heap, value: Value) -> Self {
-        if matches!(heap.get(value), Some(quench_runtime::heap::Cell::BigInt(_))) {
+    fn of_cell(heap: quench_runtime::vm::tier_queries::HeapReads<'_>, value: Value) -> Self {
+        if matches!(heap.get(value), Some(quench_runtime::tier_surface::Cell::BigInt(_))) {
             Self::BIGINT
         } else {
             Self::OTHER
@@ -121,7 +121,7 @@ impl OperandKinds {
 
     /// The kinds of an execution's two operands; two int32s that reach here widened.
     #[inline(always)]
-    fn of_pair(heap: &quench_runtime::heap::Heap, left: Value, right: Value) -> Self {
+    fn of_pair(heap: quench_runtime::vm::tier_queries::HeapReads<'_>, left: Value, right: Value) -> Self {
         let kinds = Self::of(heap, left).union(Self::of(heap, right));
         if kinds == Self::INT32 { kinds.union(Self::WIDENED) } else { kinds }
     }
@@ -153,7 +153,7 @@ unsafe fn feedback_cell<'a>(base: Ip, ip: Ip) -> &'a std::cell::Cell<u8> {
 #[inline(always)]
 pub(crate) unsafe fn note_operands(cx: *mut LaneContext, ip: Ip, left: Value, right: Value) {
     // SAFETY: as the function's own.
-    let (heap, cell) = unsafe { (&vm(cx).heap, feedback_cell((*cx).base, ip)) };
+    let (heap, cell) = unsafe { (vm(cx).heap_reads(), feedback_cell((*cx).base, ip)) };
     let seen = OperandKinds(cell.get());
     let kinds = seen.union(OperandKinds::of_pair(heap, left, right));
     if kinds != seen {

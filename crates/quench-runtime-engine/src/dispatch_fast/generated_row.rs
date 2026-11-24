@@ -48,7 +48,7 @@ lane_handler! {
             }
             if const { FLAG == FLAG_UNREAD } {
                 // A tracked runtime's own hint store is the record's first choice from now on.
-                if unsafe { vm(script) }.heap.tracks_slot_representations() {
+                if unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
                     requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
                 }
             }
@@ -134,11 +134,11 @@ lane_handler! {
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
         let property_values = if property && !store {
             // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
-            unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap.arena_values_base()
+            unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap_reads().arena_values_base()
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names))
-            && quench_runtime::staged::wasm_gc::GcStep::of(LaneFields::<OP, FLAG>::OPCODE).is_none() } {
+            && !quench_runtime::staged::wasm_gc::gc_value_op(LaneFields::<OP, FLAG>::OPCODE) } {
             // A Wasm GC value row reads the Wasm heap through its call-out, no property arena slot.
-            unsafe { vm(cx) }.heap.arena_values_base()
+            unsafe { vm(cx) }.heap_reads().arena_values_base()
         } else { std::ptr::null() };
         let mut stage = if store {
             // A store's gate reads the heap's barrier state (`Stage::store_gate`).
@@ -151,13 +151,13 @@ lane_handler! {
             // the view proof reads.
             let script: *mut LaneContext = view.memory.bytes.cast();
             frame.typed = Some((quench_runtime::staged::typed_elements::native_kind_at(i.imm()),
-                unsafe { vm(script) }.heap.typed_view_directory()));
+                unsafe { vm(script) }.heap_reads().typed_view_directory()));
         }
         if store {
             let script: *mut LaneContext = view.memory.bytes.cast();
             // The live record table: a direct object receiver proves it reserved, and any other
             // receiver leaves at the row's family test before it is addressed.
-            let records = unsafe { vm(script) }.heap.live_object_records() as u64;
+            let records = unsafe { vm(script) }.heap_reads().live_object_records() as u64;
             // A method cache that may name the atom must see the store (`store_admitted`); an add
             // leaves that to the VM's adds, which admit it themselves.
             if const { FLAG != crate::dispatch_fast::ADD_SITE } && unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
@@ -211,8 +211,8 @@ lane_handler! {
                 let others = const { crate::dispatch_fast::inherited_other_site(FLAG) };
                 let Some((guard, watch, value)) = machine.inherited_hint_operands(i.call_link.get(), i.imm(), others) else { property_miss!() };
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
-                let other = if others { Some(&raw const machine.heap) } else { None };
-                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
+                let other = if others { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
+                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
             } else if const { FLAG == crate::dispatch_fast::NESTED_SITE || crate::dispatch_fast::sink_site(FLAG) } {
                 // A nested read's two own hops: the record's hint is the first step's layout and
                 // slot, the site's second entry the second, both primary own entries; the base is
@@ -239,7 +239,7 @@ lane_handler! {
                 }
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                 frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot), (entry.receiver, entry.slot), site.base,
-                    machine.heap.live_object_records() as u64));
+                    machine.heap_reads().live_object_records() as u64));
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
@@ -261,15 +261,15 @@ lane_handler! {
                 // object, should the site meet one, through the bound records.
                 let machine = unsafe { vm(script) };
                 // The live record table: a direct object receiver proves it reserved.
-                let records = machine.heap.live_object_records() as u64;
+                let records = machine.heap_reads().live_object_records() as u64;
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
                 // A fixed form is the hint layout's own (the decision chose the row by it).
                 let form = const { crate::dispatch_fast::own_site_form(FLAG) };
                 frame.plan = Some(if form == HINTED_FORM {
-                    RecordPlan::own_other(hint.receiver, hint.slot, records, &raw const machine.heap)
+                    RecordPlan::own_other(hint.receiver, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 } else {
-                    RecordPlan::own_other_formed(hint.receiver, form & !quench_runtime::staged::TAGGED_SLOTS, hint.slot, records, &raw const machine.heap)
+                    RecordPlan::own_other_formed(hint.receiver, form & !quench_runtime::staged::TAGGED_SLOTS, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 });
             } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
                 // One object's own constant: its record's address, then the watch on its values.
@@ -280,9 +280,9 @@ lane_handler! {
                 // A register's `length`: an array's or a string's, as the site's tier decided.
                 let machine = unsafe { vm(script) };
                 frame.plan = Some(RecordPlan::length(if const { FLAG == crate::dispatch_fast::ARRAY_LENGTH_SITE } {
-                    quench_runtime::staged::ic::IcOp::ArrayLength { records: machine.heap.live_array_records() as u64 }
+                    quench_runtime::staged::ic::IcOp::ArrayLength { records: machine.heap_reads().live_array_records() as u64 }
                 } else {
-                    quench_runtime::staged::ic::IcOp::StringLength { records: machine.heap.live_string_records() as u64 }
+                    quench_runtime::staged::ic::IcOp::StringLength { records: machine.heap_reads().live_string_records() as u64 }
                 }));
             } else if const { crate::dispatch_fast::host_read_site(FLAG) } {
                 // A read the VM's geometry or length answers from the receiver's word (`FieldPlan::Length`,
@@ -300,7 +300,7 @@ lane_handler! {
                 let machine = unsafe { vm(script) };
                 let Some((guard, watch, slot)) = machine.getter_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::getter(guard, watch, slot, machine.heap.live_object_records() as u64));
+                frame.plan = Some(RecordPlan::getter(guard, watch, slot, machine.heap_reads().live_object_records() as u64));
             } else if const { FLAG == crate::dispatch_fast::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };
@@ -316,7 +316,7 @@ lane_handler! {
                 // (`RecordPlan::polymorphic`), the other entries alone.
                 let machine = unsafe { vm(script) };
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
-                let records = machine.heap.live_object_records() as u64;
+                let records = machine.heap_reads().live_object_records() as u64;
                 frame.entries = Some(EntryReads::of(script, ip));
                 frame.plan = Some(if const { FLAG == crate::dispatch_fast::POLYMORPHIC_SITE } {
                     let hint = i.field_hint();
@@ -333,8 +333,8 @@ lane_handler! {
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 // A direct object's record is addressed in the table after its family test; at the
                 // held-other site, any other receiver's object part is resolved out of line.
-                let other = if const { crate::dispatch_fast::held_other_site(FLAG) } { Some(&raw const machine.heap) } else { None };
-                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
+                let other = if const { crate::dispatch_fast::held_other_site(FLAG) } { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
+                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
             } else {
             let records = unsafe { (*script).binding.object_base } as u64;
             if const { crate::dispatch_fast::own_site_form(FLAG) == HINTED_FORM } {
@@ -367,13 +367,13 @@ lane_handler! {
                     // A tracked runtime's own store completes through the VM's own-field hit each time from the
                     // plain row (its layout store observes no representation): the record takes the tracked
                     // site's hinted store, as a refused one does (`store_miss!`), and stops asking the site.
-                    if const { FLAG == FLAG_UNREAD } && unsafe { vm(script) }.heap.tracks_slot_representations() {
+                    if const { FLAG == FLAG_UNREAD } && unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
                         requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
                     }
                     // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
                     // a narrow site whose object is no longer narrow goes back to the own store.
-                    if const { FLAG == FLAG_UNREAD || FLAG == crate::dispatch_fast::NARROW_SITE } && !unsafe { vm(script) }.heap.tracks_slot_representations() {
-                        let narrow = quench_runtime::heap::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM == quench_runtime::value_vec::NARROW_FORM;
+                    if const { FLAG == FLAG_UNREAD || FLAG == crate::dispatch_fast::NARROW_SITE } && !unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
+                        let narrow = quench_runtime::tier_surface::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM == quench_runtime::value_vec::NARROW_FORM;
                         if const { FLAG == FLAG_UNREAD } {
                             if narrow { requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::NARROW_SITE)); }
                         } else if !narrow {

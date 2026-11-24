@@ -146,7 +146,7 @@ impl CaptureStores {
             && super::capture_stores(Registers(context.cast()).capture())
                 // SAFETY: the running function's dense capture slots, which admit this write
                 // (`CAPTURE_STORES`); no collection runs in the lane.
-                .and_then(|slots| unsafe { quench_runtime::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
+                .and_then(|slots| unsafe { quench_runtime::tier_surface::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
                 .is_some() }
     }
 }
@@ -174,7 +174,7 @@ impl Decisions {
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
-            records: |context| unsafe { vm(context.cast::<LaneContext>()) }.heap.object_record_base().map(|base| base as u64),
+            records: |context| unsafe { vm(context.cast::<LaneContext>()) }.heap_reads().object_record_base().map(|base| base as u64),
             instance: instance_decision }
     }
 }
@@ -231,7 +231,7 @@ impl MathCalls {
     fn of(cx: *mut LaneContext) -> Self {
         Self { context: cx.cast(), call: |context, callee, arguments| {
             let vm = unsafe { vm(context.cast::<LaneContext>()) };
-            let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return None };
+            let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return None };
             super::number::math_inline_call(*native, arguments)
         } }
     }
@@ -247,7 +247,7 @@ impl FieldStores {
                 let vm = unsafe { vm(cx) };
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
-                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, quench_runtime::heap::PropertyStoreLayout::MayWiden) {
+                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden) {
                     return None;
                 }
                 Some(vm.form_hint(vm.field_cache_entry(site), object))
@@ -286,7 +286,7 @@ impl FieldStores {
                 let vm = unsafe { vm(cx) };
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
-                vm.polymorphic_own_field_store_hit(code, object, atom, value, site, quench_runtime::heap::PropertyStoreLayout::MayWiden)
+                vm.polymorphic_own_field_store_hit(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden)
             },
             general: |context, object, atom, site, value| {
                 let cx = context.cast::<LaneContext>();
@@ -306,7 +306,7 @@ impl FieldStores {
                 let vm = unsafe { vm(cx) };
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
-                vm.primary_own_field_store_hit::<false>(code, object, atom, value, site, quench_runtime::heap::PropertyStoreLayout::Preserve)
+                vm.primary_own_field_store_hit::<false>(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve)
             },
         }
     }
@@ -377,7 +377,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     capture_slots: Option<*const usize>,
     /// The heap whose records a row reads in place (`Frame::heap_records`), where the row is one
     /// that does (`Decoder::Names`).
-    heap: Option<*const quench_runtime::heap::Heap>,
+    heap: Option<*const Vm>,
     /// The running frame's `this` where the lane's context word does not hold it (`this_in_lane`),
     /// read only by a row that asks for `this`.
     frame_this: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
@@ -407,6 +407,10 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The lane context and the fast answers of an iteration or for-in call-out (`fast_names_step`), for
     /// the row that makes one (`Decoder::Names`).
     names: Option<(*mut (), NamesStep)>,
+    /// The lane context a Wasm GC value row's call-out runs in (`wasm_gc_in_lane`), and the record an
+    /// indirect target's reference call is at (two records on: the receiver's constant, then the call),
+    /// where the row is one.
+    gc_values: Option<(*mut (), super::Ip, GcValueStep)>,
     /// The environment clone a `CloneEnv` row makes (`clone_environment_of`).
     clones: Option<EnvironmentClones>,
     /// The iterator cleanup stack an `IteratorCleanupPush`/`Pop` row keeps (`iterator_push_in_lane`).
@@ -545,6 +549,9 @@ type ElementSpan = unsafe fn(*mut u8, u16, Value, bool) -> Option<(std::ptr::Non
 struct WasmMemories {
     context: *mut (),
     resolve: unsafe fn(*mut (), Value) -> Option<(*mut u8, usize, bool)>,
+    /// The page size (log2) of the memory a value names (`wasm_memory_page_bits_of`), which only a
+    /// `memory.size` row reads.
+    page_bits: unsafe fn(*mut (), Value) -> Option<u32>,
 }
 
 /// `WasmMemories::resolve`: the bytes of the Wasm memory `value` names, as `direct_memory` gives
@@ -558,6 +565,18 @@ unsafe fn wasm_memory_of(context: *mut (), value: Value) -> Option<(*mut u8, usi
     let wide = vm.wasm_memory_index_type(value).ok()? == quench_runtime::WasmType::I64;
     Some((bytes, length, wide))
 }
+
+/// The page size (log2) of the Wasm memory `value` names (`Vm::wasm_memory_page_bits`).
+///
+/// # Safety
+/// `context` is the running lane's context.
+unsafe fn wasm_memory_page_bits_of(context: *mut (), value: Value) -> Option<u32> {
+    unsafe { vm(context.cast::<LaneContext>()) }.wasm_memory_page_bits(value)
+}
+
+/// A Wasm GC value row's step over the lane context and register file (`wasm_gc_in_lane`), one per
+/// opcode.
+type GcValueStep = unsafe fn(*mut LaneContext, Registers, WideInstruction, super::Ip) -> Option<Value>;
 
 /// The lane context's Wasm global rules for a staged instance-state row: the VM's load of the
 /// global bound in a binding and its store (`wasm_global_load`, `wasm_global_store`).
@@ -584,8 +603,8 @@ struct WasmVectors {
 #[derive(Clone, Copy)]
 struct EnvironmentReads {
     context: *mut (),
-    read: unsafe fn(*mut ()) -> Option<*mut quench_runtime::heap::EnvironmentSlots>,
-    write: unsafe fn(*mut (), u16) -> Option<*mut quench_runtime::heap::EnvironmentSlots>,
+    read: unsafe fn(*mut ()) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots>,
+    write: unsafe fn(*mut (), u16) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots>,
     /// The value of one slot where `read` declines the whole storage (`environment_slot_read`): a
     /// function that captures selectively reads each slot its environment holds.
     slot_read: unsafe fn(*mut (), u16) -> Option<Value>,
@@ -623,7 +642,7 @@ pub(crate) struct RecordPlan {
     /// The heap whose arrays, functions and ordinary builtins a plan any receiver runs
     /// (`IcOp::Held`) finds the object part of (`Heap::held_other_receiver`); `None` where the
     /// plan runs over direct objects alone.
-    other: Option<*const quench_runtime::heap::Heap>,
+    other: Option<*const Vm>,
     /// Whether the plan starts from the receiver's word rather than its object record
     /// (`IcOp::HeldString`).
     word: bool,
@@ -694,7 +713,7 @@ impl RecordPlan {
     /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
     /// takes the same layout compare.
     #[inline(always)]
-    pub(crate) fn own_other(layout: u32, slot: u16, records: u64, heap: *const quench_runtime::heap::Heap) -> Self {
+    pub(crate) fn own_other(layout: u32, slot: u16, records: u64, heap: *const Vm) -> Self {
         Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
     }
 
@@ -717,7 +736,7 @@ impl RecordPlan {
     /// `own_other` of a layout whose storage form `form` the row's site fixed.
     #[inline(always)]
     pub(crate) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
-        heap: *const quench_runtime::heap::Heap) -> Self {
+        heap: *const Vm) -> Self {
         let mut plan = Self::own_other(layout, slot, records, heap);
         plan.ops[0] = quench_runtime::staged::ic::IcOp::GuardFormed { id: layout, form };
         plan
@@ -727,7 +746,7 @@ impl RecordPlan {
     /// (`IcOp::Held`).
     #[inline(always)]
     pub(crate) fn held(guard: u64, watch: u64, value: u64, records: u64,
-        other: Option<*const quench_runtime::heap::Heap>) -> Self {
+        other: Option<*const Vm>) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
         Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
@@ -865,7 +884,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -900,6 +919,17 @@ impl<const ACC: u8> LaneFrame<ACC> {
 /// The field reads a planned named read runs over the running lane's record: the cached read of
 /// a site, the private field of a record, and the private store.
 impl<const ACC: u8> LaneFrame<ACC> {
+    /// The value of `register` as a row reads it (`Frame::read`), typed: a proven int32 operand
+    /// (`operands_int`) is its value half re-tagged as a constant, so the staged row's tag tests fold;
+    /// the carried accumulator stands for field B, the one register a single-operand row reads, and a
+    /// row that reads several (one with heap records) reads the file, which every producer writes.
+    #[inline(always)]
+    fn read_value(&self, register: Register) -> Value {
+        if self.operands_int { return Value::integer(self.registers.get(register).to_bits() as u32 as i32); }
+        if self.heap.is_some() || register != self.accumulated { return self.registers.get(register); }
+        read::<ACC, ACC_B>(self.registers, register, self.view)
+    }
+
     /// `cached_read` of a read whose private name, if any, has the private-name site
     /// `private_site` (`private_slot`); `0` for none, which reads it uncached.
     #[inline(always)]
@@ -1023,7 +1053,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         code: &ResidualProgram, object: Value, atom: quench_runtime::bytecode::Atom) -> Option<Value> {
         let slot = Self::private_slot(cx, site, code, object, atom)?;
         let vm = unsafe { vm(cx) };
-        vm.heap.property_get(vm.object_data(object)?, slot)
+        vm.heap_reads().property_get(vm.object_data(object)?, slot)
     }
 
     /// The store of private field `atom` of `object` at the record address `site`, under its
@@ -1035,7 +1065,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         let Some(slot) = Self::private_slot(cx, site, code, object, atom) else {
             return false;
         };
-        (unsafe { vm(cx) }).heap.property_set(object, slot, value);
+        (unsafe { vm(cx) }).store_property_slot(object, slot, value);
         true
     }
 }
@@ -1088,17 +1118,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
-        // A proven int32 operand (`operands_int`): its value half, re-tagged as a constant, so the
-        // staged row's tag tests fold.
-        if self.operands_int {
-            return Value::integer(self.registers.get(register).to_bits() as u32 as i32).to_bits();
-        }
-        // The carried accumulator stands for field B, the one register a single-operand row reads;
-        // a row that reads several (one with heap records) reads the file, which every producer writes.
-        if self.heap.is_some() || register != self.accumulated { return self.registers.get(register).to_bits(); }
-        read::<ACC, ACC_B>(self.registers, register, self.view).to_bits()
-    }
+    fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 { self.read_value(register).to_bits() }
 
     #[inline(always)]
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, fact: Self::Fact) {
@@ -1139,14 +1159,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
-        let value = Value::from_bits(self.read(stage, register));
+    fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
+        let value = self.read_value(register);
         match value.truthiness() {
             Some(truthy) => Some(truthy),
             // A string or another cell the word leaves: its cell decides it in place, where the
             // row carries the heap (a truthiness jump's, `row_frame_of`).
             // SAFETY: the heap outlives the row's step.
-            None => self.heap.map(|heap| quench_runtime::vm::coercion::heap_cell_truthy_in(unsafe { &*heap }, value)),
+            None => self.heap.map(|heap| unsafe { &*heap }.heap_cell_truthy(value)),
         }
     }
 
@@ -1226,9 +1246,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     /// The window's environment is young (`window_environment`) or remembered, so a plain local
     /// needs no barrier: no collection runs in the lane.
     #[inline(always)]
-    fn case_index(&mut self, stage: &mut Concrete, source: Register, start: u32, count: u16) -> Option<(u64, Self::Fact)> {
+    fn case_index(&mut self, _stage: &mut Concrete, source: Register, start: u32, count: u16) -> Option<(u64, Self::Fact)> {
         let cases = self.string_cases?;
-        let value = Value::from_bits(self.read(stage, source));
+        let value = self.read_value(source);
         // SAFETY: the running lane's context, and the filter the record's operand names (null where none).
         let index = unsafe { (cases.index)(cases.context, cases.filter, value, start as usize, usize::from(count)) };
         Some((Value::integer(index as i32).to_bits(), Boxing::Value))
@@ -1267,7 +1287,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
         // SAFETY: the running lane's heap, live for the row's step.
-        let heap = unsafe { &*self.heap? };
+        let heap = unsafe { &*self.heap? }.heap_reads();
         Some((heap.array_record_base()? as u64, heap.object_record_base()? as u64, heap.collection_epoch()))
     }
 
@@ -1300,7 +1320,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // A receiver's constant fields test reads one cache entry and the receiver's shape in place.
         if let CallOut::Protocol { step: quench_runtime::staged::Protocol::ConstantFieldsHeld { site }, operands: [_, Some(receiver)] } = operation {
             let host = self.host?;
-            let receiver = Value::from_bits(self.read(stage, receiver));
+            let receiver = self.read_value(receiver);
             // SAFETY: the host's context is the running lane's.
             let held = unsafe { (host.constant_fields)(host.cx, receiver, site) };
             return Some((Value::boolean(held).to_bits(), Boxing::Value));
@@ -1314,23 +1334,25 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
         }
         if let (CallOut::Unary { operator, value }, Some((context, _)), Some(unary)) = (operation, self.binary, self.unary) {
-            let operand = Value::from_bits(self.read(stage, value));
+            let operand = self.read_value(value);
             // SAFETY: the running lane's context, live for the row's step.
             return unsafe { unary(context, operator, operand) }.map(|value| (value.to_bits(), Boxing::Value));
         }
         match operation {
             CallOut::Decide { left, right, operator } => {
                 let Decisions { context, decide, .. } = self.decisions?;
-                let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+                let (left, right) = (self.read_value(left), self.read_value(right));
                 decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
             }
             // A Wasm GC value step: the interpreter's own (`Vm::wasm_gc_value_step`) over the running
             // frame's registers, inlined, so a row of one opcode keeps only that opcode's arm. A trap or
             // miss, which writes nothing, is the row's miss: the general step raises it.
-            CallOut::Protocol { step, .. } if let Some(instruction) = step.wasm_gc_instruction() => {
-                let (context, _) = self.names?;
+            // The frame carries `gc_values` only for a GC value row (`row_frame_of`), whose opcode the
+            // step is instantiated for, so the test folds.
+            CallOut::Protocol { step, .. } if let Some((context, next, gc_step)) = self.gc_values
+                && let Some(instruction) = step.wasm_instruction() => {
                 // SAFETY: the running lane's context and register file, live for the row's step.
-                unsafe { super::wasm_gc::wasm_gc_in_lane(context.cast(), self.registers, instruction) }.map(|value| (value.to_bits(), Boxing::Value))
+                unsafe { gc_step(context.cast(), self.registers, instruction, next) }.map(|value| (value.to_bits(), Boxing::Value))
             }
             CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
@@ -1436,7 +1458,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             && let Some(slots) = self.capture_slots
             // SAFETY: the running function's dense storage, found this run
             // (`LaneContext::capture`); the scoped read retains the bounds and marker checks.
-            && let Some(value) = unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(slots, slot) }
+            && let Some(value) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, slot) }
         {
             return Some((value.to_bits(), Boxing::Value));
         }
@@ -1609,7 +1631,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     /// (`wasm_memory_of`), and its index type. A memory the lane cannot address leaves the row.
     #[inline(always)]
     fn wasm_memory(&mut self, _stage: &mut Concrete, register: Register) -> Option<(&mut [u8], bool)> {
-        let WasmMemories { context, resolve } = self.memories?;
+        let WasmMemories { context, resolve, .. } = self.memories?;
         // SAFETY: the context is the running lane's, live for the row's step.
         let (bytes, length, wide) = unsafe { resolve(context, self.registers.get(register)) }?;
         if length == 0 {
@@ -1618,6 +1640,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: `bytes` is the memory the value names in this lane run, `length` bytes long; the
         // frame holds no other borrow of it.
         Some((unsafe { std::slice::from_raw_parts_mut(bytes, length) }, wide))
+    }
+
+    /// The page size of the Wasm memory value in `register`, through the lane context.
+    #[inline(always)]
+    fn wasm_memory_page_bits(&mut self, _stage: &mut Concrete, register: Register) -> Option<u32> {
+        let WasmMemories { context, page_bits, .. } = self.memories?;
+        // SAFETY: the context is the running lane's, live for the row's step.
+        unsafe { page_bits(context, self.registers.get(register)) }
     }
 }
 
@@ -1631,7 +1661,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 /// `cx` is the running lane's context.
 #[inline(always)]
 unsafe fn environment_of(cx: *mut LaneContext, store: Option<u16>)
-    -> Option<(*mut quench_runtime::heap::EnvironmentSlots, Value)> {
+    -> Option<(*mut quench_runtime::tier_surface::EnvironmentSlots, Value)> {
     if !unsafe { (*cx).registers }.env().is_deleted() {
         return None;
     }
@@ -1682,7 +1712,7 @@ unsafe fn environment_slot_read(cx: *mut (), slot: u16) -> Option<Value> {
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::heap::EnvironmentSlots> {
+unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots> {
     unsafe { environment_of(cx.cast(), None) }.map(|(storage, _)| storage)
 }
 
@@ -1691,9 +1721,9 @@ unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::heap::Env
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn environment_write_storage(cx: *mut (), slot: u16) -> Option<*mut quench_runtime::heap::EnvironmentSlots> {
+unsafe fn environment_write_storage(cx: *mut (), slot: u16) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots> {
     let (storage, environment) = unsafe { environment_of(cx.cast(), Some(slot)) }?;
-    unsafe { vm(cx.cast::<LaneContext>()) }.heap.remember_cell(environment);
+    unsafe { vm(cx.cast::<LaneContext>()) }.write_barrier(environment);
     Some(storage)
 }
 
@@ -1801,15 +1831,15 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
             return quench_runtime::staged::property::receiver(stage, self, object, miss);
         };
         // SAFETY: the heap is the lane's, live for the read.
-        if functions && let Some(record) = unsafe { &*heap }.function_receiver(Value::from_bits(object)) {
-            return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::heap::Object as u64));
+        if functions && let Some(record) = unsafe { &*heap }.heap_reads().function_receiver(Value::from_bits(object)) {
+            return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
         }
         if let Some(id) = Value::from_bits(object).direct_object_index() {
             return Some(quench_runtime::staged::ic::Reached::bare(quench_runtime::staged::object::object_record_at(stage, records, u64::from(id))));
         }
         // SAFETY: as above.
-        let record = unsafe { &*heap }.held_other_receiver(Value::from_bits(object))?;
-        Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::heap::Object as u64))
+        let record = unsafe { &*heap }.heap_reads().held_other_receiver(Value::from_bits(object))?;
+        Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64))
     }
 
     /// `base[key]` past the dense and any-backing reads: the VM's element read at the row's site
@@ -1952,7 +1982,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
         // SAFETY: the heap is the lane's, live for the row.
         // The live table: a direct array receiver proves it reserved, and any other receiver
         // leaves at the access's family test before it is addressed.
-        self.heap.map(|heap| unsafe { (*heap).live_array_records() } as u64)
+        self.heap.map(|heap| unsafe { &*heap }.heap_reads().live_array_records() as u64)
     }
 
     /// The VM's element store at the row's site (`row_index_write`): an added element, a hole, a
@@ -1976,9 +2006,9 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
     /// The array a proof of the lane's span gives (`proof_span`), where the row is one a proof names;
     /// `None` where the slot does not prove the array, which proves it on the access's own check.
     #[inline(always)]
-    fn proved_view(&mut self, stage: &mut Concrete, base: Register, writable: bool) -> Option<quench_runtime::staged::elements::DenseView<u64>> {
+    fn proved_view(&mut self, _stage: &mut Concrete, base: Register, writable: bool) -> Option<quench_runtime::staged::elements::DenseView<u64>> {
         let (context, span) = self.element_span?;
-        let object = Value::from_bits(self.read(stage, base));
+        let object = self.read_value(base);
         // SAFETY: the context and its proofs are the running lane's, live for the row.
         let (values, length) = unsafe { span(context, base, object, writable) }?;
         Some(quench_runtime::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false, double: None, uncounted: false })
@@ -1999,7 +2029,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
     #[inline(always)]
     fn array_store_gate(&mut self, _stage: &mut Concrete, base: u64, value: u64, _miss: ()) -> Option<()> {
         // SAFETY: as `array_records`.
-        let heap = unsafe { &*self.heap? };
+        let heap = unsafe { &*self.heap? }.heap_reads();
         heap.array_store_unlogged(Value::from_bits(base), Value::from_bits(value)).then_some(())
     }
 }
@@ -2043,9 +2073,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
     /// interpreter reads it from the objects each time, so it needs no dependency.
     #[inline(always)]
-    fn stable_prototype(&mut self, stage: &mut Concrete, constructor: Register) -> Option<u64> {
+    fn stable_prototype(&mut self, _stage: &mut Concrete, constructor: Register) -> Option<u64> {
         let Decisions { context, prototype, .. } = self.decisions?;
-        prototype(context, Value::from_bits(self.read(stage, constructor))).map(u64::from)
+        prototype(context, self.read_value(constructor)).map(u64::from)
     }
 
     /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
@@ -2063,8 +2093,8 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
-        Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
+    fn prove_number(&mut self, _stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
+        self.read_value(register).as_number().map(|_| ())
     }
 
     #[inline(always)]
@@ -2297,6 +2327,9 @@ fn row_frame<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext,
     frame
 }
 
+/// A generic row's pure binary (`binary_values`), out of line: inlined, it grew the frame of a fused loop test's hot path.
+#[inline(never)] unsafe fn generic_binary_values(context: *mut (), operator: u32, left: Value, right: Value) -> Option<Value> { unsafe { super::binary_values(context.cast(), operator, left, right) } }
+
 /// `row_frame` before its accumulated register.
 #[inline(always)]
 fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
@@ -2307,14 +2340,14 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { quench_runtime::staged::truth_jump(LaneFields::<OP>::OPCODE).is_some() } {
         // A jump on a string's (or another cell's) truth decides it from the heap (`truthiness`).
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: *const Vm = unsafe { vm(cx) };
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
     }
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
         let script = view.memory.bytes.cast::<LaneContext>();
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(script) }.heap;
+        let heap: *const Vm = unsafe { vm(script) };
         // A read's host path is its miss sibling (`row_index_read_miss`): a call inside the row
         // would cost its fast path a stack frame.
         let reads = const { matches!(LaneFields::<OP>::OPCODE.field_layout(quench_runtime::bytecode::InstructionField::A), quench_runtime::bytecode::FieldLayout::ResultRegister) };
@@ -2338,14 +2371,19 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             None => frame,
         };
     }
-    if const { quench_runtime::staged::wasm_gc::GcStep::of(LaneFields::<OP>::OPCODE).is_some() } {
+    if const { quench_runtime::staged::wasm_gc::gc_value_op(LaneFields::<OP>::OPCODE) } {
         // A Wasm GC value row reads nothing of the frame but its registers and the lane context its
-        // call-out runs in (`wasm_gc_in_lane`): none of the name rows' hosts below.
-        let names: NamesStep = fast_names_step;
-        return LaneFrame::<ACC> { names: Some((cx.cast(), names)), ..LaneFrame::<ACC>::new(r, view) };
+        // call-out runs in (`wasm_gc_in_lane`): none of the name rows' hosts below. Lowering emits an
+        // indirect target only before its call, as the receiver's constant and then the call, so the
+        // reference call that reads the target's row is two records on; a record that is not that
+        // call finds the slot's record, register or reference differ, and resolves the reference itself.
+        let next = super::following(super::following(ip));
+        // The step of this row's opcode (`wasm_gc_in_lane::<OP>`), so only its arm is compiled.
+        let step: GcValueStep = super::wasm_gc::wasm_gc_in_lane::<OP>;
+        return LaneFrame::<ACC> { gc_values: Some((cx.cast(), next, step)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: *const Vm = unsafe { vm(cx) };
         // A count the view proved to read its function's kept arguments (`FLAG_SET`) takes a
         // keeping activation's count without finding the function.
         let count: unsafe fn(*mut (), u16) -> Option<Value> = if FLAG == FLAG_SET {
@@ -2398,8 +2436,8 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         } else {
             None
         };
-        let heap: Option<*const quench_runtime::heap::Heap> = if string_case {
-            let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: Option<*const Vm> = if string_case {
+            let heap: *const Vm = unsafe { vm(cx) };
             Some(heap)
         } else {
             None
@@ -2409,7 +2447,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
         let context = view.memory.bytes;
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(context.cast::<LaneContext>()) }.heap;
+        let heap: *const Vm = unsafe { vm(context.cast::<LaneContext>()) };
         // A row a proof names (`FLAG_SET`) reads and stores its array through the proof's span.
         let element_span = if const { FLAG == FLAG_SET } { Some((context, proof_span as ElementSpan)) } else { None };
         return LaneFrame::<ACC> { heap: Some(heap), element_span, ..LaneFrame::<ACC>::new(r, view) };
@@ -2451,8 +2489,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
         // A generic row's word-decided answers, and the pure binary of its call-outs (`binary_values`).
-        let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> =
-            |context, operator, left, right| unsafe { super::binary_values(context.cast(), operator, left, right) };
+        let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> = generic_binary_values;
         // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
         // leave is the VM's steady decision (`staged::step` over the comparison).
         // Its `ToPropertyKey` answers a primitive's key through the names step (`fast_names_step`).
@@ -2471,7 +2508,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmInt)) } {
         // An integer row reads its operands from the register file: the carried accumulator stands for
         // one field only, and a row reads two registers (`LaneFrame::read`).
-        let heap: *const quench_runtime::heap::Heap = &unsafe { vm(cx) }.heap;
+        let heap: *const Vm = unsafe { vm(cx) };
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmMemory)) } {
@@ -2479,7 +2516,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         // SAFETY: the view resolved this memory in the current lane run (`MemoryView::extent`).
         let memory = unsafe { view.memory.extent() };
         // A generic access names its memory by register, which `wasm_memory_of` resolves.
-        let memories = WasmMemories { context: cx.cast(), resolve: wasm_memory_of };
+        let memories = WasmMemories { context: cx.cast(), resolve: wasm_memory_of, page_bits: wasm_memory_page_bits_of };
         return LaneFrame::<ACC> { memory: Some(memory), memories: Some(memories), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmState)) } {
@@ -2770,18 +2807,17 @@ macro_rules! target_prefix_row {
 macro_rules! target_run {
     (@held none) => { None };
     (@held $held:ident) => { Some($held) };
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => {
-        target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0)
-    };
+    // A rare comparison or operand form: a lone jump's run (`inline`) keeps the record's switch; a pair's (`dispatch`) runs the record's row.
+    (@rare inline, $($_:tt)*) => { {} }; (@rare dispatch, $cx:ident, $r:ident, $at:ident, $c:ident) => { { std::hint::cold_path(); next!($cx, $r, $at, $c) } }; (@form inline, $op:ident, $($_:tt)*) => { test_run!(Some(Comparison::of_operator($op)), None::<bool>) }; (@form dispatch, $op:ident, $($rest:tt)*) => { target_run!(@rare dispatch, $($rest)*) };
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0, none, inline) };
     // `$cmp`, where not 0, is the test's comparison and operand form fixed at install
     // (`target_comparison`): the arm runs that test alone, with no switch on the record's operator.
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => {
-        target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, none)
-    };
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, none) };
     // `$held`, where given, is the int32 the test's left register holds, which the run just wrote
     // (`PROVEN_STEP`): the test reads it as its record's immediate, the left operand taken for a
     // constant, with no load or tag test. Given only with a fixed register-register comparison.
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt) => {{
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, $cmp, $held, dispatch) };
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident, $cmp:expr, $held:tt, $rare:ident) => {{
         // SAFETY: the view records the distance to a validated jump target.
         let target: crate::dispatch_fast::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
         if script_fuel_out($cx) {
@@ -2838,8 +2874,7 @@ macro_rules! target_run {
             test_run!(Some(Comparison::of_operator(operator)), Some(constant))
         }
         if const { $test == quench_runtime::staged::COMPARE_JUMP_ROW } {
-            // A loop's test is almost always a relation or a strict equality: each of those runs its own
-            // arm, any other comparison the record's decode.
+            // A loop's test is almost always a relation or a strict equality, each its own arm; any other runs its record's own row.
             use oxc_ast::ast::BinaryOperator as B;
             const LT: u32 = B::LessThan as u32;
             const LE: u32 = B::LessEqualThan as u32;
@@ -2859,7 +2894,7 @@ macro_rules! target_run {
                 match form {
                     1 => test_run!(Some(Comparison::of_operator($op)), Some(false)),
                     2 => test_run!(Some(Comparison::of_operator($op)), Some(true)),
-                    _ => test_run!(Some(Comparison::of_operator($op)), None::<bool>),
+                    _ => target_run!(@form $rare, $op, $cx, $r, at, carried),
                 }
             }; }
             match u32::from(test_i.a) {
@@ -2869,7 +2904,7 @@ macro_rules! target_run {
                 GE => formed!(GE),
                 SEQ => formed!(SEQ),
                 SNE => formed!(SNE),
-                _ => {}
+                _ => target_run!(@rare $rare, $cx, $r, at, carried),
             }
         }
         test_run!(None::<Comparison>, None::<bool>)
@@ -3915,7 +3950,7 @@ unsafe fn delete_value_in_lane(cx: *mut (), base: Value, key: Value) -> Option<V
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let plain = base.direct_object_index().is_some()
-        && vm.heap.string(key).is_some()
+        && vm.heap_reads().string(key).is_some()
         && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
 }
@@ -3943,7 +3978,7 @@ unsafe fn fast_names_step(cx: *mut (), call: CallOut, [first, second]: [Option<V
             if !vm.array_iteration_intact(source) {
                 return None;
             }
-            let iterator = vm.array_iterator_of(quench_runtime::heap::IteratorKind::ArrayValues, source);
+            let iterator = vm.array_iterator_of(quench_runtime::tier_surface::IteratorKind::ArrayValues, source);
             note_allocation(vm);
             Some(iterator)
         }
@@ -4018,7 +4053,7 @@ unsafe fn fast_names_step(cx: *mut (), call: CallOut, [first, second]: [Option<V
             let source = vm.to_property_key(program, source).ok()?;
             let key = if let Some(atom) = vm.string_key_atom(source) {
                 quench_runtime::vm::PropertyKey::string(atom)
-            } else if vm.heap.is_symbol(source) {
+            } else if vm.heap_reads().is_symbol(source) {
                 quench_runtime::vm::PropertyKey::symbol(source)
             } else {
                 return None;

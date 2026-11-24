@@ -102,19 +102,18 @@ impl ProgramStore {
     /// Publishes a lane body under the dependencies its code took: its slots' types
     /// (`Heap::subscribe_slot`) and its Stable facts (prototype values by holder shape, unnamed
     /// method atoms in `method_atoms`). A change of any retires it and sets its invalidation word.
-    pub fn publish_lane_method(&self, mut method: LaneMethod, heap: &mut crate::heap::Heap,
-        method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
+    pub fn publish_lane_method(&self, mut method: LaneMethod, facts: &mut crate::vm::tier_queries::FactWatch<'_>) -> Option<Rc<PublishedLaneMethod>> {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         method.reserve_scratch();
         method.trim_published();
         let invalidation = method.invalidation.clone();
         let roots = std::mem::take(&mut method.stable.roots);
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
-        published.hold_roots(roots, heap);
+        facts.hold_roots(&published, roots);
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let method = published.lease().expect("new publication");
         let root_constants = self.subscribe_root_constants(&method.dependencies.root_programs(&method.stable), &code);
-        if !root_constants || !method.dependencies.subscribe(&method.stable, &code, heap, method_atoms) {
+        if !root_constants || !method.dependencies.subscribe(&method.stable, &code, facts) {
             published.retire();
             return None;
         }
@@ -127,15 +126,14 @@ impl ProgramStore {
     /// Publishes a loop region's code under the dependencies its code took (`OsrFacts::subscribe`): a
     /// change of one retires it and sets its invalidation word, and a collection that frees a callee
     /// it names does (`NativeCallBinding::Region`).
-    pub fn publish_region(&self, mut region: CompiledOsrRegion, heap: &mut crate::heap::Heap,
-        method_atoms: &mut crate::code_dependencies::CodeReaders) -> Rc<PublishedCode<CompiledOsrRegion>> {
+    pub fn publish_region(&self, mut region: CompiledOsrRegion, facts: &mut crate::vm::tier_queries::FactWatch<'_>) -> Rc<PublishedCode<CompiledOsrRegion>> {
         region.facts.trim();
         region.calls.trim();
         let invalidation = region.calls.invalidation.clone();
         let published = Rc::new(PublishedCode::with_invalidation(region, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let region = published.lease().expect("new publication");
-        if !region.facts.subscribe(&code, heap, method_atoms) || !self.subscribe_root_constants(&region.facts.root_programs(), &code) {
+        if !region.facts.subscribe(&code, facts) || !self.subscribe_root_constants(&region.facts.root_programs(), &code) {
             published.retire();
         } else if !region.calls.inlined.is_empty() || !region.calls.direct.is_empty() {
             self.native_call_bindings.borrow_mut().push(NativeCallBinding::Region(Rc::downgrade(&published)));

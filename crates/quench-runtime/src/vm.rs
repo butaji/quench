@@ -2,6 +2,7 @@
 pub mod native_operands;
 pub mod jit_backend;
 pub mod tier_policy;
+pub mod tier_queries;
 pub mod engine_types;
 pub mod engine_calls;
 pub(crate) use engine_calls::EngineVm;

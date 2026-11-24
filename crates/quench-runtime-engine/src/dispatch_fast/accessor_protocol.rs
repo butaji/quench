@@ -42,7 +42,7 @@ impl AccessorCall {
             quench_runtime::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
         };
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: Some(index) };
-        Some(step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter.to_bits(), object.to_bits()).map(Value::from_bits))
+        Some(step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, object))
     }
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: the interpreter's getter
@@ -50,7 +50,7 @@ impl AccessorCall {
     /// no target to admit it, as a link's compare would.
     pub(crate) fn read_getter(&self, r: Registers, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
         let vm = unsafe { vm(self.cx) };
-        if !vm.lane_stack.script_calls_allowed() && matches!(vm.heap.function(getter), Some(FunctionRecord { kind: FunctionKind::Native(_), .. })) {
+        if !vm.lane_stack.script_calls_allowed() && matches!(vm.function_record(getter), Some(FunctionRecord { kind: FunctionKind::Native(_), .. })) {
             return Err(exit(ip));
         }
         lane_read_getter(self.cx, r, ip, i, getter, base)
@@ -67,7 +67,7 @@ impl AccessorCall {
         let site = vm.field_cache_index(i.c);
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: None };
-        let value = step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter.to_bits(), base.to_bits()).map(Value::from_bits)?;
+        let value = step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, base)?;
         let slot = self
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
@@ -88,7 +88,7 @@ impl AccessorCall {
             return None;
         };
         let entry = vm.field_cache_entry(cache);
-        let receiver = vm.heap.object_record_by_id(base.direct_object_index()?);
+        let receiver = vm.heap_reads().object_record_by_id(base.direct_object_index()?);
         (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
             && entry.holder == NO_FIELD_HOLDER
             && entry.receiver == receiver.exact_shape())

@@ -170,6 +170,23 @@ impl Memory {
     }
 }
 
+/// The register of the one memory `instruction` addresses through a binding the frame resolves
+/// once: a direct access's and `memory.size`'s `b`, `memory.fill`'s `a`. `None` for any other
+/// instruction, a grow (whose call-out reads the memory again) and a copy (which names two)
+/// included.
+#[cfg(not(stencil_build))]
+pub fn bound_memory_register(instruction: WideInstruction) -> Option<crate::bytecode::Register> {
+    let op = instruction.op();
+    if MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some() {
+        return Some(instruction.b());
+    }
+    match Memory::of(op)? {
+        Memory::Size => Some(instruction.b()),
+        Memory::Fill => Some(instruction.a()),
+        Memory::Load(_) | Memory::Store(_) | Memory::Grow | Memory::Copy => None,
+    }
+}
+
 /// The linear memory of the instance a function runs in, as far as reading it goes.
 pub trait WasmMemory: WasmStage {
     /// The word a v128 access moves: the 16 bytes, little-endian.

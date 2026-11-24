@@ -25,14 +25,16 @@ pub enum GetterKind<T> {
 pub trait GetterAnswer<S: Stage> {
     /// A script getter's resolved call target.
     type Target;
+    /// A value as the tier holds it: the getter, the base and the answer.
+    type Value: Copy;
     /// The getter's kind, and a script getter's target.
-    fn kind(&mut self, stage: &mut S, getter: S::Word) -> GetterKind<Self::Target>;
+    fn kind(&mut self, stage: &mut S, getter: Self::Value) -> GetterKind<Self::Target>;
     /// A native getter's value for `base` where its call runs no guest code and no effect.
-    fn pure_native(&mut self, stage: &mut S, getter: S::Word, base: S::Word) -> Option<S::Word>;
+    fn pure_native(&mut self, stage: &mut S, getter: Self::Value, base: Self::Value) -> Option<Self::Value>;
     /// What a script getter's frameless body returns for `base` by a read, where it has such a body.
-    fn read_answer(&mut self, stage: &mut S, target: &Self::Target, base: S::Word) -> Option<S::Word>;
+    fn read_answer(&mut self, stage: &mut S, target: &Self::Target, base: Self::Value) -> Option<Self::Value>;
     /// Records the answer of `getter` on `base` for the receivers of its layout, where the tier can.
-    fn memoize(&mut self, stage: &mut S, target: &Self::Target, getter: S::Word, base: S::Word);
+    fn memoize(&mut self, stage: &mut S, target: &Self::Target, getter: Self::Value, base: Self::Value);
 }
 
 /// A tier's primitives for a getter's call on a base (`step_getter_call_of`).
@@ -43,17 +45,20 @@ pub trait GetterCall<S: Stage> {
     type Out;
     fn answers(&mut self) -> &mut Self::Answer;
     /// The read completes with `value`.
-    fn answer(&mut self, stage: &mut S, value: S::Word) -> Self::Out;
+    fn answer(&mut self, stage: &mut S, value: Val<S, Self>) -> Self::Out;
     /// The native getter called in place on `base`.
-    fn call_native(&mut self, stage: &mut S, getter: S::Word, base: S::Word) -> Self::Out;
+    fn call_native(&mut self, stage: &mut S, getter: Val<S, Self>, base: Val<S, Self>) -> Self::Out;
     /// The getter activated on `base`, with its target where it is a script getter.
-    fn activate(&mut self, stage: &mut S, getter: S::Word, base: S::Word, target: Option<<Self::Answer as GetterAnswer<S>>::Target>) -> Self::Out;
+    fn activate(&mut self, stage: &mut S, getter: Val<S, Self>, base: Val<S, Self>, target: Option<<Self::Answer as GetterAnswer<S>>::Target>) -> Self::Out;
 }
+
+/// The value type of a getter call's answers.
+pub type Val<S, G> = <<G as GetterCall<S>>::Answer as GetterAnswer<S>>::Value;
 
 /// The getter call of a read of `base` that met `getter`; `writes` where the read writes its
 /// register (a returning read completes only through the getter's activation).
 #[inline(always)]
-pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut G, getter: S::Word, base: S::Word, writes: bool) -> G::Out {
+pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut G, getter: Val<S, G>, base: Val<S, G>, writes: bool) -> G::Out {
     match call.answers().kind(stage, getter) {
         GetterKind::Native if writes => match call.answers().pure_native(stage, getter, base) {
             Some(value) => call.answer(stage, value),
@@ -77,7 +82,7 @@ pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut
 /// value, or a script getter's frameless read answer (memoized as `step_getter_call_of` does);
 /// `None` where only its call answers.
 #[inline(always)]
-pub fn step_getter_answer_of<S: Stage, G: GetterAnswer<S>>(stage: &mut S, call: &mut G, getter: S::Word, base: S::Word) -> Option<S::Word> {
+pub fn step_getter_answer_of<S: Stage, G: GetterAnswer<S>>(stage: &mut S, call: &mut G, getter: G::Value, base: G::Value) -> Option<G::Value> {
     match call.kind(stage, getter) {
         GetterKind::Native => call.pure_native(stage, getter, base),
         GetterKind::Script(Some(target)) => {

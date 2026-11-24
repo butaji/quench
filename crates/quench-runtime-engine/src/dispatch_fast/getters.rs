@@ -18,24 +18,24 @@ pub(crate) struct LaneGetterAnswer {
 
 impl GetterAnswer<Concrete> for LaneGetterAnswer {
     type Target = ScriptCallTarget;
+    type Value = Value;
 
     #[inline(always)]
-    fn kind(&mut self, _: &mut Concrete, getter: u64) -> GetterKind<ScriptCallTarget> {
-        let getter = Value::from_bits(getter);
-        if let Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) = unsafe { vm(self.cx) }.heap.function(getter) {
+    fn kind(&mut self, _: &mut Concrete, getter: Value) -> GetterKind<ScriptCallTarget> {
+        if let Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) = unsafe { vm(self.cx) }.function_record(getter) {
             return GetterKind::Native;
         }
         GetterKind::Script(script_target_in_lane(self.cx, getter))
     }
 
     #[inline(always)]
-    fn pure_native(&mut self, _: &mut Concrete, getter: u64, base: u64) -> Option<u64> {
-        unsafe { vm(self.cx) }.pure_native_getter_value(Value::from_bits(getter), Value::from_bits(base)).map(Value::to_bits)
+    fn pure_native(&mut self, _: &mut Concrete, getter: Value, base: Value) -> Option<Value> {
+        unsafe { vm(self.cx) }.pure_native_getter_value(getter, base)
     }
 
     /// Where a read answers the call (`CallEntry::answered_by_read`).
     #[inline(always)]
-    fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: u64) -> Option<u64> {
+    fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: Value) -> Option<Value> {
         let cx = self.cx;
         if target.entry == CallEntry::Reads {
             // A getter only the general path has called has not run its read in the lane yet: it
@@ -48,23 +48,22 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer {
         // SAFETY: a cached target of the running program.
         } else if let Some(value) = unsafe { constant_body_value(target) } {
             // `return k`: no receiver to bind, nothing to read.
-            return Some(value.to_bits());
+            return Some(value);
         } else if !target.entry.answered_by_read() {
             return None;
         }
-        let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, Value::from_bits(base))?;
+        let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, base)?;
         // SAFETY: the running lane's context, a frameless target of its program.
-        unsafe { call_read_in_lane(cx, target, ReadArguments::NONE, this) }.map(Value::to_bits)
+        unsafe { call_read_in_lane(cx, target, ReadArguments::NONE, this) }
     }
 
     /// Memoizes at the site's accessor entry the forward that proves `base` what the getter
     /// returns for receivers of its layout (`Vm::memoize_getter_answer`, `getter_forward`); a
     /// capture read (`() => binding`) has none.
     #[inline(never)]
-    fn memoize(&mut self, _: &mut Concrete, target: &ScriptCallTarget, getter: u64, base: u64) {
+    fn memoize(&mut self, _: &mut Concrete, target: &ScriptCallTarget, getter: Value, base: Value) {
         let vm = unsafe { vm(self.cx) };
         let Some(site) = self.memo.filter(|_| target.entry != CallEntry::ReadsCapture) else { return };
-        let (getter, base) = (Value::from_bits(getter), Value::from_bits(base));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects. The
         // entry is a cached target of the running program.
         if let Some(entry) = vm.script_call_entry(getter).map(|entry| unsafe { *entry })
@@ -106,7 +105,7 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
             }
             LeafRead::Private { base, site, environment, .. } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
                 let answer = vm.site_private_field_entry(site, environment)?;
-                let receiver = vm.heap.object_record(object)?;
+                let receiver = vm.heap_reads().object_record(object)?;
                 (answer.receiver == receiver.exact_shape()).then_some(AccessorForward::Field(answer))
             }
             _ => None,
@@ -152,31 +151,30 @@ impl GetterCall<Concrete> for LaneGetter<'_> {
 
     /// The registers are the context's again: the answer's read may have made the activations frames.
     #[inline(always)]
-    fn answer(&mut self, _: &mut Concrete, value: u64) -> Self::Out {
+    fn answer(&mut self, _: &mut Concrete, value: Value) -> Self::Out {
         let r = unsafe { (*self.answer.cx).registers };
-        r.set(self.i.a, Value::from_bits(value));
+        r.set(self.i.a, value);
         Ok((r, following(self.ip)))
     }
 
     /// As a lane `Call` of it with no arguments; out of line, so script getters keep their code.
     #[cold]
     #[inline(never)]
-    fn call_native(&mut self, _: &mut Concrete, getter: u64, base: u64) -> Self::Out {
+    fn call_native(&mut self, _: &mut Concrete, getter: Value, base: Value) -> Self::Out {
         let (cx, ip, i) = (self.answer.cx, self.ip, self.i);
-        let getter = Value::from_bits(getter);
-        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.heap.function(getter) else {
+        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.function_record(getter) else {
             unreachable!("`kind` named the getter native");
         };
         let native = *native;
-        match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, native, getter, Value::from_bits(base), &[])) {
+        match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, native, getter, base, &[])) {
             Resumed::At(r, next, _) => Ok((r, next)),
             Resumed::Exit(next) => Err(next),
         }
     }
 
     #[inline(always)]
-    fn activate(&mut self, _: &mut Concrete, getter: u64, base: u64, target: Option<ScriptCallTarget>) -> Self::Out {
-        activate_getter_in_lane(self.answer.cx, self.r, self.ip, Value::from_bits(getter), Value::from_bits(base), target)
+    fn activate(&mut self, _: &mut Concrete, getter: Value, base: Value, target: Option<ScriptCallTarget>) -> Self::Out {
+        activate_getter_in_lane(self.answer.cx, self.r, self.ip, getter, base, target)
     }
 }
 
@@ -196,7 +194,7 @@ pub(crate) fn lane_read_getter(
     let writes = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
     let memo = (i.b != quench_runtime::bytecode::FieldBase::NESTED).then(|| unsafe { vm(cx) }.field_cache_index(i.c));
     let mut call = LaneGetter { answer: LaneGetterAnswer { cx, memo }, r, ip, i };
-    step_getter_call_of(&mut Concrete::new(std::ptr::null()), &mut call, getter.to_bits(), base.to_bits(), writes)
+    step_getter_call_of(&mut Concrete::new(std::ptr::null()), &mut call, getter, base, writes)
 }
 
 /// What a getter site's `GetField` record does after one walk of its site's accessor entries

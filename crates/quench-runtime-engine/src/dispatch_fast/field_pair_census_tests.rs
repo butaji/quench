@@ -44,7 +44,7 @@ fn pair_census_distinguishes_first_and_second_rejection() {
         (Value::integer(0), second, None, [1, 0, 0]),
         (first, Value::integer(0), None, [1, 1, 0]),
     ] {
-        vm.heap.property_set(first, field.slot as usize, intermediate);
+        vm.store_property_slot(first, field.slot as usize, intermediate);
         vm.profile.field_primitives = Default::default();
         assert_eq!(nested_own_field_hit(&mut vm, &program, &site, receiver), expected);
         assert_eq!(memo.run(MEMO_NESTED, &vm, ReadArguments::NONE, receiver), expected);

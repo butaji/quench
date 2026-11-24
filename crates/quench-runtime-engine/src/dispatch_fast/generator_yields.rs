@@ -130,7 +130,7 @@ impl Vm {
             return Some(source);
         }
         let record = self.promise_record(source)?;
-        (record.state() == quench_runtime::heap::PromiseState::Fulfilled).then(|| record.result())
+        (record.state() == quench_runtime::tier_surface::PromiseState::Fulfilled).then(|| record.result())
     }
 }
 
@@ -188,7 +188,7 @@ fn suspend_settling(cx: *mut LaneContext, r: Registers, (pc, destination): (usiz
     let continuation = vm.suspend_activation(frame, quench_runtime::vm::activation::Completion::Await(value), Some(destination), promise);
     let activation = vm.lane_stack.pop_activation().expect("a settling activation runs");
     let (memory, _) = restore_caller_in_lane(cx, &activation);
-    match vm.enqueue_async_resume(code, quench_runtime::heap::AwaitKind::function(continuation), promise, value) {
+    match vm.enqueue_async_resume(code, quench_runtime::tier_surface::AwaitKind::function(continuation), promise, value) {
         Ok(()) => resume_after_call_in_lane(&activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);

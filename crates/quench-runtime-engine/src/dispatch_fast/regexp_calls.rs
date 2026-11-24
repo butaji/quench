@@ -13,7 +13,7 @@ script_handler! {
     #[inline(never)]
     fn string_replace_length_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        if !matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::StringReplace), .. })) {
+        if !matches!(vm.function_record(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::StringReplace), .. })) {
             sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
         }
         // SAFETY: the context's program outlives the lane run.

@@ -25,6 +25,9 @@ mod word_ops;
 pub mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub mod layout_offsets;
+/// The const checks of `layout_offsets` against the runtime's own layouts.
+#[cfg(not(stencil_build))]
+mod layout_offset_checks;
 /// The head of the dispatch payload, which the runtime embeds and the stencils take offsets from.
 pub mod js_step_head;
 pub mod record_heads;
@@ -1094,10 +1097,6 @@ pub const fn raw_representation(op: Op) -> bool {
 pub const fn wasm_f64_unary(op: Op) -> bool { matches!(op, Op::WasmF64Unary) }
 /// Binds the instance a Wasm function runs in (`WasmInstanceBinding`).
 pub const fn wasm_instance_binding(op: Op) -> bool { matches!(op, Op::WasmInstanceBinding) }
-/// Reads the size of the function's memory (`WasmMemorySize`).
-pub const fn wasm_memory_size(op: Op) -> bool { matches!(op, Op::WasmMemorySize) }
-/// Fills a range of the function's memory (`WasmMemoryFill`).
-pub const fn wasm_memory_fill(op: Op) -> bool { matches!(op, Op::WasmMemoryFill) }
 /// Fills a Wasm function's registers (`WasmFillRegisters`).
 pub const fn wasm_fill_registers(op: Op) -> bool { matches!(op, Op::WasmFillRegisters) }
 /// Awaits a value (`Await`).
