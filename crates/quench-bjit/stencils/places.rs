@@ -41,7 +41,7 @@ pub(crate) fn widen(value: u64) -> u64 {
 }
 
 /// The place's value in its own representation.
-#[inline(always)]
+#[inline]
 pub(crate) fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
     match P {
         // SAFETY: the frame slot at hole `H` is a live register of the activation.
@@ -55,7 +55,7 @@ pub(crate) fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
 }
 
 /// The place's tagged word, boxing an unboxed representation as `Value::number` does.
-#[inline(always)]
+#[inline]
 pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
@@ -67,7 +67,7 @@ pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
 
 /// The int32 an operand holds, proved here: a tagged word must be an int word (`proved` where
 /// the caller tested that already), a double an exact int32.
-#[inline(always)]
+#[inline]
 fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
@@ -82,7 +82,7 @@ fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
 
 /// The binary64 bits of an operand, proved a Number. A constant place holds a Number the int32
 /// immediate cannot (`base_region/plan.rs` sends an int word to `IMM`): its word is the bits.
-#[inline(always)]
+#[inline]
 pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
@@ -120,7 +120,7 @@ pub(crate) fn index_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
 }
 
 /// The tagged word of a Number operand a store writes.
-#[inline(always)]
+#[inline]
 pub(crate) fn number_word<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = tagged_place::<P, H>(s);
     if P == MEM && !(value::is_int(&mut stage(), word) || value::is_double(&mut stage(), word)) {
@@ -130,7 +130,7 @@ pub(crate) fn number_word<const P: u8, const H: u8>(s: &S) -> Option<u64> {
 }
 
 /// Writes the int32 in the low half of `value` to the destination.
-#[inline(always)]
+#[inline]
 fn put_int<const D: u8>(s: &mut S, value: u64) {
     match D {
         PIN..=LAST_INT_PIN => s.p[(D - PIN) as usize] = value as u32 as usize,
@@ -144,7 +144,7 @@ fn put_int<const D: u8>(s: &mut S, value: u64) {
 /// Writes the tagged `word` to the destination: a pinned register or int slot takes an int
 /// word, a pinned double a Number, any other place any word. False, writing nothing, where the
 /// place cannot hold it.
-#[inline(always)]
+#[inline]
 fn put_tagged<const D: u8>(s: &mut S, word: u64) -> bool {
     match D {
         PINF.. if value::is_double(&mut stage(), word) => s.f[(D - PINF) as usize] = f64::from_bits(word),
@@ -247,7 +247,7 @@ fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
 /// ToBoolean of an operand: an int32 by its value, a double by its number, a tagged word by the
 /// staged rule (`value::tagged_truthiness`, which also decides a record, a boolean and an int);
 /// `None` where a heap cell decides, which leaves.
-#[inline(always)]
+#[inline]
 fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
