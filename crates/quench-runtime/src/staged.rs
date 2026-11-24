@@ -219,7 +219,7 @@ pub mod wasm_roots;
 pub mod wasm_flow;
 pub mod wasm_instance;
 #[cfg(not(stencil_build))]
-pub mod wasm_activation;
+pub mod wasm_activation; pub mod wasm_invoke;
 pub mod wasm_machine;
 pub mod wasm_memory;
 pub mod wasm_memory_vector;

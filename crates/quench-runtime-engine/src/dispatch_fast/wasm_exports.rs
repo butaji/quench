@@ -53,7 +53,7 @@ impl quench_runtime::staged::wasm_activation::WasmExportCall for LaneExportCall 
         Some(callee_code)
     }
     /// The call as a frameless Wasm activation of the export (`ActivationKind::WasmEntry`) over its
-    /// instance environment, pushed as a Wasm call's activation is (`wasm_activation::enter_function`)
+    /// instance environment, pushed as a Wasm call's activation is (`wasm_invoke::step_call_known_of`)
     /// beside the caller's activations, which stay activations. The run goes on as a Wasm run
     /// (`LaneContext::inline_calls`) until the activation returns. `None`, which changes nothing,
     /// where the callee has no lane view yet or the lane no room for it.
