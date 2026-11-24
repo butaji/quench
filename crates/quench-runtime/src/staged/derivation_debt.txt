@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`tests/staged_guards/coverage.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 103
+# total 96
 ../../quench-bjit/stencils/builtin_rows.rs fn:stencil_hand 3
 ../../quench-bjit/stencils/call_rows.rs fn:stencil_hand 10
 ../../quench-bjit/stencils/environment_rows.rs fn:stencil_hand 4
@@ -16,14 +16,13 @@
 ../../quench-runtime-engine/src/compiled/lane_sites.rs fn:lane_* 1
 ../../quench-runtime-engine/src/compiled/lane_unit/admission.rs fn:lane_* 1
 ../../quench-runtime-engine/src/compiled/residuals.rs is:is_call 1
-../../quench-runtime-engine/src/dispatch_fast.rs fn:lane_* 9
+../../quench-runtime-engine/src/dispatch_fast.rs fn:lane_* 6
 ../../quench-runtime-engine/src/dispatch_fast/array_steps.rs fn:lane_* 2
 ../../quench-runtime-engine/src/dispatch_fast/generator_yields.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/lane_frame.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/lane_stack_trace.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/on_demand_metadata.rs fn:lane_* 1
 ../../quench-runtime-engine/src/dispatch_fast/vm_steps.rs fn:lane_* 4
-../../quench-runtime-engine/src/dispatch_fast/wasm_calls.rs fn:lane_* 4
 ../../quench-runtime-engine/src/dispatch_fast/wasm_instance.rs fn:lane_* 2
 bytecode/validate.rs is:is_call_with_eval_flags 2
 bytecode/validate.rs is:is_relocatable_local_access 2

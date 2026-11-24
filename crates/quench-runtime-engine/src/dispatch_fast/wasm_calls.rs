@@ -46,7 +46,7 @@ impl LaneCall<'_> {
         if slot.next != self.ip || slot.register != self.i.b || slot.reference != self.r.get(self.i.b).to_bits() {
             return None;
         }
-        let running = lane_instance_address(self.cx);
+        let running = running_instance_address(self.cx);
         if running == 0 || slot.instance != running as u64 {
             return None;
         }
@@ -306,9 +306,39 @@ impl WasmActivation for LaneCall<'_> {
         enter_frame_in_lane(self.cx, frame, 0)
     }
 
+    /// A Wasm reference call of a JavaScript-backed import whose callee the lane activates as a
+    /// JavaScript call of another program would (`lane_script_call_cross`): the scalar arguments
+    /// in their JavaScript form (ToJSValue, which allocates nothing for i32, f32 and f64), an
+    /// `undefined` receiver, and a return that gives the Wasm caller the result's Wasm form
+    /// (`Completion::ToWasm`). The import's wrapper is of the running realm and its native
+    /// boundary is never observed: the callee runs as the wrapper's call of it would. `None`,
+    /// which changes nothing, for any other import, callee or call.
     #[inline(always)]
     fn activate_import(&mut self) -> Option<Resumed> {
-        lane_activate_js_import(self.cx, self.r, self.ip, self.memory)
+        let (cx, r, ip, memory) = (self.cx, self.r, self.ip, self.memory);
+        // SAFETY: called only from the call handler of the record at `ip`, while the lane runs.
+        let i = unsafe { &*ip };
+        let vm = unsafe { vm(cx) };
+        // A tier that may run the callee enters it natively from the general call, which a
+        // lane activation would bypass.
+        if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || vm.tier_may_run(crate::compiled::admission::Tier::ANY) {
+            return None;
+        }
+        let plan = js_import_of(vm, r.get(i.b))?;
+        if plan.realm != vm.realm.globals {
+            return None;
+        }
+        // SAFETY: the window is the caller's registers.
+        let window = unsafe { call_window_in_lane(r, i) };
+        if window.len() != usize::from(plan.argc) {
+            return None;
+        }
+        let args = import_arguments(vm, window, &plan.kinds)?;
+        let memory_binding = import_memory(cx, memory)?;
+        let argc = window.len() as u16;
+        let target = import_activation_target(cx, vm, plan.callee, argc)?;
+        let this = call_this_in_lane(vm, &target, Value::UNDEFINED)?;
+        Some(push_import_activation(cx, r, ip, &target, &args, argc, this, memory_binding, plan.result))
     }
 
     #[inline(always)]
@@ -344,7 +374,7 @@ lane_handler! {
     /// loop's inline call would be.
     fn lane_call_known<>(cx, r, ip, i, view) {
         let mut call = LaneCall { cx, r, ip, i, memory: view.memory, offered: None };
-        match activation::call_known(&mut call, u32::from(i.b)) {
+        match activation::step_call_known_of(&mut call, u32::from(i.b)) {
             Some(resumed) => resume!(cx, resumed),
             None => return exit(ip),
         }
@@ -357,7 +387,7 @@ lane_handler! {
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
         let mut call = LaneCall { cx, r, ip, i, memory: view.memory, offered: None };
-        match activation::call_reference(&mut call) {
+        match activation::step_call_reference_of(&mut call) {
             Some(resumed) => resume!(cx, resumed),
             None => return exit(ip),
         }
@@ -368,7 +398,7 @@ lane_handler! {
 /// for the environment (its bits) and program it was found for. A record is one per environment
 /// and program, so the address names the running instance.
 #[inline(always)]
-fn lane_instance_address(cx: *mut LaneContext) -> usize {
+fn running_instance_address(cx: *mut LaneContext) -> usize {
     let env = instance_env_in_lane(cx);
     // SAFETY: the context outlives the lane run.
     let program = unsafe { (*cx).program };
@@ -517,39 +547,6 @@ fn push_import_activation(
     Resumed::At(registers, start, view)
 }
 
-/// A Wasm reference call of a JavaScript-backed import whose callee the lane activates as a
-/// JavaScript call of another program would (`lane_script_call_cross`): the scalar arguments
-/// in their JavaScript form (ToJSValue, which allocates nothing for i32, f32 and f64), an
-/// `undefined` receiver, and a return that gives the Wasm caller the result's Wasm form
-/// (`Completion::ToWasm`). The import's wrapper is of the running realm and its native
-/// boundary is never observed: the callee runs as the wrapper's call of it would. `None`,
-/// which changes nothing, for any other import, callee or call.
-#[inline(always)]
-fn lane_activate_js_import(cx: *mut LaneContext, r: Registers, ip: Ip, memory: MemoryView) -> Option<Resumed> {
-    // SAFETY: called only from the call handler of the record at `ip`, while the lane runs.
-    let i = unsafe { &*ip };
-    let vm = unsafe { vm(cx) };
-    // A tier that may run the callee enters it natively from the general call, which a
-    // lane activation would bypass.
-    if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || vm.tier_may_run(crate::compiled::admission::Tier::ANY) {
-        return None;
-    }
-    let plan = js_import_of(vm, r.get(i.b))?;
-    if plan.realm != vm.realm.globals {
-        return None;
-    }
-    // SAFETY: the window is the caller's registers.
-    let window = unsafe { call_window_in_lane(r, i) };
-    if window.len() != usize::from(plan.argc) {
-        return None;
-    }
-    let args = import_arguments(vm, window, &plan.kinds)?;
-    let memory_binding = import_memory(cx, memory)?;
-    let argc = window.len() as u16;
-    let target = import_activation_target(cx, vm, plan.callee, argc)?;
-    let this = call_this_in_lane(vm, &target, Value::UNDEFINED)?;
-    Some(push_import_activation(cx, r, ip, &target, &args, argc, this, memory_binding, plan.result))
-}
 
 /// The call facts of the import `wrapper`, from the lane's cache of its last import, else
 /// derived (`js_import_plan`) and cached.

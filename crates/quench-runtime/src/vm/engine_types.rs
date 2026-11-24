@@ -150,7 +150,7 @@ pub struct LaneStack {
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
     /// A completion drops its activation's entries, as a frame's pop drops its list.
     pub iterators: Vec<(usize, crate::vm::ActiveIterator)>,
-    /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
+    /// The JavaScript-backed import a Wasm call last activated (`WasmActivation::activate_import` in `wasm_calls`),
     /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
     pub js_import: Option<JsImportPlan>,
     /// The bound function of a user function a `function_call_miss` last forwarded through,
@@ -1952,7 +1952,7 @@ pub enum Completion {
     ReturnsToBody,
     /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
     ConstructsToBody,
-    /// A Wasm call of a JavaScript-backed import (`wasm_calls::lane_activate_js_import`), of
+    /// A Wasm call of a JavaScript-backed import (`WasmActivation::activate_import` in `wasm_calls`), of
     /// another program than its Wasm caller's: its return gives the caller the value's Wasm
     /// form and runs the caller's program and instance again, as its side record keeps them
     /// (`SidePayload::ToWasm`, `lane_complete_to_wasm`). Made a frame, its pending call converts the value
@@ -3497,7 +3497,7 @@ pub struct LaneContext {
     /// call right after it reads its callee from.
     pub indirect: IndirectSlot,
     /// The running instance's record address, cached for the environment (its bits) and program
-    /// it was found for (`lane_instance_address`); 0 where the environment has no record.
+    /// it was found for (`wasm_calls::running_instance_address`); 0 where the environment has no record.
     pub instance_address: (u64, ProgramId, usize),
     /// The running program's Wasm signature pool, shared with the program, for the program it is
     /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.
