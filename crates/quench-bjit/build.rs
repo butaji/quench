@@ -69,6 +69,9 @@ mod wasm_families;
 mod wasm_kinds;
 #[path = "stencils/wasm_library.rs"]
 mod wasm_library;
+#[allow(dead_code)]
+#[path = "stencils/regexp_layout.rs"]
+mod regexp_layout;
 #[path = "build/transfer.rs"]
 mod transfer;
 
@@ -106,10 +109,12 @@ enum Family {
     Fixed,
     Js,
     Wasm,
+    /// The regexp rows (`stencils/regexp_rows.rs`), which read none of the JS or Wasm staged rules.
+    Regexp,
 }
 
 impl Family {
-    const ALL: [Family; 3] = [Family::Fixed, Family::Js, Family::Wasm];
+    const ALL: [Family; 4] = [Family::Fixed, Family::Js, Family::Wasm, Family::Regexp];
 
     /// The cfgs that select the family's modules in `rows.rs` and `stencils/staged.rs`.
     fn args(self) -> Vec<String> {
@@ -117,6 +122,7 @@ impl Family {
             Family::Fixed => "fixed_rows",
             Family::Js => "stencil_family=\"js\"",
             Family::Wasm => "stencil_family=\"wasm\"",
+            Family::Regexp => "stencil_family=\"regexp\"",
         };
         vec!["--cfg".to_string(), cfg.to_string()]
     }
@@ -126,6 +132,7 @@ impl Family {
             Family::Fixed => "fixed",
             Family::Js => "js",
             Family::Wasm => "wasm",
+            Family::Regexp => "regexp",
         }
     }
 }
@@ -182,7 +189,7 @@ fn main() {
     // The stencil sources and arguments are relative to the `quench-bjit` crate.
     env::set_current_dir(manifest).expect("enter the quench-bjit crate");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
-    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\"))");
+    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\", \"regexp\"))");
     for extra in EXTRA_WATCHED {
         println!("cargo::rerun-if-changed={}", manifest.join(extra).display());
     }
@@ -203,7 +210,7 @@ fn main() {
     let instances = instances(&listed, arch);
     // The fixed rows' shard first, then each family's rows split on their own, so no shard mixes two families.
     let mut parts: Vec<(Family, &[(String, usize, Family)])> = vec![(Family::Fixed, &[][..])];
-    for family in [Family::Js, Family::Wasm] {
+    for family in [Family::Js, Family::Wasm, Family::Regexp] {
         let start = instances.iter().position(|row| row.2 == family);
         let Some(start) = start else { continue };
         let end = instances.iter().rposition(|row| row.2 == family).unwrap() + 1;
@@ -297,7 +304,13 @@ fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize, Fam
         Vec::new()
     };
     let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT, Family::Wasm));
-    base.into_iter().map(|(row, weight)| (row, weight, Family::Js)).chain(wasm).collect()
+    // The regexp rows and their routines are x86-64's only; elsewhere a hot regexp keeps the u-jit.
+    let regexp: Vec<(String, usize, Family)> = if arch == Arch::X86_64 {
+        regexp_layout::regexp_library().into_iter().map(|c| (format!("regexp_row!({}, {}, {}, {});\n", regexp_layout::regexp_name(c), c.0, c.1, c.2), shards::NUMBER_WEIGHT, Family::Regexp)).collect()
+    } else {
+        Vec::new()
+    };
+    base.into_iter().map(|(row, weight)| (row, weight, Family::Js)).chain(wasm).chain(regexp).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {
@@ -415,7 +428,7 @@ impl Shard {
 fn base_args() -> Vec<String> {
     let mut args = vec!["--target".to_string(), env::var("TARGET").expect("cargo sets TARGET")];
     args.extend(rustc_flags());
-    args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--check-cfg", "cfg(stencil_family, values(\"js\", \"wasm\"))", "--cfg", "stencil_build"].map(String::from));
+    args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--check-cfg", "cfg(stencil_family, values(\"js\", \"wasm\", \"regexp\"))", "--cfg", "stencil_build"].map(String::from));
     args
 }
 

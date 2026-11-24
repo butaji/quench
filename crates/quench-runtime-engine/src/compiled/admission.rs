@@ -277,11 +277,29 @@ impl<T> Decision<T> {
     }
 }
 
-/// A unit cleared to compile. Its only field is private to this module, so `specialize` is the
+/// A unit cleared to compile. Its fields are private to this module, so `specialize` is the
 /// only way to obtain one; copies of it are the same proof.
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledUnit {
-    _sealed: (),
+    /// The most machine code the unit may compile to (`code_ceiling`).
+    ceiling: usize,
+}
+
+impl CompiledUnit {
+    /// The most machine code the unit may compile to: the specializer's one code-size policy,
+    /// by the kind of unit, for every language's compile (`compile_function`'s budget).
+    pub(crate) fn code_ceiling(self) -> usize { self.ceiling }
+}
+
+/// The code-size policy of a unit of `kind`: a JavaScript function's numeric entry, a regexp
+/// program's search, or a lane body or region (every other kind).
+fn code_ceiling(kind: UnitKind) -> usize {
+    use quench_runtime::vm::tier_policy::{JS_COMPILED_MAX_CODE_BYTES, LANE_BODY_MAX_CODE_BYTES, REGEXP_NATIVE_MAX_CODE_BYTES};
+    match kind {
+        UnitKind::Entry => JS_COMPILED_MAX_CODE_BYTES,
+        UnitKind::Regexp => REGEXP_NATIVE_MAX_CODE_BYTES,
+        _ => LANE_BODY_MAX_CODE_BYTES,
+    }
 }
 
 /// A unit minted for a test, through `specialize` (an AOT unit, which no mode gates).
@@ -328,7 +346,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
     if cleared && bisected_out() { return Decision::Declined; }
-    if cleared { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Declined }
+    if cleared { Decision::Compile(CompiledUnit { ceiling: code_ceiling(kind) }) } else { Decision::Declined }
 }
 
 /// Whether the `unit-bisect` range leaves out the unit `specialize` is about to clear: each cleared

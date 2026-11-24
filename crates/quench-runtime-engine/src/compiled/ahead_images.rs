@@ -91,7 +91,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
-    let code = quench_runtime::vm::jit_backend::compile_function(native, &*isa, Some(crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
+    let code = quench_runtime::vm::jit_backend::compile_function(native, &*isa, Some(admitted.code_ceiling()), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).map_err(|rejection| match rejection {
         NativeCompileRejection::CodeSizeBudget => "code past the lane body budget",

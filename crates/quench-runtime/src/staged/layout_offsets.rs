@@ -363,7 +363,7 @@ pub(crate) const JS_STEP_POP_OBSERVED_HEADER: usize = core::mem::offset_of!(supe
 pub(crate) const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, activation_count);
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`). The entry cell's
 /// offsets come from `staged::call`, which the Wasm rows' family does not compile (`stencil_family`).
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub const RAISED_RUN: u64 = 1 << u32::BITS;
 
@@ -377,19 +377,19 @@ pub(crate) const CONTEXT_CAPTURE: usize = crate::staged::frame::CONTEXT_CAPTURE;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_PROVEN_AT: usize = crate::staged::call::ENTRY_CELL.proven_offset as usize;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_NUMBERS_AT: usize = crate::staged::call::ENTRY_CELL.numbers_offset as usize;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 pub(crate) const CELL_USES_THIS_AT: usize = crate::staged::call::ENTRY_CELL.uses_this_offset as usize;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;

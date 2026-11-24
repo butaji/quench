@@ -13,7 +13,6 @@ use cranelift_codegen::isa::TargetIsa;
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativePlan};
 use quench_runtime::staged::regexp::{emit_search, PARAMETERS};
 
-use quench_runtime::vm::tier_policy::REGEXP_NATIVE_MAX_CODE_BYTES;
 /// Whether this thread's hot regexp programs run natively: only under a compiling mode.
 pub(crate) fn enable(enabled: bool, runs: u32) {
     quench_regexp::backtrack::native::set_native_compiler(compiler(runs));
@@ -32,6 +31,14 @@ fn start(plan: NativePlan) -> NativeBuild {
     let Some(unit) = specialize(UnitRequest { kind: UnitKind::Regexp, facts: UnitFacts::default() }).compiled() else {
         return Box::new(|| Poll::Ready(None));
     };
+    // The stencil tier stitches the program's rows at once (`stitch`); a target without the
+    // regexp rows compiles it as the Cranelift tiers do.
+    if crate::compiled::admission::stencil_only() {
+        if let Some(stitched) = stitch::stitch(&plan) {
+            let mut code = stitched.publish();
+            return Box::new(move || Poll::Ready(code.take()));
+        }
+    }
     let mut pending = OffThread::start((plan, unit), |(plan, unit)| compile(&plan, unit));
     Box::new(move || match pending.poll() {
         Poll::Pending => Poll::Pending,
@@ -40,7 +47,7 @@ fn start(plan: NativePlan) -> NativeBuild {
 }
 
 /// The machine code of `plan`, whose unit the specializer cleared.
-fn compile(plan: &NativePlan, _unit: CompiledUnit) -> Option<Vec<u8>> {
+fn compile(plan: &NativePlan, unit: CompiledUnit) -> Option<Vec<u8>> {
     let isa = target_isa()?;
     if isa.pointer_type() != types::I64 {
         return None;
@@ -53,7 +60,7 @@ fn compile(plan: &NativePlan, _unit: CompiledUnit) -> Option<Vec<u8>> {
         let parameters: [ir::Value; PARAMETERS] = parameters.try_into().unwrap_or_else(|_| unreachable!("`PARAMETERS` parameters"));
         emit_search(plan, raw(builder), MemFlagsData::trusted(), entry, parameters);
     });
-    compile_function(function, &*isa, Some(REGEXP_NATIVE_MAX_CODE_BYTES), |compiled, _| {
+    compile_function(function, &*isa, Some(unit.code_ceiling()), |compiled, _| {
         if !compiled.buffer.relocs().is_empty() {
             return Err(NativeCompileRejection::Relocations);
         }
@@ -73,6 +80,9 @@ fn publish(code: &[u8]) -> Option<NativeCode> {
 fn signature(isa: &dyn TargetIsa) -> ir::Signature {
     crate::compiled::call_signature::word_signature(isa.default_call_conv(), PARAMETERS, 1, types::I64)
 }
+
+/// The stencil tier's search: the program's rows stitched (`quench-bjit`'s regexp family).
+mod stitch;
 
 #[cfg(test)]
 pub(crate) mod tests;

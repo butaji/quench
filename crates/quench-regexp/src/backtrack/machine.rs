@@ -10,8 +10,10 @@
 use super::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTest, MatchStage};
 
 // The instructions a lookbehind body runs, read backward, and backreferences either way.
+#[path = "machine/backward.rs"]
 mod backward;
 // Each instruction's row.
+#[path = "machine/step.rs"]
 mod step;
 pub use step::step;
 pub use backward::{backreference, class_widths, capture_close_back, give_back_back, take_more_back, unit_back, unit_repeat_back};
