@@ -11,7 +11,7 @@ use quench_runtime::bytecode::ImmediateLayout;
 use quench_runtime::staged::array_search::{DenseNeedle, scan_dense};
 use quench_runtime::staged::region::Region;
 use quench_runtime::staged::{Domain, builtins, elements, strings};
-use quench_runtime::heap::Native;
+use quench_runtime::tier_surface::Native;
 
 /// A builtin a call runs on its staged row.
 #[derive(Clone, Copy)]
@@ -132,7 +132,7 @@ impl Lowering<'_, '_> {
     /// brand is one), so such a record is no arguments object and `Array.isArray` holds of it. Any other value leaves
     /// at `exit`.
     fn plain_array_argument(&mut self, state: &mut State, register: Register, exit: ir::Block) {
-        use quench_runtime::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        use quench_runtime::tier_surface::NATIVE_ARRAY_LAYOUT as ARRAY;
         let base = self.tagged(state, register);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
@@ -313,7 +313,7 @@ impl Lowering<'_, '_> {
     fn holds_no_double(&mut self, values: ir::Value) -> ir::Value {
         let others = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
-            stage.load_u32(Region::Elements.mutable(), values, quench_runtime::heap::OTHERS_FROM_VALUES)
+            stage.load_u32(Region::Elements.mutable(), values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
         };
         self.raw_compare_imm(Relation::Equal, others, 0)
     }

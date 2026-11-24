@@ -21,7 +21,7 @@ pub(crate) fn store_to_capture(cx: *mut LaneContext, depth: u16, slot: u16, valu
         if let Some(slots) = capture_stores(capture)
             // SAFETY: the running function's dense capture slots, which admit this write
             // (`CAPTURE_STORES`); no collection runs in the lane.
-            && unsafe { quench_runtime::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) }.is_some()
+            && unsafe { quench_runtime::tier_surface::EnvironmentSlots::write_storage(slots, usize::from(slot), value) }.is_some()
         {
             return true;
         }

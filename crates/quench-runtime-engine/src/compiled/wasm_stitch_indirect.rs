@@ -17,7 +17,7 @@ use crate::compiled::{CONTEXT_CALL_REFERENCE, CONTEXT_INSTANCE, CONTEXT_MEMORY_L
 use crate::compiled::{Plan, Slot};
 use super::{IndirectSite, Planned, World, leak, row, slot};
 use quench_runtime::bytecode::WideInstruction;
-use quench_runtime::heap::{TableTarget, TableWords};
+use quench_runtime::tier_surface::{TableTarget, TableWords};
 use quench_runtime::staged::wasm_call::Call;
 use quench_runtime::staged::wasm_step::Step;
 use quench_bjit::padded_holes;

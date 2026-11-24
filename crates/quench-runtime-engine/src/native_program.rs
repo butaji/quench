@@ -234,7 +234,7 @@ impl Vm {
         for (index, constant) in native.program.constants.iter().enumerate() {
             slots[index] = match constant {
                 quench_runtime::bytecode::Constant::String(text) =>
-                    self.heap.alloc_string(quench_runtime::vm::wtf16::JsString::from_str(text)),
+                    self.allocate_string(quench_runtime::vm::wtf16::JsString::from_str(text)),
                 other => crate::compiled::facts::immediate(other).unwrap_or(Value::UNDEFINED),
             };
         }

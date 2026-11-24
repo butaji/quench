@@ -40,8 +40,9 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING, NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
     pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
     #[cfg(feature = "profile-memory")]
-    pub use quench_runtime::heap::CellKind;
-    pub use quench_runtime::heap::{ CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle, };
+    pub use quench_runtime::tier_surface::CellKind;
+    pub use quench_runtime::tier_surface::{ CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle, };
+    pub use quench_runtime::heap::Heap;
     pub use quench_runtime::host::{CapabilityId, Host, HostContext};
     pub use quench_runtime::profile::{CallSource, Profile, TerminalCall};
     pub use quench_runtime::value::number_to_u32;
@@ -76,7 +77,7 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::vm::value_serializer::{ReadHooks, WriteHooks};
     pub use quench_runtime::vm::wtf16::JsString;
     pub use quench_runtime::staged::field_cache_layout::{ FieldCacheWords};
-    pub use quench_runtime::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
+    pub use quench_runtime::tier_surface::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
     pub use quench_runtime::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
     pub use quench_runtime::vm::engine_types::AHEAD_BUILD_ID_PREFIX;
     pub use crate::compiled::AHEAD_BUILD_ID;

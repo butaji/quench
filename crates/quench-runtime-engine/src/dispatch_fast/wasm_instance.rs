@@ -18,7 +18,7 @@ lane_handler! {
         // SAFETY: `storage` is the dense storage of `known`, found this run, which no
         // collection has run since (`after_nested_collection_in_lane` drops it).
         let cached = if known == env && slot <= u32::from(u16::MAX) {
-            unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
+            unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(storage, slot as u16) }
         } else {
             None
         };
@@ -68,7 +68,7 @@ pub(crate) unsafe fn wasm_instance_slot(context: *mut (), slot: u32) -> Option<V
     // SAFETY: `storage` is the dense storage of `known`, found this run, which no collection has run
     // since (`after_nested_collection_in_lane` drops it).
     let cached = if known == env && slot <= u32::from(u16::MAX) {
-        unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
+        unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(storage, slot as u16) }
     } else {
         None
     };
@@ -82,7 +82,7 @@ pub(crate) unsafe fn wasm_instance_slot(context: *mut (), slot: u32) -> Option<V
 /// `context` is the running lane's context.
 pub(crate) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<[u8; 16]> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
-    vm.heap.v128(value)
+    vm.heap_reads().v128(value)
 }
 
 /// A fresh vector cell holding `bytes` for the vector rows of the lane context `context`
@@ -92,7 +92,7 @@ pub(crate) unsafe fn wasm_vector_read(context: *mut (), value: Value) -> Option<
 /// `context` is the running lane's context.
 pub(crate) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Option<Value> {
     let vm = unsafe { vm(context.cast::<LaneContext>()) };
-    let value = vm.heap.alloc_v128(bytes);
+    let value = vm.allocate_v128(bytes);
     note_allocation(vm);
     Some(value)
 }
@@ -104,7 +104,7 @@ pub(crate) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Opt
 #[inline(never)]
 fn lane_instance_slot_miss(cx: *mut LaneContext, env: Value, slot: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(env)
+    if let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = vm.heap_reads().environment(env)
         && let Some(storage) = slots.dense_storage()
     {
         unsafe { (*cx).instance_slots = (env, storage) };

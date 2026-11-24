@@ -68,6 +68,8 @@ pub mod folded_roots;
 pub mod float_layout;
 #[doc(hidden)]
 pub mod heap;
+/// What the tier crates may name of the heap (`tier_surface`).
+pub mod tier_surface;
 #[cfg_attr(
     not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
     allow(dead_code)

@@ -47,7 +47,7 @@ pub(crate) fn keyed_trap_atom(vm: &mut Vm, key: Value) -> Option<quench_runtime:
 pub(crate) fn owe_invariants(vm: &mut Vm, completion: Completion, target: Value, atom: quench_runtime::bytecode::Atom, access: TrapAccess) {
     // An array's `length` and elements are answered by its element facts too, which its
     // layout does not name; any other name by its shape, which its layout does.
-    let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::ARRAY_INDEX));
+    let by_layout = vm.heap_reads().array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::ARRAY_INDEX));
     let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
     let check = TrapCheck { target, atom, access, layout };
     vm.lane_stack.recomplete_top(completion);

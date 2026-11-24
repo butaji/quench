@@ -116,10 +116,10 @@ pub(crate) fn comparison_decision(vm: &mut Vm, operator: u32, left: Value, right
 /// A lane body's decision of `left operator right` by the words a `CallOut::Decide` carries, which
 /// needs no record of the VM's: `Value::TRUE` or `Value::FALSE`, or `Value::DELETED` where only
 /// the full algorithm decides, which leaves the body at the test (`comparison_decision`).
-pub(crate) unsafe extern "C" fn decide_comparison(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
+pub(crate) unsafe extern "C" fn decide_comparison(vm: u64, _residual: u64, left: Value, right: Value, operator: u64) -> u64 {
     // SAFETY: as `field_set_in_lane`; the decision reads the heap, runs no guest code and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    comparison_decision(vm, operator as u32, Value::from_bits(left), Value::from_bits(right))
+    comparison_decision(vm, operator as u32, left, right)
         .map_or_else(|| Value::DELETED.to_bits(), |holds| Value::boolean(holds).to_bits())
 }
 

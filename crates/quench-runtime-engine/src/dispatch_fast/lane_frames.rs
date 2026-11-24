@@ -70,7 +70,7 @@ pub(crate) use quench_runtime::vm::engine_types::SidePayload;
 #[quench_macros::ext(SidePayloadOps1)]
 impl SidePayload {
     /// A settling frame's promise.
-    pub(crate) fn settles(self) -> Option<quench_runtime::heap::RootId> {
+    pub(crate) fn settles(self) -> Option<quench_runtime::tier_surface::RootId> {
         let Self::Settles(rooted) = self else { unreachable!("each settling activation has its entry") };
         rooted
     }

@@ -14,7 +14,7 @@ const HOT_LOOP_BLOCKS: usize = 4;
 /// The region of `SUM`'s loop over a Float64Array, entered at its header as the loop tier enters it
 /// (every register but the array holding the int32 it had), and how many registers the loop writes.
 fn sum_loop() -> (ir::Function, usize) {
-    use quench_runtime::heap::TypedArrayKind as Kind;
+    use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let program = quench_runtime::Engine::specialize(SUM, "loop-shape.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|

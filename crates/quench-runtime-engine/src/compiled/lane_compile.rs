@@ -74,8 +74,8 @@ fn root_constants(vm: &Vm, function: u32, unit: &lane_unit::Unit) -> std::collec
         let Some(quench_runtime::staged::Operation::LoadCapture { depth, slot, .. }) = crate::compiled::decoded(instruction) else { return None };
         let own = matches!(unit.origins.get(pc)?, lane_unit::Origin::Caller(_));
         if !own || !reaches_root(program, function, depth) || !vm.root_slot_written_once(program_id, slot) { return None; }
-        let value = vm.heap.environment_slot(environment, usize::from(slot))?;
-        (value != Value::DELETED && vm.heap.function(value).is_some()).then_some((pc, value))
+        let value = vm.heap_reads().environment_slot(environment, usize::from(slot))?;
+        (value != Value::DELETED && vm.function_record(value).is_some()).then_some((pc, value))
     }).collect()
 }
 
@@ -763,7 +763,7 @@ impl Vm {
     /// the slots' observations; whether every slot already admitted them. A body's slot
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.
     fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, quench_runtime::typed_ir::Type, bool)>) -> bool {
-        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.heap.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
     }
 }
 

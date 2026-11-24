@@ -8,7 +8,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ImmediateLayout;
-use quench_runtime::heap::Native;
+use quench_runtime::tier_surface::Native;
 use quench_runtime::staged::data_view::{self, DataViewElement, DataViewWords};
 use quench_runtime::staged::typed_view::TypedRecords;
 use super::builtin_calls::continues;

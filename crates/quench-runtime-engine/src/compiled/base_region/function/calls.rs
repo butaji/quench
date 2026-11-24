@@ -77,7 +77,7 @@ pub(crate) fn sole_definition(region: &LoopRegion, defined: usize, local: usize,
 /// read) stays, so the interpreter's call finds the callee in place.
 pub(crate) fn native_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
     use quench_runtime::vm::global_facts::GlobalRead;
-    use quench_runtime::heap::Native;
+    use quench_runtime::tier_surface::Native;
     (shape.form == CallForm::Plain).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;

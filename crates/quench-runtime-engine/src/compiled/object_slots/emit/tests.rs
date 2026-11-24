@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::heap::{Cell, Heap, Object, PlainPropertyStorage};
+use quench_runtime::{heap::Heap, tier_surface::{Cell, Object, PlainPropertyStorage}};
 use quench_runtime::staged::ic;
 use quench_runtime::staged::object::{own_layout, read_slot, Form, PackedAccess};
 use quench_runtime::staged::slot_store::store_flat;
@@ -332,7 +332,7 @@ fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMe
     let layout = own_layout(&mut stage, record, inline, Form::Arena, 2, PackedAccess::Reload, miss).unwrap();
     let velocity = read_slot(&mut stage, layout, 0, Representation::Float64);
     let mass = read_slot(&mut stage, layout, 1, Representation::Float64);
-    let payload = stage.load_u64(Region::Payload.mutable(), record, quench_runtime::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
     let pull = stage.builder.ins().fmul(dx, mass);
     let pull = stage.builder.ins().fmul(pull, mag);
     let updated = stage.builder.ins().fsub(velocity, pull);
@@ -432,6 +432,6 @@ fn a_formed_arena_read_emits_no_inline_flag_test() {
     let id = heap.object(arena_object).unwrap().hint_shape();
     assert_eq!(ic::form_of_layout(id), Form::Arena);
     let clif = formed_own_read_clif(&*isa, id, 0);
-    let inline_form = quench_runtime::heap::NATIVE_OBJECT_LAYOUT.inline_form as u64;
+    let inline_form = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_form as u64;
     assert!(!clif.contains(&clif_immediate(inline_form)), "the arena form tests no inline flag: {clif}");
 }

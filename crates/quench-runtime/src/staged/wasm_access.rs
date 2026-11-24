@@ -32,6 +32,16 @@ pub enum WasmAccessOperation {
     /// `destination = index + offset`, the effective address of a generic access (`WasmMemoryAddress`):
     /// the index in `index`, read as the memory's index type (named by the memory in `memory`).
     EffectiveAddress { destination: Register, index: Register, memory: Register, offset: u64 },
+    /// `destination = memory.size` of the memory in `memory` (`WasmMemorySize`): its length in pages,
+    /// as the memory's index type.
+    Size { destination: Register, memory: Register },
+    /// `memory.fill` of the memory in `memory` (`WasmMemoryFill`): `length` copies of the byte in
+    /// `byte` from the index in `output`, both read as the memory's index type.
+    Fill { memory: Register, byte: Register, length: Register, output: Register },
+    /// `memory.copy` from the memory in `source` to the memory in `destination` (`WasmMemoryCopy`):
+    /// `length` bytes from the index in `input` to the index in `output`. The row copies within one
+    /// memory; a copy between two memories leaves to its miss.
+    Copy { destination: Register, source: Register, length: Register, output: Register, input: Register },
 }
 
 /// The register representation a value of type `ty` takes: an i32 or f32 as its 32 bits, an i64 or
@@ -45,7 +55,10 @@ const fn representation(ty: WasmType) -> Option<WasmRep> {
 }
 
 impl WasmAccessOperation {
-    /// The access `instruction` denotes. A direct load or store takes its address from `c` and its
+    /// The access `instruction` denotes. A size takes its result register from `a` and its memory
+    /// from `b`; a fill its memory from `a`, its byte from `b`, its length from `c` and its
+    /// destination index from the register pair; a copy its memories from `a` and `b`, its length
+    /// from `c` and its two indexes from the pair. A direct load or store takes its address from `c` and its
     /// offset from its immediate. A generic load or store takes its value from `a`, its memory from
     /// `b` and its effective address from `c`, with the access its immediate tag names. An effective
     /// address takes its index from `b`, its memory from `c`, and its offset from its constant
@@ -83,6 +96,15 @@ impl WasmAccessOperation {
                 memory: wide.c(),
                 offset: instruction.constant(context)?.value.bits64()?,
             }),
+            Class::WasmMemorySize => Some(Self::Size { destination: wide.a(), memory: wide.b() }),
+            Class::WasmMemoryFill => {
+                let (output, _) = wide.register_pair();
+                Some(Self::Fill { memory: wide.a(), byte: wide.b(), length: wide.c(), output })
+            }
+            Class::WasmMemoryCopy => {
+                let (output, input) = wide.register_pair();
+                Some(Self::Copy { destination: wide.a(), source: wide.b(), length: wide.c(), output, input })
+            }
             _ => None,
         }
     }
@@ -183,6 +205,57 @@ pub(crate) fn step<F: Frame<Concrete>>(
             match frame.wasm_write(stage, destination, effective, WasmRep::Bits64) {
                 Some(tagged) => Step::Value(tagged),
                 None => Step::Unresolved,
+            }
+        }
+        WasmAccessOperation::Size { destination, memory } => {
+            let Some(page_bits) = frame.wasm_memory_page_bits(stage, memory) else { return Step::Unresolved };
+            let (pages, wide) = {
+                let Some((bytes, wide)) = frame.wasm_memory(stage, memory) else { return Step::Unresolved };
+                (wasm_memory::pages(&mut ConcreteBytes { memory: &*bytes }, page_bits), wide)
+            };
+            let rep = if wide { WasmRep::Bits64 } else { WasmRep::Int32 };
+            match frame.wasm_write(stage, destination, pages, rep) {
+                Some(tagged) => Step::Value(tagged),
+                None => Step::Unresolved,
+            }
+        }
+        WasmAccessOperation::Fill { memory, byte, length, output } => {
+            // The index type is the memory's: resolved once for the operands, then again for the
+            // bytes, which the operand reads must not hold borrowed.
+            let Some((_, wide)) = frame.wasm_memory(stage, memory) else { return Step::Unresolved };
+            let rep = if wide { WasmRep::Bits64 } else { WasmRep::Int32 };
+            let Some(index) = frame.wasm_read(stage, output, rep) else { return Step::Unresolved };
+            let Some(count) = frame.wasm_read(stage, length, rep) else { return Step::Unresolved };
+            let Some(value) = frame.wasm_read(stage, byte, WasmRep::Int32) else { return Step::Unresolved };
+            let Some(tagged) = frame.wasm_read(stage, byte, WasmRep::Tagged) else { return Step::Unresolved };
+            let filled = {
+                let Some((bytes, _)) = frame.wasm_memory(stage, memory) else { return Step::Unresolved };
+                wasm_memory::fill(&mut ConcreteMemory { memory: bytes }, index, value, count)
+            };
+            match filled {
+                Ok(()) => Step::Value(tagged),
+                Err(_) => Step::Unresolved,
+            }
+        }
+        WasmAccessOperation::Copy { destination, source, length, output, input } => {
+            // One memory: both registers hold the same memory value, so one index type reads all
+            // three operands (`copy_length_type` of two equal types is that type).
+            let Some(memory) = frame.wasm_read(stage, destination, WasmRep::Tagged) else { return Step::Unresolved };
+            if frame.wasm_read(stage, source, WasmRep::Tagged) != Some(memory) {
+                return Step::Unresolved;
+            }
+            let Some((_, wide)) = frame.wasm_memory(stage, destination) else { return Step::Unresolved };
+            let rep = if wide { WasmRep::Bits64 } else { WasmRep::Int32 };
+            let Some(to) = frame.wasm_read(stage, output, rep) else { return Step::Unresolved };
+            let Some(from) = frame.wasm_read(stage, input, rep) else { return Step::Unresolved };
+            let Some(count) = frame.wasm_read(stage, length, rep) else { return Step::Unresolved };
+            let copied = {
+                let Some((bytes, _)) = frame.wasm_memory(stage, destination) else { return Step::Unresolved };
+                wasm_memory::copy(&mut ConcreteMemory { memory: bytes }, to, from, count)
+            };
+            match copied {
+                Ok(()) => Step::Value(memory),
+                Err(_) => Step::Unresolved,
             }
         }
     }

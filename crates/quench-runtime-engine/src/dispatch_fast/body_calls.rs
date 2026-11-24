@@ -283,7 +283,7 @@ fn body_construct(cx: *mut LaneContext, call: &BodyCall, moved: &mut bool) -> u6
     // line, no base moved where no collection became due.
     if let Some(this) = super::construct_plan::planned_inline_quick(vm, callee, call.argument()) {
         call.registers.set(call.site.result, this);
-        if vm.heap.should_collect() { note_allocation(vm); } else { *moved = false; }
+        if vm.collection_due() { note_allocation(vm); } else { *moved = false; }
         return LANE_CALL_COMPLETED;
     }
     // The callee's plan first, the common `new C(...)`, which needs no call target; a returned
@@ -305,7 +305,7 @@ fn construct_admitted(cx: *mut LaneContext, vm: &Vm) -> Result<(), u64> {
     }
     if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) { return Err(miss(vm, Miss::Busy)); }
     if vm.with_scope_entered { return Err(miss(vm, Miss::WithScope)); }
-    if vm.heap.should_collect() { return Err(miss(vm, Miss::Busy)); }
+    if vm.collection_due() { return Err(miss(vm, Miss::Busy)); }
     Ok(())
 }
 
@@ -388,7 +388,7 @@ fn body_call_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value, li
     // The linked entry is the admission (`linked_script_call_entry`); its miss resolves through
     // the VM and admits a target of the running program (`staged::call_body::admits_target_program`).
     vm.linked_script_call_entry(callee, link).or_else(|| {
-        if matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(_), .. })) || vm.cross_call_entry(callee).is_some() {
+        if matches!(vm.function_record(callee), Some(FunctionRecord { kind: FunctionKind::Native(_), .. })) || vm.cross_call_entry(callee).is_some() {
             return None;
         }
         // SAFETY: the context's program outlives the lane run.

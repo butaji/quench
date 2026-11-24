@@ -21,7 +21,7 @@ fn compiled_lane_body(source: &str, name: &str) -> (Vm, ResidualProgram, LaneMet
 /// Installs a method cache entry for `owner.atom`, as a call site's first call does.
 fn name_in_a_method_cache(vm: &mut Vm, owner: Value, atom: Atom) {
     let callee = vm.own_property(owner, atom).unwrap();
-    let shape = vm.heap.object_record(owner).unwrap().shape();
+    let shape = vm.heap_reads().object_record(owner).unwrap().shape();
     let target = vm.call_target(callee).unwrap();
     let slot = vm.shape_slot(shape, atom).unwrap() as u16;
     let site = vm.method_caches.len();
@@ -61,10 +61,10 @@ fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
     let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let (instance_atom, k) = (vm.intern_atom("c"), vm.intern_atom("k"));
     let instance = vm.own_property(vm.realm.globals, instance_atom).unwrap();
-    let prototype = vm.heap.object(instance).unwrap().proto();
-    let shape = vm.heap.object(prototype).unwrap().shape();
+    let prototype = vm.heap_reads().object(instance).unwrap().proto();
+    let shape = vm.heap_reads().object(prototype).unwrap().shape();
     let slot = vm.shape_slot(shape, k).unwrap();
-    vm.heap.property_set(prototype, slot, Value::integer(6));
+    vm.store_property_slot(prototype, slot, Value::integer(6));
     assert!(published.lease().is_none(), "the prototype's write retires the code that folded its value");
     assert!(invalidation.is_set());
 }
@@ -73,7 +73,7 @@ fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
 fn prototype_of(vm: &mut Vm, name: &str) -> Value {
     let atom = vm.intern_atom(name);
     let instance = vm.own_property(vm.realm.globals, atom).unwrap();
-    vm.heap.object(instance).unwrap().proto()
+    vm.heap_reads().object(instance).unwrap().proto()
 }
 
 /// A folded prototype value holds the chain it was read through, not every prototype: class setup
@@ -90,7 +90,7 @@ fn a_folded_prototype_value_survives_other_prototypes_and_retires_at_its_chain()
     let invalidation = method.invalidation.clone();
     let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let other = prototype_of(&mut vm, "d");
-    vm.heap.mark_prototype(other);
+    vm.mark_prototype(other);
     let w = vm.intern_atom("w");
     vm.set_property(other, w, Value::integer(2)).unwrap();
     assert!(published.lease().is_some() && !invalidation.is_set(), "another prototype's new property leaves the code");
@@ -127,7 +127,7 @@ fn stable_facts_changed_mid_run_leave_compiled_bodies_with_exact_results() {
         vm.execute(&program).unwrap();
         let answer = vm.intern_atom("answer");
         let value = vm.own_property(vm.realm.globals, answer).unwrap();
-        answers.push(vm.heap.string(value).unwrap().to_string());
+        answers.push(vm.heap_reads().string(value).unwrap().to_string());
     }
     assert_eq!(answers[0], answers[1], "interpreted and compiled runs agree");
 }
@@ -143,9 +143,9 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let k = vm.intern_atom("K");
     let globals = vm.realm.globals;
-    let slot = vm.shape_slot(vm.heap.object(globals).unwrap().shape(), k).unwrap();
+    let slot = vm.shape_slot(vm.heap_reads().object(globals).unwrap().shape(), k).unwrap();
     let value = vm.own_property(globals, k).unwrap();
-    vm.heap.property_set(globals, slot, value);
+    vm.store_property_slot(globals, slot, value);
     assert!(published.lease().is_none(), "the global's write retires the code that folded its value");
     assert!(invalidation.is_set());
     let function = program.functions.iter().position(|body|
@@ -153,7 +153,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let recompile = |vm: &mut Vm| vm.compile_lane_method(&program, function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     assert_eq!(recompile(&mut vm).stable.globals.len(), 1, "written once, the global still folds");
-    vm.heap.property_set(globals, slot, value);
+    vm.store_property_slot(globals, slot, value);
     assert!(recompile(&mut vm).stable.globals.is_empty(), "written twice, the global is read at run time");
 }
 
@@ -218,6 +218,6 @@ fn global_bindings_changed_under_compiled_bodies_read_as_the_interpreter_reads()
         }
         let answer = vm.intern_atom("answer");
         let value = vm.own_property(vm.realm.globals, answer).unwrap();
-        assert_eq!(vm.heap.string(value).unwrap().to_string(), "45243007,120000,6000,30000", "{mode:?}");
+        assert_eq!(vm.heap_reads().string(value).unwrap().to_string(), "45243007,120000,6000,30000", "{mode:?}");
     }
 }

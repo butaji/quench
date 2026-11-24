@@ -64,7 +64,7 @@ fn bind_local_field_hint(cx: *mut LaneContext, ip: Ip, object: Value, site: u16)
         return;
     }
     if unsafe { (*cx).binding.object_base }.is_null() {
-        let Some(base) = vm.heap.object_record_base() else { return };
+        let Some(base) = vm.heap_reads().object_record_base() else { return };
         // SAFETY: the context is the running lane's, and the object records it binds are live for the run.
         unsafe { (*cx).binding.object_base = base };
     }

@@ -27,7 +27,7 @@ fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
         ("cell_counters", at!(super::super::entry_cell::EntryCell, counters), m::CELL_COUNTERS_AT),
         ("raised_run", super::super::entry_cell::RAISED_RUN as usize, m::RAISED_RUN as usize),
         ("frame_bytes", super::super::FRAME_BYTES, m::ACTIVATION_BYTES),
-        ("layout_table_base", quench_runtime::heap::layouts::table_base().addr(), m::LAYOUT_TABLE_BASE as usize),
+        ("layout_table_base", quench_runtime::tier_surface::layouts::table_base().addr(), m::LAYOUT_TABLE_BASE as usize),
         ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),
         ("shared_pointer", form::SHARED_POINTER_OFFSET as usize, m::string_form::SHARED_POINTER_OFFSET as usize),
         ("shared_units", form::shared_units_offset() as usize, m::string_form::shared_units_offset() as usize),
@@ -60,10 +60,10 @@ fn typed_kinds_match() {
     let mirrored = Mirror::ALL;
     assert_eq!(usize::from(stencil_layout::LOOP_ENTRY_ARRAY_COUNT_AT as u8), std::mem::size_of::<u64>(), "the count follows the elements' address");
     let native_kinds: Vec<u8> = (0..quench_bjit::numeric::library::TYPED_KINDS).filter(|kind| !quench_bjit::numeric::library::NON_NATIVE_KINDS.contains(kind)).collect();
-    let runtime_native: Vec<u8> = quench_runtime::heap::TYPED_ARRAYS.iter().filter(|row| quench_runtime::staged::typed_elements::NativeKind::new(row.kind).is_some()).map(|row| row.kind as u8).collect();
+    let runtime_native: Vec<u8> = quench_runtime::tier_surface::TYPED_ARRAYS.iter().filter(|row| quench_runtime::staged::typed_elements::NativeKind::new(row.kind).is_some()).map(|row| row.kind as u8).collect();
     assert_eq!(native_kinds, runtime_native);
-    assert_eq!(quench_runtime::heap::TYPED_ARRAYS.len(), mirrored.len());
-    for (row, mirror) in quench_runtime::heap::TYPED_ARRAYS.iter().zip(mirrored) {
+    assert_eq!(quench_runtime::tier_surface::TYPED_ARRAYS.len(), mirrored.len());
+    for (row, mirror) in quench_runtime::tier_surface::TYPED_ARRAYS.iter().zip(mirrored) {
         assert_eq!((row.kind as usize, row.width), (mirror as usize, mirror.width()), "{}", row.name);
     }
 }
@@ -88,11 +88,11 @@ fn stencil_units_match() {
 fn stencil_layout_matches() {
     use stencil_layout as mirror;
     eprintln!("OFFSETS {:?}", payload_offsets());
-    assert_eq!(format!("{:?}", quench_runtime::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
-    assert_eq!(format!("{:?}", quench_runtime::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
-    assert_eq!(format!("{:?}", quench_runtime::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
-    assert_eq!(format!("{:?}", quench_runtime::heap::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
-    assert_eq!(format!("{:?}", quench_runtime::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
+    assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
+    assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
+    assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
+    assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
+    assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
     let (cache, copy) = (quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
     assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset, cache.holder_id_offset],
         [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset, copy.holder_id_offset]);
@@ -101,7 +101,7 @@ fn stencil_layout_matches() {
         [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]
     );
     assert_eq!(
-        [quench_runtime::heap::NARROW_LEN as u64, quench_runtime::heap::DOUBLE_LEN as u64, quench_runtime::heap::ENCODED_LEN as u64, quench_runtime::heap::OTHERS_UNKNOWN as u64, quench_runtime::heap::LENGTH_FROM_VALUES as i64 as u64, quench_runtime::heap::OTHERS_FROM_VALUES as i64 as u64, quench_runtime::value_vec::INLINE_PROPERTY_COUNT as u64, u64::from(quench_runtime::heap::SMALL_STRING_ID_MASK), u64::from(quench_runtime::heap::SMALL_STRING_ID_BASE)],
+        [quench_runtime::heap::NARROW_LEN as u64, quench_runtime::tier_surface::DOUBLE_LEN as u64, quench_runtime::tier_surface::ENCODED_LEN as u64, quench_runtime::tier_surface::OTHERS_UNKNOWN as u64, quench_runtime::tier_surface::LENGTH_FROM_VALUES as i64 as u64, quench_runtime::tier_surface::OTHERS_FROM_VALUES as i64 as u64, quench_runtime::value_vec::INLINE_PROPERTY_COUNT as u64, u64::from(quench_runtime::tier_surface::SMALL_STRING_ID_MASK), u64::from(quench_runtime::tier_surface::SMALL_STRING_ID_BASE)],
         [mirror::NARROW_LEN as u64, mirror::DOUBLE_LEN as u64, mirror::ENCODED_LEN as u64, mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64, u64::from(mirror::SMALL_STRING_ID_MASK), u64::from(mirror::SMALL_STRING_ID_BASE)]
     );
     value_words_match();

@@ -66,12 +66,12 @@ fn resume_request_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneIn
     let vm = unsafe { vm(cx) };
     let promise = vm.promise_object().ok()?;
     note_allocation(vm);
-    let root = vm.heap.root(promise);
+    let root = vm.hold_root(promise);
     // The promise rides in the request activation's side record (one-frame-one-call.md F4 (3)),
     // attached as the activation is pushed.
     let resumed = generator_windows::resume_generator_in_lane(cx, r, ip, generator, r.get(i.b), sent, (Completion::AsyncRequest, SidePayload::Settles(Some(root))));
     if resumed.is_none() {
-        vm.heap.release_root(root);
+        vm.drop_root(root);
     }
     resumed
 }

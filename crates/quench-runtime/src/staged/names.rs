@@ -63,8 +63,8 @@ pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
 /// opcodes; `None` for any other opcode.
 #[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
-    let destination = || instruction.result_register();
-    let slot = || Some(crate::staged::window_slot(instruction.imm()));
+    let destination = move || instruction.result_register();
+    let slot = move || Some(crate::staged::window_slot(instruction.imm()));
     Some(match instruction.op() {
         Op::CloneEnv => Operation::CloneEnv { plan: instruction.imm() & ENVIRONMENT_CLONE_PLAN_MASK },
         Op::LoadEnvLocal => Operation::LoadEnvLocal { destination: destination(), slot: slot()? },

@@ -8,7 +8,7 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
-use quench_runtime::heap::PlainPropertyStorage;
+use quench_runtime::tier_surface::PlainPropertyStorage;
 use quench_runtime::staged::machine::{Binary, Lane, MachineFlow, MachineScalar, Relation, Unary};
 
 /// A non-null table reservation admitted for this native run. This proves no
@@ -72,7 +72,7 @@ impl ObjectRecord {
             ObjectTable::Unchecked(base) => base,
             ObjectTable::Checked(table) => table.base(),
         };
-        let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
         // Only a dominating verified definition/edge can supply this fact.
         // No safepoint or layout-changing operation may cross its lifetime.
@@ -126,8 +126,8 @@ impl ObjectHeader {
     /// A store must not take this proof: its barrier reads object record marks.
     pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
-        let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
-        let function = quench_runtime::heap::NATIVE_FUNCTION_LAYOUT;
+        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
+        let function = quench_runtime::tier_surface::NATIVE_FUNCTION_LAYOUT;
         let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
         // A function's own read is the rare one; the object path stays the straight line.
         builder.set_cold_block(function_block);
@@ -169,19 +169,19 @@ pub(crate) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlags
 /// `exact_shape` with the record's layout id (`I32`), the word it was read through.
 pub(crate) fn exact_shape_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> (ir::Value, ir::Value) {
     let (layout_id, word) = auxiliary_word(builder, flags, address);
-    let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     (builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form))), layout_id)
 }
 
 /// The layout id (`I32`) of the record at `address` and its layout's auxiliary word (shape and
 /// storage form, `I32`).
 fn auxiliary_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> (ir::Value, ir::Value) {
-    let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     // The id load is the one `staged::object::layout_entry` emits, so the two merge.
     let id = builder.ins().uload32(flags, address, layout.layout_offset as i32);
     let layout_id = builder.ins().ireduce(types::I32, id);
     let offset = builder.ins().imul_imm_u(id, 8);
-    let base = builder.ins().iconst(types::I64, quench_runtime::heap::layouts::table_base() as i64);
+    let base = builder.ins().iconst(types::I64, quench_runtime::tier_surface::layouts::table_base() as i64);
     let entry = builder.ins().iadd(base, offset);
     // The table entry is read-only memory that hoists and merges like any immutable read.
     let table = regions::flags(quench_runtime::staged::region::Region::HeapMeta.readonly());
@@ -193,7 +193,7 @@ fn auxiliary_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, ad
 /// the auxiliary word's storage-form bits carry the header's inline flag
 /// (`Object::storage_form`), so the flag needs no second header word.
 pub(crate) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value, ir::Value) {
-    let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     let (layout_id, word) = auxiliary_word(builder, regions::shape_word(), address);
     let shape = builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)));
     let form = builder.ins().band_imm_u(word, i64::from(layout.inline_form));
@@ -318,7 +318,7 @@ impl NativeFieldLoad {
         self.shape & quench_runtime::value_vec::DICTIONARY_STORAGE == 0
             && usize::from(self.slot) < self.storage_len
             && (self.storage != Some(PlainPropertyStorage::PackedInline)
-                || self.storage_len <= quench_runtime::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
+                || self.storage_len <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count)
     }
 }
 
@@ -374,7 +374,7 @@ mod tests {
         // address; it dereferences neither table nor supplied receiver.
         let run = unsafe { std::mem::transmute::<*mut u8,
             unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
-        let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         let records = vec![0_u8; layout.record_size * 2];
         let base = records.as_ptr() as u64;
         let object = Value::direct_object(1).to_bits();
@@ -391,7 +391,7 @@ mod tests {
     fn direct_family_admission_tests_the_family_alone() {
         use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
         let isa = quench_runtime::jit_backend::target_isa().unwrap();
-        let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         // A direct object's id names a record of the reservation, whose base every native
         // entry reads: only the family needs a test, and none where a fact proves it.
         for (ty, expected_guards) in [
@@ -469,7 +469,7 @@ impl CheckedObject {
                 flat
             }
         };
-        Some(emit(builder).raw_binary_imm(Binary::Add, base, i64::from(slot) * quench_runtime::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
+        Some(emit(builder).raw_binary_imm(Binary::Add, base, i64::from(slot) * quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
     }
 
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds

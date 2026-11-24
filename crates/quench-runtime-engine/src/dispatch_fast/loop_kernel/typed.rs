@@ -2,7 +2,7 @@
 //! an f64 stored as the kind's element, as the typed array element get and set do.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::heap::TypedArrayKind;
+use quench_runtime::tier_surface::TypedArrayKind;
 use quench_runtime::staged::typed_elements::{
     element_number, store_double_element, store_number_element, NATIVE_LITTLE_ENDIAN,
 };

@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::heap::TypedArrayKind;
+use quench_runtime::tier_surface::TypedArrayKind;
 use quench_runtime::staged::typed_elements::NativeKind;
 
 /// How a loop region's arrays are viewed on entry: not at all (each access proves its array's word), as
