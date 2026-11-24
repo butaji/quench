@@ -255,7 +255,7 @@ pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn
         if len > 1 { inline[1] = plan.passed_value(1, &argument); }
         return Some(vm.allocate_planned_inline(plan.header, plan.prototype, inline, len));
     }
-    Some(vm.allocate_planned_object(plan.header, plan.prototype, &std::array::from_fn::<_, CONSTRUCT_PLAN_FIELDS, _>(|index| if index < len { plan.passed_value(index, &argument) } else { Value::UNDEFINED }), len))
+    Some(vm.allocate_planned_object(plan.header, plan.prototype, &quench_runtime::vm::tier_queries::planned_fields::<CONSTRUCT_PLAN_FIELDS>(len, |index| plan.passed_value(index, &argument)), len))
 }
 
 /// Whether the running lane's frame constructs in place (`LaneContext::script_constructs`),
