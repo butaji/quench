@@ -7,7 +7,7 @@ use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
 use quench_runtime::staged::property::StoreJoin;
-use quench_runtime::staged::{Region, Stage};
+use quench_runtime::staged::{Region, ShapeFact, Stage};
 
 pub(crate) use quench_runtime::vm::engine_types::StableFacts;
 
@@ -19,7 +19,7 @@ pub(crate) struct StableUses {
     /// The chains the code read those values through (`field_plans::embed_inherited`).
     pub(crate) chains: BTreeSet<quench_runtime::code_dependencies::PrototypeChain>,
     /// Exact shapes of the objects whose shape the code held past a call (`StableHold::hold_shape`).
-    pub(crate) shapes: quench_runtime::bitset::BitSet,
+    pub(crate) shapes: quench_runtime::staged::HeldShapes,
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
@@ -27,7 +27,7 @@ pub(crate) struct StableUses {
     /// The heap identities the code embeds: callees, prototypes' values, constants.
     pub(crate) roots: quench_runtime::folded_roots::FoldedRoots,
     /// Global objects whose layout the code held.
-    layouts: BTreeSet<quench_runtime::tier_surface::GlobalLayoutFact>,
+    layouts: quench_runtime::staged::HeldLayouts,
     /// Global slots whose observed type the code relied on, each once.
     slots: Vec<quench_runtime::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
@@ -48,11 +48,11 @@ pub(crate) struct StableUses {
 impl StableUses {
     pub(crate) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
-            shapes: std::mem::take(&mut self.shapes).iter().map(|shape| shape as u32).collect(),
+            shapes: self.shapes.take(),
             chains: std::mem::take(&mut self.chains).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
-            layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
+            layouts: self.layouts.take(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
             instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take() }
     }
@@ -81,13 +81,13 @@ impl StableHold<'_> {
     /// Holds that the objects now of exact shape `shape` still have it, from the instruction at
     /// `at`: an invalidation point as `hold_holder`'s, the code retiring at the first object to
     /// leave the shape. `None` where the code takes no dependencies on the VM or the VM does not
-    /// hold the shape stable (`Vm::shape_is_stable`).
+    /// hold the shape stable (`Vm::shape_is_stable`). The fact is the dependency's: the guard
+    /// on the object's shape became the hook its departure fires.
     pub(crate) fn hold_shape(&mut self, frame: (&mut FunctionBuilder<'_>, LaneHelpers),
-        state: &mut State, exit: ir::Block, shape: u32) -> Option<()> {
+        state: &mut State, exit: ir::Block, shape: u32) -> Option<ShapeFact> {
         let online = self.online.filter(|online| (online.shape_stable)(shape))?;
         self.read_held(frame, online, state, exit);
-        self.shapes.insert_growing(shape as usize);
-        Some(())
+        Some(self.shapes.hold(shape))
     }
 }
 
@@ -189,20 +189,22 @@ impl Lowering<'_, '_> {
     /// Holds the layout of the global object `realm` names (`hold_stable`) and, where the slot
     /// `slot` was typed when the code was compiled, that type: the code stores to the slot, or
     /// reads its `typeof`, with no check but the invalidation word and the realm proof.
-    pub(crate) fn hold_global_slot(&mut self, state: &mut State, exit: ir::Block, slot: quench_runtime::vm::global_facts::GlobalSlot) {
+    /// The layout's fact is the dependency's, which a slot read of the global object takes.
+    pub(crate) fn hold_global_slot(&mut self, state: &mut State, exit: ir::Block, slot: quench_runtime::vm::global_facts::GlobalSlot) -> ShapeFact {
         self.hold_stable(state, exit);
-        self.stable.layouts.insert(slot.layout);
+        let fact = self.stable.layouts.hold(slot.layout);
         if let Some(dependency) = slot.dependency && !self.stable.slots.contains(&dependency) {
             self.stable.slots.push(dependency);
         }
         self.prove_realm(state, exit, (slot.global, slot.realm_offset));
+        fact
     }
 
     /// Holds the layout of the global object `slot` names (`hold_stable`), under which a new declaration is the only change that moves the
     /// declarative record's words, and the realm active that the record belongs to: a global lexical binding is read live, at its address.
     pub(crate) fn hold_lexical(&mut self, state: &mut State, exit: ir::Block, slot: quench_runtime::vm::global_facts::LexicalSlot) {
         self.hold_stable(state, exit);
-        self.stable.layouts.insert(slot.layout);
+        self.stable.layouts.hold(slot.layout);
         self.prove_realm(state, exit, (slot.global, slot.realm_offset));
     }
 

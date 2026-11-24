@@ -138,7 +138,7 @@ fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
 fn known_get_flat<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES + 1, payload as u64);
     let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
-    let word = own_field_flat(&mut stage, record, 0);
+    let word = own_field_flat(&mut stage, crate::staged::Shaped::by_fact(record, crate::staged::ShapeFact::entry_guard()), 0);
     finish_chained::<true>(s, Step::Value(word), |s, word| deliver::<D>(s, word))
 }
 

@@ -1997,6 +1997,7 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u16(parameter.parameter);
         out.u16(parameter.languages);
     }
+    write_declared_docs(out, &declared.docs);
     out.u32(declared.layouts.len() as u32);
     for layout in &declared.layouts {
         out.u32(layout.class_start);
@@ -2096,6 +2097,7 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
     let parameters = input.list(|input| {
         Ok(super::DeclaredParameter { function: input.u32()?, parameter: input.u16()?, languages: input.u16()? })
     })?;
+    let docs = read_declared_docs(input)?;
     let layouts = input.list(|input| {
         let class_start = input.u32()?;
         let names = input.list(|input| Ok(input.string()?.into_boxed_str()))?;
@@ -2130,8 +2132,22 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         _ => return Err("invalid saved type names tag".to_string()),
     };
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, local_members, parameter_classes, parameters, layouts, type_names,
+        declared, enum_constants, fields, signatures, locals, members, local_members, parameter_classes, parameters, layouts, docs, type_names,
     })))
+}
+
+/// The JSDoc comments that type functions from outside their text (`DeclaredDoc`).
+fn write_declared_docs(out: &mut BinaryWriter, docs: &[super::declared_types::DeclaredDoc]) {
+    out.u32(docs.len() as u32);
+    for doc in docs {
+        out.u32(doc.function);
+        out.u32(doc.start);
+        out.u32(doc.end);
+    }
+}
+
+fn read_declared_docs(input: &mut BinaryReader<'_>) -> Result<Vec<super::declared_types::DeclaredDoc>, String> {
+    input.list(|input| Ok(super::declared_types::DeclaredDoc { function: input.u32()?, start: input.u32()?, end: input.u32()? }))
 }
 
 fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {

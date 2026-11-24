@@ -54,6 +54,9 @@ pub(crate) struct ObjectHeader {
     /// The record's auxiliary word (exact shape and storage-form bits) the header read, which a
     /// formed read compares (`staged::property_slots::formed_slot`) instead of reading it again.
     pub(crate) auxiliary: Option<ir::Value>,
+    /// The fact behind `shape` where it is a constant: the register's type (`ShapeFact::of_type`)
+    /// or the guard that proved it (`headers::prove_header_shape`).
+    pub(crate) shape_fact: Option<ShapeFact>,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
@@ -107,11 +110,11 @@ impl ObjectRecord {
     pub(crate) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
         let (loaded, word, inline, auxiliary) = shape_and_inline(builder, address);
-        let (shape, word) = match known.and_then(|fact| fact.ty.object_shape()) {
-            Some(shape) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None),
-            None => (loaded, Some(word)),
+        let (shape, word, shape_fact) = match known.and_then(|fact| ShapeFact::of_type(fact.ty)) {
+            Some((shape, fact)) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None, Some(fact)),
+            None => (loaded, Some(word), None),
         };
-        ObjectHeader { record: self, shape, inline, address, word, auxiliary: Some(auxiliary) }
+        ObjectHeader { record: self, shape, inline, address, word, auxiliary: Some(auxiliary), shape_fact }
     }
 }
 
@@ -151,7 +154,7 @@ impl ObjectHeader {
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
         let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
-        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word), auxiliary: Some(auxiliary) }
+        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
     }
 }
 
@@ -443,18 +446,21 @@ mod tests {
     }
 }
 
-use quench_runtime::staged::{Layout, Slots};
+use quench_runtime::staged::{Layout, ShapeFact, Slots};
 pub(crate) mod emit;
 pub(crate) use emit::Emit;
 
 /// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
 /// only be reused while no admitted effect can change its layout, arena base or object lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CheckedObject(Layout<ir::Value, ir::Value>);
+pub(crate) struct CheckedObject(Layout<ir::Value, ir::Value>, ShapeFact);
 
 impl CheckedObject {
-    /// The proof of a layout a staged read established.
-    pub(crate) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
+    /// The proof of a layout a staged read established, under the shape fact its guard made.
+    pub(crate) fn of(layout: Layout<ir::Value, ir::Value>, fact: ShapeFact) -> Self { Self(layout, fact) }
+
+    /// The shape fact the layout's guard made.
+    pub(crate) fn fact(self) -> ShapeFact { self.1 }
 
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
@@ -474,11 +480,12 @@ impl CheckedObject {
 
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
     /// behind its extras (`staged::arena_extras_layout`), as a global object by name does: its
-    /// shape is held by a dependency, so only the representation is tested.
-    pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
+    /// shape is held by a dependency (`fact`, `HeldLayouts::hold`), so only the representation is tested.
+    pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, (record, fact): (ir::Value, ShapeFact), inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
         let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None };
-        quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss).map(Self)
+        quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss)
+            .map(|layout| Self(layout, fact))
     }
 
     /// The layout this proof carries, for a staged read of fresh contents through it.

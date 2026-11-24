@@ -10,7 +10,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
-use quench_runtime::staged::{Region, Stage};
+use quench_runtime::staged::{Region, ShapeFact, Shaped, Stage};
 use super::field_plans::LanePlans;
 use super::frame::calls;
 use quench_runtime::staged::ic::Reached;
@@ -57,7 +57,7 @@ pub(crate) struct StableHold<'a> {
     /// Exact shapes of the prototypes whose values the code holds (`StableUses::holders`).
     pub(crate) holders: &'a mut quench_runtime::bitset::BitSet,
     /// Exact shapes of the objects whose shape the code holds past a call (`StableUses::shapes`).
-    pub(crate) shapes: &'a mut quench_runtime::bitset::BitSet,
+    pub(crate) shapes: &'a mut quench_runtime::staged::HeldShapes,
     /// The loops that hold every Stable fact (`StableUses::stable_loops`).
     pub(crate) loops: &'a [(usize, usize)],
     /// The facts of the VM the code depends on; none for code shared across VMs.
@@ -158,15 +158,15 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
-    fn proven_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner) -> Option<u32> {
+    fn proven_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner) -> Option<(u32, ShapeFact)> {
         let key = self.proof_key(owner)?;
         headers::header_shape(stage.builder, self.state, key).or_else(||
-            self.state.proofs.layouts.range((key, 0)..=(key, u32::MAX)).next().map(|((_, shape), _)| *shape))
+            self.state.proofs.layouts.range((key, 0)..=(key, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
     }
 
-    fn prove_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, shape: u32, direct: bool) {
+    fn prove_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, (shape, proof): (u32, Shaped<ir::Value>), direct: bool) {
         let Some(key) = self.proof_key(owner) else { return };
-        headers::note_header_shape(stage.builder, self.state, key, shape);
+        headers::note_header_shape(stage.builder, self.state, key, (shape, proof.fact()));
         // A read that proves the receiver a direct object of its shape proves it for the block,
         // for each copy of its value too (`copies`).
         if let (true, Owner::Register(register)) = (direct, owner) {
@@ -183,11 +183,11 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         self.state.proofs.layouts.get(&(key, shape)).map(|layout| layout.layout())
     }
 
-    fn keep_layout(&mut self, owner: Owner, shape: u32, layout: Layout<ir::Value, ir::Value>) {
+    fn keep_layout(&mut self, owner: Owner, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
         let Some(key) = self.proof_key(owner) else { return };
         let copies = match owner { Owner::Register(register) if key.is_some() => self.copies(register), _ => Vec::new() };
         for kept in std::iter::once(key).chain(copies.into_iter().map(Some)) {
-            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout));
+            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout, fact));
         }
     }
 

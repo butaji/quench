@@ -56,8 +56,8 @@ impl ElementFrame<Concrete> for Typed {
 impl crate::staged::CallFrame<Concrete> for Typed {}
 
 impl NumericFrame<Concrete> for Typed {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no int32 operand") }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { Some(unsafe { crate::staged::Float64::proven(self.registers[2]) }) }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!("no int32 operand") }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { Some(crate::staged::Float64::by_fact(self.registers[2], crate::staged::NumberFact::float64_home())) }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn int_fact(&self) {}

@@ -1,4 +1,4 @@
-//! `Stage` on the interpreter's machine: every operation on its own state, inlined into
+//! `Machine` on the interpreter's machine: every operation on its own state, inlined into
 //! `Program::run`.
 #[allow(clippy::wildcard_imports)]
 use super::*;
@@ -160,6 +160,104 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn listed(&mut self, index: u32) -> u32 {
+        self.program.lists[index as usize]
+    }
+
+    #[inline(always)]
+    fn follower(&mut self, pc: u32) -> Option<UnitTest> {
+        match self.program.instructions[pc as usize] {
+            Inst::Unit(test) => Some(test),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    fn guard(&mut self, guard: u32) -> Admission<UnitTest> {
+        self.program.guards[guard as usize]
+    }
+
+    /// The body runs as a nested run above a barrier (`nested_look`).
+    #[inline(always)]
+    fn lookaround(&mut self, (negative, end): (bool, u32), at: Cursor) -> Step {
+        if self.nested_look(at.next(), negative) { Step::Continue(at.jump(end)) } else { Step::Fail }
+    }
+
+    /// The nested run ends where its body matched.
+    #[inline(always)]
+    fn look_succeed(&mut self, _: Cursor) -> Step {
+        Step::Accept
+    }
+
+    #[inline(always)]
+    fn dispatch_on(&mut self, unit: u32, table: u32, mut arm: impl FnMut(&mut Self, (u32, u32)) -> Step) -> Step {
+        match self.program.dispatch_interval(table, unit) {
+            Some(branches) => arm(self, branches),
+            None => Step::Fail,
+        }
+    }
+
+    fn class_ends(&mut self, class: u32, position: usize, backward: bool, pc: u32) -> (bool, usize) {
+        let ends = self.program.classes[class as usize].ends(self.text, position, backward);
+        let Some((&first, rest)) = ends.split_first() else { return (false, position) };
+        for &end in rest.iter().rev() {
+            self.push(Frame::Choice { pc, position: end });
+        }
+        (true, first)
+    }
+
+    #[inline(always)]
+    fn pick(&mut self, flag: bool, then: usize, otherwise: usize) -> usize {
+        if flag { then } else { otherwise }
+    }
+
+    #[inline(always)]
+    fn plus(&mut self, left: usize, right: usize) -> usize {
+        left + right
+    }
+
+    #[inline(always)]
+    fn minus(&mut self, left: usize, right: usize) -> usize {
+        left - right
+    }
+
+    #[inline(always)]
+    fn reach_back(&mut self, position: usize, count: u32) -> usize {
+        position.saturating_sub(count as usize)
+    }
+
+    #[inline(always)]
+    fn run_start(&mut self, test: UnitTest, from: usize, to: usize) -> usize {
+        self.program.run_start_back(test, self.text, from, to)
+    }
+
+    #[inline(always)]
+    fn same_units(&mut self, (from, to): (usize, usize), at: usize, (ignore_case, unicode): (bool, bool)) -> bool {
+        let distance = at.wrapping_sub(from);
+        (from..to).all(|expected| equal(self.text.unit(expected), self.text.unit(expected.wrapping_add(distance)), ignore_case, unicode))
+    }
+
+    #[inline(always)]
+    fn push_greedy_back(&mut self, pc: u32, ceiling: usize, position: usize) {
+        self.push(Frame::GreedyBack { pc, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn push_lazy_back(&mut self, pc: u32, test: UnitTest, floor: usize, position: usize) {
+        self.push(Frame::LazyBack { pc, test, floor, position });
+    }
+
+    #[inline(always)]
+    fn keep_greedy_back(&mut self, pc: u32, ceiling: usize, position: usize) {
+        self.keep(Frame::GreedyBack { pc, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn keep_lazy_back(&mut self, pc: u32, test: UnitTest, floor: usize, position: usize) {
+        self.keep(Frame::LazyBack { pc, test, floor, position });
+    }
+
+    #[inline(always)]
     fn require(&mut self, flag: bool) -> bool {
         flag
     }
@@ -177,25 +275,15 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 }
 
-impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
-
+/// The interpreter's frame stack and register writes, which `replay` runs.
+impl<T: Text + ?Sized> Concrete<'_, T> {
     #[inline(always)]
-    fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize {
-        self.program.run_start_back(test, self.text, from, to)
-    }
-
-    #[inline(always)]
-    fn register(&self, register: u32) -> usize {
-        self.registers[register as usize]
-    }
-
-    #[inline(always)]
-    fn assign(&mut self, register: u32, value: usize) {
+    pub(in crate::backtrack) fn assign(&mut self, register: u32, value: usize) {
         self.registers[register as usize] = value;
     }
 
     #[inline(always)]
-    fn push(&mut self, frame: Frame) {
+    pub(in crate::backtrack) fn push(&mut self, frame: Frame) {
         let length = self.stack.len();
         if length == self.stack.capacity() && !reserve_frames(self.stack) {
             return;
@@ -210,7 +298,7 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn keep(&mut self, frame: Frame) {
+    pub(in crate::backtrack) fn keep(&mut self, frame: Frame) {
         let length = self.stack.len();
         debug_assert!(length < self.stack.capacity());
         // SAFETY: `keep` follows the `pop` that freed this slot, so it lies within the
@@ -222,38 +310,18 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn pop(&mut self) -> Option<Frame> {
+    pub(in crate::backtrack) fn pop(&mut self) -> Option<Frame> {
         self.stack.pop()
     }
 
-    #[inline(always)]
-    fn guard(&self, guard: u32) -> Admission<UnitTest> {
-        self.program.guards[guard as usize]
-    }
+}
 
-    #[inline(always)]
-    fn dispatch(&mut self, table: u32, position: usize) -> Option<u32> {
-        self.program.dispatch_target(table, self.text, position, self.stack)
-    }
-
-    fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize> {
-        self.program.classes[class as usize].ends(self.text, position, backward)
-    }
-
-    #[inline(always)]
-    fn unit_follower(&self, pc: u32) -> Option<UnitTest> {
-        match self.program.instructions[pc as usize] {
-            Inst::Unit(test) => Some(test),
-            _ => None,
-        }
-    }
-
-    #[inline(always)]
-    fn listed(&self, index: u32) -> u32 {
-        self.program.lists[index as usize]
-    }
-
-    fn look(&mut self, body: Cursor, negative: bool) -> bool {
+impl<T: Text + ?Sized> Concrete<'_, T> {
+    /// Runs the lookaround body at `body` as a nested run; whether the lookaround holds
+    /// (`found != negative`), its stack effects applied. Out of line, returning a flag, so
+    /// `Program::run`'s loop keeps its step in registers.
+    #[inline(never)]
+    fn nested_look(&mut self, body: Cursor, negative: bool) -> bool {
         let base = self.stack.len();
         self.push(Frame::Barrier);
         let found = self.program.run(self.text, (body.pc, body.position, body.position), None, self.registers, self.stack).is_some();

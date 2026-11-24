@@ -48,9 +48,9 @@ pub(crate) fn declared<S: Stage>(stage: &mut S, source: S::Word, mask: u64, miss
 /// exact shape and prototype link `(shape, link)` (`entry::shape_link_matches`, the prototype-held read's
 /// receiver check). Any other word leaves.
 #[inline(always)]
-pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<()> {
+pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<super::Shaped<S::Word>> {
     let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
-    super::entry::shape_link_matches(stage, record, (shape, link), miss)
+    super::entry::shape_link_matches(stage, record, (shape, link), miss).map(super::Linked::shaped)
 }
 
 /// `shape`: `source` is a direct object whose record, found in the object record table `records`, has exact shape
@@ -58,7 +58,7 @@ pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Wo
 /// shape, which is a flat run with no storage-form bit (`ic::own_field`'s one compare); `Packed` takes the exact shape
 /// with the inline bit set; `Either` the exact shape alone. Any other word leaves.
 #[inline(always)]
-pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, form): (u64, Form), miss: S::Miss) -> Option<()> {
+pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, form): (u64, Form), miss: S::Miss) -> Option<super::Shaped<S::Word>> {
     let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
     let word = super::object::aux_word(stage, record);
     let recorded = match form {
@@ -71,7 +71,7 @@ pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, 
         let inline = super::object::storage_form(stage, word, OBJECT.inline_form);
         stage.guard(inline, miss)?;
     }
-    Some(())
+    Some(super::Shaped::of_guard(record))
 }
 
 /// `stores`: the run's dispatch word `specialized` says its stores specialize (`slot_store::store_admitted`). A region's entry

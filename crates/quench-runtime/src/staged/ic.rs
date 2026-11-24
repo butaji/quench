@@ -80,13 +80,16 @@ pub struct Reached<W, C> {
     pub formed: Option<u32>,
     /// The record's auxiliary word (exact shape and storage-form bits), where the caller loaded it.
     pub auxiliary: Option<W>,
+    /// The proof of the record's exact shape, once a guard of the read (or the caller's) ran: a
+    /// slot read (`slot_layout`) takes it, so no slot is read past no guard.
+    pub shaped: Option<super::Shaped<W>>,
 }
 
 impl<W, C> Reached<W, C> {
     /// A record the read reached with no facts of it held.
     #[inline(always)]
     pub fn bare(record: W) -> Self {
-        Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None }
+        Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None, shaped: None }
     }
 }
 
@@ -136,15 +139,15 @@ pub(crate) fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Re
 fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> core::ops::ControlFlow<Option<S::Word>> {
     use core::ops::ControlFlow::{Break, Continue};
-    macro_rules! guarded { ($e:expr) => { if $e.is_none() { return Break(None); } }; }
+    macro_rules! guarded { ($e:expr) => { match $e { Some(held) => held, None => return Break(None) } }; }
     match *op {
-        IcOp::GuardShape(shape) => guarded!(guard_shape(stage, at, shape, miss)),
+        IcOp::GuardShape(shape) => at.shaped = Some(guarded!(guard_shape(stage, at, shape, miss))),
         IcOp::GuardLayout(id) => {
-            guarded!(guard_layout(stage, at, id, miss));
+            at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));
             at.formed = Some(layout_form(id));
         }
         IcOp::GuardFormed { id, form } => {
-            guarded!(guard_layout(stage, at, id, miss));
+            at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));
             debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
             at.formed = Some(form);
         }
@@ -155,8 +158,8 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
             *at = Reached::bare(object_record_at(stage, records, id));
         }
         IcOp::LoadSlot { slot, form, storage_len, rep } => return Break(load_slot(stage, at, (slot, rep), form, storage_len, miss)),
-        IcOp::LoadPrototypeSlot(slot) => return Break(prototype_slot(stage, at.record, slot, miss)),
-        IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.record, values, miss)),
+        IcOp::LoadPrototypeSlot(slot) => return Break(prototype_slot(stage, at.shaped.expect("a prototype slot read follows the guard of the holder's shape"), slot, miss)),
+        IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.shaped.expect("a prototype's constants follow the guard of the receiver's shape"), values, miss)),
         IcOp::Held { guard, watch, value } => return Break(holder_read(stage, at.record, guard, watch, value, miss)),
         IcOp::OwnConstant { record, watch, value } => return Break(own_constant_read(stage, at.record, record, watch, value, miss)),
         IcOp::ArrayLength { records } => {
@@ -252,10 +255,10 @@ pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::hea
     // The same row a specializer runs (`IcOp::GuardLayout`, then the proved form's layout):
     // one compare proves shape and form, and the layout tests no form bit.
     let at = Reached { word: Some(word), ..Reached::bare(record) };
-    guard_layout(&mut stage, &at, hint, ())?;
+    let shaped = guard_layout(&mut stage, &at, hint, ())?;
     debug_assert!(form == HINTED_FORM || layout_form(hint) == form, "a fixed form's matched hint names it");
     let bits = if form == HINTED_FORM { layout_form(hint) } else { form };
-    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
+    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), shaped: Some(shaped), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
     let word = read_slot(&mut stage, layout, slot, Representation::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
@@ -364,10 +367,10 @@ mod tests {
         let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
         let object = heap.alloc_object(Object::new(prototype));
-        let link = heap.object(object).unwrap().proto_link().bits();
+        let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
         let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
-        assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
-        assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
+        assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
+        assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
     }
 
     /// The interpreter keeps its typed prototype read (`Heap::holder_property_get_flat`),
@@ -391,7 +394,7 @@ mod tests {
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
                 let interpreter = unsafe { heap.holder_property_get_flat(holder, slot) };
-                assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
+                assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::GuardShape(holder.exact_shape()), IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
                     "slot {slot} of {len}");
             }
         }

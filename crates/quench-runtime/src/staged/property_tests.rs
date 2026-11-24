@@ -72,8 +72,10 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     type Plans = &'p Plans;
     fn plans(&self) -> &'p Plans { self.plans }
     fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.records) }
-    fn proven_shape(&mut self, _stage: &mut Concrete, _owner: Owner) -> Option<u32> { self.proven }
-    fn prove_shape(&mut self, _stage: &mut Concrete, _owner: Owner, shape: u32, _direct: bool) { self.proved.push(shape); }
+    fn proven_shape(&mut self, _stage: &mut Concrete, _owner: Owner) -> Option<(u32, crate::staged::ShapeFact)> {
+        self.proven.map(|shape| (shape, crate::staged::ShapeFact::entry_guard()))
+    }
+    fn prove_shape(&mut self, _stage: &mut Concrete, _owner: Owner, (shape, _): (u32, crate::staged::Shaped<u64>), _direct: bool) { self.proved.push(shape); }
     fn field_get_host(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _miss: ()) -> Option<u64> {
         self.call("field_get_host").then_some(ANSWER)
     }

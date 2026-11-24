@@ -903,13 +903,10 @@ impl Registers {
     /// (`cmp dword [..+4], imm; jne`) and the value half loaded as it is, where a whole-word
     /// read pays a copy, a shift and a compare for the tag (V8-v7 Crypto's integer records).
     #[inline(always)]
-    fn int(self, register: u16) -> Option<i32> {
+    fn int(self, register: u16) -> Option<quench_runtime::staged::Int32<u64>> {
         // SAFETY: as for `get`; a Value is two dwords, the tag in the high one (little endian).
         let halves = unsafe { self.0.add(usize::from(register)) }.cast::<u32>();
-        if unsafe { halves.add(1).read() } != quench_runtime::value::INT_TAG_HIGH {
-            return None;
-        }
-        Some(unsafe { halves.read() } as i32)
+        quench_runtime::staged::Int32::guard_halves(unsafe { halves.add(1).read() }, || unsafe { halves.read() })
     }
 
     #[inline(always)]
@@ -1867,27 +1864,6 @@ impl LaneStack {
         Some(ActivationView::of_record(&activation, payload))
     }
 
-    /// The return of the innermost plain activation, whose window is `window`: its caller's
-    /// call record, registers and records. Its window is released.
-    ///
-    /// # Safety
-    /// A plain activation runs (`plain.depth > 0`) and `window` is its window
-    /// (`plain.registers`).
-    #[inline(always)]
-    unsafe fn pop_plain(&mut self, window: *mut Value) -> (Ip, Registers, Ip) {
-        debug_assert!(self.plain.depth.get() != 0 && self.plain.registers.get() == window, "the innermost plain activation returns");
-        let caller = quench_runtime::staged::protocol::pop_plain(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.addr() as u64,
-        );
-        // SAFETY: a plain window is the lane stack's own (`header_flags`), never a heap window, so
-        // its release is the top's move without `release_window`'s test.
-        unsafe { self.values.set_top(window) };
-        (
-            std::ptr::with_exposed_provenance(caller.call as usize),
-            Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize)),
-            std::ptr::with_exposed_provenance(caller.base as usize),
-        )
-    }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
     /// iterators, their `with` objects and eval records (a trap's check pops with its side
@@ -2613,57 +2589,20 @@ fn row_context<const OP: u16>(view: *mut LaneContext) -> *mut LaneContext {
 }
 
 /// `lane_handler!` (or `script_handler!`, `$kind`) for a handler with many const instances: rustc keeps all
-/// instances of one generic function in its module's codegen unit, so the body is defined in 8 shard modules
+/// instances of one generic function in its module's codegen unit, so the body is defined in 12 shard modules
 /// (`$mods::s*`) and `$handler::<..>()` names the instance of the shard its parameters pick, as
 /// `generated_row_handler` does. Only constant evaluation may call `$handler` (a compiled call would name every
 /// shard's instance), so a use names it through its call-site macro (`protocol_row!` and the rest).
 macro_rules! sharded_handler {
-    ($kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+    (@mods $mods:ident [$($shard:ident)*] $item:tt) => {
         #[allow(non_snake_case)]
-        pub(crate) mod $mods {
-        pub(crate) mod s0 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s1 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s2 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s3 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s4 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s5 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s6 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s7 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        }
+        pub(crate) mod $mods { $(pub(crate) mod $shard { #[allow(unused_imports)] use super::super::*; sharded_handler!(@item $item); })* }
+    };
+    (@item { $($item:tt)* }) => { $($item)* };
+    ($kind:ident, $mods:ident, $handler:ident, [$($op:ident),+]; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+        sharded_handler!(@mods $mods [s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11] { $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } });
         $vis const fn $handler<$(const $param: $ty),*>() -> Handler {
-            match crate::dispatch_fast::handler_shard(&[$($param as u64),*]) {
+            match crate::dispatch_fast::handler_shard(&[$($param as u64),*], crate::dispatch_fast::numeric_row(&[$($op),+])) {
             0 => $mods::s0::$name::<$($param),*>,
             1 => $mods::s1::$name::<$($param),*>,
             2 => $mods::s2::$name::<$($param),*>,
@@ -2671,21 +2610,43 @@ macro_rules! sharded_handler {
             4 => $mods::s4::$name::<$($param),*>,
             5 => $mods::s5::$name::<$($param),*>,
             6 => $mods::s6::$name::<$($param),*>,
-            _ => $mods::s7::$name::<$($param),*>,
+            7 => $mods::s7::$name::<$($param),*>,
+            8 => $mods::s8::$name::<$($param),*>,
+            9 => $mods::s9::$name::<$($param),*>,
+            10 => $mods::s10::$name::<$($param),*>,
+            _ => $mods::s11::$name::<$($param),*>,
             }
         }
     };
 }
 
-/// The shard (`sharded_handler!`) of a handler instance with const parameters `params`.
-pub(crate) const fn handler_shard(params: &[u64]) -> usize {
+/// The shard (`sharded_handler!`) of a handler instance with const parameters `params`: 8 to 11 for a `numeric` row
+/// (`numeric_row`), so an edit to the Number step recompiles only those units; any other keeps its shard of 0 to 7.
+pub(crate) const fn handler_shard(params: &[u64], numeric: bool) -> usize {
     let mut hash = 0u64;
     let mut index = 0;
     while index < params.len() {
         hash = hash.wrapping_mul(31).wrapping_add(params[index]);
         index += 1;
     }
-    (hash % 8) as usize
+    if numeric { 8 + (hash % 4) as usize } else { (hash % 8) as usize }
+}
+
+/// Whether a row of opcodes `ops` runs the Number step (`staged::row_step`: Number, Arith, or Generic, whose
+/// comparisons and keys convert numbers), which places its instance beside the other numeric rows
+/// (`handler_shard`, `generated_row_shard`). A chain's absent link (`staged::NO_LINK`) names no opcode.
+pub(crate) const fn numeric_row(ops: &[u16]) -> bool {
+    use quench_runtime::staged::RowStep;
+    let mut index = 0;
+    while index < ops.len() {
+        if let Some(op) = quench_runtime::bytecode::Op::from_index(ops[index] as usize) {
+            if matches!(quench_runtime::staged::row_step(op), RowStep::Number | RowStep::Arith | RowStep::Generic) {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
 }
 
 /// `lane_handler!` for a return record of any view that has a leaf form
@@ -13046,7 +13007,7 @@ fn carried_at_in_lane(cx: *mut LaneContext, view: *const LaneView, registers: Re
 
 /// A lane body's call at `call_pc` of the running activation (`lane_region`'s `Call`): the
 /// activation `script_call_miss`'s common form makes, then the callee's own lane body. A
-/// callee whose body returns completes the call (`return_plain_in_lane`), the result in the
+/// callee whose body returns completes the call (`call_return::step_activation_return_of`), the result in the
 /// call's register; one that leaves, or has no body, leaves the lane at its record in that
 /// activation (`LaneContext::callee_resume`). A call the common form does not make misses,
 /// before any of its effects.
@@ -14250,19 +14211,12 @@ return_handler! {
     }
 }
 
-/// The return of the record of form `LEAF` with `value` as one op, making no call: a running
-/// leaf of the caller's program completes (`lane_return_leaf_header`), a plain activation pops
-/// its header from `window`, the running one (`completions::lane_return_header`, the first
-/// step of `return_plain_in_lane`). `None`,
-/// which changes nothing, for any other, which `complete_plain_activation_in_lane` and the
-/// general returns decide as before.
+/// The return of the record of form `LEAF` with `value` as one op, making no call
+/// (`call_return::step_return_one_op_of`), from the running plain frame's `window`. `None`,
+/// which changes nothing, for any other, which `lane_return_records` decides.
 #[inline(always)]
 fn lane_return_one_op<const LEAF: u8>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<(Registers, Ip)> {
-    if LEAF == NOT_LEAF {
-        lane_return_header::<false>(cx, window, value)
-    } else {
-        leaf_calls::lane_return_leaf_header(cx, value, LEAF)
-    }
+    quench_runtime::staged::call_return::step_return_one_op_of(&mut LaneScriptReturn::<LEAF> { cx, window }, value)
 }
 
 return_handler! {
@@ -14270,8 +14224,9 @@ return_handler! {
     /// record's (`complete_plain_activation_in_lane`), else the returns past the common one.
     #[inline(never)]
     fn lane_return_records<LEAF: u8>(cx, r, ip, i, view) {
-        if let Some(resumed) = complete_plain_activation_in_lane::<LEAF>(cx, r.get(i.a)) {
-            resume!(cx, resumed)
+        let returned = quench_runtime::staged::call_return::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), r.get(i.a));
+        if let Some(returned) = returned {
+            resume!(cx, completions::resumed_script(cx, returned))
         }
         sibling!(return_general_in_lane, r, ip, view)
     }
@@ -14334,7 +14289,7 @@ const fn returning_completion(crosses: bool, constructs: bool, settles: bool) ->
     if crosses { Completion::Cross } else if constructs { Completion::Constructs } else if settles { Completion::SettlesPromise } else { Completion::Plain }
 }
 
-/// `return_plain_in_lane` of the innermost activation, a script one whose call keeps its
+/// `call_return::step_activation_return_of` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
 /// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
 /// `new` of its program (`Completion::Constructs`), or, where `SETTLES`, a settling async
@@ -14355,7 +14310,7 @@ fn return_from_in_lane<const CROSSES: bool, const INTO_BODY: bool, const CONSTRU
     }
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // A plain header's own return (`completions::lane_return_header`) ran before this one
-    // (`return_plain_in_lane`, `return_to_body_in_lane`): what reaches here is a side record's
+    // (`call_return::step_activation_return_of`, `return_to_body_in_lane`): what reaches here is a side record's
     // completion, a returning call's chain or a record.
     // The innermost read where it is, a header with its side record or a record (no spill:
     // one-frame-one-call.md F4).
@@ -14394,7 +14349,7 @@ fn return_from_in_lane<const CROSSES: bool, const INTO_BODY: bool, const CONSTRU
     Some((caller_registers, following(call)))
 }
 
-/// `return_plain_in_lane` of a plain activation that returns the completion of its call, and
+/// `call_return::step_activation_return_of` of a plain activation that returns the completion of its call, and
 /// whose callers do in turn (`return f(...)`), down to the plain activation whose call takes
 /// `value`: that activation's caller resumes with it, as the run's completion one activation
 /// at a time (`complete_plain_chain_in_lane`) makes it. `None`, which changes nothing, for a run
@@ -14524,73 +14479,73 @@ fn complete_activation_in_lane(cx: *mut LaneContext, ip: Ip, mut value: Value) -
     }
 }
 
-/// The return with `value` of the innermost activation, a JavaScript import's callee
-/// (`Completion::ToWasm`): its Wasm caller resumes after the call with the value's Wasm form,
-/// in its own program, instance and memory, which the callee may have grown. A value whose
-/// conversion could run guest code or throw returns from the callee's frame, whose pending
-/// call converts it (`CallCompletion::ToWasm`).
-#[inline(never)]
-fn lane_complete_to_wasm(cx: *mut LaneContext, ip: Ip, value: Value) -> Resumed {
-    let vm = unsafe { vm(cx) };
-    // What the import's activation restores, read from its side record where it is.
-    let call = vm.lane_stack.top_frame().expect("the import's activation is the innermost").payload().to_wasm();
-    // A Number's ToWebAssemblyValue, by the rule the general loop's import return runs.
-    let encoded = match call.result {
-        None => Some(Value::UNDEFINED),
-        Some(ty) => value.as_number().and_then(|number| quench_runtime::staged::wasm_activation::import_result(ty, number)).map(|wasm| vm.encode_wasm_value(wasm)),
-    };
-    let Some(encoded) = encoded else {
-        return Resumed::Exit(frame_return(vm, ip, value));
-    };
-    let frame = vm.lane_stack.pop_activation().expect("the import's activation is the innermost");
-    restore_caller_in_lane(cx, &frame);
-    enter_program_in_lane(cx, frame.caller_program());
-    let memory = match call.memory {
-        Some(binding) => {
-            let fresh = memory_view(vm, binding);
+/// The lane's primitives of a Wasm activation's and a JavaScript import's return (`WasmReturn`):
+/// `ip` is the returning record.
+struct LaneReturn { cx: *mut LaneContext, ip: Ip }
+
+impl quench_runtime::staged::wasm_activation::WasmReturn for LaneReturn {
+    type Resume = Resumed;
+    type Popped = (ActivationView, MemoryView);
+    type Value = Value;
+    type Export = Option<quench_runtime::WasmType>;
+    type Import = ToWasmCall;
+    #[inline(always)]
+    fn innermost(&mut self) -> Option<(bool, u64)> {
+        let top = unsafe { vm(self.cx) }.lane_stack.top_frame()?;
+        // SAFETY: the call record belongs to the caller's live view.
+        Some((top.completion().is_some(), u64::from(unsafe { (*top.call()).a })))
+    }
+    #[inline(always)]
+    fn pop(&mut self) -> Self::Popped {
+        let frame = unsafe { vm(self.cx) }.lane_stack.pop_activation().expect("the returning activation is the innermost");
+        let memory = restore_caller_in_lane(self.cx, &frame).0;
+        (frame, memory)
+    }
+    fn export_result(&mut self, popped: &Self::Popped) -> Option<Self::Export> { popped.0.export_result() }
+    #[inline(always)]
+    fn enter_script_caller(&mut self, popped: &Self::Popped) {
+        enter_program_in_lane(self.cx, popped.0.caller_program());
+        unsafe { ((*self.cx).inline_calls, (*self.cx).instance) = (false, Value::DELETED); set_script_calls_in_lane(self.cx, true) };
+    }
+    fn export_value(&mut self, value: Value, export: Self::Export) -> Value { unsafe { vm(self.cx) }.wasm_export_result(value, export) }
+    #[inline(always)]
+    fn import(&mut self) -> ToWasmCall {
+        unsafe { vm(self.cx) }.lane_stack.top_frame().expect("the import's activation is the innermost").payload().to_wasm()
+    }
+    #[inline(always)]
+    fn import_value(&mut self, call: ToWasmCall, value: Value) -> Option<Value> {
+        let vm = unsafe { vm(self.cx) };
+        match call.result {
+            None => Some(Value::UNDEFINED),
+            Some(ty) => value.as_number().and_then(|number| quench_runtime::staged::wasm_activation::import_result(ty, number)).map(|wasm| vm.encode_wasm_value(wasm)),
+        }
+    }
+    #[inline(always)]
+    fn enter_wasm_caller(&mut self, call: ToWasmCall, popped: &mut Self::Popped) {
+        let cx = self.cx; enter_program_in_lane(cx, popped.0.caller_program());
+        let memory = call.memory.map_or(MemoryView::NONE, |binding| {
+            let fresh = memory_view(unsafe { vm(cx) }, binding);
             unsafe { (*cx).resolved = (binding, fresh) };
             fresh
-        }
-        None => MemoryView::NONE,
-    };
-    unsafe {
-        (*cx).inline_calls = true;
-        set_script_calls_in_lane(cx, false);
-        (*cx).instance = call.instance;
-        (*cx).memory = memory;
+        });
+        unsafe { ((*cx).inline_calls, (*cx).instance, (*cx).memory) = (true, call.instance, memory); set_script_calls_in_lane(cx, false) };
+        popped.1 = memory;
     }
-    resume_after_call_in_lane(&frame, memory, encoded)
+    fn return_from_frame(&mut self, value: Value) -> Resumed { Resumed::Exit(frame_return(unsafe { vm(self.cx) }, self.ip, value)) }
+    #[inline(always)]
+    fn resume_caller(&mut self, (frame, memory): Self::Popped, value: Value) -> Resumed { resume_after_call_in_lane(&frame, memory, value) }
 }
 
-/// The return of the innermost activation, a Wasm one whose call keeps its result: its
-/// caller, Wasm, or JavaScript for an export's activation (`ActivationKind::WasmEntry`),
-/// resumes after the call with `value`, in its JavaScript form for an export. `None`, which
-/// changes nothing, leaves any other return to the general completions.
+/// The return of a JavaScript import's callee (`Completion::ToWasm`) (`step_import_return_of`).
+#[inline(never)]
+fn lane_complete_to_wasm(cx: *mut LaneContext, ip: Ip, value: Value) -> Resumed {
+    quench_runtime::staged::wasm_activation::step_import_return_of(&mut LaneReturn { cx, ip }, value)
+}
+
+/// The return of a Wasm activation whose call keeps its result (`step_wasm_return_of`), else `None`.
 #[inline(always)]
-fn lane_complete_wasm_activation(cx: *mut LaneContext, mut value: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    // The innermost read where it is (one-frame-one-call.md F4 (3)): a script activation's,
-    // header or record, has a completion; a Wasm one's has none.
-    let top = vm.lane_stack.top_frame()?;
-    if top.completion().is_some()
-        // SAFETY: the call record belongs to the caller's live view.
-        || unsafe { (*top.call()).a } & quench_runtime::bytecode::RETURN_REGISTER != 0
-    {
-        return None;
-    }
-    let frame = vm.lane_stack.pop_activation()?;
-    let (caller_memory, _) = restore_caller_in_lane(cx, &frame);
-    if let Some(result) = frame.export_result() {
-        // The export's caller runs its own program again, as the run's JavaScript.
-        enter_program_in_lane(cx, frame.caller_program());
-        unsafe {
-            (*cx).inline_calls = false;
-            set_script_calls_in_lane(cx, true);
-            (*cx).instance = Value::DELETED;
-        }
-        value = vm.wasm_export_result(value, result);
-    }
-    Some(resume_after_call_in_lane(&frame, caller_memory, value))
+fn lane_complete_wasm_activation(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
+    quench_runtime::staged::wasm_activation::step_wasm_return_of(&mut LaneReturn { cx, ip: std::ptr::null() }, value)
 }
 
 /// The value-producing records that may return their result from the frame

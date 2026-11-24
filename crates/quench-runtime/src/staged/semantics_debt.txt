@@ -13,7 +13,5 @@ imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(
 int32_tag quench-bjit/stencils/facade.rs:if self.0 & words::TAG_MASK == words::INT_TAG { Some(self.0 as u32 as i32) } else { None }
 int32_tag quench-bjit/stencils/facade.rs:} else if self.0 & words::TAG_MASK == words::INT_TAG {
 int32_tag quench-bjit/stencils/words.rs:x >> TAG_SHIFT == INT_TAG >> TAG_SHIFT
-int32_tag quench-bjit/stencils/words.rs:((x ^ INT_TAG) | (y ^ INT_TAG)) >> HIGH_SHIFT == 0
-int32_tag quench-runtime-engine/src/dispatch_fast.rs:if unsafe { halves.add(1).read() } != quench_runtime::value::INT_TAG_HIGH {
 to_uint32 quench-bjit/stencils/units.rs:pub(crate) fn to_int32(value: f64) -> i32 {
 to_uint32 quench-runtime-engine/src/compiled/object_slots/emit.rs:fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {

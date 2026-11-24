@@ -53,8 +53,7 @@ pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Pl
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     let remainder = NumberOperation::Remainder { destination: DEST, left, right, domain: Domain::Int32,
         zero: NegativeZero::Exit, divisor_nonzero: false };
-    let done = if const { !any_double(D, A, B) } && frame.both_int() {
-        frame.prove_ints();
+    let done = if const { !any_double(D, A, B) } && frame.prove_ints() {
         number(&mut frame, remainder, Kind::<{ numeric::kind::REMAINDER }>)
     } else {
         false
@@ -70,8 +69,7 @@ pub(crate) fn relation_value_row<const K: u8, const D: u8, const A: u8, const B:
     let value = |domain: Domain| NumberOperation::RelationValue { destination: DEST, left, right, relation, domain };
     let done = if const { any_double(D, A, B) } {
         number(&mut frame, value(Domain::Float64), Kind::<{ numeric::kind::RELATION_VALUE }>)
-    } else if frame.both_int() {
-        frame.prove_ints();
+    } else if frame.prove_ints() {
         number(&mut frame, value(Domain::Int32), Kind::<{ numeric::kind::RELATION_VALUE }>)
     } else {
         number(&mut frame, value(Domain::Float64), Kind::<{ numeric::kind::RELATION_VALUE }>)

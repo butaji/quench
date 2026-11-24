@@ -314,53 +314,11 @@ fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::
     quench_runtime::staged::value::known_number_f64(&mut object_slots::emit(builder), bits)
 }
 
-/// Unbox a tagged JavaScript Number, branching to the current instruction's
-/// VM fallback for every other value. The representation keeps all tags in
-/// NaN space, with integer Numbers identified by `INT_TAG`.
-fn emit_js_tagged_number(
-    builder: &mut FunctionBuilder<'_>,
-    bits: ir::Value,
-    fallback: ir::Block,
-) -> ir::Value {
-    use quench_runtime::staged::machine::{Lane, Relation, Unary};
-    let nan = builder.create_block();
-    let tagged = builder.create_block();
-    let integer_block = builder.create_block();
-    let join = builder.create_block();
-    builder.append_block_param(join, types::F64);
-    let mut stage = object_slots::emit(builder);
-    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
-    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
-
-    // An integer is the common NaN-space value (a double column holds its integral
-    // values tagged), so its tag is tested first.
-    stage.builder.switch_to_block(nan);
-    let integer = quench_runtime::staged::value::is_int(&mut stage, bits);
-    stage.branch_if(integer, (integer_block, &[]), (tagged, &[]));
-
-    // Any other tag leaves; an untagged NaN is the double NaN.
-    stage.builder.switch_to_block(tagged);
-    let double = quench_runtime::staged::value::is_double(&mut stage, bits);
-    stage.branch_if(double, (join, &[number]), (fallback, &[]));
-
-    stage.builder.switch_to_block(integer_block);
-    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
-    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
-    stage.goto(join, &[int]);
-    builder.seal_block(nan);
-    builder.seal_block(tagged);
-    builder.seal_block(integer_block);
-    builder.seal_block(join);
-    builder.switch_to_block(join);
-    builder.block_params(join)[0]
-}
-
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
 // each tagged result with the binary64 word it boxed, which dominates it. A lowering that reads
 // the Number back takes that word (`State::proofs.numbers`) instead of unboxing.
 thread_local! {
-    static BOXED_NUMBERS: std::cell::RefCell<Option<Vec<(ir::Value, ir::Value)>>> = const { std::cell::RefCell::new(None) };
+    static BOXED_NUMBERS: std::cell::RefCell<Option<Vec<(ir::Value, quench_runtime::staged::Float64<ir::Value>)>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Starts recording the boxes `emit_js_box_number` makes, until `take_boxed_numbers`.
@@ -369,20 +327,21 @@ pub(crate) fn record_boxed_numbers() {
 }
 
 /// The boxes made since `record_boxed_numbers`, which stops recording.
-pub(crate) fn take_boxed_numbers() -> Vec<(ir::Value, ir::Value)> {
+pub(crate) fn take_boxed_numbers() -> Vec<(ir::Value, quench_runtime::staged::Float64<ir::Value>)> {
     BOXED_NUMBERS.with(|boxed| boxed.borrow_mut().take().unwrap_or_default())
 }
 
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
-pub(crate) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+pub(crate) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, proof: quench_runtime::staged::Float64<ir::Value>) -> ir::Value {
+    let number = proof.word();
     let recording = BOXED_NUMBERS.with(|boxed| boxed.borrow().is_some());
     if !recording { return emit_js_box_number_word(builder, number); }
     // A recorded box is pure (no branch), so a lowering that reads the Number back leaves it
     // unread and it folds away.
     let result = emit_js_box_number_pure(builder, number);
-    BOXED_NUMBERS.with(|boxed| if let Some(boxed) = boxed.borrow_mut().as_mut() { boxed.push((result, number)); });
+    BOXED_NUMBERS.with(|boxed| if let Some(boxed) = boxed.borrow_mut().as_mut() { boxed.push((result, proof)); });
     result
 }
 

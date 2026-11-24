@@ -160,13 +160,6 @@ const METRICS: &[Metric] = &[
         extract: Extract::Text(extract::runtime_internals),
     },
     Metric {
-        name: "unguarded_number_proofs",
-        direction: Direction::Down,
-        sources: &[Source::Tree(ENGINE, &[]), Source::Tree("crates/quench-bjit/src", &[]), Source::Tree("crates/quench-bjit/stencils", &[]),
-            Source::Tree("crates/quench-runtime/src/vm", &[])],
-        extract: Extract::Text(extract::unguarded_number_proofs),
-    },
-    Metric {
         name: "lane_dispatch_lines",
         direction: Direction::Down,
         sources: &[Source::File("crates/quench-runtime-engine/src/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],

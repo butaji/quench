@@ -45,6 +45,9 @@ pub enum NegativeZero {
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
 pub trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
+    /// The shard module of this frame type's out-of-line `step` (`step_out_of_line`), 0 to 3: frame types with
+    /// large instances name different shards, so that each instance gets its own codegen unit.
+    const STEP_SHARD: u8 = 0;
     /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
     /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>>;
@@ -595,7 +598,7 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
             let int = frame.int_result(stage, bits);
             let result = stage.choose(widens, #[inline(always)] |stage| {
                 let number = stage.u32_to_f64(left);
-                stage.box_number(number)
+                stage.box_number(super::Float64::of_row(number))
             }, #[inline(always)] |_| int);
             frame.write(stage, destination, result, fact);
             return Step::Value(result);
@@ -751,7 +754,7 @@ fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
     let boxed_int = frame.int_result(stage, packed);
     let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), #[inline(always)] |stage| {
         let number = float_operation(stage, frame, (left, right), operation)?;
-        Some(stage.box_number(number))
+        Some(stage.box_number(super::Float64::of_row(number)))
     })?;
     frame.write(stage, destination, boxed, fact);
     Some(boxed)

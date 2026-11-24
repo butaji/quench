@@ -143,7 +143,8 @@ pub trait Stage: crate::projection::Sealed {
     fn load_f64(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
     /// The `Value` bits of an `f64` word, as `Value::number` makes them: an integral double in
     /// int32 range is an int32, NaN is the canonical NaN, any other double its own bits.
-    fn box_number(&mut self, number: Self::Word) -> Self::Word;
+    /// The binary64 is a proof (`staged::Float64`), so only a proved Number is boxed.
+    fn box_number(&mut self, number: super::Float64<Self::Word>) -> Self::Word;
     /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
     fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);

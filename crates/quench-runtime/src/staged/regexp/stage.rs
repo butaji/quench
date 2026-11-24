@@ -1,12 +1,11 @@
 //! `MatchStage` on the emitter: the matcher's operations of `quench_regexp::backtrack::matcher`
 //! as Cranelift IR over an ASCII subject. A position or unit is an `i64` value, a flag an `i8`
 //! one, and a guarded operation a pair of blocks that join on the flag.
-#[allow(unused_imports)]
-use crate::ext_traits::*;
 use super::{Emit, RegexpMachine};
-use quench_runtime::staged::machine::{Binary, Extend, Lane, Relation};
+use crate::staged::machine::{Binary, Extend, Lane, Relation};
 use quench_regexp::backtrack::matcher::MatchStage;
-use quench_regexp::backtrack::native::{NativeTest, NATIVE_ASCII_UNITS};
+use quench_regexp::backtrack::native::NATIVE_ASCII_UNITS;
+use quench_regexp::backtrack::UnitTest;
 
 /// The bits of a mask word, and the mask of a shift within one.
 const WORD_BITS: i64 = 64;
@@ -16,7 +15,7 @@ const MASK_WORDS: usize = (NATIVE_ASCII_UNITS as i64 / WORD_BITS) as usize;
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// Bit `byte` of the 128-bit `mask`.
-    fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: M::Word) -> M::Word {
+    pub(super) fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: M::Word) -> M::Word {
         let low = self.constant(mask[0] as i64);
         let high = self.constant(mask[1] as i64);
         let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
@@ -28,7 +27,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// Whether `byte` lies in `first..=last`.
-    fn in_range(&mut self, byte: M::Word, (first, last): (u32, u32)) -> M::Word {
+    pub(super) fn in_range(&mut self, byte: M::Word, (first, last): (u32, u32)) -> M::Word {
         if first == last {
             return self.compare_constant(Relation::Equal, byte, i64::from(first));
         }
@@ -43,7 +42,7 @@ impl<M: RegexpMachine> MatchStage for Emit<'_, M> {
     type Pos = M::Word;
     type Unit = M::Word;
     type Flag = M::Word;
-    type Test = NativeTest;
+    type Test = UnitTest;
 
     fn length(&mut self) -> M::Word {
         self.length
@@ -70,11 +69,12 @@ impl<M: RegexpMachine> MatchStage for Emit<'_, M> {
         self.b.raw_load_extended(Lane::I8, Extend::Zero, Lane::I64, self.flags, address, 0)
     }
 
-    fn passes(&mut self, unit: M::Word, test: NativeTest) -> M::Word {
+    /// An ASCII subject's unit: a literal at or past 128 matches none, a set by its ASCII mask.
+    fn passes(&mut self, unit: M::Word, test: UnitTest) -> M::Word {
         match test {
-            NativeTest::Never => self.b.raw_const(Lane::I8, 0),
-            NativeTest::Exact(expected) => self.compare_constant(Relation::Equal, unit, i64::from(expected)),
-            NativeTest::Mask(mask) => self.in_mask(mask, unit),
+            UnitTest::Exact(expected) if expected < NATIVE_ASCII_UNITS => self.compare_constant(Relation::Equal, unit, i64::from(expected)),
+            UnitTest::Exact(_) => self.b.raw_const(Lane::I8, 0),
+            UnitTest::Set(set) => self.in_mask(self.plan.masks[set as usize], unit),
         }
     }
 

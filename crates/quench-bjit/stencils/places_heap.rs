@@ -11,7 +11,7 @@ use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
 use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
 use crate::numeric::{HOLE_A, HOLE_B};
-use crate::places::at_place;
+use crate::places::on_place;
 use crate::typed_ir::Representation;
 use crate::places::{LEFT, RIGHT, Places, index_of};
 use crate::staged::{Concrete, ElementFrame, Frame, elements, entry, value};
@@ -35,11 +35,8 @@ impl ElementFrame<Concrete> for Places {
     /// half; a key that is no int32 leaves at the miss edge.
     #[inline(always)]
     fn index_key(&mut self, _stage: &mut Concrete, key: Operand, _miss: ()) -> Option<u64> {
-        let index = match key.register_index()? {
-            LEFT => at_place!(self.a, |P| index_of::<P, HOLE_A>(&self.s)),
-            RIGHT => at_place!(self.b, |P| index_of::<P, HOLE_B>(&self.s)),
-            _ => at_place!(self.d, |P| index_of::<P, 0>(&self.s)),
-        }?;
+        let place = self.place(key.register_index()?);
+        let index = on_place!(place, index_of(&self.s))?;
         Some(u64::from(index as u32))
     }
 

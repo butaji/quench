@@ -4,9 +4,26 @@ use super::*;
 
 /// `step` out of line, for a generated row whose opcode has no family step (`RowStep::Full`): one instance per
 /// stage and frame type rather than the whole interpreter inlined into every such row's instance (`row_step!`).
-#[inline]
+/// The instance sits in its frame type's shard module (`NumericFrame::STEP_SHARD`): all instances of one function
+/// share one codegen unit, and four lane frame instances of ~110 KB each in one unit were one thread for 74 s at
+/// the end of a hot numeric edit.
+#[inline(always)]
 pub fn step_out_of_line<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    step(stage, frame, operation)
+    let shard: fn(&mut S, &mut F, Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> =
+        const { match F::STEP_SHARD % 4 { 0 => out_of_line::s0::step, 1 => out_of_line::s1::step, 2 => out_of_line::s2::step, _ => out_of_line::s3::step } };
+    shard(stage, frame, operation)
+}
+
+mod out_of_line {
+    use super::*;
+    macro_rules! shards { ($($shard:ident)*) => { $(pub(super) mod $shard {
+        use super::*;
+        #[inline(never)]
+        pub(in super::super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+            super::super::step(stage, frame, operation)
+        }
+    })* }; }
+    shards!(s0 s1 s2 s3);
 }
 
 /// Run `operation` on `frame`; its word or where control goes.
@@ -72,8 +89,8 @@ fn guard_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &m
         Operation::GuardLive => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_LIVE]) } { super::guard::live(stage, frame, miss) } else { unreachable!() },
         Operation::GuardRealm { expected } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_REALM]) } { super::guard::realm(stage, frame, expected, miss) } else { unreachable!() },
         Operation::GuardDeclared { source, mask } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_DECLARED]) } { super::guard::declared(stage, source, mask, miss) } else { unreachable!() },
-        Operation::GuardPrototype { source, records, shape, link } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_PROTOTYPE]) } { super::guard::prototype(stage, records, source, (shape, link), miss) } else { unreachable!() },
-        Operation::GuardShape { source, records, shape, form } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_SHAPE]) } { super::guard::shape(stage, records, source, (shape, form), miss) } else { unreachable!() },
+        Operation::GuardPrototype { source, records, shape, link } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_PROTOTYPE]) } { super::guard::prototype(stage, records, source, (shape, link), miss).map(drop) } else { unreachable!() },
+        Operation::GuardShape { source, records, shape, form } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_SHAPE]) } { super::guard::shape(stage, records, source, (shape, form), miss).map(drop) } else { unreachable!() },
         Operation::GuardStores { specialized } => if const { super::op_kind::admits(KIND, &[super::op_kind::GUARD_STORES]) } { super::guard::stores(stage, specialized, miss) } else { unreachable!() },
         Operation::BackEdge { proof } => if const { super::op_kind::admits(KIND, &[super::op_kind::BACK_EDGE]) } { super::guard::back_edge(stage, frame, proof) } else { unreachable!() },
         _ => if const { super::op_kind::outside(KIND, &[super::op_kind::GUARD_IDENTITY, super::op_kind::GUARD_LIVE, super::op_kind::GUARD_REALM, super::op_kind::GUARD_DECLARED, super::op_kind::GUARD_PROTOTYPE, super::op_kind::GUARD_SHAPE, super::op_kind::GUARD_STORES, super::op_kind::BACK_EDGE]) } { unreachable!("`guard_step` sends only guards and back edges") } else { unreachable!() },

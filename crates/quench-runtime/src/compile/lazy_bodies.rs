@@ -290,16 +290,19 @@ impl<'a> VisitMut<'a> for StandIns<'_, 'a> {
 
 /// A function's source wrapped to parse alone in its context: `wrapper` gives it the
 /// syntactic form it had, and a directive the strictness it inherits where the goal does
-/// not imply it. Returns the text and the offset of the function's source in it.
+/// not imply it. `doc` is the JSDoc comment that types the function from outside its text
+/// (`DeclaredTypes::leading_doc`), put back before it so the body parses to the tree its load
+/// annotated. Returns the text and the offset of the function's source in it.
 pub(super) fn text_alone(
-    snippet: &str,
+    (doc, snippet): (&str, &str),
     (prefix, suffix): (&str, &str),
     inherited_strict: bool,
     source_type: SourceType,
 ) -> (String, u32) {
     let strict = if inherited_strict && !source_type.is_module() { "\"use strict\";" } else { "" };
-    let text = format!("{strict}{prefix}{snippet}{suffix}");
-    (text, (strict.len() + prefix.len()) as u32)
+    let gap = if doc.is_empty() { "" } else { " " };
+    let text = format!("{strict}{prefix}{doc}{gap}{snippet}{suffix}");
+    (text, (strict.len() + prefix.len() + doc.len() + gap.len()) as u32)
 }
 
 /// The wrapper of a plain function parsed alone: an expression parses parenthesized.
@@ -374,7 +377,7 @@ fn syntax_verdict(text: &str, source_type: SourceType, lazy_from: u32) -> Verdic
     drop(allocator);
     let body_valid = |function: LazyFunction| {
         let snippet = &text[function.start as usize..function.end as usize];
-        let (alone, offset) = text_alone(snippet, plain_wrapper(function.expression), function.inherited_strict, source_type);
+        let (alone, offset) = text_alone(("", snippet), plain_wrapper(function.expression), function.inherited_strict, source_type);
         syntax_verdict(&alone, source_type, offset + 1) == Verdict::Valid
     };
     if found.into_iter().all(body_valid) { Verdict::Valid } else { Verdict::BodyFailed }

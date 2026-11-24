@@ -1130,7 +1130,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
             let exit = self.guard_exit(state, target as u32);
             let header = self.object_header(state, Some(register), false, exit);
-            headers::prove_header_shape(&mut self.builder, state, Some(register), header.shape, shape, exit);
+            headers::prove_header_shape(&mut self.builder, state, Some(register), header, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }
@@ -3404,7 +3404,7 @@ impl Lowering<'_, '_> {
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
         for (bits, number) in super::take_boxed_numbers() {
             let bits = self.builder.func.dfg.resolve_aliases(bits);
-            state.proofs.note_number(bits, unsafe { quench_runtime::staged::Float64::proven(number) }); // Fact: `bits` boxes this binary64.
+            state.proofs.note_number(bits, number);
         }
         debug_assert!(!matches!(step, quench_runtime::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         // A step that ends in a branch makes no environment: only a closure's allocation, a value step, does.
@@ -3563,8 +3563,8 @@ impl Lowering<'_, '_> {
         self.branch_if(both, (numbers, &[]), (others, &[]));
         self.builder.switch_to_block(numbers);
         // A Number a test already projected in this block is reused; the decode is only for the rest.
-        let left_value = match frame::known_number(&self.builder, state, left) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, left, exit) };
-        let right_value = match frame::known_number(&self.builder, state, right) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, right, exit) };
+        let left_value = frame::number_word(&mut self.builder, state, left, exit);
+        let right_value = frame::number_word(&mut self.builder, state, right, exit);
         let number_equal = self.raw_compare(Relation::FloatEqual, left_value, right_value);
         self.goto(join, &[number_equal]);
         self.builder.switch_to_block(others);
@@ -3667,8 +3667,8 @@ impl Lowering<'_, '_> {
         let int_holds = quench_runtime::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
         self.goto(join, &[int_holds]);
         self.builder.switch_to_block(number_block);
-        let left = match frame::known_number(&self.builder, state, left) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, left, exit) };
-        let right = match frame::known_number(&self.builder, state, right) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, right, exit) };
+        let left = frame::number_word(&mut self.builder, state, left, exit);
+        let right = frame::number_word(&mut self.builder, state, right, exit);
         let number_holds = quench_runtime::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left, right, NumberRelationDomain::Float64);
         self.goto(join, &[number_holds]);
         self.builder.switch_to_block(join);
@@ -4342,11 +4342,7 @@ impl Lowering<'_, '_> {
             let raw = match representation {
                 Representation::Int32 => self.raw_unary(Unary::Narrow(Lane::I32), value),
                 Representation::Float64 => {
-                    let bits = self.builder.func.dfg.resolve_aliases(value);
-                    match state.proofs.numbers.iter().find(|(source, _)| *source == bits) {
-                        Some((_, number)) => number.word(),
-                        None => emit_js_tagged_number(&mut self.builder, value, exit),
-                    }
+                    frame::number_word(&mut self.builder, state, value, exit)
                 }
                 _ => value,
             };
