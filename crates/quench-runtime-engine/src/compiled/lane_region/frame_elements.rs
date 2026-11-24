@@ -105,7 +105,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// is (`held_long`), else its int32 (`operand_int`), which the rows zero-extend.
     fn index_key(&mut self, stage: &mut Emit<'b, 'c>, key: Operand, miss: ir::Block) -> Option<ir::Value> {
         let long = key.register_index().and_then(|register| held_long(stage.builder, self.registers, self.state, register));
-        long.or_else(|| operand_int(stage.builder, self.registers, self.state, self.constants, key, miss))
+        long.or_else(|| operand_int(stage.builder, self.registers, self.state, self.constants, key, miss).map(quench_runtime::staged::Int32::word))
     }
 
     /// The view an earlier access of the same array value proved, which no storage change has

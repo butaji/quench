@@ -13,6 +13,8 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
 #[path = "../../quench-runtime/src/staged/int_math.rs"] pub(crate) mod int_math;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
+#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/proof.rs"] pub(crate) mod proof;
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use proof::{Float64, Int32, IntFact, IntOf, NumberFact, NumberOf};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/builtins.rs"] pub(crate) mod builtins;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/strings.rs"] pub(crate) mod strings;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/call_native.rs"] pub(crate) mod call_native;

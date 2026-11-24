@@ -102,14 +102,24 @@ pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }
 
-/// The tier crates' reaches into the runtime's internals (S1.4, TOD-2075): paths into its heap module,
-/// reads of the VM's heap field and Value words made from raw bits, outside comments. A migration
-/// counter: it reaches 0 when those internals are `pub(crate)`, and is then deleted.
+/// What the tier crates still take of the runtime's internals: Value words made from raw bits, outside
+/// comments, and the heap names `tier_surface` re-exports. The heap module and `Vm::heap` are
+/// `pub(crate)` (S1.4), so paths into the heap and reads of the heap field cannot be written; this
+/// counter carries the raw-word typing of S1.5 (TOD-2076) and is deleted when it reaches the surface
+/// the tiers keep.
 pub fn runtime_internals(text: &str) -> usize {
-    const REACHES: [&str; 3] = ["quench_runtime::heap::", ".heap.", "Value::from_bits("];
+    const REACHES: [&str; 1] = ["Value::from_bits("];
     let reaches: usize = text.lines().map(str::trim).filter(|line| !line.starts_with("//"))
         .map(|line| REACHES.iter().map(|reach| line.matches(reach).count()).sum::<usize>()).sum();
     reaches + surface_names(text)
+}
+
+/// The int32 and binary64 operands a frame outside `staged` asserts with no staged guard
+/// (`Int32::proven`, `Float64::proven`; S1.5, TOD-2076): each is a frame's own test or fact that the
+/// staged guard (`checked`) or a typed fact replaces, so the counter only falls.
+pub fn unguarded_number_proofs(text: &str) -> usize {
+    text.lines().map(str::trim).filter(|line| !line.starts_with("//"))
+        .map(|line| line.matches("Int32::proven(").count() + line.matches("Float64::proven(").count()).sum()
 }
 
 /// The heap items a `pub use crate::heap::...;` re-exports (`quench_runtime::tier_surface`): each is an

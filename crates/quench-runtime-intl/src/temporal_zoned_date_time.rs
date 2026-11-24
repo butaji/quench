@@ -350,7 +350,7 @@ impl Vm {
         };
         Ok(self.allocate_cell(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            instant: Box::new(quench_runtime::heap::ZonedInstant {
+            instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                 epoch_nanoseconds: epoch,
                 time_zone: timezone,
             }),
@@ -2315,7 +2315,7 @@ impl Vm {
         };
         Ok(self.allocate_cell(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            instant: Box::new(quench_runtime::heap::ZonedInstant {
+            instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                 epoch_nanoseconds: record.epoch_nanoseconds,
                 time_zone: record.time_zone,
             }),

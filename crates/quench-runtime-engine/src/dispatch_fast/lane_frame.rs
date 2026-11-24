@@ -8,7 +8,7 @@ use super::lane_reads::Reads;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -2047,17 +2047,17 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
         // A register no accumulator stands for: its tag half-word tested in memory
         // (`Registers::int`), not the whole word loaded and masked.
         if ACC == ACC_NONE && let Some(register) = operand.register_index() {
             if self.operands_int {
-                return Some(u64::from(self.registers.get(register).to_bits() as u32));
+                return Some(unsafe { Int32::proven(u64::from(self.registers.get(register).to_bits() as u32)) }); // Fact: `operands_int`.
             }
-            return self.registers.int(register).map(|int| u64::from(int as u32));
+            return self.registers.int(register).map(|int| unsafe { Int32::proven(u64::from(int as u32)) }); // Fact: `Registers::int` tested the tag half-word.
         }
         let word = self.operand_word(stage, operand)?;
-        Value::from_bits(word).as_int().map(|int| u64::from(int as u32))
+        Int32::checked(Value::from_bits(word))
     }
 
     /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
@@ -2067,9 +2067,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Float64<u64>> {
         let word = self.operand_word(stage, operand)?;
-        Value::from_bits(word).as_number().map(f64::to_bits)
+        Float64::checked(Value::from_bits(word))
     }
 
     /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
@@ -2083,15 +2083,15 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
     /// is read as an int and never converted to binary64.
     #[inline(always)]
-    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
         let value = Value::from_bits(self.operand_word(stage, operand)?);
-        if let Some(int) = value.as_int() {
-            return Some(u64::from(int as u32));
+        if let Some(int) = Int32::checked(value) {
+            return Some(int);
         }
         // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
         // computes no conversion of its own.
-        let number = value.as_number()?;
-        quench_runtime::staged::NumericStage::to_int32(stage, number.to_bits(), ())
+        let number = Float64::checked(value)?;
+        Int32::truncating(stage, number, ())
     }
 
     #[inline(always)]
@@ -2799,6 +2799,46 @@ macro_rules! target_prefix_row {
     }};
 }
 
+/// The conditional test `$test` of a target run at its record `$at` (`$test_i`) with the run's `$carried`, as `compare_jump_row`'s
+/// instance runs it: `$comparison` (`Some`) folds its row to that comparison; `$constant` states the operand kinds; `$held` as `target_run`'s.
+macro_rules! target_test { ($cx:ident, $r:ident, $at:ident, $test_i:ident, $carried:ident, $test:ident, $comparison:expr, $constant:expr, $held:expr) => {{
+        // SAFETY: the arm below tested the operand kinds `$constant` states (`compare_operands`).
+        if let Some(constant) = $constant {
+            unsafe {
+                std::hint::assert_unchecked(Operand($test_i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register));
+                std::hint::assert_unchecked(Operand($test_i.c).kind() == Some(if constant { quench_runtime::bytecode::OperandKind::Constant } else { quench_runtime::bytecode::OperandKind::Register }));
+            }
+        }
+        let fields = LaneFields::<$test, { FLAG_UNREAD }>($test_i);
+        let held: Option<u64> = $held;
+        let decoded = match ($comparison, row_decode!($test, { FLAG_UNREAD }, fields)) {
+            (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) => {
+                let left = if held.is_some() { Operand::constant(0).unwrap_or(left) } else { left };
+                Some(Operation::CompareJump { comparison, left, right, negate })
+            }
+            (_, decoded) => decoded,
+        };
+        let Some(operation) = decoded else { sibling!(general_step_in_lane, $r, $at, $carried) };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<$test, ACC_NONE, FLAG_UNREAD>($cx, $r, $at, $test_i, $carried);
+        if let Some(word) = held {
+            frame.reads = frame.reads.with_immediate(Value::integer(word as u32 as i32));
+        }
+        match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Control(LaneControl::Edge(Edge::Target)) => {
+                // SAFETY: as the read of `$test_i` above.
+                let backward_test = unsafe { (*$at).jump() } <= 0;
+                resume!($cx, crate::dispatch_fast::take_jump($cx, $r, $at, backward_test, $carried, None))
+            }
+            Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!($cx, $r, following($at), $carried),
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, $at, $carried),
+        }
+}}; }
+
+/// The bits of a target run's back edge record's `mode` holding its test's code (`target_comparison`; written by `target_test_word`).
+pub(crate) const TARGET_TEST_SHIFT: u32 = 2;
+const _: () = assert!(quench_runtime::staged::MODE_DEAD_FIRST | quench_runtime::staged::MODE_BACKWARD < 1 << TARGET_TEST_SHIFT && 16 << TARGET_TEST_SHIFT <= quench_runtime::staged::raw_bit(0));
+
 /// A backward jump's target run (`FUSED_TARGET`), run in the jump's record `$ip` once the jump is taken: the
 /// back edge's fuel check (a safepoint at the target, before its run, as `take_jump` makes it), then the
 /// target's prefix row `$prefix` when it is not `NO_LINK` (`target_prefix_row`), then the copy row `$copy`
@@ -2810,7 +2850,7 @@ macro_rules! target_run {
     (@held none) => { None };
     (@held $held:ident) => { Some($held) };
     // A rare comparison or operand form: a lone jump's run (`inline`) keeps the record's switch; a pair's (`dispatch`) runs the record's row.
-    (@rare inline, $($_:tt)*) => { {} }; (@rare dispatch, $cx:ident, $r:ident, $at:ident, $c:ident) => { { std::hint::cold_path(); next!($cx, $r, $at, $c) } }; (@form inline, $op:ident, $($_:tt)*) => { test_run!(Some(Comparison::of_operator($op)), None::<bool>) }; (@form dispatch, $op:ident, $($rest:tt)*) => { target_run!(@rare dispatch, $($rest)*) };
+    (@rare inline, $($_:tt)*) => { {} }; (@rare dispatch, $cx:ident, $r:ident, $at:ident, $c:ident) => { { std::hint::cold_path(); next!($cx, $r, $at, $c) } };
     ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0, none, inline) };
     // `$cmp`, where not 0, is the test's comparison and operand form fixed at install
     // (`target_comparison`): the arm runs that test alone, with no switch on the record's operator.
@@ -2835,79 +2875,19 @@ macro_rules! target_run {
         }
         // SAFETY: `at` is the target or the record the prefix rows fall through to, a validated record of the view.
         let test_i = unsafe { &*at };
-        // The test at comparison `$comparison` (`Some`, a constant of the arm), as `compare_jump_row`'s
-        // instance runs it: its row folds to that comparison's test, and only that one's paths, which
-        // keep the frame out of memory. `None` is the record's own comparison.
-        macro_rules! test_run { ($comparison:expr, $constant:expr) => {{
-            // SAFETY: the arm below tested the operand kinds `$constant` states (`compare_operands`).
-            if let Some(constant) = $constant {
-                unsafe {
-                    std::hint::assert_unchecked(Operand(test_i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register));
-                    std::hint::assert_unchecked(Operand(test_i.c).kind() == Some(if constant { quench_runtime::bytecode::OperandKind::Constant } else { quench_runtime::bytecode::OperandKind::Register }));
-                }
-            }
-            let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
-            let held: Option<u64> = target_run!(@held $held);
-            let decoded = match ($comparison, row_decode!($test, { FLAG_UNREAD }, fields)) {
-                (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) => {
-                    let left = if held.is_some() { Operand::constant(0).unwrap_or(left) } else { left };
-                    Some(Operation::CompareJump { comparison, left, right, negate })
-                }
-                (_, decoded) => decoded,
-            };
-            let Some(operation) = decoded else { sibling!(general_step_in_lane, $r, at, carried) };
-            let mut stage = Concrete::new(std::ptr::null());
-            let mut frame = row_frame::<$test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
-            if let Some(word) = held {
-                frame.reads = frame.reads.with_immediate(Value::integer(word as u32 as i32));
-            }
-            match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
-                Step::Control(LaneControl::Edge(Edge::Target)) => {
-                    // SAFETY: as the read of `test_i` above.
-                    let backward_test = unsafe { (*at).jump() } <= 0;
-                    resume!($cx, crate::dispatch_fast::take_jump($cx, $r, at, backward_test, carried, None))
-                }
-                Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!($cx, $r, following(at), carried),
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
-            }
-        }}; }
+        // The test at comparison `$comparison` (`Some`, a constant of the arm), or `None`, the record's own comparison (`target_test`).
+        macro_rules! test_run { ($comparison:expr, $constant:expr) => { target_test!($cx, $r, at, test_i, carried, $test, $comparison, $constant, target_run!(@held $held)) }; }
         if const { $test == quench_runtime::staged::COMPARE_JUMP_ROW && $cmp != 0 } {
             let (operator, constant) = const { target_comparison_of($cmp) };
             test_run!(Some(Comparison::of_operator(operator)), Some(constant))
         }
         if const { $test == quench_runtime::staged::COMPARE_JUMP_ROW } {
-            // A loop's test is almost always a relation or a strict equality, each its own arm; any other runs its record's own row.
-            use oxc_ast::ast::BinaryOperator as B;
-            const LT: u32 = B::LessThan as u32;
-            const LE: u32 = B::LessEqualThan as u32;
-            const GT: u32 = B::GreaterThan as u32;
-            const GE: u32 = B::GreaterEqualThan as u32;
-            const SEQ: u32 = B::StrictEquality as u32;
-            const SNE: u32 = B::StrictInequality as u32;
-            // Each comparison's arm also fixes its operand kinds where they are a register and a register or a
-            // constant, as the comparison's own formed instances do (`compare_jump_row`).
-            use quench_runtime::bytecode::OperandKind::{Constant, Register};
-            let form = match (Operand(test_i.b).kind(), Operand(test_i.c).kind()) {
-                (Some(Register), Some(Register)) => 1u32,
-                (Some(Register), Some(Constant)) => 2,
-                _ => 0,
-            };
-            macro_rules! formed { ($op:ident) => {
-                match form {
-                    1 => test_run!(Some(Comparison::of_operator($op)), Some(false)),
-                    2 => test_run!(Some(Comparison::of_operator($op)), Some(true)),
-                    _ => target_run!(@form $rare, $op, $cx, $r, at, carried),
-                }
-            }; }
-            match u32::from(test_i.a) {
-                LT => formed!(LT),
-                LE => formed!(LE),
-                GT => formed!(GT),
-                GE => formed!(GE),
-                SEQ => formed!(SEQ),
-                SNE => formed!(SNE),
-                _ => target_run!(@rare $rare, $cx, $r, at, carried),
-            }
+            // A loop's test is almost always a relation or a strict equality over a register and a register or a constant: its
+            // code, fixed at install in the record's `mode` (`TARGET_TEST_SHIFT`), names its shared instance; any other is rare.
+            // SAFETY: `$ip` is the handler's own record.
+            let code = (unsafe { (*$ip).mode } >> TARGET_TEST_SHIFT) as usize & 15;
+            if code != 0 { sibling!(TARGET_TESTS[code - 1], $r, at, carried) }
+            target_run!(@rare $rare, $cx, $r, at, carried);
         }
         test_run!(None::<Comparison>, None::<bool>)
     }};
@@ -4355,3 +4335,16 @@ mod binary_number_kind_tests {
         }
     }
 }
+
+lane_handler! {
+    /// A target run's comparison test at its record `ip` with code `CMP` (`target_comparison`), shared by every target run (`TARGET_TESTS`).
+    #[inline(never)]
+    pub(crate) fn target_test_row<CMP: u8>(cx, r, ip, i, view) {
+        let (operator, constant) = const { target_comparison_of(CMP) };
+        const TEST: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+        target_test!(cx, r, ip, i, view, TEST, Some(Comparison::of_operator(operator)), Some(constant), None::<u64>)
+    }
+}
+
+/// The shared target run tests (`target_test_row`) by code, from code 1.
+const TARGET_TESTS: [Handler; 12] = [target_test_row::<1> as Handler, target_test_row::<2>, target_test_row::<3>, target_test_row::<4>, target_test_row::<5>, target_test_row::<6>, target_test_row::<7>, target_test_row::<8>, target_test_row::<9>, target_test_row::<10>, target_test_row::<11>, target_test_row::<12>];

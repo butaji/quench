@@ -1050,7 +1050,7 @@ impl Vm {
             };
             let text = formatted.to_string();
             let parts = vm.number_format_parts_for_text(this, &text)?;
-            Ok(vm.allocate_array(quench_runtime::heap::ArrayObject::new(
+            Ok(vm.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                     Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
                     parts,
                 )))
@@ -1160,7 +1160,7 @@ impl Vm {
                         parts.push(literal);
                         parts.extend(vm.number_format_tag_parts(p, second, "endRange")?);
                     }
-                    Ok(vm.allocate_array(quench_runtime::heap::ArrayObject::new(
+                    Ok(vm.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                             Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
                             parts,
                         )))

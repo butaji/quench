@@ -17696,9 +17696,9 @@ fn specialize_proved_arrays(decoded: &[WideInstruction], records: &mut [LaneInst
 
 /// The `FUSED_ROWS` pairs whose second row is `Jump`, by their index in that table: a row followed
 /// by a backward jump, which `FUSED_TARGET` may fuse with the target run at the jump's target.
-/// `(StoreLocalPlain, Jump)`, `(Move, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
-/// the pairs; the const check below names each one's second row.
-const BACK_EDGE_PAIRS: [usize; 4] = [31, 32, 33, 37];
+/// `(StoreLocalPlain, Jump)`, `(Move, Jump)` and `(IncDec, Jump)` are the pairs (the check names each one's second row);
+/// not `(WasmI32AddImmediate, Jump)`: only a Wasm body has that add, and a target run's rows are JavaScript rows.
+const BACK_EDGE_PAIRS: [usize; 3] = [31, 32, 37];
 const _: () = {
     let mut k = 0;
     while k < BACK_EDGE_PAIRS.len() {
@@ -17915,7 +17915,7 @@ fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
             )
         };
     }
-    let pairs = [pair!(31), pair!(32), pair!(33), pair!(37)];
+    let pairs = [pair!(31), pair!(32), pair!(37)];
     let lone = lone_target_forms();
     let lone_copy = lone_copy_target_forms();
     let back = jump_row::<JUMP>(true) as *const ();
@@ -17935,18 +17935,19 @@ fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
         let Some(head) = jump.checked_sub(1) else {
             // No record before the jump: a lone back jump.
             if let Some(handler) = lone_target_handler(&lone, &lone_copy, records, target, &after) {
+                records[jump].mode = target_test_word(|k| records.get(target + k));
                 records[jump].handler = handler as *const ();
             }
             continue;
         };
         let first = records[head].handler;
         if let Some((_, forms)) = pairs.iter().find(|(first_row, _)| first_row(first)) {
-            // A move or an add of a constant at a hot OSR latch keeps its own record, as `fuse_rows` keeps it.
-            let latch = osr_loop && (plain_row::<{ quench_runtime::staged::MOVE_ROW }>(first) || plain_row::<{ quench_runtime::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
+            // A move at a hot OSR latch keeps its own record, as `fuse_rows` keeps it.
+            let latch = osr_loop && plain_row::<{ quench_runtime::staged::MOVE_ROW }>(first);
             if !latch {
                 if let Some(handler) = target_run_handler(forms, target_handler, &after) {
                     let handler = fixed_comparison(handler, &records[target]);
-                    let word = target_word(&records[jump]);
+                    let word = target_word(&records[jump]) | target_test_word(|k| records.get(target + k));
                     records[head].handler = handler as *const ();
                     records[head].mode = word;
                 }
@@ -17958,9 +17959,18 @@ fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
             continue;
         }
         if let Some(handler) = lone_target_handler(&lone, &lone_copy, records, target, &after) {
+            records[jump].mode = target_test_word(|k| records.get(target + k));
             records[jump].handler = handler as *const ();
         }
     }
+}
+
+/// The target test code of a back edge's record `mode` (`lane_frame::TARGET_TEST_SHIFT`): the code of the run's first record (`run(k)`) past its prefix and copy rows where that is a plain comparison jump.
+fn target_test_word<'a>(run: impl Fn(usize) -> Option<&'a LaneInstruction>) -> u64 {
+    use quench_runtime::staged::{COMPARE_JUMP_ROW as TEST, FUSED_TARGET_COPY_ROWS as C, FUSED_TARGET_PREFIX_ROWS as P};
+    let passes = |h| plain_row::<{ P[0] }>(h) || plain_row::<{ P[1] }>(h) || plain_row::<{ P[2] }>(h) || plain_row::<{ C[0] }>(h);
+    let test = (0..3).map_while(&run).find(|record| !passes(record.handler)).filter(|record| plain_row::<TEST>(record.handler));
+    test.map_or(0, |record| u64::from(lane_frame::target_comparison(record)) << lane_frame::TARGET_TEST_SHIFT)
 }
 
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
@@ -17989,7 +17999,9 @@ fn update_fusion(update: &LaneInstruction, jump: &LaneInstruction, target: Optio
         if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
             // SAFETY: as the read of `target_handler`.
             let handler = fixed_comparison(handler, unsafe { &*target });
-            return Some((handler, target_word(jump)));
+            // SAFETY: as `after`: the run's rows fall through to records of the view.
+            let test = target_test_word(|k| Some(unsafe { &*(0..k).fold(target, |at, _| following(at)) }));
+            return Some((handler, target_word(jump) | test));
         }
     }
     let pair = lane_frame::fused_row::<{ quench_runtime::staged::INC_DEC_ROW }, { quench_runtime::staged::JUMP_ROW }, { quench_runtime::staged::FUSED_PLAIN }>(backward);

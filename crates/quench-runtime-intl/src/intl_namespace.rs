@@ -38,7 +38,7 @@ impl Vm {
             .intl_number_format_prototypes
             .insert(global, prototype);
         let fallback_symbol = self
-            .allocate_symbol(quench_runtime::heap::SymbolData::public(Some(
+            .allocate_symbol(quench_runtime::library_surface::SymbolData::public(Some(
                 "IntlLegacyConstructedSymbol".into(),
             )));
         self.realm
@@ -700,7 +700,7 @@ impl Vm {
             .into_iter()
             .map(|value| self.allocate_string(value.into()))
             .collect::<Vec<_>>();
-        self.allocate_array(quench_runtime::heap::ArrayObject::new(
+        self.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements,
             ))

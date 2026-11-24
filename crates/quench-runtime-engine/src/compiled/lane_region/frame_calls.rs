@@ -28,9 +28,9 @@ pub(crate) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
     let super::Edges::ValueGuarded { miss } = frame.edges else { return None };
     let fact = frame.state.values[usize::from(register)].value;
     let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
-        super::register_int_value(stage.builder, frame.registers, frame.state, register, miss)
+        super::register_int_value(stage.builder, frame.registers, frame.state, register, miss).word()
     } else {
-        super::register_number_value(stage.builder, frame.registers, frame.state, register, miss)
+        super::register_number_value(stage.builder, frame.registers, frame.state, register, miss).word()
     };
     let fact = frame.state.values[usize::from(register)].value;
     let machine = match fact.representation {

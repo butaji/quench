@@ -121,7 +121,7 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
 fn write_typed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, view: TypedView<S::Word>,
     (value, key): (Register, Register)) -> Option<S::Word> {
     let miss = frame.miss();
-    let number = frame.number_operand(stage, Operand::register(value), miss)?;
+    let number = frame.number_operand(stage, Operand::register(value), miss).map(super::Float64::word)?;
     let index = frame.index_key(stage, Operand::register(key), miss)?;
     let index = stage.uextend32(index);
     typed_write(stage, view, index, number, miss)?;

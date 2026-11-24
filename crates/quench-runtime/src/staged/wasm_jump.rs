@@ -166,12 +166,12 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     match jump {
         WasmJump::Compare { relation, left, right } => {
             let miss = frame.miss();
-            let Some(left) = frame.int_operand(stage, Operand::register(left), miss) else {
+            let Some(left) = frame.int_operand(stage, Operand::register(left), miss).map(super::Int32::word) else {
                 return Step::Unresolved;
             };
             let right = match right {
                 WasmRight::Register(register) => {
-                    let Some(right) = frame.int_operand(stage, Operand::register(register), miss) else {
+                    let Some(right) = frame.int_operand(stage, Operand::register(register), miss).map(super::Int32::word) else {
                         return Step::Unresolved;
                     };
                     right
@@ -183,7 +183,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         }
         WasmJump::Test { register, nonzero } => {
             let miss = frame.miss();
-            let Some(word) = frame.int_operand(stage, Operand::register(register), miss) else {
+            let Some(word) = frame.int_operand(stage, Operand::register(register), miss).map(super::Int32::word) else {
                 return Step::Unresolved;
             };
             let zero = stage.eq_imm(word, 0u64);
@@ -192,7 +192,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         }
         WasmJump::AddNonZero { destination, source, addend } => {
             let miss = frame.miss();
-            let Some(word) = frame.int_operand(stage, Operand::register(source), miss) else {
+            let Some(word) = frame.int_operand(stage, Operand::register(source), miss).map(super::Int32::word) else {
                 return Step::Unresolved;
             };
             let addend = stage.constant(u64::from(addend as u32));
@@ -235,7 +235,7 @@ impl BranchTable {
 #[inline(always)]
 pub(crate) fn branch_table<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, table: BranchTable) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(index) = frame.int_operand(stage, Operand::register(table.index), miss) else {
+    let Some(index) = frame.int_operand(stage, Operand::register(table.index), miss).map(super::Int32::word) else {
         return Step::Unresolved;
     };
     match frame.branch_table(stage, index, table.entries) {

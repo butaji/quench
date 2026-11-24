@@ -42,7 +42,6 @@ pub(crate) mod engine_prelude {
     #[cfg(feature = "profile-memory")]
     pub use quench_runtime::tier_surface::CellKind;
     pub use quench_runtime::tier_surface::{ CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle, };
-    pub use quench_runtime::heap::Heap;
     pub use quench_runtime::host::{CapabilityId, Host, HostContext};
     pub use quench_runtime::profile::{CallSource, Profile, TerminalCall};
     pub use quench_runtime::value::number_to_u32;

@@ -3,14 +3,13 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::object_slots::emit;
-use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
-use quench_runtime::staged::{NumericStage, Stage};
+use quench_runtime::staged::{Float64, Int32, IntFact, NumberFact, NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, constants: &[quench_runtime::bytecode::Constant], operand: quench_runtime::bytecode::Operand,
-    otherwise: ir::Block) -> Option<ir::Value> {
+    otherwise: ir::Block) -> Option<Int32<ir::Value>> {
     match operand.kind()? {
         quench_runtime::bytecode::OperandKind::Register =>
             Some(register_int_value(builder, registers, state, operand.register_index()?, otherwise)),
@@ -24,7 +23,7 @@ pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
                 let never = stage.ne_imm(zero, 0u32);
                 stage.guard(never, otherwise)?;
             }
-            Some(stage.i32_constant(if int32 { value.wasm_bits32() as i32 } else { 0 }))
+            Some(Int32::constant(&mut stage, if int32 { value.wasm_bits32() as i32 } else { 0 }))
         }
         _ => None,
     }
@@ -48,21 +47,21 @@ pub(crate) fn operand_long(builder: &mut FunctionBuilder<'_>, registers: &mut Re
     if let Some(word) = operand.register_index().and_then(|register| held_long(builder, registers, state, register)) {
         return Some(word);
     }
-    let int = operand_int(builder, registers, state, constants, operand, otherwise)?;
+    let int = operand_int(builder, registers, state, constants, operand, otherwise)?.word();
     Some(emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
 }
 
 /// An operand's binary64 value, statically where it is a constant Number.
 pub(crate) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, constants: &[quench_runtime::bytecode::Constant], operand: quench_runtime::bytecode::Operand,
-    otherwise: ir::Block) -> Option<ir::Value> {
+    otherwise: ir::Block) -> Option<Float64<ir::Value>> {
     match operand.kind()? {
         quench_runtime::bytecode::OperandKind::Register =>
             Some(register_number_value(builder, registers, state, operand.register_index()?, otherwise)),
         quench_runtime::bytecode::OperandKind::Constant => {
             let value = constants.get(usize::from(operand.payload()))
                 .and_then(super::super::facts::immediate)?.as_number()?;
-            Some(crate::compiled::object_slots::emit(builder).f64_constant(value))
+            Some(Float64::constant(&mut emit(builder), value))
         }
         _ => None,
     }
@@ -72,7 +71,7 @@ pub(crate) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut 
 /// double of magnitude 2^63 or more, an infinity or NaN leaves (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(crate) fn operand_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, constants: &[quench_runtime::bytecode::Constant], operand: quench_runtime::bytecode::Operand,
-    exit: ir::Block) -> Option<ir::Value> {
+    exit: ir::Block) -> Option<Int32<ir::Value>> {
     use quench_runtime::bytecode::OperandKind;
     let integral = match operand.kind()? {
         OperandKind::Register => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
@@ -89,31 +88,21 @@ pub(crate) fn operand_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mu
         Some(register) => Some(tagged_to_int32(builder, registers, state, register, exit)),
         None => {
             let number = operand_number(builder, registers, state, constants, operand, exit)?;
-            Some(crate::compiled::emit_number_to_int32(builder, number, exit))
+            Int32::truncating(&mut emit(builder), number, exit)
         }
     }
 }
 
-/// A tagged register's ToInt32, kept for the later uses of the same bits.
+/// A tagged register's ToInt32 (the staged `Int32::guard_truncating`), kept for the later uses of
+/// the same bits.
 fn tagged_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
-    register: Register, exit: ir::Block) -> ir::Value {
+    register: Register, exit: ir::Block) -> Int32<ir::Value> {
     let bits = register_tagged(builder, registers, state, register);
     if let Some((_, int32)) = state.proofs.int32_projections.iter().find(|(source, _)| *source == bits) {
         #[cfg(test)] INT32_PROJECTION_REUSES.with(|count| count.set(count.get() + 1));
         return *int32;
     }
-    let integer = is_int_tagged(builder, bits);
-    let (int_block, number_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
-    let int32 = builder.append_block_param(join, types::I32);
-    emit(builder).branch(integer, (int_block, &[]), (number_block, &[]));
-    builder.switch_to_block(int_block);
-    let int = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
-    emit(builder).jump(join, &[int]);
-    builder.switch_to_block(number_block);
-    let number = emit_js_tagged_number(builder, bits, exit);
-    let truncated = crate::compiled::emit_number_to_int32(builder, number, exit);
-    emit(builder).jump(join, &[truncated]);
-    builder.switch_to_block(join);
+    let int32 = Int32::guard_truncating(&mut emit(builder), bits, exit).expect("an emitted guard continues");
     state.proofs.int32_projections.push((bits, int32));
     int32
 }
@@ -132,91 +121,104 @@ fn guard_unless(builder: &mut FunctionBuilder<'_>, condition: ir::Value, proved:
     }
 }
 
-/// `register`'s int32 value, proving it where the fact does not.
+/// `register`'s int32 value: by its fact, or by the staged guard of the representation it holds.
 pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
+    state: &mut State, register: Register, otherwise: ir::Block) -> Int32<ir::Value> {
     let index = usize::from(register);
     let fact = state.values[index];
+    let typed = IntFact::of_type(fact.value.ty);
     let int = match fact.value.representation {
         Representation::Int32 => {
             let variable = register_int(builder, registers, index);
-            return builder.use_var(variable);
+            let held = IntFact::of_representation(Representation::Int32).expect("an int32 home");
+            return Int32::by_fact(builder.use_var(variable), held);
         }
-        Representation::Float64 if !fact.tagged.current() => {
-            let variable = register_float(builder, registers, index);
-            let number = builder.use_var(variable);
-            let (int, exact) = emit_js_exact_int32(builder, number);
-            guard_unless(builder, exact, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            int
-        }
+        Representation::Float64 if !fact.tagged.current() => float_home_int(builder, registers, index, typed, otherwise),
         Representation::Int64 => {
             let variable = register_long(builder, registers, index);
-            let word = builder.use_var(variable);
-            let int = emit(builder).raw_unary(Unary::Narrow(Lane::I32), word);
-            let exact = int_is_word(builder, int, word);
-            guard_unless(builder, exact, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            int
+            let (word, mut stage) = (builder.use_var(variable), emit(builder));
+            match typed {
+                Some(proof) => Int32::by_fact(stage.raw_unary(Unary::Narrow(Lane::I32), word), proof),
+                None => Int32::of_long(&mut stage, word, otherwise).expect("an emitted guard continues"),
+            }
         }
         Representation::Tagged | Representation::Float64 => {
-            let bits = register_tagged(builder, registers, state, register);
-            let integer = is_int_tagged(builder, bits);
-            guard_unless(builder, integer, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            crate::compiled::object_slots::emit(builder).narrow(bits)
+            let (bits, mut stage) = (register_tagged(builder, registers, state, register), emit(builder)); // Staged guard, or the type's proof.
+            match typed {
+                Some(proof) => Int32::by_fact(stage.narrow(bits), proof),
+                None => Int32::guard(&mut stage, bits, otherwise).expect("an emitted guard continues"),
+            }
         }
     };
     let variable = register_int(builder, registers, index);
-    builder.def_var(variable, int);
+    builder.def_var(variable, int.word());
     state.values[index] = RegisterFact { tagged: state.values[index].tagged,
         ..RegisterFact::definition(Type::INT32, Representation::Int32) };
     int
 }
 
+/// The int32 of a register held as a binary64: the staged exactness guard, or the truncation
+/// alone where its type proves it an int32.
+fn float_home_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, index: usize,
+    typed: Option<IntFact>, otherwise: ir::Block) -> Int32<ir::Value> {
+    let variable = register_float(builder, registers, index);
+    let home = NumberFact::of_representation(Representation::Float64).expect("a float home");
+    let (number, mut stage) = (Float64::by_fact(builder.use_var(variable), home), emit(builder));
+    match typed {
+        Some(proof) => Int32::by_fact(quench_runtime::staged::value::exact_int32(&mut stage, number.word()).0, proof),
+        None => Int32::exact(&mut stage, number, otherwise).expect("an emitted guard continues"),
+    }
+}
+
 /// The binary64 view a test already proved of tagged `bits` in this block (`LocalProofs::numbers`), if any.
-pub(crate) fn known_number(builder: &FunctionBuilder<'_>, state: &State, bits: ir::Value) -> Option<ir::Value> {
+pub(crate) fn known_number(builder: &FunctionBuilder<'_>, state: &State, bits: ir::Value) -> Option<Float64<ir::Value>> {
     let bits = builder.func.dfg.resolve_aliases(bits);
     state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number)
 }
 
-/// `register`'s binary64 value, proving Number where the fact does not.
+/// `register`'s binary64 value: by its fact, as a conversion of the integer it holds, or by the
+/// staged Number guard.
 pub(crate) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
+    state: &mut State, register: Register, otherwise: ir::Block) -> Float64<ir::Value> {
     let index = usize::from(register);
     let fact = state.values[index].value;
-    match fact.representation {
+    let number = match fact.representation {
         Representation::Float64 => {
             let variable = register_float(builder, registers, index);
-            builder.use_var(variable)
+            let home = NumberFact::of_representation(Representation::Float64).expect("a float home");
+            return Float64::by_fact(builder.use_var(variable), home);
         }
         Representation::Int32 => {
             let variable = register_int(builder, registers, index);
-            let int = builder.use_var(variable);
-            crate::compiled::object_slots::emit(builder).i32_to_f64(int)
+            let home = IntFact::of_representation(Representation::Int32).expect("an int32 home");
+            let int = Int32::by_fact(builder.use_var(variable), home);
+            return Float64::of_int(&mut emit(builder), int);
         }
         Representation::Int64 => {
             let variable = register_long(builder, registers, index);
             let word = builder.use_var(variable);
-            let number = emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
-            let variable = register_float(builder, registers, index);
-            builder.def_var(variable, number);
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(fact.ty, Representation::Float64) };
-            number
+            Float64::of_long(&mut emit(builder), word)
         }
-        Representation::Tagged => {
-            let bits = register_tagged(builder, registers, state, register);
-            let bits = builder.func.dfg.resolve_aliases(bits);
-            let known = known_number(builder, state, bits);
-            let number = if let Some(number) = known { number } else if fact.ty.is_subtype(Type::NUMBER) {
-                emit_known_number(builder, bits)
-            } else {
-                emit_js_tagged_number(builder, bits, otherwise)
-            };
-            if known.is_none() { state.proofs.note_number(bits, number); }
-            let variable = register_float(builder, registers, index);
-            builder.def_var(variable, number);
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
-            number
-        }
-    }
+        Representation::Tagged => tagged_number(builder, registers, state, register, fact.ty, otherwise),
+    };
+    let variable = register_float(builder, registers, index);
+    builder.def_var(variable, number.word());
+    let ty = if fact.representation == Representation::Tagged { Type::NUMBER } else { fact.ty };
+    state.values[index] = RegisterFact { tagged: state.values[index].tagged, ..RegisterFact::definition(ty, Representation::Float64) };
+    number
+}
+
+/// A tagged register's Number: the view this block already proved, the unboxing its type proves
+/// (`known_number_f64`), or the staged Number guard; noted for the later reads of the same bits.
+fn tagged_number(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+    register: Register, ty: Type, otherwise: ir::Block) -> Float64<ir::Value> {
+    let bits = register_tagged(builder, registers, state, register);
+    let bits = builder.func.dfg.resolve_aliases(bits);
+    if let Some(number) = known_number(builder, state, bits) { return number; }
+    let number = match NumberFact::of_type(ty) {
+        Some(proof) => Float64::by_fact(emit_known_number(builder, bits), proof),
+        None => Float64::guard(&mut emit(builder), bits, otherwise).expect("an emitted guard continues"),
+    };
+    state.proofs.note_number(bits, number);
+    number
 }

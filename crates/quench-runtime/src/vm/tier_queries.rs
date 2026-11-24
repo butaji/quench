@@ -403,3 +403,15 @@ impl<'a> FactWatch<'a> {
     #[inline(always)]
     pub(crate) fn of(heap: &'a mut Heap, readers: &'a mut crate::code_dependencies::CodeReaders) -> Self { Self { heap, readers } }
 }
+
+/// The `len` field values of a planned object, each `field(index)`, in a fixed array of `N` with
+/// the rest undefined (`Vm::allocate_planned_object`): a loop the caller inlines, not a closure
+/// call per slot.
+#[inline(always)]
+pub fn planned_fields<const N: usize>(len: usize, field: impl Fn(usize) -> Value) -> [Value; N] {
+    let mut values = [Value::UNDEFINED; N];
+    for (index, value) in values.iter_mut().enumerate().take(len) {
+        *value = field(index);
+    }
+    values
+}

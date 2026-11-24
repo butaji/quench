@@ -236,6 +236,18 @@ pub fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
     ops.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
+/// Both Number classes of `bits` from one shifted tag field, as `Value::as_number` reads them:
+/// `(double, int)`. The int test compares the same field the double test offsets, so a stage
+/// shifts the word once for both.
+#[inline(always)]
+pub fn number_classes<T: TagOps>(ops: &mut T, bits: T::Word) -> (T::Flag, T::Flag) {
+    let field = ops.shr_imm(bits, u64::from(ValueLayout::TAG_SHIFT));
+    let offset = ops.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
+    let double = ops.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN);
+    let int = ops.eq_imm(field, ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT);
+    (double, int)
+}
+
 /// The states `tagged_truthiness` sorts a word into: undecided by the word, falsy, or truthy.
 const UNDECIDED: u64 = 0;
 const FALSY: u64 = 1;

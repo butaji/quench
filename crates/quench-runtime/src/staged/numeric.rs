@@ -47,13 +47,13 @@ pub enum NegativeZero {
 pub trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
     /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
     /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
-    fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
+    fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>>;
     /// The binary64 word of `operand`, proved here; `None` where it is no Number.
-    fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
+    fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<super::NumberOf<S>>;
     /// The int32 `operand` holds where the frame already proved it one, read with no test; `None`
     /// where it did not (a frame that keeps no facts never has).
     #[inline(always)]
-    fn held_int(&mut self, _stage: &mut S, _operand: Operand) -> Option<S::Word> { None }
+    fn held_int(&mut self, _stage: &mut S, _operand: Operand) -> Option<super::IntOf<S>> { None }
     /// The program constant `operand` names, where it names one: the value a numeric operation folds into
     /// its stage (`int32_word`, `float_word`: `i32_constant`, `f64_constant`) in place of reading it, in every
     /// tier. `None` for a register or a local, and where the frame holds no constant table.
@@ -76,7 +76,7 @@ pub trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::Prop
     /// truncation; `None` where it is no Number, which leaves the row to the interpreter. A frame
     /// that proves int32 operands only reads them as such.
     #[inline(always)]
-    fn int32_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+    fn int32_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>> {
         self.int_operand(stage, operand, miss)
     }
 
@@ -304,7 +304,7 @@ fn math<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Operand, operation: super::math::FloatUnary,
 ) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(value) = frame.number_operand(stage, source, miss) else { return Step::Unresolved };
+    let Some(value) = frame.number_operand(stage, source, miss).map(super::Float64::word) else { return Step::Unresolved };
     let result = super::math::unary(stage, operation, value);
     let fact = frame.number_fact();
     frame.write(stage, destination, result, fact);
@@ -331,7 +331,7 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     source: Operand, (minimum, maximum): (i32, i32), count: u16) -> Step<S::Word, F::Control> {
     // An int32 the frame holds is its own integral value: only the label range decides its slot.
-    if let Some(value) = frame.held_int(stage, source) {
+    if let Some(value) = frame.held_int(stage, source).map(super::Int32::word) {
         let slot = int_slot(stage, value, (minimum, maximum), count, None);
         let slot = frame.int_result(stage, slot);
         let fact = frame.int_fact();
@@ -404,7 +404,7 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let miss = frame.miss();
     match domain {
         Domain::Float64 => {
-            let Some(value) = frame.number_operand(stage, source, miss) else { return Step::Unresolved };
+            let Some(value) = frame.number_operand(stage, source, miss).map(super::Float64::word) else { return Step::Unresolved };
             let result = match operation {
                 NumberUnary::Plus => value,
                 NumberUnary::Negate => stage.float_negate(value),
@@ -416,7 +416,7 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Domain::Int32 => {
             // A Number operand past the int32 domain (a double, `-0`, `i32::MIN`'s negation) takes the
             // float row before the VM's operator: only a non-Number leaves.
-            let Some(value) = frame.int_operand(stage, source, miss) else {
+            let Some(value) = frame.int_operand(stage, source, miss).map(super::Int32::word) else {
                 return float_or_general_unary(stage, frame, destination, source, operation);
             };
             match operation {
@@ -451,7 +451,7 @@ fn float_or_general_unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fr
     destination: Register, source: Operand, operation: NumberUnary,
 ) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    match frame.number_operand(stage, source, miss) {
+    match frame.number_operand(stage, source, miss).map(super::Float64::word) {
         Some(value) => {
             let result = match operation {
                 NumberUnary::Plus => value,
@@ -499,7 +499,7 @@ fn general_unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(value) = frame.int_operand(stage, source, miss) else {
+    let Some(value) = frame.int_operand(stage, source, miss).map(super::Int32::word) else {
         return general_unary(stage, frame, crate::vm::operations::unary_operator::BitwiseNot, (destination, source));
     };
     let all_ones = stage.i32_constant(-1);
@@ -514,17 +514,17 @@ fn operands<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, domain: Domain) -> Option<(S::Word, S::Word)> {
     let miss = frame.miss();
     Some(match domain {
-        Domain::Int32 => (int32_word(stage, frame, left, miss)?, int32_word(stage, frame, right, miss)?),
-        Domain::Float64 => (float_word(stage, frame, left, miss)?, float_word(stage, frame, right, miss)?),
+        Domain::Int32 => (int32_word(stage, frame, left, miss)?.word(), int32_word(stage, frame, right, miss)?.word()),
+        Domain::Float64 => (float_word(stage, frame, left, miss)?.word(), float_word(stage, frame, right, miss)?.word()),
     })
 }
 
 /// `operand`'s int32 word: a constant int32 is the stage's own constant (`i32_constant`), so a constant
 /// left operand folds in every tier; any other operand is `int_operand`'s.
 #[inline(always)]
-fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>> {
     match frame.constant_operand(operand) {
-        Some(value) => Some(stage.i32_constant(value.as_int()?)),
+        Some(value) => Some(super::Int32::constant(stage, value.as_int()?)),
         None => frame.int_operand(stage, operand, miss),
     }
 }
@@ -532,14 +532,14 @@ fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 /// `operand`'s ToInt32 word for a bitwise operator: a constant's ToInt32 is the stage's own constant
 /// (`i32_constant`), else `int32_operand`'s.
 #[inline(always)]
-pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>> {
     match frame.constant_operand(operand) {
         Some(value) => {
             let int = match value.as_int() {
                 Some(int) => int,
                 None => crate::value::number_to_u32(value.as_number()?) as i32,
             };
-            Some(stage.i32_constant(int))
+            Some(super::Int32::constant(stage, int))
         }
         None => frame.int32_operand(stage, operand, miss),
     }
@@ -549,9 +549,9 @@ pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
 /// `number_operand`'s. Subsumes the constant-left Number handlers (`lane_operator_constant_left`, one per
 /// operator): the operator is the row's, and the constant folds in every tier.
 #[inline(always)]
-fn float_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+fn float_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<super::NumberOf<S>> {
     match frame.constant_operand(operand) {
-        Some(value) => Some(stage.f64_constant(value.as_number()?)),
+        Some(value) => Some(super::Float64::constant(stage, value.as_number()?)),
         None => frame.number_operand(stage, operand, miss),
     }
 }
@@ -581,8 +581,8 @@ fn relation_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
 fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand, operation: NumberBitwise) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(left) = bitwise_word(stage, frame, left, miss) else { return Step::Unresolved };
-    let Some(right) = bitwise_word(stage, frame, right, miss) else { return Step::Unresolved };
+    let Some(left) = bitwise_word(stage, frame, left, miss).map(super::Int32::word) else { return Step::Unresolved };
+    let Some(right) = bitwise_word(stage, frame, right, miss).map(super::Int32::word) else { return Step::Unresolved };
     if operation == NumberBitwise::ShiftRightUnsigned {
         let count = stage.and_imm(right, 31u64);
         let zero_count = stage.eq_imm(count, 0u64);
@@ -916,10 +916,10 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let miss = frame.miss();
     let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
     let update = super::CallOut::IncDec { source, decrement };
-    let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else {
+    let Some(value) = frame.int_operand(stage, Operand::register(source), miss).map(super::Int32::word) else {
         // A stage that found the operand no int32 (the interpreter's, or a tier that knows it a
         // binary64) steps the binary64 by one; any other operand is the VM's update.
-        let Some(number) = frame.number_operand(stage, Operand::register(source), miss) else {
+        let Some(number) = frame.number_operand(stage, Operand::register(source), miss).map(super::Float64::word) else {
             return general_update(stage, frame, update, destination);
         };
         let one = stage.f64_constant(1.0);

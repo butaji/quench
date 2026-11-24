@@ -67,9 +67,11 @@ pub mod folded_roots;
 #[doc(hidden)]
 pub mod float_layout;
 #[doc(hidden)]
-pub mod heap;
+pub(crate) mod heap;
 /// What the tier crates may name of the heap (`tier_surface`).
 pub mod tier_surface;
+/// What the runtime's library layers may name of the heap (`library_surface`).
+pub mod library_surface;
 #[cfg_attr(
     not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
     allow(dead_code)

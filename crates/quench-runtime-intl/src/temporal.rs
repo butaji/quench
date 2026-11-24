@@ -610,7 +610,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let receiver = self.allocate_cell(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(self.object_proto)),
-            instant: Box::new(quench_runtime::heap::ZonedInstant {
+            instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                 epoch_nanoseconds: relative.epoch_nanoseconds,
                 time_zone: relative.time_zone.clone(),
             }),
@@ -657,7 +657,7 @@ impl Vm {
         {
             let receiver = self.allocate_cell(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                instant: Box::new(quench_runtime::heap::ZonedInstant {
+                instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                     epoch_nanoseconds: zoned.epoch_nanoseconds,
                     time_zone: zoned.time_zone.clone(),
                 }),
@@ -1352,7 +1352,7 @@ impl Vm {
             let date_duration = self.temporal_duration_construct(p, &date_fields)?;
             let start = self.allocate_cell(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                instant: Box::new(quench_runtime::heap::ZonedInstant {
+                instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                     epoch_nanoseconds: zoned.epoch_nanoseconds,
                     time_zone: zoned.time_zone.clone(),
                 }),
@@ -1384,7 +1384,7 @@ impl Vm {
             let next_day_duration = self.temporal_duration_construct(p, &day_fields)?;
             let date_endpoint = self.allocate_cell(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                instant: Box::new(quench_runtime::heap::ZonedInstant {
+                instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                     epoch_nanoseconds: date_endpoint_epoch,
                     time_zone,
                 }),
