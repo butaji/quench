@@ -2772,8 +2772,8 @@ macro_rules! target_prefix_row {
 macro_rules! target_run {
     (@held none) => { None };
     (@held $held:ident) => { Some($held) };
-    // A rare comparison: a lone jump's run (`inline`) keeps the record's switch; a pair's (`dispatch`) runs the record's row.
-    (@rare inline, $($_:tt)*) => { {} }; (@rare dispatch, $cx:ident, $r:ident, $at:ident, $c:ident) => { { std::hint::cold_path(); next!($cx, $r, $at, $c) } };
+    // A rare comparison or operand form: a lone jump's run (`inline`) keeps the record's switch; a pair's (`dispatch`) runs the record's row.
+    (@rare inline, $($_:tt)*) => { {} }; (@rare dispatch, $cx:ident, $r:ident, $at:ident, $c:ident) => { { std::hint::cold_path(); next!($cx, $r, $at, $c) } }; (@form inline, $op:ident, $($_:tt)*) => { test_run!(Some(Comparison::of_operator($op)), None::<bool>) }; (@form dispatch, $op:ident, $($rest:tt)*) => { target_run!(@rare dispatch, $($rest)*) };
     ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => { target_run!($cx, $r, $ip, $carried, $prefix, $copy, $test, 0, none, inline) };
     // `$cmp`, where not 0, is the test's comparison and operand form fixed at install
     // (`target_comparison`): the arm runs that test alone, with no switch on the record's operator.
@@ -2859,7 +2859,7 @@ macro_rules! target_run {
                 match form {
                     1 => test_run!(Some(Comparison::of_operator($op)), Some(false)),
                     2 => test_run!(Some(Comparison::of_operator($op)), Some(true)),
-                    _ => test_run!(Some(Comparison::of_operator($op)), None::<bool>),
+                    _ => target_run!(@form $rare, $op, $cx, $r, at, carried),
                 }
             }; }
             match u32::from(test_i.a) {
