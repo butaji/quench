@@ -164,21 +164,30 @@ impl<A: WasmActivation> WasmCallFrame<'_, A> {
     }
 }
 
-/// The call of `function` with the window `window` and result `result` through the one call step:
-/// where the caller resumes, else where the frame admitted the call.
+/// The known call of `function` with the window `window` into `result` through the one call step,
+/// at any stage: the interpreter's lane (`step_call_known_of`) and the native tier's lowering run
+/// this one site, a return call (`returns`) the frame's activation where it replaces the caller.
 #[inline(always)]
-fn invoke_function<A: WasmActivation>(call: &mut A, function: FunctionId, (first, count): (Register, u16), result: Register)
-    -> Result<A::Resume, Admitted> {
+pub fn step_known_call_of<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss,
+    (function, (first, count), result, returns): (FunctionId, (Register, u16), Register, bool)) -> Step<S::Word, F::Control> {
     let site = Invocation {
         callee: Callee::Known(function),
         receiver: Receiver::Undefined,
         arguments: Arguments::Window { first, count },
         result,
-        returns: false,
+        returns,
         forwards: false,
     };
+    invoke(stage, frame, miss, site)
+}
+
+/// The call of `function` with the window `window` and result `result` through the one call step:
+/// where the caller resumes, else where the frame admitted the call.
+#[inline(always)]
+fn invoke_function<A: WasmActivation>(call: &mut A, function: FunctionId, window: (Register, u16), result: Register)
+    -> Result<A::Resume, Admitted> {
     let mut frame = WasmCallFrame { call, function: u32::from(function), shape: None, admitted: Admitted::Pending, ran: None };
-    match invoke(&mut Concrete::new(std::ptr::null()), &mut frame, (), site) {
+    match step_known_call_of(&mut Concrete::new(std::ptr::null()), &mut frame, (), (function, window, result, false)) {
         Step::Control(resumed) => Ok(resumed),
         _ => Err(frame.admitted),
     }
