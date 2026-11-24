@@ -14,11 +14,12 @@
 
 use super::Stage;
 
-/// Which kind of callee a getter is, as the tier resolved it: a native, or a script function with
-/// its call target where the tier has one.
-pub enum GetterKind<T> {
+/// Which kind of callee a getter is: a native, or a script function (whose call target the tier
+/// resolves once, `GetterAnswer::target`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GetterKind {
     Native,
-    Script(Option<T>),
+    Script,
 }
 
 /// A tier's primitives for what a getter returns without its call (`step_getter_answer_of`).
@@ -27,8 +28,10 @@ pub trait GetterAnswer<S: Stage> {
     type Target;
     /// A value as the tier holds it: the getter, the base and the answer.
     type Value: Copy;
-    /// The getter's kind, and a script getter's target.
-    fn kind(&mut self, stage: &mut S, getter: Self::Value) -> GetterKind<Self::Target>;
+    /// The getter's kind.
+    fn kind(&mut self, stage: &mut S, getter: Self::Value) -> GetterKind;
+    /// A script getter's call target, where the tier has one.
+    fn target(&mut self, stage: &mut S, getter: Self::Value) -> Option<Self::Target>;
     /// A native getter's value for `base` where its call runs no guest code and no effect.
     fn pure_native(&mut self, stage: &mut S, getter: Self::Value, base: Self::Value) -> Option<Self::Value>;
     /// What a script getter's frameless body returns for `base` by a read, where it has such a body.
@@ -65,7 +68,8 @@ pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut
             None => call.call_native(stage, getter, base),
         },
         GetterKind::Native => call.activate(stage, getter, base, None),
-        GetterKind::Script(target) => {
+        GetterKind::Script => {
+            let target = call.answers().target(stage, getter);
             if writes
                 && let Some(known) = &target
                 && let Some(value) = call.answers().read_answer(stage, known, base)
@@ -85,11 +89,11 @@ pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut
 pub fn step_getter_answer_of<S: Stage, G: GetterAnswer<S>>(stage: &mut S, call: &mut G, getter: G::Value, base: G::Value) -> Option<G::Value> {
     match call.kind(stage, getter) {
         GetterKind::Native => call.pure_native(stage, getter, base),
-        GetterKind::Script(Some(target)) => {
+        GetterKind::Script => {
+            let target = call.target(stage, getter)?;
             let value = call.read_answer(stage, &target, base)?;
             call.memoize(stage, &target, getter, base);
             Some(value)
         }
-        GetterKind::Script(None) => None,
     }
 }

@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::getters::{lane_read_getter, set_getter_hint, LaneGetterAnswer};
+use super::getters::{lane_read_getter, set_getter_hint, GetterMemo, LaneGetterAnswer};
 use quench_runtime::staged::call_getter::step_getter_answer_of;
 use quench_runtime::staged::Concrete;
 use super::proxy_traps::{get_trap_call, keyed_trap_atom, owe_invariants, set_trap_call};
@@ -41,7 +41,7 @@ impl AccessorCall {
             quench_runtime::vm::accessor_cache::GetterEntryRead::Call(getter) => getter,
             quench_runtime::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
         };
-        let mut answer = LaneGetterAnswer { cx: self.cx, memo: Some(index) };
+        let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Site(site) };
         Some(step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, object))
     }
 
@@ -66,7 +66,7 @@ impl AccessorCall {
         let vm = unsafe { vm(self.cx) };
         let site = vm.field_cache_index(i.c);
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
-        let mut answer = LaneGetterAnswer { cx: self.cx, memo: None };
+        let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Off };
         let value = step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, base)?;
         let slot = self
             .getter_field_slot(getter, base)

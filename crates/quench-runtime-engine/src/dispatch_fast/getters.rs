@@ -9,23 +9,37 @@ use quench_runtime::staged::call_getter::{step_getter_call_of, GetterAnswer, Get
 use quench_runtime::staged::Concrete;
 
 /// The lane's primitives of a getter's answer without its call (`call_getter::step_getter_answer_of`),
-/// memoized at the field cache index `memo` where it has one.
+/// memoized at the field cache site `memo` names.
 #[derive(Clone, Copy)]
-pub(crate) struct LaneGetterAnswer {
+pub(crate) struct LaneGetterAnswer<'a> {
     pub(crate) cx: *mut LaneContext,
-    pub(crate) memo: Option<usize>,
+    pub(crate) memo: GetterMemo<'a>,
 }
 
-impl GetterAnswer<Concrete> for LaneGetterAnswer {
+/// Where a lane getter's answer is memoized: nowhere, a site operand, or a read record's site
+/// unless the read is nested (read only where an answer is memoized).
+#[derive(Clone, Copy)]
+pub(crate) enum GetterMemo<'a> {
+    Off,
+    Site(u16),
+    Read(&'a LaneInstruction),
+}
+
+impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     type Target = ScriptCallTarget;
     type Value = Value;
 
     #[inline(always)]
-    fn kind(&mut self, _: &mut Concrete, getter: Value) -> GetterKind<ScriptCallTarget> {
-        if let Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) = unsafe { vm(self.cx) }.function_record(getter) {
-            return GetterKind::Native;
+    fn kind(&mut self, _: &mut Concrete, getter: Value) -> GetterKind {
+        match unsafe { vm(self.cx) }.function_record(getter) {
+            Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) => GetterKind::Native,
+            _ => GetterKind::Script,
         }
-        GetterKind::Script(script_target_in_lane(self.cx, getter))
+    }
+
+    #[inline(always)]
+    fn target(&mut self, _: &mut Concrete, getter: Value) -> Option<ScriptCallTarget> {
+        script_target_in_lane(self.cx, getter)
     }
 
     #[inline(always)]
@@ -60,17 +74,28 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer {
     /// Memoizes at the site's accessor entry the forward that proves `base` what the getter
     /// returns for receivers of its layout (`Vm::memoize_getter_answer`, `getter_forward`); a
     /// capture read (`() => binding`) has none.
-    #[inline(never)]
+    #[inline(always)]
     fn memoize(&mut self, _: &mut Concrete, target: &ScriptCallTarget, getter: Value, base: Value) {
-        let vm = unsafe { vm(self.cx) };
-        let Some(site) = self.memo.filter(|_| target.entry != CallEntry::ReadsCapture) else { return };
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects. The
-        // entry is a cached target of the running program.
-        if let Some(entry) = vm.script_call_entry(getter).map(|entry| unsafe { *entry })
-            && let Some(answer) = unsafe { getter_forward(vm, &entry, base) }
-        {
-            vm.memoize_getter_answer(base, site, getter, answer);
-        }
+        let site = match self.memo {
+            _ if target.entry == CallEntry::ReadsCapture => return,
+            GetterMemo::Site(site) => site,
+            GetterMemo::Read(i) if i.b != quench_runtime::bytecode::FieldBase::NESTED => i.c,
+            _ => return,
+        };
+        memoize_getter(unsafe { vm(self.cx) }, site, getter, base);
+    }
+}
+
+/// `LaneGetterAnswer::memoize` at the site operand `site`, out of line.
+#[inline(never)]
+fn memoize_getter(vm: &mut Vm, site: u16, getter: Value, base: Value) {
+    let site = vm.field_cache_index(site);
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects. The
+    // entry is a cached target of the running program.
+    if let Some(entry) = vm.script_call_entry(getter).map(|entry| unsafe { *entry })
+        && let Some(answer) = unsafe { getter_forward(vm, &entry, base) }
+    {
+        vm.memoize_getter_answer(base, site, getter, answer);
     }
 }
 
@@ -135,17 +160,17 @@ unsafe fn constant_body_value(target: &ScriptCallTarget) -> Option<Value> {
 
 /// The lane's primitives of a getter's call for the read record `i` at `ip` (`step_getter_call_of`).
 struct LaneGetter<'a> {
-    answer: LaneGetterAnswer,
+    answer: LaneGetterAnswer<'a>,
     r: Registers,
     ip: Ip,
     i: &'a LaneInstruction,
 }
 
-impl GetterCall<Concrete> for LaneGetter<'_> {
-    type Answer = LaneGetterAnswer;
+impl<'a> GetterCall<Concrete> for LaneGetter<'a> {
+    type Answer = LaneGetterAnswer<'a>;
     type Out = Result<(Registers, Ip), Ip>;
     #[inline(always)]
-    fn answers(&mut self) -> &mut LaneGetterAnswer {
+    fn answers(&mut self) -> &mut LaneGetterAnswer<'a> {
         &mut self.answer
     }
 
@@ -157,19 +182,9 @@ impl GetterCall<Concrete> for LaneGetter<'_> {
         Ok((r, following(self.ip)))
     }
 
-    /// As a lane `Call` of it with no arguments; out of line, so script getters keep their code.
-    #[cold]
-    #[inline(never)]
+    #[inline(always)]
     fn call_native(&mut self, _: &mut Concrete, getter: Value, base: Value) -> Self::Out {
-        let (cx, ip, i) = (self.answer.cx, self.ip, self.i);
-        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.function_record(getter) else {
-            unreachable!("`kind` named the getter native");
-        };
-        let native = *native;
-        match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, native, getter, base, &[])) {
-            Resumed::At(r, next, _) => Ok((r, next)),
-            Resumed::Exit(next) => Err(next),
-        }
+        call_native_getter(self.answer.cx, self.ip, self.i, getter, base)
     }
 
     #[inline(always)]
@@ -192,9 +207,22 @@ pub(crate) fn lane_read_getter(
     base: Value,
 ) -> Result<(Registers, Ip), Ip> {
     let writes = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
-    let memo = (i.b != quench_runtime::bytecode::FieldBase::NESTED).then(|| unsafe { vm(cx) }.field_cache_index(i.c));
-    let mut call = LaneGetter { answer: LaneGetterAnswer { cx, memo }, r, ip, i };
+    let mut call = LaneGetter { answer: LaneGetterAnswer { cx, memo: GetterMemo::Read(i) }, r, ip, i };
     step_getter_call_of(&mut Concrete::new(std::ptr::null()), &mut call, getter, base, writes)
+}
+
+/// `LaneGetter::call_native`: the native getter called as a lane `Call` of it with no arguments;
+/// out of line, so script getters keep their code.
+#[cold]
+#[inline(never)]
+fn call_native_getter(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.function_record(getter) else {
+        unreachable!("`kind` named the getter native");
+    };
+    match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, *native, getter, base, &[])) {
+        Resumed::At(r, next, _) => Ok((r, next)),
+        Resumed::Exit(next) => Err(next),
+    }
 }
 
 /// What a getter site's `GetField` record does after one walk of its site's accessor entries
