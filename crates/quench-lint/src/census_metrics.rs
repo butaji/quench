@@ -102,6 +102,18 @@ pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }
 
+/// The tier crates' reaches into the runtime's internals (S1.4, TOD-2075): paths into its heap module,
+/// reads of the VM's heap field and Value words made from raw bits, outside comments. A migration
+/// counter: it reaches 0 when those internals are `pub(crate)`, and is then deleted.
+pub fn runtime_internals(text: &str) -> usize {
+    const REACHES: [&str; 3] = ["quench_runtime::heap::", ".heap.", "Value::from_bits("];
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//"))
+        .map(|line| REACHES.iter().map(|reach| line.matches(reach).count()).sum::<usize>())
+        .sum()
+}
+
 /// The opcode-identity predicates the catalog generates (`is_load_capture`, ...): the left of each
 /// `name => Opcode | ...` entry of its `op_predicates!` table.
 fn catalog_predicates() -> &'static BTreeSet<String> {

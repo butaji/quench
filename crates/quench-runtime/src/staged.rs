@@ -25,6 +25,9 @@ mod word_ops;
 pub mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub mod layout_offsets;
+/// The const checks of `layout_offsets` against the runtime's own layouts.
+#[cfg(not(stencil_build))]
+mod layout_offset_checks;
 /// The head of the dispatch payload, which the runtime embeds and the stencils take offsets from.
 pub mod js_step_head;
 pub mod record_heads;
