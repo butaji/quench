@@ -1835,6 +1835,11 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     fn field_entry(&mut self, _stage: &mut Concrete, _owner: quench_runtime::staged::property::Owner, object: u64,
         kind: quench_runtime::staged::property::EntryKind, _miss: ()) -> Option<u64> {
         let entries = self.entries?;
+        // The polymorphic hit is the field row's common read: it runs in the row body, where the
+        // other kinds take the erased call.
+        if matches!(kind, quench_runtime::staged::property::EntryKind::Polymorphic) {
+            return super::polymorphic_entry_read(entries.context, entries.site, Value::from_bits(object)).map(Value::to_bits);
+        }
         // SAFETY: the reader was made for the lane context this frame runs in.
         (entries.read)(entries.context, entries.site, Value::from_bits(object), kind).map(Value::to_bits)
     }

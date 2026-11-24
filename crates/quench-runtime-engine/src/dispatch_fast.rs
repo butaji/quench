@@ -5050,6 +5050,7 @@ fn polymorphic_read(vm: &mut Vm, code: &ResidualProgram, ip: Ip, object: Value) 
 /// immediate prototype (`hinted_polymorphic_field_hit`). An own hit becomes the record's hint; a
 /// prototype's hit holds the prototype hint (`hold_holder_hint`), kept while its watch is live, and
 /// a record whose hint is a prototype's first tests that hint (`holder_hint_hit`).
+#[inline]
 fn polymorphic_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value> {
     use quench_runtime::vm::object::PolymorphicHit;
     // SAFETY: the context's program outlives the lane run; `ip` is a live `GetField` record.
@@ -5133,6 +5134,14 @@ pub(crate) fn field_entry_read(context: *mut (), ip: Ip, object: Value,
         EntryKind::Holder => holder_entry(cx, ip, object),
         EntryKind::Inherited => inherited_entry(cx, ip, object),
     }
+}
+
+/// `polymorphic_entry` on the row's erased context, inline: the hit's shape compare and slot load
+/// live in the row body, where the other entry kinds take the out-of-line lookup
+/// (`field_entry_read`).
+#[inline(always)]
+pub(crate) fn polymorphic_entry_read(context: *mut (), ip: Ip, object: Value) -> Option<Value> {
+    polymorphic_entry(context.cast::<LaneContext>(), ip, object)
 }
 
 script_handler! {
