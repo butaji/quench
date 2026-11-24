@@ -81,13 +81,29 @@ pub(crate) fn plain_return_admits<S: Stage>(stage: &mut S, packed: S::Word, dest
     stage.all(plain, completes)
 }
 
-/// `plain_return_admits` of the frame at `window` returning into a call record whose result
-/// word is `destination`, its packed word loaded.
+/// The plain return of the frame at `window` with `value` (call protocol v2 stage C), `plain` the
+/// lane's plain-frame words: where a plain frame runs (its depth is not 0) and the return is the
+/// header's (`plain_return_admits` of the result word `destination` reads from the caller's call
+/// record), the header pops (`protocol::pop_plain`) and the caller's result register takes `value`.
+/// The one step of every plain return; the tier releases the window. Leaves at `miss`, changing
+/// nothing, for any other return.
 #[inline(always)]
-pub fn concrete_plain_return_admits(window: u64, destination: Register, into_body: bool) -> bool {
-    let stage = &mut super::Concrete::new(std::ptr::null());
+pub fn step_plain_return_of<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, value: S::Word, into_body: S::Cond,
+    destination: impl FnOnce(&mut S, S::Word) -> S::Word, miss: S::Miss) -> Option<super::protocol::PlainCaller<S::Word>> {
+    let depth = stage.load_u64(Region::Payload.mutable(), plain, frame::PLAIN_DEPTH_AT as i32);
+    let running = stage.ne_imm(depth, 0u64);
+    stage.guard(running, miss)?;
+    let call = stage.load_u64(Region::Frame.mutable(), window, -word_offset(frame::CONTEXT_CALL as u16));
+    let destination = destination(stage, call);
     let packed = frame_packed(stage, window);
-    plain_return_admits(stage, packed, u64::from(destination), into_body)
+    let admits = plain_return_admits(stage, packed, destination, into_body);
+    stage.guard(admits, miss)?;
+    let caller = super::protocol::pop_plain(stage, plain, window);
+    let register = stage.and_imm(destination, u64::from(crate::bytecode::REGISTER_MASK));
+    let offset = stage.mul_imm(register, super::word_bytes(1));
+    let result = stage.add(caller.registers, offset);
+    stage.store_u64(Region::Frame.mutable(), result, 0, value);
+    Some(caller)
 }
 
 /// Whether a settling call's return settles its promise in the lane: unless the host observes
@@ -294,10 +310,33 @@ mod tests {
         words[8 - frame::CONTEXT_PACKED] = plain;
         words[8 - frame::CONTEXT_THIS] = 41;
         let window = words.as_mut_ptr().wrapping_add(8) as u64;
-        assert!(concrete_plain_return_admits(window, 1, false));
         assert_eq!(concrete_returning_this(window).to_bits(), 41);
         let mut registers = [0_u64, 9];
         assert_eq!(concrete_call_result(registers.as_mut_ptr() as u64, 1).to_bits(), 9);
+    }
+
+    #[test]
+    fn the_plain_return_step_pops_the_header_and_writes_the_caller_register() {
+        let mut caller = [0_u64; 4];
+        let mut words = [0_u64; 9];
+        words[8 - frame::CONTEXT_PACKED] = crate::staged::protocol::plain_packed(3, 1, 0);
+        words[8 - frame::CONTEXT_CALL] = 77;
+        words[8 - frame::CONTEXT_CALLER_REGISTERS] = caller.as_mut_ptr() as u64;
+        let window = words.as_mut_ptr().wrapping_add(8) as u64;
+        let mut plain = [0_u64; 4];
+        let run = |plain: &mut [u64; 4], destination: Register, into_body: bool| {
+            let at = plain.as_mut_ptr() as u64;
+            step_plain_return_of(&mut Concrete::new(std::ptr::null()), at, window, 9, into_body, |_, call| {
+                assert_eq!(call, 77);
+                u64::from(destination)
+            }, ()).map(|caller| caller.call)
+        };
+        assert_eq!(run(&mut plain, 2, false), None, "no plain frame runs");
+        plain[frame::PLAIN_DEPTH_AT / 8] = 1;
+        assert_eq!(run(&mut plain, RETURN_REGISTER | 2, false), None, "a returning call takes the chain");
+        assert_eq!(plain[frame::PLAIN_DEPTH_AT / 8], 1, "a declined return changes nothing");
+        assert_eq!(run(&mut plain, 2, false), Some(77));
+        assert_eq!((plain[frame::PLAIN_DEPTH_AT / 8], caller[2]), (0, 9));
     }
 
     #[test]
