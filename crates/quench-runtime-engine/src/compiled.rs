@@ -7539,7 +7539,7 @@ impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;
         #[cfg(feature = "jit")]
-        crate::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
+        crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
         self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 

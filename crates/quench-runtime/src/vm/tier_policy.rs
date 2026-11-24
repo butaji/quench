@@ -330,6 +330,15 @@ impl LaneBody {
 }
 
 impl Tiers {
+    /// The searches a regexp program runs interpreted before the stencil tier stitches it
+    /// (`regexp_native::stitch`), where the mode runs that tier below Cranelift: the Cranelift
+    /// threshold over what a stitch saves against a compile. Stitching costs about a fiftieth of
+    /// a Cranelift compile (V8-v7-shaped patterns, 2026-11-24: 175K instructions against 9.4M),
+    /// so it pays after a fiftieth of the searches; a thirty-second leaves room.
+    pub fn regexp_stitch_runs(&self) -> u32 {
+        (self.regexp_native_runs / 32).max(1)
+    }
+
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
     /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
