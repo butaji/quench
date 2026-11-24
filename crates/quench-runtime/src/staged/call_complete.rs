@@ -128,59 +128,6 @@ pub fn step_returning_pop_of<S: Stage>(stage: &mut S, plain: S::Word, window: S:
     Some(super::protocol::pop_plain(stage, plain, window))
 }
 
-/// The primitives of a script activation's return (`step_return_one_op_of`,
-/// `step_activation_return_of`): the running leaf's, the plain header's, a returning run's and
-/// the side record's completions. Every method is one completion the tier makes or declines;
-/// the rules decide their order.
-pub trait ScriptReturn {
-    /// The returned value.
-    type Value: Copy;
-    /// Where the caller continues: its registers and next record.
-    type Returned;
-    /// Whether the returning record is a leaf's (its form fixed where the record was made).
-    fn leaf(&self) -> bool;
-    /// The running leaf's completion where it is of the caller's own program, as one op.
-    fn leaf_header(&mut self, value: Self::Value) -> Option<Self::Returned>;
-    /// The running leaf's completion, of any program.
-    fn complete_leaf(&mut self, value: Self::Value) -> Option<Self::Returned>;
-    /// The plain return of the running window's header (`step_plain_return_of`).
-    fn plain_header(&mut self, value: Self::Value) -> Option<Self::Returned>;
-    /// How many plain frames, innermost first, return their callee's completion before one whose
-    /// call keeps it; `None` where the run ends any other way. Reads headers only.
-    fn returning_run(&mut self) -> Option<usize>;
-    /// Pops `above` returning plain frames (`step_returning_pop_of` each), which the run proved.
-    fn pop_returning(&mut self, above: usize);
-    /// The completion past the plain ones: the side record's, or the general return's chain.
-    fn side_return(&mut self, value: Self::Value) -> Option<Self::Returned>;
-}
-
-/// The return with `value` of the running activation as one op, making no call: a running leaf
-/// of the caller's program completes, a plain frame pops its header. `None`, which changes
-/// nothing, for any other, which `step_activation_return_of` decides.
-#[inline(always)]
-pub fn step_return_one_op_of<S: ScriptReturn>(stage: &mut S, value: S::Value) -> Option<S::Returned> {
-    if stage.leaf() { stage.leaf_header(value) } else { stage.plain_header(value) }
-}
-
-/// The return with `value` of the running script activation: a leaf's record completes the
-/// running leaf first; then the header's plain return; then a run of plain frames that return
-/// their callee's completion (`return f()`), which pops only where it ends in a call that keeps
-/// the value, whose header then returns; else the side record's completion.
-#[inline(always)]
-pub fn step_activation_return_of<S: ScriptReturn>(stage: &mut S, value: S::Value) -> Option<S::Returned> {
-    if stage.leaf() && let Some(returned) = stage.complete_leaf(value) {
-        return Some(returned);
-    }
-    if let Some(returned) = stage.plain_header(value) {
-        return Some(returned);
-    }
-    if let Some(above) = stage.returning_run() {
-        stage.pop_returning(above);
-        return stage.plain_header(value);
-    }
-    stage.side_return(value)
-}
-
 /// Whether a settling call's return settles its promise in the lane: unless the host observes
 /// promise lifecycles, whose hooks may run guest code, so the frame's pending call settles it.
 /// Reads the fact; writes nothing.
