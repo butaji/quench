@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+use quench_runtime::staged::call_return::ChainCompletion;
 use quench_runtime::staged::call_complete::{
     concrete_admits_returning_call, concrete_returning_this, concrete_returns_callee_completion,
     concrete_settles_in_lane, concrete_settles_without_promise, concrete_side_completion, concrete_write_call_result, frame_packed,
@@ -70,7 +71,7 @@ fn complete_trapped_read_in_lane(cx: *mut LaneContext, ip: Ip, value: Value) -> 
     Some(resume_after_call_in_lane(&frame, caller_memory, value))
 }
 
-/// The lane's primitives of a script activation's return (`call_complete::ScriptReturn`), for a
+/// The lane's primitives of a script activation's return (`call_return::ScriptReturn`), for a
 /// record of leaf form `LEAF`: `window` is the running plain frame's, which a returning run moves.
 pub(crate) struct LaneScriptReturn<const LEAF: u8> { pub(crate) cx: *mut LaneContext, pub(crate) window: Registers }
 
@@ -80,7 +81,7 @@ impl<const LEAF: u8> LaneScriptReturn<LEAF> {
     pub(crate) fn running(cx: *mut LaneContext) -> Self { Self { cx, window: Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get()) } }
 }
 
-impl<const LEAF: u8> quench_runtime::staged::call_complete::ScriptReturn for LaneScriptReturn<LEAF> {
+impl<const LEAF: u8> quench_runtime::staged::call_return::ScriptReturn for LaneScriptReturn<LEAF> {
     type Value = Value;
     type Returned = (Registers, Ip);
     #[inline(always)]
@@ -166,7 +167,7 @@ pub(crate) fn lane_return_header<const INTO_BODY: bool>(cx: *mut LaneContext, wi
     Some((registers, following(std::ptr::with_exposed_provenance(caller.call as usize))))
 }
 
-/// `return_plain_in_lane` into a running lane body's call (`body_call_helper`): a returning
+/// `call_return::step_activation_return_of` into a running lane body's call (`body_call_helper`): a returning
 /// call's register takes the result too, since the body completes its own activation with
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
@@ -181,17 +182,7 @@ pub(crate) fn return_to_body_in_lane(cx: *mut LaneContext, value: Value) -> Opti
 /// carries none of the program switch.
 #[inline(always)]
 pub(crate) fn complete_cross_activation_in_lane(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
-    // A plain frame crosses by its header's flag (`staged::call_complete::side_completion`):
-    // one without it declines before its side record is read.
-    let stack = &unsafe { vm(cx) }.lane_stack;
-    if stack.plain.depth.get() != 0 {
-        let packed = frame_packed(&mut Concrete::new(std::ptr::null()), stack.plain.registers.get().expose_provenance() as u64);
-        if !concrete_side_completion(packed).crosses {
-            return None;
-        }
-    }
-    let (registers, next) = return_from_in_lane::<true, false, false, false>(cx, value)?;
-    Some(Resumed::At(registers, next, Carried::script(cx)))
+    quench_runtime::staged::call_return::step_cross_return_of(&mut LaneChain { cx }, value)
 }
 
 /// Whether a call record that returns its callee's completion runs in the lane: from an
@@ -219,7 +210,7 @@ pub(crate) fn frame_return(vm: &mut Vm, call: Ip, value: Value) -> Ip {
 }
 
 /// Complete the innermost lane activation with `value` when it is the common return
-/// (`call_complete::step_activation_return_of`): a JavaScript activation of the running program's caller yielding
+/// (`call_return::step_activation_return_of`): a JavaScript activation of the running program's caller yielding
 /// `value` to its call's result register. Each step loads or stores, so a handler returning
 /// through it saves no registers. `None`, which changes nothing, leaves every other completion
 /// to `complete_activation_in_lane`. A return record of a leaf's records (`LEAF`,
@@ -227,7 +218,7 @@ pub(crate) fn frame_return(vm: &mut Vm, call: Ip, value: Value) -> Ip {
 /// (`complete_leaf_in_lane`); no other record runs while one does.
 #[inline(always)]
 pub(crate) fn complete_plain_activation_in_lane<const LEAF: u8>(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
-    let returned = quench_runtime::staged::call_complete::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), value)?;
+    let returned = quench_runtime::staged::call_return::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), value)?;
     Some(resumed_script(cx, returned))
 }
 
@@ -244,65 +235,70 @@ pub(crate) fn resumed_script(cx: *mut LaneContext, (registers, next): (Registers
 /// any other completion to the activation-by-activation loop.
 #[inline(always)]
 pub(crate) fn complete_plain_chain_in_lane(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    // The run walked where its frames are, headers with their side records, then records: no
-    // spill and no record built (one-frame-one-call.md F4).
-    let (above, top, crossed) = returning_chain_outermost(vm.lane_stack.frames_innermost())?;
-    // The inner ones go where they are: script activations hold no Wasm storage
-    // (`LaneStack::pop_activation`), and their windows lie above the outermost's, which its
-    // return releases. What they owned goes with them.
-    let outermost = vm.lane_stack.activation_count() - above;
-    vm.lane_stack.drop_owned_from(outermost);
-    for _ in 0..above {
-        // SAFETY: an activation runs, a script one of the chain.
-        unsafe { vm.lane_stack.discard_top_frame() };
-    }
-    if above != 0 {
-        // The outermost runs now: its window is the running one its return pops.
-        unsafe { (*cx).registers = Registers(top.window_ptr()) };
-    }
-    let completion = top.completion().expect("a chain holds script activations");
-    if completion == Completion::ReturnsToBody {
-        return end_body_callee(cx, value);
-    }
-    // The outermost activation of another program than its caller's enters that program;
-    // one of its own, past a crossing one above it, returns to the program it began in.
-    if completion == Completion::Cross {
-        return complete_cross_activation_in_lane(cx, value);
-    }
-    if crossed {
-        enter_program_in_lane(cx, top.caller_program());
-        unsafe { (*cx).memory = MemoryView::script(cx) };
-    }
-    complete_plain_activation_in_lane::<NOT_LEAF>(cx, value)
+    quench_runtime::staged::call_return::step_returning_chain_of(&mut LaneChain { cx }, value)
 }
 
-/// The outermost activation of the run the innermost one completes, each returning the
-/// completion of the call above it, from `frames`, innermost first: how many lie above it, its
-/// return words, and whether the run crosses programs; `None` where a completion past a plain
-/// or crossing return, or the frame, ends it. Each test reads the frame's completion and its
-/// call record's return bit (`staged::call_complete::returns_callee_completion`).
-#[inline(always)]
-fn returning_chain_outermost(mut frames: impl Iterator<Item = ActivationView>) -> Option<(usize, ActivationView, bool)> {
-    let mut above = 0;
-    let mut crossed = false;
-    loop {
-        let frame = frames.next()?;
-        let completion = frame.completion()?;
-        // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
-        // the outermost, whatever its call's register, and runs in its caller's program.
-        if completion == Completion::ReturnsToBody {
-            return (!crossed).then_some((above, frame, false));
+/// The lane's primitives of a returning chain and a crossing return (`call_return::ReturningChain`).
+struct LaneChain { cx: *mut LaneContext }
+
+impl quench_runtime::staged::call_return::ReturningChain for LaneChain {
+    type Value = Value;
+    type Resume = Resumed;
+    type Frame = ActivationView;
+    #[inline(always)]
+    fn frames(&mut self) -> impl Iterator<Item = Option<ActivationView>> {
+        // The run walked where its frames are, headers with their side records, then records: no
+        // spill and no record built (one-frame-one-call.md F4).
+        unsafe { vm(self.cx) }.lane_stack.frames_innermost().map(|frame| frame.completion().map(|_| frame))
+    }
+    #[inline(always)]
+    fn completion(frame: &ActivationView) -> ChainCompletion {
+        match frame.completion() {
+            Some(Completion::Plain) => ChainCompletion::Plain,
+            Some(Completion::Cross) => ChainCompletion::Cross,
+            Some(Completion::ReturnsToBody) => ChainCompletion::ReturnsToBody,
+            _ => ChainCompletion::Flagged,
         }
-        crossed |= completion == Completion::Cross;
-        if completion.needs_completion_flag() {
-            return None;
+    }
+    // SAFETY: the call record belongs to the caller's live view.
+    #[inline(always)]
+    fn call_result(frame: &ActivationView) -> u64 { u64::from(unsafe { (*frame.call()).a }) }
+    #[inline(always)]
+    fn discard(&mut self, above: usize, outermost: ActivationView) {
+        // The inner ones go where they are: script activations hold no Wasm storage
+        // (`LaneStack::pop_activation`), and their windows lie above the outermost's, which its
+        // return releases. What they owned goes with them.
+        let vm = unsafe { vm(self.cx) };
+        vm.lane_stack.drop_owned_from(vm.lane_stack.activation_count() - above);
+        for _ in 0..above {
+            // SAFETY: an activation runs, a script one of the chain.
+            unsafe { vm.lane_stack.discard_top_frame() };
         }
-        // SAFETY: the call record belongs to the caller's live view.
-        if !concrete_returns_callee_completion(unsafe { (*frame.call()).a }) {
-            return Some((above, frame, crossed));
+        if above != 0 {
+            // The outermost runs now: its window is the running one its return pops.
+            unsafe { (*self.cx).registers = Registers(outermost.window_ptr()) };
         }
-        above += 1;
+    }
+    #[inline(always)]
+    fn end_body(&mut self, value: Value) -> Option<Resumed> { end_body_callee(self.cx, value) }
+    #[inline(always)]
+    fn reenter_caller(&mut self, outermost: ActivationView) {
+        enter_program_in_lane(self.cx, outermost.caller_program());
+        unsafe { (*self.cx).memory = MemoryView::script(self.cx) };
+    }
+    #[inline(always)]
+    fn complete_plain(&mut self, value: Value) -> Option<Resumed> { complete_plain_activation_in_lane::<NOT_LEAF>(self.cx, value) }
+    #[inline(always)]
+    fn plain_header_crosses(&mut self) -> Option<bool> {
+        let stack = &unsafe { vm(self.cx) }.lane_stack;
+        (stack.plain.depth.get() != 0).then(|| {
+            concrete_side_completion(frame_packed(&mut Concrete::new(std::ptr::null()), stack.plain.registers.get().expose_provenance() as u64)).crosses
+        })
+    }
+    #[inline(always)]
+    fn return_crossing(&mut self, value: Value) -> Option<Resumed> {
+        let (registers, next) = return_from_in_lane::<true, false, false, false>(self.cx, value)?;
+        Some(Resumed::At(registers, next, Carried::script(self.cx)))
     }
 }
 
