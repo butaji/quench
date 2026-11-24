@@ -19,7 +19,7 @@ use super::{
     Slot, Vm, internal_signature, invariant,
 };
 use quench_runtime::bytecode::WideInstruction;
-use quench_runtime::heap::{TableTarget, TableWords};
+use quench_runtime::tier_surface::{TableTarget, TableWords};
 use quench_runtime::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
@@ -62,7 +62,7 @@ unsafe extern "C" fn compiled_table_accepts(
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let context = unsafe { &*context };
     let vm = unsafe { &*context.vm.cast::<Vm>() };
-    let binding = vm.heap.environment_slot(context.env, table as usize);
+    let binding = vm.heap_reads().environment_slot(context.env, table as usize);
     let reference = binding.and_then(|table| vm.wasm_table_get(table, index).ok());
     let pool = vm.programs.wasm_signatures(context.program);
     let accepted = reference

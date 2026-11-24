@@ -217,12 +217,10 @@ impl Vm {
             && !i.returns_from_frame()
         {
             self.profile.call_source(CallSource::Known);
-            if let Some(result) =
-                self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
-            {
-                let value = result?;
-                self.write(f, i.result_register(), value);
-                return Ok(StepResult::Continue);
+            // The native entry the lane makes first, by the same rule (`wasm_activation::enter_native`).
+            let mut call = GeneralWasmCall { vm: self, f, i, raised: None };
+            if let Some(resumed) = crate::staged::wasm_activation::enter_native(&mut call, u32::from(i.known_function_index())) {
+                return resumed;
             }
             self.frames[f].pc = pc;
             self.frames[f].pc_is_resume = true;
@@ -382,6 +380,56 @@ impl Vm {
             return Ok(StepResult::Return(v));
         }
         self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+}
+
+/// A Wasm known call of the general loop, as the native entry rule (`wasm_activation::enter_native`) sees
+/// it: frame `f`'s record `i`, and what a native run raised, which `left` raises.
+struct GeneralWasmCall<'a> {
+    vm: &'a mut Vm,
+    f: usize,
+    i: WideInstruction,
+    raised: Option<JsError>,
+}
+
+impl crate::staged::wasm_activation::WasmNativeEntry for GeneralWasmCall<'_> {
+    type Resume = Result<StepResult, JsError>;
+
+    #[inline(always)]
+    fn native_mode(&mut self) -> bool {
+        self.vm.execution_mode == crate::ExecutionMode::Compiled
+    }
+
+    /// The general loop offers every call to the native tiers: their entry (`call_compiled`) compiles
+    /// the program at its first offer, and declines a function no tier holds. The lane offers only a
+    /// function a tier holds already.
+    #[inline(always)]
+    fn has_native(&mut self, _function: u32) -> bool {
+        true
+    }
+
+    #[inline(always)]
+    fn enter_compiled(&mut self, function: u32) -> crate::staged::wasm_activation::NativeCall {
+        use crate::staged::wasm_activation::NativeCall;
+        match self.vm.call_compiled(self.f, function, self.i.call_window()) {
+            None => NativeCall::Declined,
+            Some(Ok(value)) => NativeCall::Ran(value.to_bits()),
+            Some(Err(error)) => {
+                self.raised = Some(error);
+                NativeCall::Left
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn left(&mut self) -> Self::Resume {
+        Err(self.raised.take().expect("a native run that left raised"))
+    }
+
+    #[inline(always)]
+    fn complete_call(&mut self, word: u64) -> Self::Resume {
+        self.vm.write(self.f, self.i.result_register(), Value::from_bits(word));
         Ok(StepResult::Continue)
     }
 }

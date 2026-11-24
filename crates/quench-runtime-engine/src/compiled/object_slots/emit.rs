@@ -206,7 +206,7 @@ impl Stage for Emit<'_, '_> {
     /// without counts, else closed, and the store leaves at its miss.
     fn immediate_store_open(&mut self) -> ir::Value {
         let Some(payload) = self.gate else {
-            let seen = quench_runtime::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
+            let seen = quench_runtime::tier_surface::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
             let counted = self.raw_const(Lane::I8, i64::from(seen));
             return self.raw_compare_imm(Relation::Equal, counted, 0);
         };
@@ -333,7 +333,7 @@ impl Stage for Emit<'_, '_> {
                 (None, None) => panic!("an operation addressing the arena has its base"),
             },
             // The table is a static that never moves; in-process code embeds its address.
-            Table::Layouts => self.constant(quench_runtime::heap::layouts::table_base() as u64),
+            Table::Layouts => self.constant(quench_runtime::tier_surface::layouts::table_base() as u64),
         }
     }
     /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's

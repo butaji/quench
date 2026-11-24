@@ -62,26 +62,7 @@ impl Vm {
         Ok(())
     }
 
-    /// `Promise.resolve` of the intrinsic `%Promise%` receiver whose steps provably observe
-    /// nothing: a promise whose `constructor` reads as plain data to the receiver is
-    /// returned as is; any other value resolves a fresh promise as `promise_resolve_value`
-    /// resolves one, where its `then` also reads as plain data. `None` leaves an impure read
-    /// or a lifecycle-observing host to the general call.
-    pub(in crate::vm) fn lane_promise_resolve(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-        value: Value,
-    ) -> Option<Value> {
-        if self.host.observes_promise_lifecycle()
-            || receiver != self.intrinsic_promise_constructor()
-        {
-            return None;
-        }
-        self.intrinsic_promise_resolve(p, value)
-    }
-
-    /// `lane_promise_resolve` of the realm's own `%Promise%`, the receiver an `await`'s
+    /// `Promise.resolve` of the realm's own `%Promise%` whose steps observe nothing, the receiver an `await`'s
     /// PromiseResolve always has, without looking that receiver up to compare it: a promise
     /// whose layout the species proof answers (`promise_species_proved`) reads its
     /// `constructor` as this realm's `%Promise%`, which the proof was recorded for, so it is

@@ -80,7 +80,7 @@ fn chain_stores(
     stores: &mut ChainStores,
     classes: usize,
 ) -> Option<Value> {
-    let record = vm.heap.function(class)?;
+    let record = vm.function_record(class)?;
     let FunctionKind::User(program, function) = &record.kind else {
         return None;
     };

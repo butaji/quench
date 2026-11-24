@@ -164,7 +164,7 @@ impl Vm {
             self.set_builtin_named(p, now, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let tag = self.heap.alloc_string("Temporal.Now".into());
+            let tag = self.allocate_string("Temporal.Now".into());
             self.set_symbol_property(now, symbol, tag)?;
             self.set_property_attributes(
                 now,
@@ -189,7 +189,7 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::TemporalNowTimeZoneId {
-            return Ok(self.heap.alloc_string("UTC".into()));
+            return Ok(self.allocate_string("UTC".into()));
         }
         let milliseconds = HostContext::new(&mut *self.host).invoke(CapabilityId::ClockMillis, None);
         if !milliseconds.is_finite() {
@@ -246,9 +246,8 @@ impl Vm {
                 let constructor_key = self.intern_atom("ZonedDateTime");
                 let constructor = self.get_property(p, temporal, constructor_key)?;
                 let args = [
-                    self.heap
-                        .alloc(Cell::bigint(epoch_nanoseconds.into())),
-                    self.heap.alloc_string(timezone.into()),
+                    self.allocate_cell(Cell::bigint(epoch_nanoseconds.into())),
+                    self.allocate_string(timezone.into()),
                 ];
                 self.temporal_zoned_date_time_construct(p, &args, constructor)
             }
@@ -275,7 +274,7 @@ impl Vm {
             *field = if number == 0.0 { 0.0 } else { number };
         }
         self.validate_duration_fields(p, &fields)?;
-        Ok(self.heap.alloc(Cell::TemporalDuration {
+        Ok(self.allocate_cell(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),
             fields: Box::new(fields),
         }))
@@ -317,7 +316,7 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<[f64; 10], JsError> {
-        match self.heap.get(value) {
+        match self.heap_reads().get(value) {
             Some(Cell::TemporalDuration { fields, .. }) => Ok(**fields),
             _ => Err(self.type_error(
                 p,
@@ -461,7 +460,7 @@ impl Vm {
                 } else {
                     format_duration(&fields)
                 };
-                Ok(self.heap.alloc_string(JsString::from_str(&text)))
+                Ok(self.allocate_string(JsString::from_str(&text)))
             }
             Native::TemporalDurationValueOf => Err(self.type_error(
                 p,
@@ -518,10 +517,10 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<[f64; 10], JsError> {
-        if let Some(Cell::TemporalDuration { fields, .. }) = self.heap.get(value) {
+        if let Some(Cell::TemporalDuration { fields, .. }) = self.heap_reads().get(value) {
             return Ok(**fields);
         }
-        if let Some(text) = self.heap.string(value) {
+        if let Some(text) = self.heap_reads().string(value) {
             return quench_temporal::parse_duration(text.host_string())
                 .ok_or_else(|| self.range_error(p, "Invalid duration string".into()));
         }
@@ -560,11 +559,11 @@ impl Vm {
         let constructor = self.get_property(p, temporal, duration_atom)?;
         let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
-        let value = self.heap.alloc(Cell::TemporalDuration {
+        let value = self.allocate_cell(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),
             fields: Box::new(fields),
         });
-        if let Some(Cell::TemporalDuration { object, .. }) = self.heap.get_mut(value) {
+        if let Some(Cell::TemporalDuration { object, .. }) = self.library_cell_mut(value) {
             object.set_proto(prototype);
         }
         Ok(value)
@@ -609,9 +608,9 @@ impl Vm {
         p: &ResidualProgram,
         relative: &crate::temporal_zoned_date_time::ZonedDateTimeRecord,
     ) -> Result<(), JsError> {
-        let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
+        let receiver = self.allocate_cell(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(self.object_proto)),
-            instant: Box::new(quench_runtime::heap::ZonedInstant {
+            instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                 epoch_nanoseconds: relative.epoch_nanoseconds,
                 time_zone: relative.time_zone.clone(),
             }),
@@ -656,9 +655,9 @@ impl Vm {
             .iter()
             .any(|value| *value != 0.0)
         {
-            let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
+            let receiver = self.allocate_cell(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                instant: Box::new(quench_runtime::heap::ZonedInstant {
+                instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                     epoch_nanoseconds: zoned.epoch_nanoseconds,
                     time_zone: zoned.time_zone.clone(),
                 }),
@@ -670,7 +669,7 @@ impl Vm {
                 receiver,
                 &[date_duration],
             )?;
-            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(result) else {
+            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap_reads().get(result) else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
             instant.epoch_nanoseconds
@@ -820,7 +819,7 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<TemporalRelativeDate, JsError> {
-        if let Some(text) = self.heap.string(value) {
+        if let Some(text) = self.heap_reads().string(value) {
             let text = text.host_string().to_owned();
             let (date, zoned) = if text.contains(['T', 't']) {
                 crate::temporal_zoned_date_time::parse_relative_date_details(&text)
@@ -842,7 +841,7 @@ impl Vm {
         }
         if let Some(Cell::TemporalPlainDate {
             year, month, day, ..
-        }) = self.heap.get(value)
+        }) = self.heap_reads().get(value)
         {
             return Ok(TemporalRelativeDate {
                 iso_date: quench_temporal::IsoDate {
@@ -859,13 +858,13 @@ impl Vm {
             return Err(self.type_error(p, "Invalid relativeTo".into()));
         }
         if matches!(
-            self.heap.get(value),
+            self.heap_reads().get(value),
             Some(Cell::TemporalPlainDateTime { .. } | Cell::TemporalZonedDateTime { .. })
         ) {
             let constructor = self.temporal_plain_date_constructor(p)?;
             let date = self.temporal_plain_date_from(p, constructor, &[value])?;
             let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
-            let zoned = match self.heap.get(value) {
+            let zoned = match self.heap_reads().get(value) {
                 Some(Cell::TemporalZonedDateTime {
                     instant, calendar, ..
                 }) => Some(crate::temporal_zoned_date_time::ZonedDateTimeRecord {
@@ -891,7 +890,7 @@ impl Vm {
             == crate::temporal_plain_date_time_conversion::MIN_PLAIN_DATE_TIME_DATE;
         let timezone = timezone
             .map(|timezone| {
-                let timezone = self.heap.alloc_string(timezone.into());
+                let timezone = self.allocate_string(timezone.into());
                 self.temporal_timezone_id(p, timezone)
             })
             .transpose()?;
@@ -938,8 +937,8 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let fields = self.duration_fields(p, this)?;
         let options = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let (unit, relative_date) = match self.heap.get(options) {
-            _ if let Some(text) = self.heap.string(options)  => (text.to_string(), None),
+        let (unit, relative_date) = match self.heap_reads().get(options) {
+            _ if let Some(text) = self.heap_reads().string(options)  => (text.to_string(), None),
             _ if self.is_object_like(options) => {
                 let relative_to_atom = self.intern_atom("relativeTo");
                 let relative_to = self.get_property(p, options, relative_to_atom)?;
@@ -1351,9 +1350,9 @@ impl Vm {
                 )
             });
             let date_duration = self.temporal_duration_construct(p, &date_fields)?;
-            let start = self.heap.alloc(Cell::TemporalZonedDateTime {
+            let start = self.allocate_cell(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                instant: Box::new(quench_runtime::heap::ZonedInstant {
+                instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                     epoch_nanoseconds: zoned.epoch_nanoseconds,
                     time_zone: zoned.time_zone.clone(),
                 }),
@@ -1367,7 +1366,7 @@ impl Vm {
             )?;
             let Some(Cell::TemporalZonedDateTime {
                 instant, calendar, ..
-            }) = self.heap.get(date_endpoint)
+            }) = self.heap_reads().get(date_endpoint)
             else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
@@ -1383,9 +1382,9 @@ impl Vm {
             let mut day_fields = [Value::number(0.0); 10];
             day_fields[crate::temporal_date_arithmetic::DURATION_DAYS_FIELD] = Value::number(1.0);
             let next_day_duration = self.temporal_duration_construct(p, &day_fields)?;
-            let date_endpoint = self.heap.alloc(Cell::TemporalZonedDateTime {
+            let date_endpoint = self.allocate_cell(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                instant: Box::new(quench_runtime::heap::ZonedInstant {
+                instant: Box::new(quench_runtime::library_surface::ZonedInstant {
                     epoch_nanoseconds: date_endpoint_epoch,
                     time_zone,
                 }),
@@ -1397,7 +1396,7 @@ impl Vm {
                 date_endpoint,
                 &[next_day_duration],
             )?;
-            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(next_day) else {
+            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap_reads().get(next_day) else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
             let day_length = instant.epoch_nanoseconds.abs_diff(date_endpoint_epoch);
@@ -1604,7 +1603,7 @@ impl Vm {
             ("roundingMode", "trunc"),
         ] {
             let atom = self.intern_atom(name);
-            let value = self.heap.alloc_string(value.into());
+            let value = self.allocate_string(value.into());
             self.set_property(internal_options, atom, value)?;
         }
         let date_difference = self.temporal_plain_date_difference(
@@ -1702,7 +1701,7 @@ impl Vm {
         ),
         JsError,
     > {
-        let is_string = self.heap.is_string(options);
+        let is_string = self.heap_reads().is_string(options);
         if !is_string && !self.is_object_like(options) {
             return Err(self.type_error(p, "Options must be an object or string".into()));
         }

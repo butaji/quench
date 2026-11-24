@@ -34,7 +34,7 @@ use crate::ext_traits::*;
 use super::{choose, CallShape, Choice, DirectFacts};
 use quench_runtime::bytecode::{Class, FieldBase, FieldLookup, Register, WideInstruction, REGISTER_MASK};
 use quench_runtime::compile::liveness::RegisterMasks;
-use quench_runtime::heap::GlobalFact;
+use quench_runtime::tier_surface::GlobalFact;
 use quench_runtime::value::Value;
 use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, InlinedCall};
 use super::super::super::osr_loop::{inlined_returning, renamed};
@@ -404,7 +404,7 @@ mod tests {
     use quench_runtime::vm::tier_policy::TierRows;
     use quench_runtime::bytecode::{Op, Operand, RETURN_REGISTER};
     use quench_runtime::code_dependencies::{DependentCode, PublishedCode};
-    use quench_runtime::heap::{global_value_fact, note_global_write, subscribe_global_value, GlobalCell};
+    use quench_runtime::tier_surface::{global_value_fact, note_global_write, subscribe_global_value, GlobalCell};
     use quench_runtime::staged::call::{CellFacts, ENTRY_ACTIVATES};
     use oxc_ast::ast::BinaryOperator;
     use std::rc::Rc;

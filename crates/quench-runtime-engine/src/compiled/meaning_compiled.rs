@@ -264,83 +264,83 @@ pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
     }
 }
 
-/// A binary operation of the numeric lowering (`JsDenotation::NumericBinary`): the catalog's property
+/// A binary operation of the numeric lowering (the catalog's numeric-binary denotation): the catalog's property
 /// of the opcode, which `numeric_binary` rows and the stage admit by their operator.
 #[inline(always)]
 pub(crate) fn is_numeric_binary(instruction: WideInstruction) -> bool {
     quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary)
 }
 
-/// A unary operation of the numeric lowering (`JsDenotation::NumericUnary`), as `is_numeric_binary`.
+/// A unary operation of the numeric lowering (the catalog's numeric-unary denotation), as `is_numeric_binary`.
 #[inline(always)]
 pub(crate) fn is_numeric_unary(instruction: WideInstruction) -> bool {
     quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericUnary)
 }
 
-/// Whether a region rejection's opcode is a plain call (`Op::Call`), the stop the inliner takes over
+/// Whether a region rejection's opcode is a plain call (`Operation::encode_call`), the stop the inliner takes over
 /// once the call site is hot (`RegionAnalysisFailure::is_call_boundary`).
 #[inline(always)]
 pub(crate) fn is_call_rejection(opcode: u16) -> bool {
-    opcode == Op::Call as u16
+    quench_runtime::staged::Operation::<u64, ()>::is_call_index(opcode)
 }
 
 /// The record that reads a named field into `a` through the base in `b`, the lookup in `c` and the
 /// atom in `imm` (`GetField`). A rewrite builds its reads with this, not by naming the opcode.
 #[inline(always)]
 pub(crate) fn field_read_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
-    WideInstruction::new(Op::GetField, a, b, c, imm)
+    quench_runtime::staged::Operation::<u64, ()>::encode_get_field(a, b, c, imm)
 }
 
 /// The record that stores `a` into the `this` field named by the site in `c` and atom `imm`
 /// (`SetThisField`), the sink of a fused read.
 #[inline(always)]
 pub(crate) fn this_field_store_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
-    WideInstruction::new(Op::SetThisField, a, b, c, imm)
+    quench_runtime::staged::Operation::<u64, ()>::encode_set_this_field(a, b, c, imm)
 }
 
 /// The record that stores `a` into a field of the object in `b` through the lookup in `c` and atom
 /// `imm` (`SetField`).
 #[inline(always)]
 pub(crate) fn field_store_record(a: u16, b: u16, c: u16, imm: u32) -> WideInstruction {
-    WideInstruction::new(Op::SetField, a, b, c, imm)
+    quench_runtime::staged::Operation::<u64, ()>::encode_set_field(a, b, c, imm)
 }
 
 /// The record that copies register `b` into `a` (`Move`).
 #[inline(always)]
 pub(crate) fn move_record(a: Register, b: Register) -> WideInstruction {
-    WideInstruction::new(Op::Move, a, b, 0, 0)
+    quench_runtime::staged::Operation::<u64, ()>::encode_move(a, b)
 }
 
 /// The record that jumps unconditionally to the PC `target` (`Jump`).
 #[inline(always)]
 pub(crate) fn jump_record(target: u32) -> WideInstruction {
-    WideInstruction::new(Op::Jump, 0, 0, 0, target)
+    quench_runtime::staged::Operation::<u64, ()>::encode_jump(target)
 }
 
 /// The record that reads a capture into `a` at the depth and slot its immediate `imm` names
 /// (`LoadCapture`), through the operands in `b` and `c`.
 #[inline(always)]
 pub(crate) fn capture_load_record(a: u16, b: u16, c: u16, imm: u32) -> WideInstruction {
-    WideInstruction::new(Op::LoadCapture, a, b, c, imm)
+    quench_runtime::staged::Operation::<u64, ()>::encode_load_capture(a, b, c, imm)
 }
 
 /// The record that does nothing (`Nop`): a marker a rewrite leaves or a slot a residual clears.
 #[inline(always)]
 pub(crate) fn nop_record() -> WideInstruction {
-    WideInstruction::new(Op::Nop, 0, 0, 0, 0)
+    quench_runtime::staged::Operation::<u64, ()>::encode_nop()
 }
 
 /// The plain call record: callee in `b`, result in `a`, receiver and arguments from `c` as the
 /// immediate `imm` lays them out (`Call`).
 #[inline(always)]
 pub(crate) fn call_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
-    WideInstruction::new(Op::Call, a, b, c, imm)
+    quench_runtime::staged::Operation::<u64, ()>::encode_call(a, b, c, imm)
 }
 
 /// The construct record over the same operands as the original construction (`Construct`).
 #[inline(always)]
 pub(crate) fn construct_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
-    WideInstruction::new(Op::Construct, a, b, c, imm)
+    quench_runtime::staged::Operation::<u64, ()>::encode_construct(a, b, c, imm)
 }
 
 /// The site-lookup field read record (`GetField`) with result flags folded into `a`.
@@ -359,12 +359,6 @@ pub(crate) fn is_super_construct(instruction: WideInstruction) -> bool {
 #[inline(always)]
 pub(crate) fn writes_register_a(instruction: WideInstruction) -> bool {
     instruction.op().field_layout(quench_runtime::bytecode::InstructionField::A).is_register_field()
-}
-
-/// Whether the inline-unit rewriter replaces this opcode's records (the catalog's trait).
-#[inline(always)]
-pub(crate) fn is_unit_rewritten(op: Op) -> bool {
-    op.is_unit_rewritten()
 }
 
 /// The number of catalog opcodes: one past the last opcode index, the index a table keeps for a

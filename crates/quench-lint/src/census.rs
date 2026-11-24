@@ -153,6 +153,13 @@ const METRICS: &[Metric] = &[
         extract: Extract::Syntax(extract::stable_epoch_reads),
     },
     Metric {
+        name: "tier_runtime_internals",
+        direction: Direction::Down,
+        sources: &[Source::Tree(ENGINE, &[]), Source::Tree("crates/quench-bjit/src", &[]), Source::Tree("crates/quench-bjit/stencils", &[]),
+            Source::File("crates/quench-runtime/src/tier_surface.rs")],
+        extract: Extract::Text(extract::runtime_internals),
+    },
+    Metric {
         name: "lane_dispatch_lines",
         direction: Direction::Down,
         sources: &[Source::File("crates/quench-runtime-engine/src/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],

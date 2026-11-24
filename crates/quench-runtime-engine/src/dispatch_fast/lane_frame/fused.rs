@@ -50,7 +50,7 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
             let fields = LaneFields::<A, { $flag }>(i);
             let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<A>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap.arena_values_base()
+                unsafe { vm(cx) }.heap_reads().arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
@@ -124,7 +124,7 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
             let fields = LaneFields::<B, { $flag }>(i);
             let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap.arena_values_base()
+                unsafe { vm(cx) }.heap_reads().arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
@@ -177,7 +177,7 @@ sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler;
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap.arena_values_base()
+                unsafe { vm(cx) }.heap_reads().arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
@@ -203,7 +203,7 @@ sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler;
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap.arena_values_base()
+                unsafe { vm(cx) }.heap_reads().arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);

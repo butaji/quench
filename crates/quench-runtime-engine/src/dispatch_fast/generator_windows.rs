@@ -160,7 +160,7 @@ pub(crate) fn start_called_generator(
 #[derive(Clone, Copy)]
 pub(crate) struct WindowLocals {
     captured: u64,
-    own_slots: Option<*const quench_runtime::heap::EnvironmentSlots>,
+    own_slots: Option<*const quench_runtime::tier_surface::EnvironmentSlots>,
 }
 
 /// The collection epoch (the capture's remembered environment), program-store epoch (its
@@ -202,7 +202,7 @@ impl WindowPlan {
 /// function has no view or environment layout.
 pub(crate) fn window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &FrameRecord, environment: bool) -> Option<WindowPlan> {
     let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
-    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), env, captured);
+    let key = (vm.heap_reads().collection_epoch(), vm.programs.context_epoch(), env, captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.holds(key)) {
         return Some(plan);
     }
@@ -219,7 +219,7 @@ pub(crate) fn window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &FrameReco
 /// plan it does not hold already.
 #[inline(always)]
 pub(crate) fn cached_window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &FrameRecord) -> Option<(WindowPlan, bool)> {
-    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
+    let key = (vm.heap_reads().collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.holds(key)) {
         return Some((plan, false));
     }
@@ -237,7 +237,7 @@ pub(crate) fn cached_window_plan(vm: &mut Vm, code: &ResidualProgram, frame: &Fr
 pub(crate) unsafe fn record_window_plan<'a>(vm: &mut Vm, code: &ResidualProgram, frame: *mut FrameRecord) -> Option<&'a WindowPlan> {
     // SAFETY: as the caller guarantees.
     let record = unsafe { &mut *frame };
-    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), record.env, record.captured);
+    let key = (vm.heap_reads().collection_epoch(), vm.programs.context_epoch(), record.env, record.captured);
     if !matches!(&record.window_plan, Some(plan) if plan.holds(key)) {
         record.window_plan = Some(shared_window_plan(vm, code, record, key)?);
     }
@@ -286,7 +286,7 @@ pub(crate) fn window_environments(
     environment: bool,
 ) -> Option<(Value, Option<WindowLocals>)> {
     let own = if captured {
-        let Some(quench_runtime::heap::EnvironmentRecord { parent, slots, .. }) = vm.heap.environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { parent, slots, .. }) = vm.heap_reads().environment(env) else {
             return None;
         };
         Some((*parent, std::ptr::from_ref(slots)))
@@ -372,7 +372,7 @@ pub(crate) fn open_window_locals(vm: &mut Vm, frame: *mut FrameRecord, locals: W
     // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
     let frame = unsafe { &mut *frame };
     if locals.own_slots.is_some() {
-        vm.heap.remember_cell(frame.env);
+        vm.write_barrier(frame.env);
     }
     frame.open_environment_window(locals.captured, locals.own_slots);
 }

@@ -18,7 +18,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::call_plan::inline::{InlineSite, Proof};
-use quench_runtime::heap::GlobalFact;
+use quench_runtime::tier_surface::GlobalFact;
 
 /// What a caller instruction becomes: a row, or a call's inlined site.
 pub(crate) enum What {

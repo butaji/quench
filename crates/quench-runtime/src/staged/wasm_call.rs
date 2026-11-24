@@ -25,6 +25,7 @@ pub enum Call {
 
 #[cfg(not(stencil_build))]
 impl Call {
+    #[inline(always)]
     pub const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::CallKnown => Some(Self::Known),

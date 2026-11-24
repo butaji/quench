@@ -42,8 +42,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlDisplayNames, global, global);
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_display_names_constructors
@@ -95,7 +94,7 @@ impl Vm {
                 let locales = vm.canonical_locale_list(p, args.first().copied())?;
                 let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
                 let options = vm.display_names_options(p, args.get(1).copied())?;
-                let instance = vm.heap.alloc_object(Self::empty_object(prototype));
+                let instance = vm.allocate_object(Self::empty_object(prototype));
                 for (slot, value) in [
                     (DISPLAY_NAMES_LOCALE_SLOT, locale),
                     (DISPLAY_NAMES_TYPE_SLOT, options.display_type),
@@ -169,7 +168,7 @@ impl Vm {
         let fallback = self.display_names_slot(p, this, DISPLAY_NAMES_FALLBACK_SLOT)?;
         Ok(
             display_name_value(&code, &kind, locale, &fallback).map_or(Value::UNDEFINED, |name| {
-                self.heap.alloc_string(name.into())
+                self.allocate_string(name.into())
             }),
         )
     }
@@ -189,7 +188,7 @@ impl Vm {
         ] {
             let value = self.display_names_slot(p, this, slot)?;
             let atom = self.intern_atom(key);
-            let value = self.heap.alloc_string(value.into());
+            let value = self.allocate_string(value.into());
             self.set_property(result, atom, value)?;
         }
         let _ = p;

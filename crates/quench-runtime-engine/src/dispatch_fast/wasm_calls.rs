@@ -5,7 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::machine::{Machine, MachineStage};
-use quench_runtime::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation};
+use quench_runtime::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation, WasmNativeEntry};
 use super::lane_stack_growth::LaneStackFull;
 use quench_runtime::vm::JsError;
 
@@ -67,54 +67,18 @@ impl MachineStage for LaneCall<'_> {
     }
 }
 
-impl WasmActivation for LaneCall<'_> {
+impl WasmNativeEntry for LaneCall<'_> {
     type Resume = Resumed;
-    type Shape = (ActivationShape, Ip);
-    type Full = LaneStackFull;
-    type Guard = quench_runtime::stack::GuestCallGuard;
-
-    #[inline(always)]
-    fn reference(&mut self) -> CallTarget {
-        if let Some(function) = self.indirect_callee() {
-            return CallTarget::Function(function);
-        }
-        let vm = unsafe { vm(self.cx) };
-        let running = (unsafe { (*self.cx).program }, Some(instance_env_in_lane(self.cx)));
-        match vm.heap.function(self.r.get(self.i.b)) {
-            Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
-                if (*program, Some(*env)) == running =>
-            {
-                u16::try_from(*function).map_or(CallTarget::Other, |function| CallTarget::Function(u32::from(function)))
-            }
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::WasmHost), .. }) => CallTarget::Import,
-            _ => CallTarget::Other,
-        }
-    }
-
-    #[inline(always)]
-    fn inline_calls(&mut self) -> bool {
-        unsafe { (*self.cx).inline_calls }
-    }
-
     #[inline(always)]
     fn native_mode(&mut self) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        vm.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
+        unsafe { vm(self.cx) }.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
     }
 
     #[inline(always)]
     fn has_native(&mut self, function: u32) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        let (program, function) = (unsafe { (*self.cx).program }, function as usize);
+        let (vm, program, function) = (unsafe { vm(self.cx) }, unsafe { (*self.cx).program }, function as usize);
         vm.programs.has_compiled_function_or_note_fallback(program, function)
             || vm.programs.has_wasm_tier_containing(program, function)
-    }
-
-    #[inline(always)]
-    fn note_tier_entry(&mut self, function: u32) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        let program = unsafe { (*self.cx).program };
-        vm.programs.note_wasm_tier_lane_entry(program, function)
     }
 
     #[inline(always)]
@@ -131,6 +95,71 @@ impl WasmActivation for LaneCall<'_> {
             Some(None) => NativeCall::Declined,
             Some(Some(value)) => NativeCall::Ran(value.to_bits()),
         }
+    }
+
+    #[inline(always)]
+    fn left(&mut self) -> Resumed {
+        Resumed::Exit(exit(self.ip))
+    }
+
+    #[inline(always)]
+    fn complete_call(&mut self, word: u64) -> Resumed {
+        let vm = unsafe { vm(self.cx) };
+        // The caller's view is of the run's resolved binding, which its return reads again: the
+        // callee may have grown the memory.
+        let (binding, resolved) = unsafe { (*self.cx).resolved };
+        let memory = if self.memory.bytes == resolved.bytes {
+            let fresh = memory_view(vm, binding);
+            unsafe { (*self.cx).resolved = (binding, fresh) };
+            fresh
+        } else {
+            MemoryView::NONE
+        };
+        // SAFETY: guest code the callee ran may have made the activations frames, whose
+        // registers the context then names.
+        let r = unsafe {
+            (*self.cx).memory = memory;
+            (*self.cx).registers
+        };
+        r.set(self.i.a, Value::from_bits(word));
+        let view = Carried { memory, integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+        Resumed::At(r, following(self.ip), view)
+    }
+}
+
+impl WasmActivation for LaneCall<'_> {
+    type Shape = (ActivationShape, Ip);
+    type Full = LaneStackFull;
+    type Guard = quench_runtime::stack::GuestCallGuard;
+
+    #[inline(always)]
+    fn reference(&mut self) -> CallTarget {
+        if let Some(function) = self.indirect_callee() {
+            return CallTarget::Function(function);
+        }
+        let vm = unsafe { vm(self.cx) };
+        let running = (unsafe { (*self.cx).program }, Some(instance_env_in_lane(self.cx)));
+        match vm.function_record(self.r.get(self.i.b)) {
+            Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
+                if (*program, Some(*env)) == running =>
+            {
+                u16::try_from(*function).map_or(CallTarget::Other, |function| CallTarget::Function(u32::from(function)))
+            }
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::WasmHost), .. }) => CallTarget::Import,
+            _ => CallTarget::Other,
+        }
+    }
+
+    #[inline(always)]
+    fn inline_calls(&mut self) -> bool {
+        unsafe { (*self.cx).inline_calls }
+    }
+
+    #[inline(always)]
+    fn note_tier_entry(&mut self, function: u32) -> bool {
+        let vm = unsafe { vm(self.cx) };
+        let program = unsafe { (*self.cx).program };
+        vm.programs.note_wasm_tier_lane_entry(program, function)
     }
 
     #[inline(always)]
@@ -311,34 +340,6 @@ impl WasmActivation for LaneCall<'_> {
         }
     }
 
-    #[inline(always)]
-    fn left(&mut self) -> Resumed {
-        Resumed::Exit(exit(self.ip))
-    }
-
-    #[inline(always)]
-    fn complete_call(&mut self, word: u64) -> Resumed {
-        let vm = unsafe { vm(self.cx) };
-        // The caller's view is of the run's resolved binding, which its return reads again: the
-        // callee may have grown the memory.
-        let (binding, resolved) = unsafe { (*self.cx).resolved };
-        let memory = if self.memory.bytes == resolved.bytes {
-            let fresh = memory_view(vm, binding);
-            unsafe { (*self.cx).resolved = (binding, fresh) };
-            fresh
-        } else {
-            MemoryView::NONE
-        };
-        // SAFETY: guest code the callee ran may have made the activations frames, whose
-        // registers the context then names.
-        let r = unsafe {
-            (*self.cx).memory = memory;
-            (*self.cx).registers
-        };
-        r.set(self.i.a, Value::from_bits(word));
-        let view = Carried { memory, integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
-        Resumed::At(r, following(self.ip), view)
-    }
 }
 
 lane_handler! {
@@ -571,7 +572,7 @@ fn js_import_of(vm: &mut Vm, wrapper: Value) -> Option<JsImportPlan> {
 /// host-backed or memcpy import, or a signature past the scalars the activation converts.
 #[inline(never)]
 fn js_import_plan(vm: &Vm, wrapper: Value) -> Option<JsImportPlan> {
-    let record = vm.heap.function(wrapper)?;
+    let record = vm.function_record(wrapper)?;
     let (callee, capture, signature) = vm.host_import_js_target(wrapper)?;
     if capture.is_some() {
         return None;

@@ -119,7 +119,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
     let native = region.function;
     let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
-            if i32::from(offset) == quench_runtime::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
+            if i32::from(offset) == quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
                 && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32))
         .count();
     // The implicit receiver has its entry projection; o needs one shape

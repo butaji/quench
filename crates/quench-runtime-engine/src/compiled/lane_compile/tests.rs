@@ -4,7 +4,7 @@
 use crate::ext_traits::*;
 use super::LaneDependencies;
 use quench_runtime::code_dependencies::{CodeReaders, DependentCode, PublishedCode, SlotDependency};
-use quench_runtime::heap::{Heap, Object};
+use quench_runtime::{heap::Heap, tier_surface::Object};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::Value;
 use std::rc::Rc;
@@ -81,21 +81,21 @@ fn chain_dependencies_retire_at_their_own_prototypes_only() {
         assert!(LaneDependencies::default().subscribe(&stable, &reader, heap, &mut CodeReaders::default()));
         code
     };
-    let through_middle = PrototypeChain { link: quench_runtime::heap::ProtoLink::of(middle).bits(), depth: 2 };
+    let through_middle = PrototypeChain { link: quench_runtime::tier_surface::ProtoLink::of(middle).bits(), depth: 2 };
     let code = subscribed(&mut heap, through_middle);
     heap.set_object_shape(other, 2);
     assert!(heap.object(other).unwrap().was_used_as_prototype());
     assert!(code.is_published(), "another prototype's layout change leaves the code");
     heap.object_mut(middle).unwrap().set_proto(Value::NULL);
     assert!(!code.is_published(), "a link's new prototype retires the code");
-    let at_holder = PrototypeChain { link: quench_runtime::heap::ProtoLink::of(holder).bits(), depth: 1 };
+    let at_holder = PrototypeChain { link: quench_runtime::tier_surface::ProtoLink::of(holder).bits(), depth: 1 };
     let code = subscribed(&mut heap, at_holder);
     heap.set_object_shape(middle, 2);
     assert!(code.is_published(), "a prototype no longer above the holder changes nothing it read");
     let subject = heap.object(holder).unwrap().watched_subject().unwrap();
     heap.dependencies_mut().release(subject);
     assert!(!code.is_published(), "a link's death retires the code");
-    let code = subscribed(&mut heap, PrototypeChain { link: quench_runtime::heap::ProtoLink::of(middle).bits(), depth: 1 });
+    let code = subscribed(&mut heap, PrototypeChain { link: quench_runtime::tier_surface::ProtoLink::of(middle).bits(), depth: 1 });
     heap.dependencies_mut().retire_cells();
     assert!(!code.is_published(), "an event no prototype names retires the code");
 }

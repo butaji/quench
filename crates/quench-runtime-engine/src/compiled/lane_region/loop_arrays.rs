@@ -70,7 +70,7 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
 pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
     captured: impl Fn(usize, usize) -> bool, views: ElementViews,
-    typed_kinds: &[(Register, quench_runtime::heap::TypedArrayKind)], typed_captures: &[u16],
+    typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)], typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
     for &(header, back) in loops {

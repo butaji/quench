@@ -72,8 +72,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlDurationFormat, global, global);
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_duration_format_constructors
@@ -124,7 +123,7 @@ impl Vm {
                 let requested_locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
                 let options =
                     vm.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
-                let instance = vm.heap.alloc_object(Self::empty_object(prototype));
+                let instance = vm.allocate_object(Self::empty_object(prototype));
                 vm.write_duration_format_slots(instance, &options)?;
                 Ok(instance)
             })
@@ -326,7 +325,7 @@ impl Vm {
             .iter()
             .map(|part| part.value.as_str())
             .collect::<String>();
-        Ok(self.heap.alloc_string(text.into()))
+        Ok(self.allocate_string(text.into()))
     }
 
     fn duration_format_to_parts(
@@ -340,19 +339,19 @@ impl Vm {
         for part in parts {
             let object = self.object();
             let kind_atom = self.intern_atom("type");
-            let kind = self.heap.alloc_string(part.kind.into());
+            let kind = self.allocate_string(part.kind.into());
             self.set_property(object, kind_atom, kind)?;
             let value_atom = self.runtime_atoms.value;
-            let value = self.heap.alloc_string(part.value.into());
+            let value = self.allocate_string(part.value.into());
             self.set_property(object, value_atom, value)?;
             if let Some(unit) = part.unit {
                 let unit_atom = self.intern_atom("unit");
-                let unit = self.heap.alloc_string(unit.into());
+                let unit = self.allocate_string(unit.into());
                 self.set_property(object, unit_atom, unit)?;
             }
             values.push(object);
         }
-        Ok(self.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+        Ok(self.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 values,
             )))

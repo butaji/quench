@@ -139,8 +139,7 @@ impl Vm {
         self.set_builtin_named(p, prototype, "equals", Native::TemporalPlainDateTimeEquals)?;
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
             let value = self
-                .heap
-                .alloc_string("Temporal.PlainDateTime".into());
+                .allocate_string("Temporal.PlainDateTime".into());
             self.set_symbol_property(prototype, symbol, value)?;
             self.set_property_attributes(
                 prototype,
@@ -177,7 +176,7 @@ impl Vm {
         let calendar = args.get(9).copied().unwrap_or(Value::UNDEFINED);
         let calendar = if calendar.is_undefined() {
             "iso8601".to_owned()
-        } else if self.heap.is_string(calendar) {
+        } else if self.heap_reads().is_string(calendar) {
             let value = self.to_string(p, calendar)?;
             crate::temporal_date_parse::parse_calendar_identifier_name(&value)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -196,9 +195,9 @@ impl Vm {
         } else {
             self.object_proto
         };
-        Ok(self.heap.alloc(Cell::TemporalPlainDateTime {
+        Ok(self.allocate_cell(Cell::TemporalPlainDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            date_time: Box::new(quench_runtime::heap::IsoDateTimeFields {
+            date_time: Box::new(quench_runtime::library_surface::IsoDateTimeFields {
                 date: (date.year, date.month, date.day),
                 time: time.map(|value| value as u32),
             }),
@@ -278,7 +277,7 @@ impl Vm {
                 "",
             )
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-            return Ok(self.heap.alloc_string(text.into()));
+            return Ok(self.allocate_string(text.into()));
         }
         if native == Native::TemporalPlainDateTimeToPlainDate {
             let (date, _, calendar) = self.temporal_plain_date_time_slots(p, this)?;
@@ -313,7 +312,7 @@ impl Vm {
             quench_intl::calendar_fields_from_iso(date.year, date.month, date.day, &calendar);
         let value = match native {
             Native::TemporalPlainDateTimeCalendarIdGetter => {
-                return Ok(self.heap.alloc_string(calendar.into()));
+                return Ok(self.allocate_string(calendar.into()));
             }
             Native::TemporalPlainDateTimeYearGetter => i64::from(
                 calendar_fields
@@ -331,7 +330,7 @@ impl Vm {
                     .map_or(date.day, |fields| fields.day),
             ),
             Native::TemporalPlainDateTimeMonthCodeGetter => {
-                return Ok(self.heap.alloc_string(
+                return Ok(self.allocate_string(
                     calendar_fields
                         .map_or_else(
                             || format!("M{:0width$}", date.month, width = MONTH_CODE_DIGITS),
@@ -351,7 +350,7 @@ impl Vm {
                     Native::TemporalPlainDateTimeEraGetter => calendar_fields
                         .and_then(|fields| fields.era)
                         .map_or(Value::UNDEFINED, |era| {
-                            self.heap.alloc_string(era.into())
+                            self.allocate_string(era.into())
                         }),
                     _ => calendar_fields
                         .and_then(|fields| fields.era_year)
@@ -426,7 +425,7 @@ impl Vm {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.is_object_like(value) {
             if !matches!(
-                self.heap.get(value),
+                self.heap_reads().get(value),
                 Some(
                     Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainDate { .. }
@@ -455,7 +454,7 @@ impl Vm {
                 Value::number(f64::from(time[3])),
                 Value::number(f64::from(time[4])),
                 Value::number(f64::from(time[5])),
-                self.heap.alloc_string(calendar.into()),
+                self.allocate_string(calendar.into()),
             ];
             return self.temporal_plain_date_time_construct(p, &args, constructor);
         }
@@ -467,7 +466,7 @@ impl Vm {
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime string".into()))?;
         let base = text.split('[').next().unwrap_or(&text);
         let time = if let Some((_, time)) = base.split_once(['T', 't', ' ']) {
-            let time = self.heap.alloc_string(time.to_owned().into());
+            let time = self.allocate_string(time.to_owned().into());
             crate::temporal_plain_date_time_conversion::parse_time_string(self, p, time)?
         } else {
             [0; 6]
@@ -483,7 +482,7 @@ impl Vm {
             Value::number(f64::from(time[3])),
             Value::number(f64::from(time[4])),
             Value::number(f64::from(time[5])),
-            self.heap.alloc_string(calendar.into()),
+            self.allocate_string(calendar.into()),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -613,7 +612,7 @@ impl Vm {
         } else {
             return Err(self.type_error(p, "Invalid monthCode".into()));
         };
-        let Some(text) = self.heap.string(primitive) else {
+        let Some(text) = self.heap_reads().string(primitive) else {
             return Err(self.type_error(p, "Invalid monthCode".into()));
         };
         crate::temporal_date::parse_iso_month_code_syntax(text.host_string())
@@ -710,7 +709,7 @@ impl Vm {
             Value::number(f64::from(time[3])),
             Value::number(f64::from(time[4])),
             Value::number(f64::from(time[5])),
-            self.heap.alloc_string(calendar.into()),
+            self.allocate_string(calendar.into()),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -775,7 +774,7 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<(IsoDate, [u32; 6], String), JsError> {
-        match self.heap.get(value) {
+        match self.heap_reads().get(value) {
             Some(Cell::TemporalPlainDateTime {
                 date_time,
                 calendar,
@@ -932,14 +931,14 @@ impl Vm {
         let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
         let is_plain_time = self
-            .heap
+            .heap_reads()
             .object_record(changes)
             .is_some_and(|object| object.proto() == self.temporal_plain_time_proto);
         if !self.is_object_like(changes)
-            || self.heap.array(changes).is_some()
+            || self.heap_reads().array(changes).is_some()
             || is_plain_time
             || matches!(
-                self.heap.get(changes),
+                self.heap_reads().get(changes),
                 Some(
                     Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
@@ -1143,8 +1142,8 @@ impl Vm {
         if calendar_value.is_undefined() {
             return Err(self.type_error(p, "Missing calendar".into()));
         }
-        let calendar = match self.heap.get(calendar_value) {
-            _ if let Some(value) = self.heap.string(calendar_value)  => {
+        let calendar = match self.heap_reads().get(calendar_value) {
+            _ if let Some(value) = self.heap_reads().string(calendar_value)  => {
                 crate::temporal_date_parse::calendar_identifier_from_string(value.host_string())
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }

@@ -125,13 +125,13 @@ unsafe extern "C" fn exception_new_callout(
 /// The catch's test of `exception` against `tag`: the flag in `out`.
 unsafe extern "C" fn exception_match_callout(
     context: *mut CallContext,
-    exception: u64,
-    tag: u64,
+    exception: Value,
+    tag: Value,
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
-    match vm.wasm_exception_matches(Value::from_bits(exception), Value::from_bits(tag)) {
+    match vm.wasm_exception_matches(exception, tag) {
         Ok(matches) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
             unsafe { *out = u64::from(matches) };
@@ -190,10 +190,10 @@ unsafe extern "C" fn exception_payload_callout(
 
 /// `throw_ref` of `exception`: the error it raises is left in the context, and the status is the
 /// raised one. It always returns that status.
-unsafe extern "C" fn exception_throw_callout(context: *mut CallContext, exception: u64) -> i64 {
+unsafe extern "C" fn exception_throw_callout(context: *mut CallContext, exception: Value) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let vm = unsafe { &mut *(*context).head.vm.cast::<Vm>() };
-    let error = vm.wasm_throw_ref(Value::from_bits(exception));
+    let error = vm.wasm_throw_ref(exception);
     // SAFETY: compiled code passes the context of its call.
     finish_callout(unsafe { &mut *context }, Ok(Err(error)))
 }

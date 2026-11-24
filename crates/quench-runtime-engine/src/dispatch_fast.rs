@@ -113,7 +113,7 @@ use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
 use quench_runtime::vm::iterators::InPlaceStep;
 use smallvec::SmallVec;
-use quench_runtime::heap::InlineObjectHeader;
+use quench_runtime::tier_surface::InlineObjectHeader;
 use quench_runtime::value_vec::INLINE_PROPERTY_COUNT;
 use crate::engine_prelude::*;
 use quench_runtime::bytecode::{RegisterList, Traits};
@@ -842,9 +842,6 @@ pub(crate) unsafe fn set_frame_word(registers: *mut Value, index: usize, word: u
     // SAFETY: as the caller promises.
     unsafe { *registers.cast::<u64>().sub(index) = word }
 }
-/// `CONTEXT_PACKED`'s flag of a plain frame.
-pub(crate) const PLAIN_FRAME_FLAG: u64 = quench_runtime::staged::frame::PLAIN_FLAG;
-
 use quench_runtime::vm::engine_types::Registers;
 
 #[quench_macros::ext(RegistersOps1)]
@@ -2070,7 +2067,7 @@ pub(crate) fn retire_running_lane_context() {
 unsafe fn resume_lane_binding(context: *mut ()) {
     let cx = context.cast::<LaneContext>();
     // SAFETY: the prefix's callback was installed for this context's Host.
-    let base = unsafe { vm(cx) }.heap.object_record_base().unwrap_or(std::ptr::null());
+    let base = unsafe { vm(cx) }.heap_reads().object_record_base().unwrap_or(std::ptr::null());
     unsafe { (*cx).binding.object_base = base };
 }
 
@@ -2107,7 +2104,7 @@ const NO_FRAME_STORAGE: FrameStorage =
 /// for a frame run of a function other than the root whose frame holds one; `None` leaves
 /// the access to the heap.
 #[inline(always)]
-fn frame_storage_in_lane(cx: *mut LaneContext) -> Option<&'static mut quench_runtime::heap::EnvironmentSlots> {
+fn frame_storage_in_lane(cx: *mut LaneContext) -> Option<&'static mut quench_runtime::tier_surface::EnvironmentSlots> {
     let vm = unsafe { vm(cx) };
     let index = unsafe { (*cx).frame() };
     let frame = &vm.frames[index];
@@ -2131,10 +2128,10 @@ fn find_frame_storage_in_lane(
     cx: *mut LaneContext,
     frame: usize,
     env: Value,
-) -> *mut quench_runtime::heap::EnvironmentSlots {
+) -> *mut quench_runtime::tier_surface::EnvironmentSlots {
     let vm = unsafe { vm(cx) };
-    let slots = match vm.heap.environment_mut(env) {
-        Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) => std::ptr::from_mut(slots),
+    let slots = match vm.environment_mut(env) {
+        Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) => std::ptr::from_mut(slots),
         _ => std::ptr::null_mut(),
     };
     unsafe { (*cx).frame_storage = FrameStorage { frame, env, slots } };
@@ -2186,7 +2183,7 @@ pub(crate) fn capture_stores(capture: *const usize) -> Option<*const usize> {
 #[inline(always)]
 pub(crate) unsafe fn capture_view(capture: *const usize) -> (Option<(*const Value, usize)>, bool) {
     // SAFETY: as the caller promises.
-    (unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(capture)) }, capture_stores(capture).is_some())
+    (unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(capture)) }, capture_stores(capture).is_some())
 }
 
 /// A lane handler returns the next record for the lane loop, tagged with
@@ -2346,7 +2343,7 @@ fn script_below_floor(cx: *mut LaneContext) -> bool {
 /// one runs: a linked region's general frame polls the heap's own counters instead.
 #[inline(always)]
 pub(crate) fn note_allocation(vm: &Vm) {
-    if vm.heap.should_collect() {
+    if vm.collection_due() {
         let floor = tls_lane_floor();
         // SAFETY: as `lane_floor`, while a lane runs; null otherwise.
         if let Some(floor) = unsafe { floor.as_ref() } {
@@ -2756,11 +2753,10 @@ use local_fields::{local_field_handler, local_field_miss};
 pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
-use lane_reads::RecordOperand;
 pub(crate) mod loop_body;
 pub(crate) mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 pub(crate) mod capture_append;
@@ -2971,7 +2967,7 @@ unsafe fn clone_environment_of(cx: *mut (), r: Registers, window: u16, plan: u32
         return false;
     };
     note_allocation(vm);
-    let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(environment) else {
+    let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = vm.heap_reads().environment(environment) else {
         unreachable!("an iteration copy is an environment");
     };
     let storage = std::ptr::from_ref(slots);
@@ -3391,7 +3387,7 @@ unsafe fn binary_values_classified(
 /// immediate operands' tests, which a string fails; else `Vm::immediate_binary`.
 #[inline(always)]
 fn concat_or_immediate(cx: *mut LaneContext, operator: u32, left: Value, right: Value) -> Option<Value> {
-    let heap = &unsafe { vm(cx) }.heap;
+    let heap = unsafe { vm(cx) }.heap_reads();
     if operator == quench_runtime::vm::operations::ADDITION && (heap.is_string(left) || heap.is_string(right))
         && let Some(value) = concat_value(cx, left, right)
     {
@@ -3738,29 +3734,6 @@ fn requicken_typed(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
 }
 
 script_handler! {
-    /// A kind variant's miss (`lane_get_index_typed_kind`): the site becomes any-kind.
-    #[inline(never)]
-    fn get_index_typed_mixed_in_lane<>(cx, r, ip, i, view) {
-        // merge: `lane_get_index_typed` is undefined in theirs; the generic keyed read row takes its place.
-        requicken(ip, element_read_row());
-        sibling!(element_read_row(), r, ip, view)
-    }
-}
-
-script_handler! {
-    /// `lane_get_index_typed` past its quick read (`Vm::typed_element_quick`): any typed
-    /// array read that allocates nothing (`Vm::plain_typed_element`), or the generic order.
-    #[inline(never)]
-    fn get_index_typed_full_in_lane<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(element_read_row(), r, ip, view)
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `delete base[key]` by the staged row: a string key on an ordinary object runs no guest
     /// code (`delete_value_in_lane`); any other deletion takes the general path.
     #[inline(never)]
@@ -3892,118 +3865,6 @@ fn row_typed_store(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value)
     stored
 }
 
-/// A plain string-keyed write (`Vm::try_plain_string_key_set`), which every array, symbol
-/// and typed-array path before it declines: the site then tries it first
-/// (`set_index_string_in_lane`).
-fn string_key_store_in_lane(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
-    let stored = vm.try_plain_string_key_set(object, key, value);
-    if stored {
-        requicken(ip, set_index_string_in_lane);
-    }
-    stored
-}
-
-script_handler! {
-    /// `set_index_slot_miss` at a site that made a plain string-keyed write: that write is
-    /// the whole store, as the generic order reaches it once every array, symbol and typed
-    /// path declines a string key; any other store takes the generic order.
-    fn set_index_string_in_lane<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        let vm = unsafe { vm(cx) };
-        if !vm.try_plain_string_key_set(object, key, value) {
-            sibling!(set_index_slot_miss, r, ip, view)
-        }
-        // Adding a property can allocate.
-        note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `set_index_slot_miss` at a site that stored into a typed array: a number stored at an
-    /// index of one is the whole store, as the generic order reaches it once every array and
-    /// symbol path declines a typed array; any other store takes the generic order.
-    fn set_index_typed_in_lane<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_cached_store::<{ quench_runtime::vm::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(set_index_typed_fill_in_lane::<{ quench_runtime::vm::typed_array_access::ANY_TYPED_KIND }>, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `set_index_typed_in_lane` at a site that has stored into typed arrays of one kind only,
-    /// `KIND` (as `lane_get_index_typed_kind`).
-    fn set_index_typed_kind_in_lane<KIND: usize>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_cached_store::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(set_index_typed_fill_in_lane::<KIND>, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `set_index_typed_kind_in_lane` at a site that has stored a double into its integer kind:
-    /// any Number converts in place (`Vm::typed_cached_store_number`).
-    fn set_index_typed_number_kind_in_lane<KIND: usize>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_cached_store_number::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(set_index_typed_fill_in_lane::<KIND>, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A typed store whose view has no current cached entry (as `lane_get_index_typed_fill`).
-    #[inline(never)]
-    fn set_index_typed_fill_in_lane<KIND: usize>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (base, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        // A double into an integer kind misses the hot store only: the entry is current, and a
-        // kind variant's site moves to the variant that converts doubles in place.
-        if vm.typed_cached_store_number::<KIND>(base, key, value) {
-            if KIND != quench_runtime::vm::typed_array_access::ANY_TYPED_KIND {
-                requicken(ip, set_index_typed_number_kind_in_lane::<KIND>);
-            }
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        vm.fill_typed_view(base);
-        if !vm.typed_cached_store_number::<KIND>(base, key, value) {
-            if KIND == quench_runtime::vm::typed_array_access::ANY_TYPED_KIND {
-                sibling!(set_index_typed_full_in_lane, r, ip, view)
-            }
-            sibling!(set_index_typed_mixed_in_lane, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A kind variant's miss (`set_index_typed_kind_in_lane`): the site becomes any-kind.
-    #[inline(never)]
-    fn set_index_typed_mixed_in_lane<>(cx, r, ip, i, view) {
-        requicken(ip, set_index_typed_in_lane);
-        sibling!(set_index_typed_in_lane, r, ip, view)
-    }
-}
-
-script_handler! {
-    /// `set_index_typed_in_lane` past its quick store (`Vm::typed_cached_store_number` after `fill_typed_view`): any Number stored
-    /// at an index of a typed array (`Vm::typed_array_set_number`), or the generic order.
-    #[inline(never)]
-    fn set_index_typed_full_in_lane<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        let vm = unsafe { vm(cx) };
-        let stored = vm
-            .array_index_key(key)
-            .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
-        if !stored {
-            sibling!(set_index_slot_miss, r, ip, view)
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// A capture of a root environment's global var or global lexical
 /// (`Vm::plain_projected_root_binding`), which a script's functions read for its top-level
 /// `var`s, and in an eval script's context its `let`s and `const`s: the capture's environment
@@ -4038,7 +3899,7 @@ fn frame_capture_in_lane(cx: *mut LaneContext) -> Option<*const usize> {
     // SAFETY: the context's program outlives the lane run.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     if vm.admits_every_direct_store(code, program, env) {
-        vm.heap.remember_cell(env);
+        vm.write_barrier(env);
         return Some(dense.map_addr(|address| address | CAPTURE_STORES));
     }
     Some(dense)
@@ -4149,7 +4010,7 @@ fn store_own_capture(cx: *mut LaneContext, slot: u16, value: Value) -> bool {
     capture_stores(unsafe { (*cx).registers }.capture())
         // SAFETY: the running function's dense capture slots, which admit this write
         // (`CAPTURE_STORES`); no collection runs in the lane.
-        .and_then(|slots| unsafe { quench_runtime::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
+        .and_then(|slots| unsafe { quench_runtime::tier_surface::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
         .is_some()
 }
 
@@ -4293,7 +4154,7 @@ fn object_literal_value_in_lane(cx: *mut LaneContext, r: Registers, site: u32,
     // SAFETY: `fields_fit_in_lane` admitted the window inside the register file, and no
     // other reference into it is live while the object is allocated.
     let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window.base)), usize::from(window.count)) };
-    let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+    let value = vm.allocate_object_with_properties(vm.object_proto, shape, properties);
     note_allocation(vm);
     value
 }
@@ -4376,7 +4237,7 @@ unsafe fn literal_value_in_lane(
         start,
         usize::from(array.element_count()),
     )?;
-    let array_value = vm.heap.alloc_array(quench_runtime::heap::ArrayObject::new(Vm::empty_object(vm.array_proto), elements));
+    let array_value = vm.allocate_array(quench_runtime::tier_surface::ArrayObject::new(Vm::empty_object(vm.array_proto), elements));
     r.set(array.result_register(), array_value);
     for part in [first, second] {
         let left = operand_value_in_lane(cx, r, part.operand_b().0)?;
@@ -4505,7 +4366,7 @@ script_handler! {
         };
         if !BOUND {
             // SAFETY: a successful direct-object lookup proves the range is reserved.
-            unsafe { (*cx).binding.object_base = vm.heap.object_record_base().unwrap_unchecked() };
+            unsafe { (*cx).binding.object_base = vm.heap_reads().object_record_base().unwrap_unchecked() };
         }
         // A register read probes for an own constant (an enum member, a namespace export): the
         // first object it meets stays unhinted, so the next read comes back here; the same
@@ -4543,7 +4404,7 @@ fn own_entry_hit(vm: &mut Vm, code: &ResidualProgram, object: Value, site: u16) 
         return Some(value);
     }
     let entry = vm.field_cache_entry(site);
-    let receiver = vm.heap.record_object_value(object)?;
+    let receiver = vm.heap_reads().record_object_value(object)?;
     if entry.holder != quench_runtime::vm::NO_FIELD_HOLDER || receiver.exact_shape() != entry.receiver {
         return None;
     }
@@ -4562,14 +4423,6 @@ const FIELD_LEAF_READ: u16 = {
         }
     }
 };
-
-/// The generated keyed write (`generated_row` of `ELEMENT_WRITE`): a present dense element replaced in
-/// place, any other write `set_index_slot_miss`.
-/// The write's boolean immediate (its strictness) is no operand of the in-place row, whose misses
-/// read it from the record: the row is installed at its cleared flag, so the passes that
-/// recognise the record's handler (`specialize_proved_arrays`) find it before a first run
-/// would requicken it.
-const fn element_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, FLAG_CLEAR) }
 
 /// The site fact of a keyed access of a typed array's element (`requicken_typed`): the row proves
 /// the array's view for the element kind its record's immediate holds (`LaneFrame::kept_view`),
@@ -4954,7 +4807,7 @@ fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler {
     // other forms skip the decode where float slots are off for the process.
     let tagged = !quench_runtime::vm::switches::float_slots();
     // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
-    let form = match hint.map(quench_runtime::heap::layouts::auxiliary) {
+    let form = match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
         None => 0,
         Some(hint) if hint & NARROW_FORM != 0 => 5,
         Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
@@ -5168,7 +5021,7 @@ script_handler! {
         // installed, so a hit reads the site's `String.prototype` entry directly; any other
         // read is `Vm::cached_string_field_hit`'s, whose miss records the site's entry.
         let Some(value) = (unsafe { single_field_base_in_lane(cx, r, i.b) })
-            .filter(|object| vm.heap.is_string(*object))
+            .filter(|object| vm.heap_reads().is_string(*object))
             .and_then(|object| {
                 vm.string_prototype_field_hit(i.c)
                     .or_else(|| vm.cached_string_field_hit(unsafe { &*(*cx).code }, object, i.imm(), i.c))
@@ -5206,7 +5059,7 @@ script_handler! {
     fn row_get_field_string_refresh<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let base = r.get(i.b);
-        let Some(value) = vm.heap.is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
+        let Some(value) = vm.heap_reads().is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
             sibling!(get_field_string_miss, r, ip, Carried::script_in(cx, view))
         };
         set_prototype_hint(ip, |owned| vm.hold_string_hint(owned, i.imm(), value, NO_CALL_LINK));
@@ -5363,7 +5216,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let base = unsafe { single_field_base_in_lane(cx, r, i.b) };
         let string_base = base.is_some_and(|base| {
-            (unsafe { vm(cx) }).heap.is_string(base)
+            (unsafe { vm(cx) }).heap_reads().is_string(base)
         });
         if let Some(handler) = local_field_handler(cx, i) {
             requicken(ip, handler);
@@ -5448,7 +5301,7 @@ script_handler! {
                         set_record_hint(ip, layout, slot);
                         // A tagged arena run is a fixed form: the row folds the layout's form test and the slot decode.
                         use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-                        let run = quench_runtime::heap::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
+                        let run = quench_runtime::tier_surface::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
                             && !quench_runtime::vm::switches::float_slots();
                         Some(if run {
                             single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS),
@@ -5686,7 +5539,7 @@ fn nested_last_step(
 fn own_length(vm: &Vm, object: Value) -> Option<Value> {
     // The staged row answers either by the value's tag; a form it leaves is read through the
     // string's units, or the array's record.
-    vm.length_value(object).or_else(|| match vm.heap.string(object) {
+    vm.length_value(object).or_else(|| match vm.heap_reads().string(object) {
         Some(text) => Some(Value::length(text.len())),
         None => vm.array_length_field(object, vm.length_atom),
     })
@@ -6102,7 +5955,7 @@ fn private_brand_in_lane(
     ip: Ip,
     code: &ResidualProgram,
     atom: quench_runtime::bytecode::Atom,
-) -> Option<quench_runtime::heap::PrivateBrand> {
+) -> Option<quench_runtime::tier_surface::PrivateBrand> {
     let (environment, function, frame) = private_site_in_lane(cx)?;
     unsafe { vm(cx) }.site_private_brand(code, ip.addr(), environment, function, frame, atom)
 }
@@ -6262,7 +6115,7 @@ script_handler! {
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
             && vm.private_element_addable(data)
         {
-            vm.heap.property_add(object, r.get(i.a), next);
+            vm.add_property(object, r.get(i.a), next);
             note_allocation(vm);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -6299,7 +6152,7 @@ script_handler! {
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
             && vm.private_element_addable(data)
         {
-            vm.heap.property_add(object, Value::UNDEFINED, next);
+            vm.add_property(object, Value::UNDEFINED, next);
             note_allocation(vm);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -6457,7 +6310,7 @@ script_handler! {
                     let shape = data.shape();
                     let hint = i.field_hint();
                     if shape == hint.receiver {
-                        return vm.heap.property_get(data, usize::from(hint.slot)).map(PrivateRead::Value);
+                        return vm.heap_reads().property_get(data, usize::from(hint.slot)).map(PrivateRead::Value);
                     }
                     if let Some(element) = vm.private_site_homes.unique_element(ip.addr(), shape) {
                         return Some(element_read(element, object));
@@ -6468,7 +6321,7 @@ script_handler! {
                 let vm = unsafe { vm(cx) };
                 let data = vm.object_data(object)?;
                 hint_private_field(vm, ip, i.imm(), data.shape(), slot);
-                return vm.heap.property_get(data, slot).map(PrivateRead::Value);
+                return vm.heap_reads().property_get(data, slot).map(PrivateRead::Value);
             }
             let brand = private_brand_in_lane(cx, ip, code, i.imm())?;
             let vm = unsafe { vm(cx) };
@@ -6757,7 +6610,7 @@ script_handler! {
             loop_retire_in_lane(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        if !site.may_run_natively(unsafe { vm(cx) }.heap.memory_policy()) {
+        if !site.may_run_natively(unsafe { vm(cx) }.heap_reads().memory_policy()) {
             loop_retire_in_lane(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
@@ -6929,9 +6782,10 @@ fn count_arithmetic_leave(cx: *mut LaneContext, site: &LoopSite, pc: u32, region
             let instruction = body.widened(*packed);
             let op = instruction.op();
             crate::compiled::base_region::leave(site.function(), pc, op);
+            let stores = quench_runtime::staged::stores_field(op) && matches!(op.staged(), Some(quench_runtime::bytecode::Decoder::Property)); // what decodes to `SetField` (`decode_property`), with no decode
             (quench_runtime::staged::computes_numeric_binary(op) || quench_runtime::staged::reads_element(op) || op.stores_element()
-                || op.is_field_store() || quench_runtime::staged::miss(op) == quench_runtime::staged::Miss::WalkScopes)
-                .then(|| (quench_runtime::staged::reads_element(op), op.is_field_store()))
+                || stores || quench_runtime::staged::miss(op) == quench_runtime::staged::Miss::WalkScopes)
+                .then(|| (quench_runtime::staged::reads_element(op), stores))
         })
     });
     match counted {
@@ -7213,7 +7067,7 @@ fn loop_run_in_lane(
     }
     if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        if !tier.may_run(site.tiers, unsafe { vm(cx) }.heap.memory_policy()) {
+        if !tier.may_run(site.tiers, unsafe { vm(cx) }.heap_reads().memory_policy()) {
             return site.declined(RegionDecline::NoCompile);
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
@@ -7228,7 +7082,7 @@ fn loop_run_in_lane(
     }
     // A b-jit region due to move to u-jit starts the u-jit compile and runs on meanwhile
     // (`LoopTier::promote`); one not yet due runs until the u-jit region would be ahead.
-    if tier.promotion_due() && tier.may_run(site.tiers, unsafe { vm(cx) }.heap.memory_policy()) {
+    if tier.promotion_due() && tier.may_run(site.tiers, unsafe { vm(cx) }.heap_reads().memory_policy()) {
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
@@ -7338,7 +7192,7 @@ fn loop_trace_exit_in_lane(cx: *mut LaneContext, r: Registers, site: &LoopSite, 
                 if quench_runtime::staged::writes_element(instruction.op()) {
                     let key = r.get(instruction.register_c());
                     let base = r.get(instruction.register_b());
-                    if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
+                    if let Some(array) = unsafe { vm(cx) }.heap_reads().record_array(base) {
                         eprintln!(
                             "QUENCH_JS_JIT_OSR_SET_INDEX_EXIT program={} function={} header={} pc={pc} key_bits={:016x} key_number={:?} length={} capacity={}",
                             program.raw(), site.function, site.header,
@@ -7519,7 +7373,7 @@ fn loop_entry_checked_in_lane(
             }
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
-            let value = unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(slots, *slot) }
+            let value = unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, *slot) }
                 .or_else(|| capture_read_value(cx, 0, *slot))
                 .or_else(|| {
                     // A projected global var aliases its global object's property. Native
@@ -7558,9 +7412,9 @@ fn loop_entry_checked_in_lane(
     let views = loop_tier::loop_arrays_in_lane(vm, r, region, entry).ok_or(RegionDecline::Array)?;
     loop_field_stores(cx, r, region, entry).ok_or(RegionDecline::FieldStore)?;
     if region.reads_heap_natively() {
-        let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
-        let (properties_base, properties_len) = vm.heap.native_property_values();
-        let array_base = vm.heap.array_record_base().unwrap_or(std::ptr::null());
+        let object_base = vm.heap_reads().object_record_base().unwrap_or(std::ptr::null());
+        let (properties_base, properties_len) = vm.heap_reads().native_property_values();
+        let array_base = vm.heap_reads().array_record_base().unwrap_or(std::ptr::null());
         entry.push_native_heap(object_base, properties_base, properties_len, array_base);
     }
     if let Some(inlining) = &region.inlining {
@@ -7781,7 +7635,7 @@ pub(crate) fn direct_memory_and_guard(
     vm: &Vm,
     binding: Value,
 ) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
-    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap_reads().get(binding) else {
         return None;
     };
     bytes.direct_view()
@@ -7832,7 +7686,7 @@ fn frame_memory_view(
 fn safepoint_at(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
     let cx = context_in_lane();
     // SAFETY: called only while a lane runs, from one of its handlers.
-    if unsafe { vm(cx) }.heap.should_collect() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
+    if unsafe { vm(cx) }.collection_due() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
         // SAFETY: as above.
         unsafe { (*cx).fuel = 0 };
         return exit(ip);
@@ -7924,7 +7778,7 @@ fn frame_state_in_lane(
                     function,
                     code,
                     constants,
-                    &vm.heap,
+                    vm.heap_reads(),
                     kind,
                     live,
                     sites,
@@ -7977,7 +7831,7 @@ impl Vm {
         if native != Native::HostFunction {
             return native.runs_beside_activations();
         }
-        let Some(index) = self.heap.function(callee).and_then(|function| self.host_operation_index(function.env)) else {
+        let Some(index) = self.function_record(callee).and_then(|function| self.host_operation_index(function.env)) else {
             return false;
         };
         self.host.host_function_runs_beside_activations(index as usize)
@@ -7988,9 +7842,9 @@ impl Vm {
     /// iterator, whose step reads its source alone. A generator's step resumes its frame and an
     /// iterator helper's may step one, so those take frames first.
     fn steps_beside_activations(&self, native: Native, receiver: Value) -> bool {
-        use quench_runtime::heap::IteratorKind;
+        use quench_runtime::tier_surface::IteratorKind;
         native == Native::IteratorNext
-            && self.heap.iterator(receiver).is_some_and(|iterator| {
+            && self.heap_reads().iterator(receiver).is_some_and(|iterator| {
                 matches!(
                     iterator.kind,
                     IteratorKind::Array
@@ -8019,7 +7873,7 @@ impl Vm {
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
     pub(crate) fn callee_runs_beside_activations(&self, callee: Value) -> bool {
-        match self.heap.function(callee) {
+        match self.function_record(callee) {
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
                 self.runs_beside_activations(*native, callee)
             }
@@ -8533,7 +8387,7 @@ impl Vm {
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
         if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
             let target = self.closure_target(code, program, callee, env, known)?;
-            self.lane_stack.remember_script_target(target, self.heap.memory_policy());
+            self.lane_stack.remember_script_target(target, self.heap_reads().memory_policy());
             return Some(target);
         }
         let numeric = self.numeric_body(program, function);
@@ -8560,7 +8414,7 @@ impl Vm {
         // closures share their function's.
         if !numeric && let Some(known) = self.lane_stack.function_target(program, function, cross) {
             let target = self.closure_target(code, program, callee, env, known)?;
-            let policy = self.heap.memory_policy();
+            let policy = self.heap_reads().memory_policy();
             if cross {
                 self.lane_stack.remember_cross_target(target, policy);
             } else {
@@ -8750,7 +8604,7 @@ impl Vm {
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
     /// `cross` one among the other programs' targets.
     fn remember_target(&mut self, target: ScriptCallTarget, numeric: bool, cross: bool) {
-        let policy = self.heap.memory_policy();
+        let policy = self.heap_reads().memory_policy();
         if numeric {
             // A numeric body's target is its closure's, held per callee: another program's in
             // the cross-program set, which its callers activate across programs.
@@ -8776,7 +8630,7 @@ impl Vm {
         // A frameless activation's function has no environment of its own: its depth-0
         // captures are the closure environment's dense slots (`Vm::environment_capture_slots`),
         // read here with the facts the store tag needs from the same cell.
-        let Some(quench_runtime::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function, slots, scope, .. }) = self.heap_reads().environment(env) else {
             return std::ptr::null();
         };
         // A root environment's slot may project a global var, a global lexical binding or an
@@ -8793,7 +8647,7 @@ impl Vm {
         if quench_runtime::vm::environment::direct_store_owner(code, program, *function, scope)
             .is_some_and(quench_runtime::vm::environment::owner_admits_every_direct_store)
         {
-            self.heap.remember_cell(env);
+            self.write_barrier(env);
             return capture.map_addr(|address| address | CAPTURE_STORES);
         }
         capture
@@ -8870,7 +8724,7 @@ impl Vm {
                 function,
                 code,
                 constants,
-                &self.heap,
+                self.heap_reads(),
                 kind,
                 live,
                 sites,
@@ -8919,7 +8773,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, &self.heap, kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
+                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -9544,7 +9398,7 @@ script_handler! {
                 return exit(ip);
             };
             note_allocation(vm);
-            Some(vm.heap.root(promise))
+            Some(vm.hold_root(promise))
         };
         let (registers, base) = if target.settles_in_environment() {
             // SAFETY: the call's window is registers of the running function.
@@ -9554,7 +9408,7 @@ script_handler! {
                 Err(next) => {
                     // A refused activation releases the promise's root before any effect.
                     if let Some(root) = root {
-                        vm.heap.release_root(root);
+                        vm.drop_root(root);
                     }
                     return next;
                 }
@@ -9887,7 +9741,7 @@ script_handler! {
         }
         // A site calling a native takes the native handler from now on, which hands any other
         // callee back.
-        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) {
             let native = *native;
             let handler = native_call_handler(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
             requicken(ip, handler);
@@ -10180,7 +10034,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        match vm.heap.function(callee) {
+        match vm.function_record(callee) {
             Some(FunctionRecord { kind: FunctionKind::User(..), .. }) => {
                 if let Some(parent) = super_forwarded_parent_in_lane(vm, callee) {
                     resume!(cx, construct_forwarded_parent_in_lane(cx, r, ip, i, callee, parent));
@@ -10251,7 +10105,7 @@ script_handler! {
         // SAFETY: a call record's operand is `call`.
         let link = unsafe { (*ip).operand.call.memo } as usize;
         if vm.script_call_holds(link, r.get(i.c))
-            && matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
+            && matches!(vm.function_record(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
             && !unsafe { (*cx).tiers_run }
         {
             let (receiver, args) = window.split_first().map_or((Value::UNDEFINED, &[][..]), |(first, rest)| (*first, rest));
@@ -10306,12 +10160,12 @@ script_handler! {
 /// arguments kept as `undefined`, so the window alone is what such a call passes.
 #[inline(never)]
 fn remember_bound_call_in_lane(vm: &mut Vm, callee: Value) {
-    let Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) = vm.heap.function(callee) else {
+    let Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) = vm.function_record(callee) else {
         return;
     };
     let Some((target, this, list)) = vm.bound_function_words(*env) else { return };
-    let list = if vm.heap.array_elements(list).is_some_and(|elements| elements.len() != 0) { list } else { Value::UNDEFINED };
-    if matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+    let list = if vm.heap_reads().array_elements(list).is_some_and(|elements| elements.len() != 0) { list } else { Value::UNDEFINED };
+    if matches!(vm.function_record(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
         vm.lane_stack.bound_call = Some((callee, target, this, list));
     }
 }
@@ -10330,7 +10184,7 @@ fn bound_arguments_call_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &
     // list's elements then the window, with no walk of its parts.
     let remembered = match vm.lane_stack.bound_call {
         Some((bound, target, this, list)) if bound == r.get(i.b) && !list.is_undefined() => {
-            vm.heap.array_elements(list).map(|elements| {
+            vm.heap_reads().array_elements(list).map(|elements| {
                 let bound = elements.as_slice();
                 let mut args = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::with_capacity(bound.len() + window.len());
                 args.extend_from_slice(&bound);
@@ -10582,13 +10436,13 @@ fn passed_frame_call_in_lane(
         #[cfg(feature = "profile-lane-exits")]
         quench_runtime::vm::lane_exits::record_detail(format!(
             "passed frame call declined kind={:?} realm_matches={} name={:?}",
-            vm.heap.function(callee).map(|record| match record.kind {
+            vm.function_record(callee).map(|record| match record.kind {
                 FunctionKind::Native(Native::HostFunction) => vm.host_function_name(callee).unwrap_or_default().to_string(),
                 FunctionKind::Native(native) => format!("{native:?}"),
                 FunctionKind::User(..) => "user".to_string(),
             }),
-            vm.heap.function(callee).is_some_and(|record| vm.record_realm(record) == vm.realm.globals),
-            vm.heap.function(callee).and_then(|record| match record.kind {
+            vm.function_record(callee).is_some_and(|record| vm.record_realm(record) == vm.realm.globals),
+            vm.function_record(callee).and_then(|record| match record.kind {
                 FunctionKind::User(program, function) => vm.programs.residual(program).and_then(|code| {
                     let body = code.function_get(function as usize)?;
                     Some(format!("{} @{:?} async={} generator={} in_loop={}",
@@ -10623,7 +10477,7 @@ script_handler! {
     fn native_call_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // The callee's kind, read once: a call changes no function record before it runs.
-        let native = match vm.heap.function(r.get(i.b)) {
+        let native = match vm.function_record(r.get(i.b)) {
             Some(FunctionRecord {
                 kind: FunctionKind::Native(native),
                 ..
@@ -10666,7 +10520,7 @@ script_handler! {
     #[inline(never)]
     fn apply_call_miss<>(cx, r, ip, i, view) {
         let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) =
-            (unsafe { vm(cx) }).heap.function(r.get(i.b))
+            (unsafe { vm(cx) }).function_record(r.get(i.b))
         else {
             unreachable!("native_call_miss routes only a native apply here");
         };
@@ -10774,7 +10628,7 @@ fn spread_linked_call_in_lane(
     length: usize,
 ) -> Option<(Registers, Ip)> {
     let argc = u16::try_from(length).ok()?;
-    let elements = unsafe { vm(cx) }.heap.array_elements(list)?;
+    let elements = unsafe { vm(cx) }.heap_reads().array_elements(list)?;
     let mut decoded = [Value::UNDEFINED; FRAME_CALL_INLINE_ARGUMENTS];
     let (passed, valid) = match elements.wide_values() {
         Some(values) => (values.as_ptr(), argc),
@@ -11003,7 +10857,6 @@ pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
 use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler};
 pub(crate) mod wasm_gc;
-use wasm_gc::wasm_gc_handler;
 
 #[quench_macros::ext(DispatchFastVm4)]
 impl Vm {
@@ -11066,7 +10919,7 @@ script_handler! {
     #[inline(never)]
     fn call_array_callback_miss<DISCARDS: bool>(cx, r, ip, i, view) {
         let callee = r.get(i.b);
-        let native = match (unsafe { vm(cx) }).heap.function(callee) {
+        let native = match (unsafe { vm(cx) }).function_record(callee) {
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) if native.is_array_callback() => *native,
             _ => sibling!(native_call_miss, r, ip, Carried::script_in(cx, view)),
         };
@@ -11093,7 +10946,7 @@ script_handler! {
 /// Whether `callee` is a function whose behavior is the native `native`'s.
 #[inline(always)]
 fn callee_is_native(vm: &Vm, callee: Value, native: Native) -> bool {
-    matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(found), .. }) if *found == native)
+    matches!(vm.function_record(callee), Some(FunctionRecord { kind: FunctionKind::Native(found), .. }) if *found == native)
 }
 
 script_handler! {
@@ -11102,7 +10955,7 @@ script_handler! {
     /// argument takes `native_call_miss`.
     fn call_math_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let value = match vm.heap.function(r.get(i.b)) {
+        let value = match vm.function_record(r.get(i.b)) {
             // SAFETY: the call's window is registers of the running function.
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
                 quench_runtime::vm::number::math_inline_call(*native, unsafe { call_window_in_lane(r, i) })
@@ -11223,7 +11076,7 @@ fn promise_native_in_lane(
     args: &[Value],
 ) -> Option<Value> {
     if !matches!(native, Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve)
-        || !vm.heap.function(callee).is_some_and(|function| function.env.is_null())
+        || !vm.function_record(callee).is_some_and(|function| function.env.is_null())
     {
         return None;
     }
@@ -11240,7 +11093,7 @@ fn promise_native_in_lane(
             let then_atom = vm.runtime_atoms.then;
             let then = vm.plain_named_load(receiver, then_atom)?;
             if !matches!(
-                vm.heap.function(then),
+                vm.function_record(then),
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::PromiseThen), .. })
             ) {
                 return None;
@@ -11503,7 +11356,7 @@ fn super_forwarded_parent_in_lane(vm: &Vm, callee: Value) -> Option<(Value, quen
     if holding_construct_plan_index(vm, callee).is_some_and(|index| vm.lane_stack.construct_plans[index].super_parent != Value::UNDEFINED) {
         return None;
     }
-    let Some(FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.heap.function(callee) else {
+    let Some(FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.function_record(callee) else {
         return None;
     };
     let code = vm.programs.residual(*program)?;
@@ -11515,7 +11368,7 @@ fn super_forwarded_parent_in_lane(vm: &Vm, callee: Value) -> Option<(Value, quen
     // user class hierarchy's, declines here without decoding its constructor's body
     // (`Function::super_forwarding`, ~900 Ir), which every `new` of it would otherwise pay.
     let parent = vm.object_data(callee)?.proto();
-    match vm.heap.function(parent) {
+    match vm.function_record(parent) {
         // An error's stack starts past its constructors' frames, which this construction
         // would not make.
         Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
@@ -11553,7 +11406,7 @@ fn construct_forwarded_parent_in_lane(
     // An array subclass's `super(...)`: the intrinsic's array with the class's `prototype`,
     // made in place and named as the general path names it (`capture_constructed_value`).
     if vm.construct_target.is_none()
-        && matches!(vm.heap.function(parent), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. }))
+        && matches!(vm.function_record(parent), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. }))
         && let Some(array) = vm.array_construction_by(callee, &passed)
     {
         vm.capture_constructed_value(array, parent, false);
@@ -11692,7 +11545,7 @@ script_handler! {
         };
         r.set(i.a, this);
         // Allocating the receiver can make a collection due.
-        if vm.heap.should_collect() {
+        if vm.collection_due() {
             sibling!(construct_allocation_due_in_lane, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -12105,7 +11958,7 @@ fn forwarded_fields_in_lane(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -
             values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
         }
     }
-    Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
+    { let plan = vm.lane_stack.construct_plans[index]; Some(plan.allocate_values(vm, &values)) }
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
@@ -12173,7 +12026,7 @@ fn forwarded_construction_in_lane(
         None => lane_frame::LaneFrame::<ACC_NONE>::cached_read(cx, code, function, method.apply.0, method.apply.1, 0)?,
     };
     if !matches!(
-        vm.heap.function(apply),
+        vm.function_record(apply),
         Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
@@ -12203,14 +12056,14 @@ fn forwarded_resolution(
     apply: Value,
 ) -> Option<ForwardedResolution> {
     let plan = holding_construct_plan(vm, callee).filter(|plan| plan.fields == 0)?;
-    let data_slot = |owner: &quench_runtime::heap::Object, atom| {
+    let data_slot = |owner: &quench_runtime::tier_surface::Object, atom| {
         let shape = owner.shape();
         if vm.shape_is_dictionary(shape) {
             return None;
         }
         let slot = vm.shape_slot(shape, atom)?;
         // SAFETY: the slot exists in the non-dictionary shape that names it.
-        let value = unsafe { vm.heap.property_get_shaped(owner, slot) }?;
+        let value = unsafe { vm.heap_reads().property_get_shaped(owner, slot) }?;
         (!value.is_deleted()).then_some((u16::try_from(slot).ok()?, value))
     };
     let data = |owner: Value, atom, slot: usize| {
@@ -12221,14 +12074,14 @@ fn forwarded_resolution(
     if vm.shape_slot(plan.shape, method.method.0).is_some() {
         return None;
     }
-    let prototype = vm.heap.object_record(plan.prototype)?;
+    let prototype = vm.heap_reads().object_record(plan.prototype)?;
     let (method_slot, found) = data_slot(prototype, method.method.0)?;
-    let FunctionRecord { object, .. } = vm.heap.function(function)?;
+    let FunctionRecord { object, .. } = vm.function_record(function)?;
     if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
         return None;
     }
     let apply_holder = object.proto();
-    let (apply_slot, found) = data_slot(vm.heap.object(apply_holder)?, method.apply.0)?;
+    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?, method.apply.0)?;
     (found == apply
         && data(plan.prototype, method.method.0, usize::from(method_slot))
         && data(apply_holder, method.apply.0, usize::from(apply_slot)))
@@ -12292,7 +12145,7 @@ fn forward_activation_in_lane(
     }
     let vm = unsafe { vm(cx) };
     if !matches!(
-        vm.heap.function(r.get(i.b)),
+        vm.function_record(r.get(i.b)),
         Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
@@ -12916,7 +12769,7 @@ impl Vm {
     pub(crate) fn callee_capture_slots(&self, callee: Value) -> (usize, usize) {
         self.script_call_entry(callee)
             // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
-            .and_then(|target| unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads((*target).capture)) })
+            .and_then(|target| unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads((*target).capture)) })
             .map_or((0, 0), |(values, len)| (values.addr(), len))
     }
 }
@@ -12946,9 +12799,10 @@ fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &que
 /// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the
 /// site names (`None` where the program holds no such site).
 fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction) -> Option<u16> {
-    match instruction.op() {
-        quench_runtime::bytecode::Op::CallMethod => quench_runtime::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count),
-        _ => Some(ImmediateLayout::argument_count(instruction.imm())),
+    if instruction.op() as u16 == quench_runtime::staged::METHOD_CALL_ROW {
+        quench_runtime::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count)
+    } else {
+        Some(ImmediateLayout::argument_count(instruction.imm()))
     }
 }
 
@@ -12998,7 +12852,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
     let view_of = unsafe { &*target.view };
     let (method, body) = view_of.pinned_callee(target.function == function);
     // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-    let (capture_values, capture_len) = unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(crate::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
@@ -13200,10 +13054,9 @@ pub(crate) unsafe extern "C" fn body_arguments_length_in_lane(_vm: u64, _residua
 
 /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
 /// unmaterialized binding holds; any other key leaves at the record.
-pub(crate) unsafe extern "C" fn body_argument_get_in_lane(_vm: u64, _residual: u64, context: u64, slot: u64, index: u64) -> u64 {
+pub(crate) unsafe extern "C" fn body_argument_get_in_lane(_vm: u64, _residual: u64, context: u64, slot: u64, index: Value) -> u64 {
     if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext;
-    let index = Value::from_bits(index);
     if let Some((argc, function)) = unsafe { keeping_activation_in_lane(cx) }
         && let Some(index) = index.as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
     {
@@ -13251,10 +13104,10 @@ pub(crate) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, c
 ///
 /// # Safety
 /// As `body_capture_in_lane`.
-pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
+pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: Value) -> u64 {
     if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return 0; }
     let cx = context as usize as *mut LaneContext;
-    let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
+    let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, value);
     let stored = match native_frames::innermost_callee_env(cx) {
         Some(env) => {
             // SAFETY: the context's program outlives the lane run.
@@ -13928,7 +13781,7 @@ fn activate_environment_in_lane(
             && environment_row::ENTRY_SLOTS == WINDOW_SLOTS
             && environment_row::ENTRY_CAPTURED == WINDOW_CAPTURED
             && environment_row::ENTRY_STORAGE == WINDOW_STORAGE
-            && environment_row::STORAGE_WORDS as usize == quench_runtime::heap::IN_PLACE_SLOTS_WORDS
+            && environment_row::STORAGE_WORDS as usize == quench_runtime::tier_surface::IN_PLACE_SLOTS_WORDS
             && environment_row::ENTRY_WORDS == WINDOW_LOCALS
     );
     let shape = environment_row::EnvironmentShape {
@@ -14035,16 +13888,16 @@ unsafe fn window_environment(
             bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
         }
         let scope = window_scope_ref(program, bindings);
-        let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
+        let (environment, storage) = vm.allocate_environment(parent, function, slots, scope);
         // Its storage links to its parent's for its closures' outer captures
         // (`EnvironmentSlots::link`), as a capture walk would find the parent's.
-        if let Some(quench_runtime::heap::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = vm.heap.environment(parent)
+        if let Some(quench_runtime::tier_surface::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = vm.heap_reads().environment(parent)
             && *owner != u32::MAX
             && *owner != quench_runtime::vm::ROOT_FUNCTION_ID
             && let Some(parent_storage) = parent_slots.dense_storage()
             && let Some(own) = (*storage).dense_storage()
         {
-            quench_runtime::heap::EnvironmentSlots::link(own, parent_storage, vm.heap.collection_epoch());
+            quench_runtime::tier_surface::EnvironmentSlots::link(own, parent_storage, vm.heap_reads().collection_epoch());
         }
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
         entries
@@ -14059,16 +13912,16 @@ unsafe fn window_environment(
 ///
 /// # Safety
 /// `entries` starts the entries of a live environment window (`activate_environment_in_lane`).
-unsafe fn window_slots_taken(entries: *mut Value) -> quench_runtime::heap::EnvironmentSlots {
+unsafe fn window_slots_taken(entries: *mut Value) -> quench_runtime::tier_surface::EnvironmentSlots {
     // SAFETY: as the caller guarantees.
     unsafe {
         let captured = std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_CAPTURED)));
         let in_place = &*(std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_SLOTS)))
-            as *const quench_runtime::heap::EnvironmentSlots);
+            as *const quench_runtime::tier_surface::EnvironmentSlots);
         let locals = entries.add(usize::from(WINDOW_LOCALS));
         let window = EnvironmentWindow { locals: in_place.len() as u16, captured, rest: false, self_binding: None, parameter_registers: 0 };
         // SAFETY: the mask names locals of the window, which hold owned values.
-        let slots = quench_runtime::heap::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
+        let slots = quench_runtime::tier_surface::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
         // Each captured local, one per bit of the mask, which names no slot past the locals.
         debug_assert_eq!(captured.checked_shr(u32::from(window.locals)).unwrap_or(0), 0);
         let mut remaining = captured;
@@ -14082,11 +13935,11 @@ unsafe fn window_slots_taken(entries: *mut Value) -> quench_runtime::heap::Envir
 
 /// The scope of a window's environment: its program's alone, which needs no allocation, or
 /// holding the dynamic `bindings` it takes over.
-fn window_scope_ref(program: ProgramId, bindings: Vec<(quench_runtime::bytecode::Atom, Value)>) -> quench_runtime::heap::EnvironmentScopeRef {
+fn window_scope_ref(program: ProgramId, bindings: Vec<(quench_runtime::bytecode::Atom, Value)>) -> quench_runtime::tier_surface::EnvironmentScopeRef {
     if bindings.is_empty() {
-        return quench_runtime::heap::EnvironmentScopeRef::of_program(program.raw());
+        return quench_runtime::tier_surface::EnvironmentScopeRef::of_program(program.raw());
     }
-    quench_runtime::heap::EnvironmentScopeRef::new(quench_runtime::heap::EnvironmentScope {
+    quench_runtime::tier_surface::EnvironmentScopeRef::new(quench_runtime::tier_surface::EnvironmentScope {
         program: Some(program.raw()),
         root_eval_scope: false,
         binding_site_pc: None,
@@ -14132,11 +13985,11 @@ fn planned_receiver_in_lane(
     plan: Option<&ConstructPlan>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
-        return Some(plan.allocate(&mut vm.heap, |_| Value::UNDEFINED));
+        return Some(plan.allocate(vm, |_| Value::UNDEFINED));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
-    let this = vm.heap.alloc_object(template);
+    let this = vm.allocate_object(template);
     if let Some(index) = construct_plan_index(callee)
         && let Some(callee_layout) = vm.function_prototype_layout(callee)
     {
@@ -14661,12 +14514,10 @@ fn lane_complete_to_wasm(cx: *mut LaneContext, ip: Ip, value: Value) -> Resumed 
     let vm = unsafe { vm(cx) };
     // What the import's activation restores, read from its side record where it is.
     let call = vm.lane_stack.top_frame().expect("the import's activation is the innermost").payload().to_wasm();
+    // A Number's ToWebAssemblyValue, by the rule the general loop's import return runs.
     let encoded = match call.result {
         None => Some(Value::UNDEFINED),
-        Some(quench_runtime::WasmType::I32) => value.as_number().map(|number| Value::integer(quench_runtime::value::number_to_i32(number))),
-        Some(quench_runtime::WasmType::F32) => value.as_number().map(|number| Value::integer((number as f32).to_bits() as i32)),
-        Some(quench_runtime::WasmType::F64) => value.as_number().map(|number| vm.encode_bits64(number.to_bits())),
-        Some(_) => None,
+        Some(ty) => value.as_number().and_then(|number| quench_runtime::staged::wasm_activation::import_result(ty, number)).map(|wasm| vm.encode_wasm_value(wasm)),
     };
     let Some(encoded) = encoded else {
         return Resumed::Exit(frame_return(vm, ip, value));
@@ -14828,7 +14679,7 @@ unsafe fn read_capture_in_lane(vm: &mut Vm, target: &ScriptCallTarget) -> Option
     let slots = capture_reads(target.capture);
     if depth == 0 && !slots.is_null() {
         // SAFETY: as `ScriptCallTarget::capture`.
-        return unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(slots, slot) };
+        return unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, slot) };
     }
     let (slots, root) = vm.walked_capture_slots(target.env, false, depth)?;
     // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
@@ -15165,7 +15016,7 @@ impl MemoLeaf {
         vm: &Vm,
         arguments: ReadArguments,
         this: Value,
-        this_record: Option<&quench_runtime::heap::Object>,
+        this_record: Option<&quench_runtime::tier_surface::Object>,
     ) -> Option<Value> {
         match *self {
             Self::Field { base: field_base, field } if shape == MEMO_FIELD => memo_first_step(vm, field, field_base, arguments, this, this_record),
@@ -15203,7 +15054,7 @@ fn memo_first_step(
     base: u16,
     arguments: ReadArguments,
     this: Value,
-    this_record: Option<&quench_runtime::heap::Object>,
+    this_record: Option<&quench_runtime::tier_surface::Object>,
 ) -> Option<Value> {
     match this_record {
         Some(record) if base == quench_runtime::bytecode::FieldBase::THIS.0 => vm.record_field_formed_hit_in(field, record),
@@ -15418,7 +15269,7 @@ unsafe fn memo_read_in_lane<const SHAPE: u8>(
         {
             let base = read_base_in_lane(quench_runtime::bytecode::FieldBase(*base), arguments, this)?;
             let receiver = vm.record_field_formed_hit(*field, base)?;
-            let record = vm.heap.object_record_by_id(receiver.direct_object_index()?);
+            let record = vm.heap_reads().object_record_by_id(receiver.direct_object_index()?);
             if vm.record_field_formed_hit_in(*method_field, record)? != *method {
                 return None;
             }
@@ -16177,7 +16028,7 @@ fn frame_construct_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneI
     // frame binds `this` at `super(...)`, and its pending call applies the derived return
     // rules (`CallCompletion::DerivedConstructor`), where it left the lane before.
     let admits = |body: &quench_runtime::bytecode::Function| Vm::inline_constructible(body) || Vm::inline_derived_constructible(body);
-    let pushable = match vm.heap.function(callee) {
+    let pushable = match vm.function_record(callee) {
         Some(record @ FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
             vm.record_realm(record) == vm.realm.globals
                 && if *program == unsafe { (*cx).program } {
@@ -16425,9 +16276,6 @@ pub(crate) const ELEMENT_READ: u16 = {
     }
 };
 
-/// The generated keyed read (`generated_row` of `ELEMENT_READ`) of a register base and key.
-const fn element_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, FLAG_UNREAD) }
-
 /// The opcode of the catalog's keyed store: the element row whose record defines no result register
 /// (`Decoder::Element`), whose generated row (`generated_row`) a register-keyed store runs.
 pub(crate) const ELEMENT_WRITE: u16 = {
@@ -16514,7 +16362,7 @@ const fn other_handler(opcode: Op) -> Option<Handler> {
         _ if quench_runtime::staged::forwarded_call_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::FORWARDED_CALL as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 })),
         _ if quench_runtime::staged::return_family(opcode) => Some(return_row!(quench_runtime::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF))),
         _ if generator_yields::suspend_handler(opcode).is_some() => generator_yields::suspend_handler(opcode),
-        _ => wasm_gc_handler(opcode),
+        _ => None,
     }
 }
 
@@ -16917,58 +16765,6 @@ fn binding_step_in_lane(decoded: &[WideInstruction], pc: usize) -> bool {
         && pc + BINDING_VALUE_READ + 1 < decoded.len()
 }
 
-/// Whether `instruction` is an element read: the decoder's `ElementRead` for a register base, or
-/// its `ElementReadOperand` for a frame local base.
-fn decoded_element_read(instruction: WideInstruction) -> bool {
-    matches!(
-        crate::compiled::decoded_completed(instruction),
-        Some(quench_runtime::staged::Operation::ElementRead { .. } | quench_runtime::staged::Operation::ElementReadOperand { .. })
-    )
-}
-
-/// Whether `instruction` is an element store the decoder takes as `ElementWrite`.
-fn decoded_element_write(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::ElementWrite { .. }))
-}
-
-/// Whether `instruction` is a named field read the decoder takes as `GetField`. Where it
-/// rejects the record (`decoded_completed` is `None`: no field lookup), the opcode test keeps
-/// the read.
-fn decoded_field_read(instruction: WideInstruction) -> bool {
-    match crate::compiled::decoded_completed(instruction) {
-        Some(quench_runtime::staged::Operation::GetField { .. }) => true,
-        _ => false,
-    }
-}
-
-/// Whether `instruction` is a named field store (`SetField`, the decoder takes every one).
-fn decoded_field_store(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. }))
-}
-
-/// Whether `instruction` is a capture read the decoder takes as `LoadCapture`.
-fn decoded_capture_load(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. }))
-}
-
-/// Whether `instruction` is a plain local load the decoder takes as `LoadLocalPlain`. The decode
-/// rejects only a slot past `u16`, which the class test keeps as the load the lane always made.
-fn decoded_local_plain_load(instruction: WideInstruction) -> bool {
-    match crate::compiled::decoded_completed(instruction) {
-        Some(quench_runtime::staged::Operation::LoadLocalPlain { .. }) => true,
-        _ => false,
-    }
-}
-
-/// Whether `instruction` is a plain local store the decoder takes as `StoreLocalPlain`. As
-/// `decoded_local_plain_load`, the class test keeps a slot past `u16`.
-fn decoded_local_plain_store(instruction: WideInstruction) -> bool {
-    match crate::compiled::decoded_completed(instruction) {
-        Some(quench_runtime::staged::Operation::StoreLocalPlain { .. }) => true,
-        _ => false,
-    }
-}
-
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
 /// (`row_get_field_sink`).
 fn sinks_field_in_lane(instruction: WideInstruction) -> bool {
@@ -16987,13 +16783,7 @@ fn returns_in_lane(instruction: WideInstruction) -> bool {
 /// memory32 memory once per call.
 pub(crate) fn memory_register(function: &Function) -> Option<u16> {
     let instructions = || function.code.iter().map(|packed| function.widened(*packed));
-    let direct = instructions().filter_map(|instruction| match instruction.op() {
-        op if MemoryLoad::from_direct_op(op).is_some()
-            || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
-        op if quench_runtime::staged::wasm_memory_size(op) => Some(instruction.b()),
-        op if quench_runtime::staged::wasm_memory_fill(op) => Some(instruction.a()),
-        _ => None,
-    });
+    let direct = instructions().filter_map(quench_runtime::staged::wasm_memory::bound_memory_register);
     single_register(direct).or_else(|| {
         let vector = single_register(
             instructions().filter(|instruction| quench_runtime::staged::wasm_memory_address(instruction.op())).map(|instruction| instruction.c()),
@@ -17063,7 +16853,7 @@ fn derive_lane_view<'live>(
     function_id: u32,
     function: &Function,
     constants: &[Value],
-    heap: &quench_runtime::heap::Heap,
+    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
     kind: quench_runtime::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
@@ -17866,7 +17656,7 @@ unsafe fn proof_span(context: *mut u8, register: u16, base: Value, writable: boo
     let cx = context.cast::<LaneContext>();
     // SAFETY: the context's proofs and its VM are distinct, both live for the run.
     let (proofs, vm) = unsafe { (&mut (*cx).proofs, vm(cx)) };
-    if !proofs.holds(register, base) && !vm.heap.prove_array_storage(proofs, register, base) {
+    if !proofs.holds(register, base) && !vm.prove_array_storage(proofs, register, base) {
         return None;
     }
     if writable { proofs.write_span(register, base) } else { proofs.read_span(register, base) }
@@ -17916,9 +17706,9 @@ fn specialize_proved_arrays(decoded: &[WideInstruction], records: &mut [LaneInst
         })
         .collect();
     for &(pc, proved, base, index) in &candidates {
-        let slot = quench_runtime::heap::ArrayStorageProofs::slot(base);
+        let slot = quench_runtime::tier_surface::ArrayStorageProofs::slot(base);
         let shared = candidates.iter().any(|&(_, _, other, other_index)| {
-            other_index == index && other != base && quench_runtime::heap::ArrayStorageProofs::slot(other) == slot
+            other_index == index && other != base && quench_runtime::tier_surface::ArrayStorageProofs::slot(other) == slot
         });
         if !shared {
             records[pc].handler = proved as *const ();
@@ -17970,7 +17760,7 @@ fn pair_target_form<const A: u16, const B: u16, const PREFIX: u16, const TEST: u
 /// comparison fixed (`CMP`, `lane_frame::target_comparison`).
 const fn inc_dec_test_row<const CMP: u8>() -> Handler {
     fused_rows!({ quench_runtime::staged::INC_DEC_ROW }, { quench_runtime::staged::JUMP_ROW }, false, { quench_runtime::staged::FUSED_TARGET },
-        { quench_runtime::bytecode::Op::JumpBinaryFalse as u16 }, { quench_runtime::staged::NO_LINK }, CMP) as Handler
+        { quench_runtime::staged::COMPARE_JUMP_ROW }, { quench_runtime::staged::NO_LINK }, CMP) as Handler
 }
 
 /// The `(IncDec, Jump)` back edges whose step and test the registers' int32 kinds prove
@@ -18343,9 +18133,9 @@ fn specialize_register_operands(records: &mut [LaneInstruction]) {
         if !lane_frame::register_operands(record) {
             continue;
         }
-        let row = lane_frame::registers_row::<{ quench_runtime::bytecode::Op::Binary as u16 }>(record.handler)
-            .or_else(|| lane_frame::registers_row::<{ quench_runtime::bytecode::Op::NumericAdd as u16 }>(record.handler))
-            .or_else(|| lane_frame::registers_row::<{ quench_runtime::bytecode::Op::NumericMultiply as u16 }>(record.handler));
+        let row = lane_frame::registers_row::<{ quench_runtime::staged::BINARY_ROW }>(record.handler)
+            .or_else(|| lane_frame::registers_row::<{ quench_runtime::staged::NUMERIC_ADD_ROW }>(record.handler))
+            .or_else(|| lane_frame::registers_row::<{ quench_runtime::staged::NUMERIC_MULTIPLY_ROW }>(record.handler));
         if let Some(row) = row {
             record.handler = row as *const ();
         }
@@ -18580,7 +18370,7 @@ impl Vm {
                     function,
                     code,
                     constants,
-                    &self.heap,
+                    self.heap_reads(),
                     kind,
                     live,
                     sites,
@@ -18686,7 +18476,7 @@ impl Vm {
     /// the request, the request raises it after setting itself, so one of the two sees the
     /// other.
     fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
-        let floor = if self.heap.should_collect() || self.credits_backedges_in_lane(code, program) {
+        let floor = if self.collection_due() || self.credits_backedges_in_lane(code, program) {
             COLLECTION_DUE_FLOOR
         } else {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
@@ -18745,7 +18535,7 @@ impl Vm {
         // A due collection runs on the general path, whose safepoints take it; the lane's
         // floor, set for the native's caller, bounds this run's stack as it bounds the lane's
         // own calls (`LANE_STACK_SLACK`).
-        if !self.lane_stack.admits_program(unsafe { (*cx).program }) || self.heap.should_collect() {
+        if !self.lane_stack.admits_program(unsafe { (*cx).program }) || self.collection_due() {
             return None;
         }
         // Each nested run takes native stack, as the general loop's would (`Vm::enter_stack`),
@@ -18856,7 +18646,7 @@ impl Vm {
             return None;
         }
         // SAFETY: as `lane_native_callback`'s.
-        if !self.lane_stack.admits_program(unsafe { (*cx).program }) || self.heap.should_collect() {
+        if !self.lane_stack.admits_program(unsafe { (*cx).program }) || self.collection_due() {
             return None;
         }
         let _stack = quench_runtime::stack::StackGuard::enter().ok()?;
@@ -19418,7 +19208,7 @@ impl Vm {
             || self.lane_deferred.is_some()
             || self.with_scope_entered
             || self.active_program != program
-            || self.heap.should_collect()
+            || self.collection_due()
         {
             return None;
         }

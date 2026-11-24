@@ -21,7 +21,7 @@ use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
 use quench_runtime::bytecode::Function;
-use quench_runtime::heap::GlobalFact;
+use quench_runtime::tier_surface::GlobalFact;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::{padded_holes, HOLES};
 
@@ -69,7 +69,7 @@ pub(crate) struct Body {
     pub(crate) bare: bool,
     /// The global layouts and slot types its rows hold (a Stable fact): a change retires the body
     /// (`StableFacts::layouts`, `StableFacts::slots`).
-    pub(crate) layouts: Box<[quench_runtime::heap::GlobalLayoutFact]>,
+    pub(crate) layouts: Box<[quench_runtime::tier_surface::GlobalLayoutFact]>,
     pub(crate) slot_types: Box<[quench_runtime::code_dependencies::SlotDependency]>,
     /// Where a run that left a loop region at a PC re-enters it (`resume`); none for a body.
     pub(crate) resumes: ResumeTable,

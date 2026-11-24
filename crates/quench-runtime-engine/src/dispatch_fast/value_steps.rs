@@ -133,7 +133,7 @@ unsafe fn activation_literal_step(cx: *mut LaneContext, _call_pc: u64, instructi
         return Some(LANE_CALL_COMPLETED);
     }
     match instruction.op() {
-        quench_runtime::bytecode::Op::DefineArrayElement => {
+        op if op == quench_runtime::staged::Operation::<u64, ()>::DEFINE_ELEMENT_OP => {
             let defined = unsafe { vm(cx) }.define_literal_element(r.get(instruction.register_b()), instruction.imm() as usize, r.get(instruction.register_a()));
             if !defined { return Some(LANE_CALL_MISSED); }
         }

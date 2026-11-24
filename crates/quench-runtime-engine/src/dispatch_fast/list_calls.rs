@@ -29,14 +29,14 @@ pub(crate) fn apply_activation_in_lane(
         let vm = unsafe { vm(cx) };
         super::lane_exits::record_detail(format!(
             "apply callee={:?} array={} arguments_object={} sparse={} holes={} activations={}",
-            vm.heap.function(callee).map(|record| match record.kind {
+            vm.function_record(callee).map(|record| match record.kind {
                 FunctionKind::User(..) => "user",
                 FunctionKind::Native(_) => "native",
             }),
-            vm.heap.array(list).is_some(),
-            vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
+            vm.heap_reads().array(list).is_some(),
+            vm.heap_reads().array(list).is_some_and(|array| array.is_arguments_object()),
             vm.heap.sparse_length(list).is_some(),
-            vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
+            vm.heap_reads().array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
             vm.lane_stack.activation_count(),
         ));
     }
@@ -66,10 +66,10 @@ pub(crate) fn list_activation_in_lane(
     // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
     // out first, as a frame call's are.
     if matches!(
-        vm.heap.function(callee),
+        vm.function_record(callee),
         Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
     ) {
-        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
+        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap_reads().array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding declined".into());
@@ -98,14 +98,14 @@ pub(crate) fn list_activation_in_lane(
         // the elements copied out first: making the caller's
         // activations frames moves no heap array, but the callee may change the list.
         let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> =
-            vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
+            vm.heap_reads().array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         return Some(Err(passed_frame_call_in_lane(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
     };
     let Some(this) = call_this_in_lane(vm, &target, receiver) else {
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.
-    let held = if listed.is_some() { vm.heap.array_elements(list)?.values_cow() } else { std::borrow::Cow::Borrowed(&[][..]) };
+    let held = if listed.is_some() { vm.heap_reads().array_elements(list)?.values_cow() } else { std::borrow::Cow::Borrowed(&[][..]) };
     let elements: &[Value] = if listed.is_some() { &held[..length] } else { &[] };
     Some(activate_passed_in_lane(cx, r, ip, &target, elements, this))
 }
@@ -129,7 +129,7 @@ pub(crate) fn spread_native_call_in_lane(
     if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
+    let args = vm.heap_reads().array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
     Some(native_complete_in_lane(cx, ip, i, value))
 }
@@ -137,7 +137,7 @@ pub(crate) fn spread_native_call_in_lane(
 /// The native `spread_native_call_in_lane` calls in place: any but a forwarding one or `eval`.
 #[inline(always)]
 fn spread_native_in_lane(vm: &Vm, callee: Value) -> Option<Native> {
-    let FunctionKind::Native(native) = vm.heap.function(callee)?.kind else {
+    let FunctionKind::Native(native) = vm.function_record(callee)?.kind else {
         return None;
     };
     (!matches!(native, Native::FunctionCall | Native::FunctionBoundCall | Native::FunctionApply | Native::ReflectApply | Native::Eval)).then_some(native)
@@ -157,7 +157,7 @@ pub(crate) fn spread_set_native_call_in_lane(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if !vm.heap.is_set(list) {
+    if !vm.heap_reads().is_set(list) {
         return None;
     }
     let native = spread_native_in_lane(vm, callee)?;
@@ -167,7 +167,7 @@ pub(crate) fn spread_set_native_call_in_lane(
     if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.set_entries(list)?.iter().collect();
+    let args: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap_reads().set_entries(list)?.iter().collect();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
     Some(native_complete_in_lane(cx, ip, i, value))
 }

@@ -118,7 +118,7 @@ impl AccessorCall {
         let reads = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
         // A native getter is answered or called in place; a script getter's target, resolved
         // once, is answered by its read or activated.
-        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(self.cx) }.heap.function(getter) {
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(self.cx) }.function_record(getter) {
             let native = *native;
             // A native getter has no target to admit it: the admission word decides, as a link's
             // compare would.
@@ -193,7 +193,7 @@ impl AccessorCall {
             return None;
         };
         let entry = vm.field_cache_entry(cache);
-        let receiver = vm.heap.object_record_by_id(base.direct_object_index()?);
+        let receiver = vm.heap_reads().object_record_by_id(base.direct_object_index()?);
         (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
             && entry.holder == NO_FIELD_HOLDER
             && entry.receiver == receiver.exact_shape())

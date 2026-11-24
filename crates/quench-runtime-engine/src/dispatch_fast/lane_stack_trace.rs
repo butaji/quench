@@ -133,12 +133,12 @@ impl Vm {
     fn windowed_record(&self, root: LaneRoot, script: &ScriptActivation) -> Option<&FrameRecord> {
         let owner = match root {
             LaneRoot::Job(job) if script.completion == Completion::ResumesJob => match job.kind {
-                SuspendKind::AsyncFunction => return self.heap.await_state(job.object)?.running_frame(),
+                SuspendKind::AsyncFunction => return self.heap_reads().await_state(job.object)?.running_frame(),
                 SuspendKind::AsyncGenerator | SuspendKind::Generator => job.object,
             },
             _ => script.callee,
         };
-        self.heap.iterator(owner)?.ext.generator.as_deref()?.windowed_frame()
+        self.heap_reads().iterator(owner)?.ext.generator.as_deref()?.windowed_frame()
     }
 
     /// The receiver the frame of `function` of `program` binds from its window's `this` over

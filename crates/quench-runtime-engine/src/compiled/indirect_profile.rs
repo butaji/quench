@@ -8,7 +8,7 @@
 use crate::ext_traits::*;
 use super::{CompiledProgram, MAX_JIT_PROFILED_INDIRECT_TARGETS, ProgramId, Vm};
 use quench_runtime::Value;
-use quench_runtime::heap::{Cell, TableTarget};
+use quench_runtime::tier_surface::{Cell, TableTarget};
 use std::cell::RefCell;
 
 use quench_runtime::vm::engine_types::TargetHits;
@@ -35,8 +35,8 @@ impl SiteHits {
 
 /// The rows of the table bound at environment slot `slot` of `env`.
 fn table_rows(vm: &Vm, env: Value, slot: u32) -> Option<&[TableTarget]> {
-    let binding = vm.heap.environment_slot(env, slot as usize)?;
-    match vm.heap.get(binding)? {
+    let binding = vm.heap_reads().environment_slot(env, slot as usize)?;
+    match vm.heap_reads().get(binding)? {
         Cell::WasmTable { elements, .. } => Some(elements.targets()),
         _ => None,
     }

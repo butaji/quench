@@ -63,8 +63,8 @@ pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
 /// opcodes; `None` for any other opcode.
 #[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
-    let destination = || instruction.result_register();
-    let slot = || Some(crate::staged::window_slot(instruction.imm()));
+    let destination = move || instruction.result_register();
+    let slot = move || Some(crate::staged::window_slot(instruction.imm()));
     Some(match instruction.op() {
         Op::CloneEnv => Operation::CloneEnv { plan: instruction.imm() & ENVIRONMENT_CLONE_PLAN_MASK },
         Op::LoadEnvLocal => Operation::LoadEnvLocal { destination: destination(), slot: slot()? },
@@ -126,13 +126,17 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
             Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
             Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
-        _ => return super::protocol_literals::decode(instruction)
-            .or_else(|| super::protocol_classes::decode(instruction))
-            .or_else(|| super::protocol_values::decode(instruction))
-            .or_else(|| super::protocol_owned::decode(instruction))
-            .or_else(|| super::protocol_wasm::decode(instruction))
-            .map(|(step, destination, operands)| Operation::Protocol { step, destination, operands })
-            .or_else(|| super::spread::decode(instruction)),
+        // A sequence of tests, not `Option::or_else`: its closures left out of line kept every
+        // decoder's test at run time in a row whose opcode is a constant (`generated_row`).
+        _ => {
+            let decoded = if let Some(decoded) = super::protocol_literals::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_classes::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_values::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_owned::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_wasm::decode(instruction) { decoded }
+                else { return super::spread::decode(instruction) };
+            decoded
+        }
     };
     Some(Operation::Protocol { step, destination, operands })
 }

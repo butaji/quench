@@ -14,7 +14,7 @@ struct Candidates {
 }
 
 /// The candidates of `values`, or `None` when one is no resolved flat string.
-fn candidates(heap: &quench_runtime::heap::Heap, values: &[Value]) -> Option<Candidates> {
+fn candidates(heap: quench_runtime::vm::tier_queries::HeapReads<'_>, values: &[Value]) -> Option<Candidates> {
     let mut candidates = Candidates { cases: Vec::with_capacity(values.len()), short_lengths: 0, max_length: 0 };
     for (index, &value) in values.iter().enumerate() {
         let record = value.direct_string_index()?;
@@ -56,7 +56,7 @@ fn kept_group(group: &[(u64, Case)], cases: &mut Vec<Case>) -> Option<Bucket> {
 
 #[quench_macros::ext(StringCaseFilterOpsX3)]
 impl StringCaseFilter {
-    fn new(heap: &quench_runtime::heap::Heap, values: &[Value]) -> Option<Self> {
+    fn new(heap: quench_runtime::vm::tier_queries::HeapReads<'_>, values: &[Value]) -> Option<Self> {
         let Candidates { mut cases, short_lengths, max_length } = candidates(heap, values)?;
         // Stable, so each group keeps its source order.
         cases.sort_by_key(|&(key, _)| key);
@@ -74,7 +74,7 @@ impl StringCaseFilter {
 /// Replaces each string-case selector of `records` (decoded as `decoded`) whose constants
 /// admit a filter with the filtered selector, and returns the filters the records point into.
 pub(crate) fn specialize(
-    heap: &quench_runtime::heap::Heap,
+    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
     constants: &[Value],
     decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
@@ -82,7 +82,7 @@ pub(crate) fn specialize(
     let mut filters = Vec::new();
     let mut sites = Vec::new();
     for (pc, instruction) in decoded.iter().enumerate() {
-        if !instruction.op().is_string_case_index() {
+        if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::StringCaseIndex) {
             continue;
         }
         // The range `operand_in_lane` validated before installing the selector.

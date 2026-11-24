@@ -19,7 +19,7 @@ const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_functi
 fn quench_engine2_fn_pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool { crate::compiled::pays_native_entry(body) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_pays_native_entry = quench_engine2_fn_pays_native_entry;
 #[unsafe(no_mangle)]
-fn quench_engine2_fn_subscribe_stable(stable: &StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>, heap: &mut quench_runtime::heap::Heap, method_atoms: &mut quench_runtime::code_dependencies::CodeReaders) -> bool { crate::compiled::lane_compile::dependencies::subscribe_stable(stable, code, heap, method_atoms) }
+fn quench_engine2_fn_subscribe_stable(stable: &StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>, facts: &mut quench_runtime::vm::tier_queries::FactWatch<'_>) -> bool { crate::compiled::lane_compile::dependencies::subscribe_stable(stable, code, facts) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_subscribe_stable = quench_engine2_fn_subscribe_stable;
 #[unsafe(no_mangle)]
 fn quench_engine2_fn_ahead_program_fingerprint(program: &ResidualProgram) -> u64 { crate::compiled::ahead_images::ahead_program_fingerprint(program) }

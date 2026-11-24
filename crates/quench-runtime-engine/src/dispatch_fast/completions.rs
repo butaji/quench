@@ -417,7 +417,7 @@ pub(crate) fn settled_then_in_lane(vm: &mut Vm, value: Value) -> Option<Value> {
 /// `rooted`, which its side record carried (`SidePayload::Settles`), resolved with the value,
 /// which its call yields.
 #[inline(never)]
-pub(crate) fn settle_promise_in_lane(cx: *mut LaneContext, value: Value, then: Value, rooted: Option<quench_runtime::heap::RootId>) -> Value {
+pub(crate) fn settle_promise_in_lane(cx: *mut LaneContext, value: Value, then: Value, rooted: Option<quench_runtime::tier_surface::RootId>) -> Value {
     let vm = unsafe { vm(cx) };
     // Only the `await` after the call reads an unrooted promise: a primitive fulfills it, and
     // awaiting a primitive takes the one job awaiting that fulfilled promise takes.

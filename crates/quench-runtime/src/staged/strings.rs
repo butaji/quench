@@ -66,6 +66,27 @@ fn at_width<S: Stage>(stage: &mut S, string: FlatString<S::Word>,
     stage.choose_leaving(wide, #[inline(always)] |stage| row(stage, UnitWidth::Wide), #[inline(always)] |stage| row(stage, UnitWidth::Narrow))
 }
 
+/// A string native over a flat string: `charCodeAt`, and `charAt` from the table of one-unit
+/// strings. The interpreter (`concrete_char_code_at`, `concrete_char_at`) and the b-jit's builtin
+/// rows run it through the one step, `step_string_native_of`.
+#[derive(Clone, Copy)]
+pub enum StringNative<W> {
+    /// `charCodeAt` of `string` at the index value word `index`.
+    CharCodeAt { string: FlatString<W>, index: W },
+    /// `charAt` of `string` at `index`, from the one-unit strings at `table`.
+    CharAt { string: FlatString<W>, index: W, table: W },
+}
+
+/// The value word `native` answers: the one step of a string native, on any stage. `None`
+/// (leaving at `miss`) where its row leaves (`string_char_code_at`, `string_char_at`).
+#[inline(always)]
+pub fn step_string_native_of<S: Stage>(stage: &mut S, native: StringNative<S::Word>, miss: S::Miss) -> Option<S::Word> {
+    match native {
+        StringNative::CharCodeAt { string, index } => string_char_code_at(stage, string, index, miss),
+        StringNative::CharAt { string, index, table } => string_char_at(stage, string, index, table, miss),
+    }
+}
+
 /// `builtins::char_code_at` of `string`.
 #[inline(always)]
 pub fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
@@ -176,7 +197,7 @@ impl ConcreteString<'_> {
 pub fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option<Value> {
     let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
-    string_char_code_at(&mut stage, string, index.to_bits(), ()).map(Value::from_bits)
+    step_string_native_of(&mut stage, StringNative::CharCodeAt { string, index: index.to_bits() }, ()).map(Value::from_bits)
 }
 
 #[cfg(not(stencil_build))]
@@ -186,7 +207,7 @@ pub fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option
 pub fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: Value) -> Option<Value> {
     let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
-    string_char_at(&mut stage, string, index.to_bits(), table as u64, ()).map(Value::from_bits)
+    step_string_native_of(&mut stage, StringNative::CharAt { string, index: index.to_bits(), table: table as u64 }, ()).map(Value::from_bits)
 }
 
 /// The unit index that `String.prototype.at` (`from_end`) or `codePointAt` reads for the relative

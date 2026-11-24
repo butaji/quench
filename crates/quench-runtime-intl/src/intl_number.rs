@@ -86,7 +86,7 @@ impl Vm {
             vm.with_call_roots([prototype], |vm| {
                 let mut locale = vm.number_format_locale(p, args.first().copied())?;
                 let options = vm.number_format_options(p, args.get(1).copied())?;
-                let formatter = vm.heap.alloc_object(Self::empty_object(prototype));
+                let formatter = vm.allocate_object(Self::empty_object(prototype));
                 let locale_numbering_system = locale_unicode_keyword(&locale, "nu")
                     .filter(|value| quench_intl::valid_numbering_system(value));
                 let option_numbering_system = options
@@ -172,8 +172,7 @@ impl Vm {
                 }
                 let grouping_value = options.grouping_boolean.map_or_else(
                     || {
-                        vm.heap
-                            .alloc_string(options.grouping_mode.clone().into())
+                        vm.allocate_string(options.grouping_mode.clone().into())
                     },
                     |enabled| if enabled { Value::TRUE } else { Value::FALSE },
                 );
@@ -782,7 +781,7 @@ impl Vm {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
                 "number",
             )?;
-            let formatted = if let Some(Cell::BigInt(value)) = vm.heap.get(value) {
+            let formatted = if let Some(Cell::BigInt(value)) = vm.heap_reads().get(value) {
                 quench_intl::format_bigint(
                     &value.to_string(),
                     &quench_intl::BigIntFormatOptions {
@@ -797,7 +796,7 @@ impl Vm {
                 && minimum_significant_digits.is_none()
                 && maximum_significant_digits.is_none()
                 && rounding_increment == 1
-                && let Some(raw) = vm.heap.string(value)
+                && let Some(raw) = vm.heap_reads().string(value)
                 && let Some(formatted) = format_decimal_string(
                     raw.host_string(),
                     &locale,
@@ -882,7 +881,7 @@ impl Vm {
                 "always" | "exceptZero" if accounting_negative => formatted,
                 _ => formatted,
             };
-            Ok(vm.heap.alloc_string(formatted.into()))
+            Ok(vm.allocate_string(formatted.into()))
         })
     }
 
@@ -899,32 +898,32 @@ impl Vm {
             let Some(style) = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
                 return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
             };
-            let result = vm.heap.alloc_object(Self::empty_object(
+            let result = vm.allocate_object(Self::empty_object(
                 vm.realm_object_prototype(vm.realm.globals),
             ));
-            let locale_value = vm.heap.alloc_string(locale.clone().into());
+            let locale_value = vm.allocate_string(locale.clone().into());
             vm.set_named(p, result, "locale", locale_value)?;
             let numbering_system = vm
                 .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
-            let numbering_system_value = vm.heap.alloc_string(numbering_system.into());
+            let numbering_system_value = vm.allocate_string(numbering_system.into());
             vm.set_named(p, result, "numberingSystem", numbering_system_value)?;
-            let style_value = vm.heap.alloc_string(style.clone().into());
+            let style_value = vm.allocate_string(style.clone().into());
             vm.set_named(p, result, "style", style_value)?;
             if style == "currency" {
                 let currency = vm
                     .hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
                     .unwrap_or_default();
-                let currency = vm.heap.alloc_string(currency.into());
+                let currency = vm.allocate_string(currency.into());
                 vm.set_named(p, result, "currency", currency)?;
-                let display = vm.heap.alloc_string(
+                let display = vm.allocate_string(
                     vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
                         .unwrap_or_else(|| "symbol".into())
                         .into(),
                 );
                 vm.set_named(p, result, "currencyDisplay", display)?;
-                let sign = vm.heap.alloc_string(
+                let sign = vm.allocate_string(
                     vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
                         .unwrap_or_else(|| "standard".into())
                         .into(),
@@ -935,12 +934,12 @@ impl Vm {
                 let unit = vm
                     .hidden_string(this, NUMBER_FORMAT_UNIT_SLOT)
                     .unwrap_or_default();
-                let unit = vm.heap.alloc_string(unit.into());
+                let unit = vm.allocate_string(unit.into());
                 vm.set_named(p, result, "unit", unit)?;
                 let unit_display = vm
                     .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
                     .unwrap_or_else(|| "short".into());
-                let unit_display = vm.heap.alloc_string(unit_display.into());
+                let unit_display = vm.allocate_string(unit_display.into());
                 vm.set_named(p, result, "unitDisplay", unit_display)?;
             }
             for (name, slot, fallback) in [
@@ -992,7 +991,7 @@ impl Vm {
             }
             let grouping = vm
                 .hidden_value(this, NUMBER_FORMAT_GROUPING_SLOT)
-                .unwrap_or_else(|| vm.heap.alloc_string("auto".into()));
+                .unwrap_or_else(|| vm.allocate_string("auto".into()));
             vm.set_named(p, result, "useGrouping", grouping)?;
             let notation = vm
                 .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
@@ -1046,12 +1045,12 @@ impl Vm {
     ) -> Result<Value, JsError> {
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let formatted = vm.intl_number_format_format(p, this, args)?;
-            let Some(formatted) = vm.heap.string(formatted) else {
+            let Some(formatted) = vm.heap_reads().string(formatted) else {
                 return Err(JsError("NumberFormat output is not a string".into()));
             };
             let text = formatted.to_string();
             let parts = vm.number_format_parts_for_text(this, &text)?;
-            Ok(vm.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+            Ok(vm.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                     Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
                     parts,
                 )))
@@ -1128,7 +1127,7 @@ impl Vm {
                         format!("{first}{separator}{second}")
                     }
                 };
-                Ok(vm.heap.alloc_string(range.into()))
+                Ok(vm.allocate_string(range.into()))
             })
         })
     }
@@ -1161,7 +1160,7 @@ impl Vm {
                         parts.push(literal);
                         parts.extend(vm.number_format_tag_parts(p, second, "endRange")?);
                     }
-                    Ok(vm.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+                    Ok(vm.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                             Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
                             parts,
                         )))
@@ -1207,7 +1206,7 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<f64, JsError> {
-        if let Some(Cell::BigInt(value)) = self.heap.get(value) {
+        if let Some(Cell::BigInt(value)) = self.heap_reads().get(value) {
             return Ok(value.to_f64());
         }
         self.to_number(p, value)
@@ -1251,7 +1250,7 @@ impl Vm {
         value: &str,
         unit: Option<&str>,
     ) -> Result<Value, JsError> {
-        let object = self.heap.alloc_object(Self::empty_object(
+        let object = self.allocate_object(Self::empty_object(
             self.realm_object_prototype(self.realm.globals),
         ));
         self.set_intl_string_property(object, "type", kind)?;
@@ -1505,7 +1504,7 @@ impl Vm {
         value: &str,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(key);
-        let value = self.heap.alloc_string(value.into());
+        let value = self.allocate_string(value.into());
         self.set_property(object, atom, value)
     }
 
@@ -1705,7 +1704,7 @@ impl Vm {
         key: &str,
         value: &str,
     ) -> Result<(), JsError> {
-        let value = self.heap.alloc_string(value.into());
+        let value = self.allocate_string(value.into());
         self.set_hidden_value(object, key, value)
     }
 
@@ -1726,7 +1725,7 @@ impl Vm {
 
     pub(super) fn hidden_string(&self, object: Value, key: &str) -> Option<String> {
         let value = self.hidden_value(object, key)?;
-        self.heap.string(value).map(ToString::to_string)
+        self.heap_reads().string(value).map(ToString::to_string)
     }
 }
 

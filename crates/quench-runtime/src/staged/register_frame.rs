@@ -247,6 +247,12 @@ pub trait Frame<S: Stage> {
     #[inline(always)]
     fn wasm_memory(&mut self, _stage: &mut S, _register: Register) -> Option<(&mut [u8], bool)> { None }
 
+    /// The log2 of the page size of the Wasm memory value in `register` (16 for the 64 KiB page),
+    /// which `memory.size` counts in; `None` where the frame does not resolve it, which leaves the
+    /// row to its miss.
+    #[inline(always)]
+    fn wasm_memory_page_bits(&mut self, _stage: &mut S, _register: Register) -> Option<u32> { None }
+
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.
     #[inline(always)]

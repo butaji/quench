@@ -18,7 +18,7 @@ use super::call_plan::builtin::{self, BuiltinCall};
 use super::super::{DirectCallee, DirectCandidates};
 use quench_runtime::bytecode::Function;
 use quench_runtime::compile::liveness::RegisterMasks;
-use quench_runtime::heap::GlobalFact;
+use quench_runtime::tier_surface::GlobalFact;
 use std::rc::Rc;
 
 /// A function a site may inline: its instructions, registers, the register each parameter is
@@ -72,7 +72,7 @@ pub(crate) struct Callees {
     stable: Vec<Option<Held>>,
     /// By PC, the native function the call site's callee register holds, where a field read defines it
     /// (`Vm::native_callees`), with the holder whose values the code depends on.
-    natives: Vec<Option<(quench_runtime::value::Value, quench_runtime::heap::Native, u32)>>,
+    natives: Vec<Option<(quench_runtime::value::Value, quench_runtime::tier_surface::Native, u32)>>,
     /// By PC, the callee the closed world proves the call site calls (`AotFacts::call_target`), as an
     /// image's body calls it: through the site's image record (`Symbol::CallRecord`), whose run-time
     /// words the loader binds (`aot_image::bound::BoundCalls::bind`). Empty for a body of this process.
@@ -142,7 +142,7 @@ pub(crate) fn chains(instruction: WideInstruction) -> bool {
 /// Whether `instruction` is a method call `o.m(args)`, whose callee its site's call feedback records and whose chain reads it
 /// (`call_plan::Method`).
 pub(crate) fn is_method_call(instruction: WideInstruction) -> bool {
-    instruction.op() == quench_runtime::bytecode::Op::CallMethod && CallForm::of(instruction) == Some(CallForm::Stepped)
+    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::MethodCall) && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
 /// The callee the call site `instruction` makes calls, if its body's call chain makes it: the
@@ -165,7 +165,7 @@ impl Callees {
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
     pub(crate) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<Held>>,
-        natives: Vec<Option<(quench_runtime::value::Value, quench_runtime::heap::Native, u32)>>) -> Self {
+        natives: Vec<Option<(quench_runtime::value::Value, quench_runtime::tier_surface::Native, u32)>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
             let callees = reached(*instruction, site);

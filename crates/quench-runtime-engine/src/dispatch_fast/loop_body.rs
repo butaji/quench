@@ -96,7 +96,7 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
     let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
     let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {
         let call = function.widened(*packed);
-        vm.heap.function(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
+        vm.function_record(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
             FunctionKind::Native(native) => crate::compiled::inlines_in_loop(native),
             _ => true,
         })

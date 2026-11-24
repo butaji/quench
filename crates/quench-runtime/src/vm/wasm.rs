@@ -856,6 +856,12 @@ impl Vm {
         Ok(rule(&mut crate::staged::wasm_machine::ConcreteBytes { memory: &guard }))
     }
 
+    /// The log2 of the page size of the Wasm memory `memory`, which `memory.size` counts in;
+    /// `None` for a value that is no Wasm memory.
+    pub fn wasm_memory_page_bits(&self, memory: Value) -> Option<u32> {
+        self.wasm_memory_type(memory).ok().map(|ty| ty.page_size_log2())
+    }
+
     #[inline] pub fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
         let Some(Cell::WasmMemory { header, .. }) = self.heap.get(memory) else {
             return Err(JsError::validation("invalid Wasm memory binding".into()));

@@ -74,8 +74,8 @@ fn root_constants(vm: &Vm, function: u32, unit: &lane_unit::Unit) -> std::collec
         let Some(quench_runtime::staged::Operation::LoadCapture { depth, slot, .. }) = crate::compiled::decoded(instruction) else { return None };
         let own = matches!(unit.origins.get(pc)?, lane_unit::Origin::Caller(_));
         if !own || !reaches_root(program, function, depth) || !vm.root_slot_written_once(program_id, slot) { return None; }
-        let value = vm.heap.environment_slot(environment, usize::from(slot))?;
-        (value != Value::DELETED && vm.heap.function(value).is_some()).then_some((pc, value))
+        let value = vm.heap_reads().environment_slot(environment, usize::from(slot))?;
+        (value != Value::DELETED && vm.function_record(value).is_some()).then_some((pc, value))
     }).collect()
 }
 
@@ -707,20 +707,21 @@ impl Vm {
                 if !self.lowering_holds(program, &pending, &lowered) { return Ok(LaneBodyOutcome::Stale); }
                 pending.plan.lowered = lowered;
                 let watch = pending.watch.clone();
-                watch.hold_roots(pending.plan.lowered.region.stable.roots.clone(), &mut self.heap);
+                let (mut facts, _) = self.fact_watch();
+                facts.hold_roots(&watch, pending.plan.lowered.region.stable.roots.clone());
                 let watcher: Rc<dyn quench_runtime::code_dependencies::DependentCode> = watch.clone();
-                if !pending.plan.dependencies().subscribe(&pending.plan.lowered.region.stable, &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
+                if !pending.plan.dependencies().subscribe(&pending.plan.lowered.region.stable, &watcher, &mut facts) {
                     refuse(self, Refusal::Dependencies);
                     return Ok(LaneBodyOutcome::Declined);
                 }
                 let PendingLaneMethod { plan, .. } = *pending;
                 plan.finish(&code.code, code.scalar, code.proven)
-                    .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
+                    .and_then(|method| { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) })
                     .inspect(|published| self.programs.note_installed_lane(key, published))
                     .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
             }
             Ok(LaneCompile::Done(method)) => method
-                .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
+                .and_then(|method| { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) })
                 .inspect(|published| self.programs.note_installed_lane(key, published))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
         })
@@ -763,7 +764,7 @@ impl Vm {
     /// the slots' observations; whether every slot already admitted them. A body's slot
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.
     fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, quench_runtime::typed_ir::Type, bool)>) -> bool {
-        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.heap.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
     }
 }
 

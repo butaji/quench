@@ -9,7 +9,9 @@
 use super::math::FloatUnary;
 use super::numeric::{Domain, NumericStage};
 use super::value::{int_word, is_double, is_int};
-use super::{Concrete, Stage};
+use super::region::Region;
+use super::{Concrete, Stage, word_bytes, word_offset};
+use crate::bytecode::Register;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 use crate::Value;
 
@@ -28,6 +30,43 @@ pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected:
 #[inline(always)]
 pub fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
     admit_identity(&mut Concrete::new(std::ptr::null()), callee, expected, ()).is_some()
+}
+
+/// The registers of a call site's in-place native call: its callee, receiver, first argument (the
+/// window the arguments lie in) and result.
+#[derive(Clone, Copy, Debug)]
+pub struct InPlaceCall {
+    pub callee: Register,
+    pub receiver: Register,
+    pub arguments: Register,
+    pub result: Register,
+}
+
+/// A tier's in-place body of the native a site's row runs: the value word for `receiver` and the
+/// arguments at the address `arguments`, or `None` (leaving at `miss`, before any write) where the
+/// native's own steps decide. The interpreter's body is `Vm::in_place_native_value`; the b-jit's
+/// builtin rows prepare their operands and run the shared native steps (`step_string_native_of`,
+/// `step_number_native_of`, `builtins::step_array_native_of`).
+pub trait InPlaceBody<S: Stage> {
+    fn in_place_value(&mut self, stage: &mut S, receiver: S::Word, arguments: S::Word, miss: S::Miss) -> Option<S::Word>;
+}
+
+/// The in-place call of a native at a site whose registers lie in the file at `registers`: the
+/// callee admitted against the identity the tier proved for it (`admit_identity`), the body over
+/// the receiver and the argument window where it lies, and its value stored to the result register.
+/// The one step of an in-place native call: the interpreter's in-place handlers
+/// (`lane_call_in_place`) and the b-jit's builtin rows run it. `None` (leaving at `miss`, before any
+/// write) where the callee is another or the body declines.
+#[inline(always)]
+pub fn step_in_place_call_of<S: Stage, B: InPlaceBody<S>>(stage: &mut S, body: &mut B, registers: S::Word, identity: S::Word,
+    call: InPlaceCall, miss: S::Miss) -> Option<S::Word> {
+    let callee = stage.load_u64(Region::Frame.mutable(), registers, word_offset(call.callee));
+    admit_identity(stage, callee, identity, miss)?;
+    let receiver = stage.load_u64(Region::Frame.mutable(), registers, word_offset(call.receiver));
+    let arguments = stage.add_imm(registers, word_bytes(call.arguments));
+    let value = body.in_place_value(stage, receiver, arguments, miss)?;
+    stage.store_u64(Region::Frame.mutable(), registers, word_offset(call.result), value);
+    Some(value)
 }
 
 /// A Math function of Number arguments: the one table of them (`vm::number::math_call`), from which
@@ -131,27 +170,50 @@ fn math_call_of_one<S: NumericStage>(stage: &mut S, call: MathCall, only: S::Wor
         return absolute(stage, only, miss);
     }
     let number = number_word(stage, only, miss)?;
-    let result = match call {
-        MathCall::Unary(operation) => stage.float_unary(operation, number),
-        MathCall::Extreme(maximum) => {
+    if matches!(call, MathCall::Imul) {
+        // The missing argument is `undefined`, whose ToInt32 is 0: the product is 0, once the
+        // given argument is a Number.
+        let zero = stage.i32_constant(0);
+        return Some(int_value(stage, zero));
+    }
+    // ToUint32 and ToInt32 share their low 32 bits, which `Math.clz32` reads.
+    let operand = match math_operands(call) { Domain::Int32 => stage.to_int32(number, miss)?, _ => number };
+    math_value(stage, call, &[operand])
+}
+
+/// The domain a Math row reads its operands in: int32 words for `Math.imul` and `Math.clz32`
+/// (after ToInt32), binary64 words for the rest.
+#[inline(always)]
+pub const fn math_operands(call: MathCall) -> Domain {
+    match call { MathCall::Imul | MathCall::LeadingZeros => Domain::Int32, _ => Domain::Float64 }
+}
+
+/// The Math row `call` of `operands`, words of its domain (`math_operands`): its result word and
+/// the result's domain (an int32 for `Math.imul` and `Math.clz32`, else a binary64). The one
+/// definition of each row's operation, which the value-word step (`math_call`) and the u-jit's
+/// unboxed lowering both run. `None` for a call with no row, or another operand count.
+#[inline(always)]
+pub fn math_of_operands<S: NumericStage>(stage: &mut S, call: MathCall, operands: &[S::Word]) -> Option<(Domain, S::Word)> {
+    Some(match (call, operands) {
+        (MathCall::Imul, &[left, right]) => (Domain::Int32, super::math::multiply(stage, left, right)),
+        (MathCall::LeadingZeros, &[only]) => (Domain::Int32, super::math::count_leading_zeros(stage, only)),
+        (MathCall::Unary(operation), &[only]) => (Domain::Float64, super::math::unary(stage, operation, only)),
+        (MathCall::Extreme(maximum), &[left, right]) => (Domain::Float64, super::math::extreme(stage, maximum, left, right)),
+        (MathCall::Extreme(maximum), &[only]) => {
             let start = stage.f64_constant(MathCall::extreme_start(maximum));
-            stage.float_extreme(maximum, start, number)
+            (Domain::Float64, super::math::extreme(stage, maximum, start, only))
         }
-        MathCall::Imul => {
-            // The missing argument is `undefined`, whose ToInt32 is 0: the product is 0, once
-            // the given argument is a Number.
-            let zero = stage.i32_constant(0);
-            return Some(int_value(stage, zero));
-        }
-        MathCall::LeadingZeros => {
-            // ToUint32 and ToInt32 share their low 32 bits, which the count reads.
-            let word = stage.to_int32(number, miss)?;
-            let count = stage.int_leading_zeros(word);
-            return Some(int_value(stage, count));
-        }
-        MathCall::Libm(_) | MathCall::Binary(_) => return None,
-    };
-    Some(stage.box_number(result))
+        _ => return None,
+    })
+}
+
+/// `math_of_operands` as a value word: an int32 result tagged, a binary64 boxed.
+#[inline(always)]
+fn math_value<S: NumericStage>(stage: &mut S, call: MathCall, operands: &[S::Word]) -> Option<S::Word> {
+    match math_of_operands(stage, call, operands)? {
+        (Domain::Int32, word) => Some(int_value(stage, word)),
+        (_, word) => Some(stage.box_number(word)),
+    }
 }
 
 /// `Math.abs` of the value word `only`: an int32 other than `i32::MIN` by negation, whose result
@@ -191,8 +253,7 @@ fn extreme_pair<S: NumericStage>(stage: &mut S, maximum: bool, (left, right): (S
     }, #[inline(always)] |stage| {
         let x = number_word(stage, left, miss)?;
         let y = number_word(stage, right, miss)?;
-        let result = stage.float_extreme(maximum, x, y);
-        Some(stage.box_number(result))
+        math_value(stage, MathCall::Extreme(maximum), &[x, y])
     })
 }
 
@@ -211,9 +272,50 @@ fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), 
         let y = number_word(stage, right, miss)?;
         let x = stage.to_int32(x, miss)?;
         let y = stage.to_int32(y, miss)?;
-        let product = stage.int_multiply(x, y);
-        Some(int_value(stage, product))
+        math_value(stage, MathCall::Imul, &[x, y])
     })
+}
+
+/// A native whose value is a function of Number value words: a Math function (`math_call`) or
+/// `Number.isInteger`. The interpreter (`concrete_math_call`, `builtins::concrete_is_integral`) and
+/// the b-jit's builtin rows run it through the one step, `step_number_native_of`.
+#[derive(Clone, Copy, Debug)]
+pub enum NumberNative {
+    /// A Math function of Numbers.
+    Math(MathCall),
+    /// `Number.isInteger` of its one argument.
+    IsInteger,
+}
+
+/// The value word `native` answers for the value words `args`: the one step of a native of
+/// Numbers, on any numeric stage. `None` (leaving at `miss`) for any case the native's own steps
+/// decide (`math_call`; for `Number.isInteger`, an argument that is no Number).
+#[inline(always)]
+pub fn step_number_native_of<S: NumericStage>(stage: &mut S, native: NumberNative, args: &[S::Word], miss: S::Miss)
+    -> Option<S::Word> {
+    match native {
+        NumberNative::Math(call) => math_call(stage, call, args, miss),
+        NumberNative::IsInteger => {
+            let &[value] = args else { return None };
+            let int = is_int(stage, value);
+            stage.choose_leaving(int, #[inline(always)] |stage| {
+                let payload = stage.narrow(value);
+                let integral = super::builtins::is_integral(stage, Domain::Int32, payload);
+                Some(boolean_word(stage, integral))
+            }, #[inline(always)] |stage| {
+                let number = number_word(stage, value, miss)?;
+                let integral = super::builtins::is_integral(stage, Domain::Float64, number);
+                Some(boolean_word(stage, integral))
+            })
+        }
+    }
+}
+
+/// The boolean value word of `cond`.
+#[inline(always)]
+fn boolean_word<S: Stage>(stage: &mut S, cond: S::Cond) -> S::Word {
+    let (yes, no) = (stage.constant(Value::boolean(true).to_bits()), stage.constant(Value::boolean(false).to_bits()));
+    stage.select(cond, yes, no)
 }
 
 /// `math_call` of `call` on the interpreter's values, and the bodies no stage runs: a libm function
@@ -236,9 +338,9 @@ pub fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
 fn concrete_row(call: MathCall, args: &[Value]) -> Option<Value> {
     let stage = &mut Concrete::new(std::ptr::null());
     match *args {
-        [] => math_call(stage, call, &[], ()),
-        [only] => math_call(stage, call, &[only.to_bits()], ()),
-        [left, right] => math_call(stage, call, &[left.to_bits(), right.to_bits()], ()),
+        [] => step_number_native_of(stage, NumberNative::Math(call), &[], ()),
+        [only] => step_number_native_of(stage, NumberNative::Math(call), &[only.to_bits()], ()),
+        [left, right] => step_number_native_of(stage, NumberNative::Math(call), &[left.to_bits(), right.to_bits()], ()),
         _ => None,
     }.map(Value::from_bits)
 }

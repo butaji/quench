@@ -157,7 +157,7 @@ fn typed_slot(load: crate::compiled::object_slots::NativeFieldLoad) -> Option<qu
 /// An inline-cache row's entry operands in one word: the exact shape below 32 bits, the slot's byte
 /// offset in the flat run above (`base_region::plan::site_holes` splits them).
 fn ic_hole(load: crate::compiled::object_slots::NativeFieldLoad) -> u64 {
-    u64::from(load.shape) | (u64::from(load.slot) * quench_runtime::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64) << u32::BITS
+    u64::from(load.shape) | (u64::from(load.slot) * quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64) << u32::BITS
 }
 
 /// The observed type of the own slot cache `site` stores to, where it proves exactly one own load.

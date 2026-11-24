@@ -1216,10 +1216,10 @@ impl LoopEntry {
     /// code.
     pub(crate) fn push_native_heap(
         &mut self,
-        objects: *const quench_runtime::heap::Object,
+        objects: *const quench_runtime::tier_surface::Object,
         properties: *const Value,
         property_len: usize,
-        arrays: *const quench_runtime::heap::ArrayObject,
+        arrays: *const quench_runtime::tier_surface::ArrayObject,
     ) {
         self.push(objects.addr() as u64);
         self.push(properties.addr() as u64);
@@ -2167,7 +2167,7 @@ pub(crate) struct Observation<'a> {
     /// The typed arrays the region's arrays hold at entry, by register (`Vm::typed_array_kind`):
     /// an array read or written through one is viewed at that kind, one arm per access instead of
     /// `typed_elements::by_word`'s walk over every kind (`LoopArray::views`).
-    pub(crate) typed_kinds: &'a [(Register, quench_runtime::heap::TypedArrayKind)],
+    pub(crate) typed_kinds: &'a [(Register, quench_runtime::tier_surface::TypedArrayKind)],
     /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
     /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its

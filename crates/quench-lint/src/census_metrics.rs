@@ -102,6 +102,31 @@ pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }
 
+/// What the tier crates still take of the runtime's internals: Value words made from raw bits, outside
+/// comments, and the heap names `tier_surface` re-exports. The heap module and `Vm::heap` are
+/// `pub(crate)` (S1.4), so paths into the heap and reads of the heap field cannot be written; this
+/// counter carries the raw-word typing of S1.5 (TOD-2076) and is deleted when it reaches the surface
+/// the tiers keep.
+pub fn runtime_internals(text: &str) -> usize {
+    const REACHES: [&str; 1] = ["Value::from_bits("];
+    let reaches: usize = text.lines().map(str::trim).filter(|line| !line.starts_with("//"))
+        .map(|line| REACHES.iter().map(|reach| line.matches(reach).count()).sum::<usize>()).sum();
+    reaches + surface_names(text)
+}
+
+/// The heap items a `pub use crate::heap::...;` re-exports (`quench_runtime::tier_surface`): each is an
+/// internal the tiers can still name, so the counter falls only when an item leaves the surface.
+fn surface_names(text: &str) -> usize {
+    let code: String = text.lines().filter(|line| !line.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
+    code.match_indices("pub use crate::heap::").map(|(at, _)| {
+        let statement = &code[at..code[at..].find(';').map_or(code.len(), |end| at + end)];
+        match (statement.find('{'), statement.rfind('}')) {
+            (Some(open), Some(close)) => statement[open + 1..close].split(',').filter(|name| !name.trim().is_empty()).count(),
+            _ => 1,
+        }
+    }).sum()
+}
+
 /// The opcode-identity predicates the catalog generates (`is_load_capture`, ...): the left of each
 /// `name => Opcode | ...` entry of its `op_predicates!` table.
 fn catalog_predicates() -> &'static BTreeSet<String> {

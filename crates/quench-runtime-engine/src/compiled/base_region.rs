@@ -17,7 +17,7 @@
 use crate::ext_traits::*;
 use super::lane_unit::{InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
-use quench_runtime::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
+use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use quench_runtime::code_dependencies::InstanceofFact;
 use quench_runtime::typed_ir::{Representation, Type};
 use quench_runtime::value::Value;

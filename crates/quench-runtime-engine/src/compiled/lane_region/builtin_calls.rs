@@ -11,7 +11,7 @@ use quench_runtime::bytecode::ImmediateLayout;
 use quench_runtime::staged::array_search::{DenseNeedle, scan_dense};
 use quench_runtime::staged::region::Region;
 use quench_runtime::staged::{Domain, builtins, elements, strings};
-use quench_runtime::heap::Native;
+use quench_runtime::tier_surface::Native;
 
 /// A builtin a call runs on its staged row.
 #[derive(Clone, Copy)]
@@ -132,7 +132,7 @@ impl Lowering<'_, '_> {
     /// brand is one), so such a record is no arguments object and `Array.isArray` holds of it. Any other value leaves
     /// at `exit`.
     fn plain_array_argument(&mut self, state: &mut State, register: Register, exit: ir::Block) {
-        use quench_runtime::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        use quench_runtime::tier_surface::NATIVE_ARRAY_LAYOUT as ARRAY;
         let base = self.tagged(state, register);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
@@ -168,7 +168,7 @@ impl Lowering<'_, '_> {
         continues(if within {
             strings::string_char_code_at_within(&mut stage, string, index, exit)
         } else {
-            strings::string_char_code_at(&mut stage, string, index, exit)
+            strings::step_string_native_of(&mut stage, strings::StringNative::CharCodeAt { string, index }, exit)
         })
     }
 
@@ -178,7 +178,7 @@ impl Lowering<'_, '_> {
         let index = self.tagged(state, index);
         let table = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.ascii_unit_strings));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
-        continues(strings::string_char_at(&mut stage, string, index, table, exit))
+        continues(strings::step_string_native_of(&mut stage, strings::StringNative::CharAt { string, index, table }, exit))
     }
 
     /// The `length` of the flat string `base` (tagged) as an int32; any other value, or a
@@ -212,7 +212,7 @@ impl Lowering<'_, '_> {
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
-        let length = continues(builtins::array_push_one(&mut stage, backing, room, value, exit));
+        let length = continues(builtins::step_array_native_of(&mut stage, builtins::ArrayNative::Push { room, value }, backing, exit));
         self.raw_unary(Unary::Narrow(Lane::I32), length)
     }
 
@@ -313,7 +313,7 @@ impl Lowering<'_, '_> {
     fn holds_no_double(&mut self, values: ir::Value) -> ir::Value {
         let others = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
-            stage.load_u32(Region::Elements.mutable(), values, quench_runtime::heap::OTHERS_FROM_VALUES)
+            stage.load_u32(Region::Elements.mutable(), values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
         };
         self.raw_compare_imm(Relation::Equal, others, 0)
     }
@@ -325,7 +325,7 @@ impl Lowering<'_, '_> {
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
-        let popped = continues(builtins::array_pop(&mut stage, backing, exit));
+        let popped = continues(builtins::step_array_native_of(&mut stage, builtins::ArrayNative::Pop, backing, exit));
         self.helper_call(LaneHelper::RetireArrayProofs, &[]);
         popped
     }

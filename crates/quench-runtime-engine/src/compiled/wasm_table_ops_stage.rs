@@ -23,7 +23,7 @@ const WORD: u32 = size_of::<u64>() as u32;
 /// The environment slot of a binding word `slot` names, or the undefined value when the
 /// environment holds no binding there (which the analysis never admits).
 fn bound(vm: &Vm, environment: super::Value, slot: u64) -> super::Value {
-    vm.heap
+    vm.heap_reads()
         .environment_slot(environment, slot as usize)
         .unwrap_or(super::Value::UNDEFINED)
 }
@@ -39,7 +39,7 @@ pub(crate) unsafe extern "C" fn table_op_callout(
     a: u64,
     b: u64,
     c: u64,
-    value: u64,
+    value: super::Value,
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
@@ -63,7 +63,7 @@ pub(crate) unsafe extern "C" fn table_op_callout(
                 }
                 _ => [bound(vm, environment, first), super::Value::UNDEFINED],
             };
-            vm.wasm_table_op(op, tables, [a, b, c], super::Value::from_bits(value))
+            vm.wasm_table_op(op, tables, [a, b, c], value)
         }
     };
     match result {
@@ -124,7 +124,7 @@ impl Vm {
     /// Drops the segment bound at environment slot `slot` of `environment`: the binding holds the
     /// undefined value afterwards, which `memory.init` reads as a dropped segment.
     pub(crate) fn wasm_segment_drop(&mut self, environment: super::Value, slot: usize) {
-        if let Some(bound) = self.heap.environment_slot_mut(environment, slot) {
+        if let Some(bound) = self.environment_slot_mut(environment, slot) {
             *bound = super::Value::UNDEFINED;
         }
     }

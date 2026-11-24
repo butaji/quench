@@ -8,7 +8,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::bytecode::Class;
 use super::lane_frame::{suspension_row_in_lane, yield_star_kind, Suspender, LANE_YIELD};
 use quench_runtime::vm::activation::{JobRoot, SuspendKind};
 use quench_runtime::staged::{SuspendEffect, Suspending, Suspension};
@@ -131,7 +130,7 @@ impl Vm {
             return Some(source);
         }
         let record = self.promise_record(source)?;
-        (record.state() == quench_runtime::heap::PromiseState::Fulfilled).then(|| record.result())
+        (record.state() == quench_runtime::tier_surface::PromiseState::Fulfilled).then(|| record.result())
     }
 }
 
@@ -157,11 +156,12 @@ script_handler! {
 /// The handlers of a frame's suspensions: each runs its staged `Suspend` row on the lane's frame
 /// (`suspension_row_in_lane`), with the suspender its record's activation makes.
 pub(crate) const fn suspend_handler(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::Yield => Some(yield_row),
-        Class::YieldStar => Some(yield_star_row),
-        Class::Await => Some(await_row),
-        _ => None,
+    use quench_runtime::staged::SuspendRow;
+    match quench_runtime::staged::suspend_row(opcode) {
+        Some(SuspendRow::Yield) => Some(yield_row),
+        Some(SuspendRow::YieldStar) => Some(yield_star_row),
+        Some(SuspendRow::Await) => Some(await_row),
+        None => None,
     }
 }
 
@@ -188,7 +188,7 @@ fn suspend_settling(cx: *mut LaneContext, r: Registers, (pc, destination): (usiz
     let continuation = vm.suspend_activation(frame, quench_runtime::vm::activation::Completion::Await(value), Some(destination), promise);
     let activation = vm.lane_stack.pop_activation().expect("a settling activation runs");
     let (memory, _) = restore_caller_in_lane(cx, &activation);
-    match vm.enqueue_async_resume(code, quench_runtime::heap::AwaitKind::function(continuation), promise, value) {
+    match vm.enqueue_async_resume(code, quench_runtime::tier_surface::AwaitKind::function(continuation), promise, value) {
         Ok(()) => resume_after_call_in_lane(&activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);

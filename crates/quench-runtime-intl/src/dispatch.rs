@@ -114,7 +114,7 @@ impl Vm {
             | Native::IntlDateTimeFormatResolvedOptions => {
                 self.intl_date_time_format_native(p, native, this, args)
             }
-            Native::TemporalToLocaleString => match self.heap.get(this) {
+            Native::TemporalToLocaleString => match self.heap_reads().get(this) {
                 Some(Cell::TemporalDuration { .. }) => {
                     self.temporal_duration_to_locale_string(p, this, args)
                 }

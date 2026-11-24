@@ -448,8 +448,19 @@ const fn read_signed(access: GcFieldAccess) -> Option<bool> {
     }
 }
 
+/// Whether `op` is a value step `Vm::wasm_gc_value_step` makes: a GC value operation
+/// (`GcStep::of`), or an instance read, which names a function of the running instance (an
+/// indirect call's target, `ref.func`).
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub const fn gc_value_op(op: Op) -> bool {
+    GcStep::of(op).is_some()
+        || matches!(super::wasm_call::Call::of(op), Some(super::wasm_call::Call::IndirectTarget | super::wasm_call::Call::RefFunc))
+}
+
 impl GcStep {
     /// The step of `op`, `None` for an opcode that is no GC value operation (a call target is none).
+    #[inline(always)]
     pub const fn of(op: Op) -> Option<Self> {
         wasm_gc_table!(wasm_gc_step_of op)
     }

@@ -802,11 +802,11 @@ impl ElementViews {
     }
 
     /// The kind a typed view's site observed.
-    fn observed_kind(self) -> Option<quench_runtime::heap::TypedArrayKind> {
+    fn observed_kind(self) -> Option<quench_runtime::tier_surface::TypedArrayKind> {
         match self {
             Self::Typed(kind) => kind,
             // A double backing's words are a `Float64Array`'s.
-            Self::Double => Some(quench_runtime::heap::TypedArrayKind::Float64),
+            Self::Double => Some(quench_runtime::tier_surface::TypedArrayKind::Float64),
             Self::Dense => None,
         }
     }
@@ -1753,7 +1753,7 @@ pub(crate) struct RegionSpecializer<'p> {
     pub(crate) int_captures: &'p [u16],
     /// The kind each loop array's register held at entry (`Observation::typed_kinds`): an array's
     /// reads and writes keep their own kind's arm, not a walk over every kind.
-    pub(crate) typed_kinds: &'p [(Register, quench_runtime::heap::TypedArrayKind)],
+    pub(crate) typed_kinds: &'p [(Register, quench_runtime::tier_surface::TypedArrayKind)],
     pub(crate) plan: RegionPlan,
     /// The gate's proof that this region's compile may run (minted by `specialize`).
     pub(crate) admitted: super::admission::CompiledUnit,
@@ -1882,7 +1882,7 @@ pub(crate) fn lower(
     (int_entries, number_entries, string_entries): (&[(Register, IntRange)], &[Register], &[Register]),
     typed_captures: &[u16],
     int_captures: &[u16],
-    typed_kinds: &[(Register, quench_runtime::heap::TypedArrayKind)],
+    typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -3165,7 +3165,7 @@ impl Lowering<'_, '_> {
                 self.arguments_length(state, pc32, instruction),
             _ if plain && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_get(state, pc32, instruction),
-            _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
+            _ if plain && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Jump) => return self.jump(state, pc, instruction),
             _ if plain && instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable => return self.branch_table(state, pc, instruction),
             _ if plain && matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Number(quench_runtime::staged::NumberOperation::IntCase { .. }))) => self.int_case_index(state, pc, instruction),
             _ if plain && matches!(super::decoded(instruction), Some(quench_runtime::staged::Operation::JumpIf { .. })) => {
@@ -3612,8 +3612,8 @@ impl Lowering<'_, '_> {
         let mut addresses = [base; 2];
         for (address, bits) in addresses.iter_mut().zip([left, right]) {
             let index = self.raw_binary_imm(Binary::And, bits, i64::from(u32::MAX));
-            let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::heap::SMALL_STRING_ID_MASK));
-            let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::heap::SMALL_STRING_ID_BASE));
+            let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_MASK));
+            let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_BASE));
             decided = self.raw_binary(Binary::And, decided, recorded);
             let offset = self.raw_binary_imm(Binary::Mul, index, quench_runtime::staged::string_form::RECORD_SIZE as i64);
             *address = self.raw_binary(Binary::Add, base, offset);
@@ -4460,7 +4460,7 @@ impl Lowering<'_, '_> {
                         // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
                         let others = {
                             let mut stage = super::object_slots::emit(&mut self.builder);
-                            stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::heap::OTHERS_FROM_VALUES)
+                            stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
                         };
                         let none = self.raw_compare_imm(Relation::Equal, others, 0);
                         emit_js_guard(&mut self.builder, none, exit);
