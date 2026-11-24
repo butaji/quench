@@ -334,7 +334,7 @@ fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 fn bitwise<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
     operation: NumberBitwise) -> Option<S::Cond> {
     let miss = frame.miss();
-    let (left, right) = (super::numeric::bitwise_word(stage, frame, left, miss)?, super::numeric::bitwise_word(stage, frame, right, miss)?);
+    let (left, right) = (super::numeric::bitwise_word(stage, frame, left, miss)?.word(), super::numeric::bitwise_word(stage, frame, right, miss)?.word());
     let bits = stage.int_bitwise(operation, left, right);
     let zero = stage.i32_is_zero(bits);
     Some(stage.not(zero))

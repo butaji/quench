@@ -162,12 +162,12 @@ impl<'a, const N: usize> Frame<Concrete> for PlannedPlaces<'a, N> {
 
 impl<'a, const N: usize> NumericFrame<Concrete> for PlannedPlaces<'a, N> {
     #[inline(always)]
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<crate::staged::Int32<u64>> {
         self.places.int_operand(stage, operand, miss)
     }
 
     #[inline(always)]
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<u64> {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<crate::staged::Float64<u64>> {
         self.places.number_operand(stage, operand, miss)
     }
 

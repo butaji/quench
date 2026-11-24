@@ -8,8 +8,14 @@ use crate::heap::{ArrayElements, ArrayObject, Cell, EnvironmentRecord, FunctionR
 use crate::vm::engine_types::InstanceRecord;
 use crate::vm::wtf16::JsString;
 use crate::Value;
+use crate::code_dependencies::{DependentCode, PrototypeChain, PublishedCode, SlotDependency};
+use std::rc::Rc;
 
 impl Vm {
+    /// The offset of the heap's property buffer word from the VM, which compiled code reads through
+    /// the VM pointer it holds (`Heap::PROPERTY_BUFFER_OFFSET`).
+    pub const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Vm, heap) + Heap::PROPERTY_BUFFER_OFFSET;
+
     /// Whether a collection is due (`Heap::should_collect`): an allocating tier helper leaves first,
     /// and the interpreter collects at the instruction.
     #[inline(always)]
@@ -57,6 +63,31 @@ impl Vm {
     /// Holds the roots `code` folded into its machine code until the code is dropped (`Heap::hold_folded_roots`).
     #[inline(always)]
     pub fn hold_folded_roots(&mut self, code: &std::rc::Rc<dyn crate::folded_roots::RootedCode>) { self.heap.hold_folded_roots(code) }
+
+    /// A new iterator of record `iterator` (`Heap::alloc_iterator`).
+    #[inline(always)]
+    pub fn allocate_iterator(&mut self, iterator: crate::heap::IteratorRecord) -> Value { self.heap.alloc_iterator(iterator) }
+
+    /// The record of the iterator `value`, for a library step that advances it (`Heap::iterator_mut`).
+    #[inline(always)]
+    pub fn iterator_mut(&mut self, value: Value) -> Option<&mut crate::heap::IteratorRecord> { self.heap.iterator_mut(value) }
+
+    /// The cell of `value`, for a library layer (Intl, Temporal) that updates a cell kind it defines
+    /// (`Heap::get_mut`). The tiers write through the named mutations above instead.
+    #[inline(always)]
+    pub fn library_cell_mut(&mut self, value: Value) -> Option<&mut Cell> { self.heap.get_mut(value) }
+
+    /// A new string of `units` (`Heap::alloc_unit_run`).
+    #[inline(always)]
+    pub fn allocate_unit_run(&mut self, units: crate::vm::wtf16::Units<'_>) -> Value { self.heap.alloc_unit_run(units) }
+
+    /// Charges a materialized text to the collector's pacing (`Heap::charge_materialized_text`).
+    #[inline(always)]
+    pub fn charge_materialized_text(&mut self) { self.heap.charge_materialized_text() }
+
+    /// A new symbol (`Heap::alloc_symbol`).
+    #[inline(always)]
+    pub fn allocate_symbol(&mut self, symbol: crate::heap::SymbolData) -> Value { self.heap.alloc_symbol(symbol) }
 
     /// A new cell (`Heap::alloc`).
     #[inline(always)]
@@ -132,6 +163,12 @@ pub enum WasmBindingArea {
 #[derive(Clone, Copy)]
 pub struct HeapReads<'a>(&'a Heap);
 
+impl<'a> HeapReads<'a> {
+    /// The view of `heap`, for the runtime's own readers.
+    #[inline(always)]
+    pub(crate) fn of(heap: &'a Heap) -> Self { Self(heap) }
+}
+
 macro_rules! heap_reads {
     ($($(#[$doc:meta])* fn $name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)*) => {
         impl<'a> HeapReads<'a> {
@@ -193,6 +230,10 @@ heap_reads! {
     fn held_other_receiver(value: Value) -> Option<&'a Object>;
     /// Whether storing `stored` into the array `base` in place needs no store log (`Heap::array_store_unlogged`).
     fn array_store_unlogged(base: Value, stored: Value) -> bool;
+    /// Whether `value` is a function (`Heap::is_function_value`).
+    fn is_function_value(value: Value) -> bool;
+    /// An iterator's record (`Heap::iterator`) is listed above; a Map test (`Heap::is_map`).
+    fn is_map(value: Value) -> bool;
     /// The cell of a heap value (`Heap::get`).
     fn get(value: Value) -> Option<&'a Cell>;
     /// An object's record (`Heap::object`).
@@ -315,4 +356,50 @@ impl Vm {
     /// Visits every Wasm table's elements for a store (`Heap::for_each_wasm_table_mut`).
     #[inline(always)]
     pub fn for_each_wasm_table_mut(&mut self, visit: impl FnMut(&mut crate::heap::WasmTableElements)) { self.heap.for_each_wasm_table_mut(visit) }
+}
+
+/// The fact subscriptions a compiled unit takes when it publishes (`Vm::fact_watch`): the heap's reader
+/// tables and the method atoms' readers, and nothing else of the heap. A tier subscribes its code through
+/// these methods; each fact it names retires the code when a tracked mutation changes it.
+pub struct FactWatch<'a> {
+    heap: &'a mut Heap,
+    readers: &'a mut crate::code_dependencies::CodeReaders,
+}
+
+impl Vm {
+    /// The fact subscriptions of a publication, beside the program store that publishes the code.
+    #[inline(always)]
+    pub fn fact_watch(&mut self) -> (FactWatch<'_>, &crate::vm::program_store::ProgramStore) {
+        (FactWatch { heap: &mut self.heap, readers: self.method_cache_atoms.readers() }, &self.programs)
+    }
+}
+
+impl<'a> FactWatch<'a> {
+    /// Retires `code` when a shape departs (`Heap::subscribe_shape`); `false` where the table is full.
+    #[inline(always)]
+    pub fn subscribe_shape(&mut self, shape: u32, code: &Rc<dyn DependentCode>) -> bool { self.heap.subscribe_shape(shape, code) }
+    /// Retires `code` when a slot's observation changes (`Heap::subscribe_slot_observation`).
+    #[inline(always)]
+    pub fn subscribe_slot_observation(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
+        self.heap.subscribe_slot_observation(dependency, code)
+    }
+    /// Retires `code` when a prototype of `chain` changes (`Heap::subscribe_prototype_chain`).
+    #[inline(always)]
+    pub fn subscribe_prototype_chain(&mut self, chain: PrototypeChain, code: &Rc<dyn DependentCode>) -> bool {
+        self.heap.subscribe_prototype_chain(chain, code)
+    }
+    /// Retires `code` when a method cache names `atom` (`CodeReaders::subscribe`).
+    #[inline(always)]
+    pub fn subscribe_atom(&mut self, atom: u32, code: &Rc<dyn DependentCode>) -> bool { self.readers.subscribe(atom, code) }
+    /// Keeps the heap identities `code` embeds alive until it retires (`PublishedCode::hold_roots`).
+    #[inline(always)]
+    pub fn hold_roots<T: 'static>(&mut self, code: &Rc<PublishedCode<T>>, roots: crate::folded_roots::FoldedRoots) {
+        code.hold_roots(roots, self.heap)
+    }
+    /// The heap and readers, for the runtime's own subscriptions.
+    #[inline(always)]
+    pub(crate) fn parts(&mut self) -> (&mut Heap, &mut crate::code_dependencies::CodeReaders) { (self.heap, self.readers) }
+    /// A watch over `heap` and `readers`, for the runtime's own publications.
+    #[inline(always)]
+    pub(crate) fn of(heap: &'a mut Heap, readers: &'a mut crate::code_dependencies::CodeReaders) -> Self { Self { heap, readers } }
 }

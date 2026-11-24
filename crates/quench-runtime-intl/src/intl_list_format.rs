@@ -19,8 +19,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlListFormat, global, global);
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_list_format_constructors
@@ -70,7 +69,7 @@ impl Vm {
                 let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
                 let (style, kind) = vm.list_format_options(p, args.get(1).copied())?;
 
-                let instance = vm.heap.alloc_object(Self::empty_object(prototype));
+                let instance = vm.allocate_object(Self::empty_object(prototype));
                 vm.set_hidden_string(instance, LIST_FORMAT_LOCALE_SLOT, &locale)?;
                 vm.set_hidden_string(instance, LIST_FORMAT_STYLE_SLOT, &style)?;
                 vm.set_hidden_string(instance, LIST_FORMAT_TYPE_SLOT, &kind)?;
@@ -141,20 +140,20 @@ impl Vm {
                 .iter()
                 .flat_map(|part| part.value.units().iter())
                 .collect::<Vec<_>>();
-            return Ok(self.heap.alloc_string(JsString::from_units(&text)));
+            return Ok(self.allocate_string(JsString::from_units(&text)));
         }
         let mut values = Vec::with_capacity(parts.len());
         for part in parts {
-            let object = self.heap.alloc_object(Self::empty_object(
+            let object = self.allocate_object(Self::empty_object(
                 self.realm_object_prototype(self.realm.globals),
             ));
             self.set_intl_string_property(object, "type", part.kind)?;
             let atom = self.runtime_atoms.value;
-            let value = self.heap.alloc_string(part.value);
+            let value = self.allocate_string(part.value);
             self.set_property(object, atom, value)?;
             values.push(object);
         }
-        Ok(self.heap.alloc_array(quench_runtime::heap::ArrayObject::new(
+        Ok(self.allocate_array(quench_runtime::library_surface::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 values,
             )))
@@ -174,7 +173,7 @@ impl Vm {
                 let iterator = vm.iterator_get_direct(p, iterator)?;
                 vm.with_call_roots([iterator], |vm| {
                     while let Some(item) = vm.iterator_step_value(p, iterator)? {
-                        let Some(item) = vm.heap.string(item).cloned() else {
+                        let Some(item) = vm.heap_reads().string(item).cloned() else {
                             let error = vm
                                 .type_error(p, "ListFormat iterable values must be strings".into());
                             return Err(vm.iterator_abrupt(p, iterator, error));

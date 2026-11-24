@@ -88,11 +88,11 @@ impl ElementFrame<Concrete> for ConcreteFrame<'_> {}
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        Some(u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32))
+        Some(crate::staged::Int32::checked(Value::from_bits(self.read(stage, register))).expect("a proved int"))
     }
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        Some(Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits())
+        Some(crate::staged::Float64::checked(Value::from_bits(self.read(stage, register))).expect("a proved Number"))
     }
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())

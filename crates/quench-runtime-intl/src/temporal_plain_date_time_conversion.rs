@@ -47,7 +47,7 @@ pub(super) fn to_time_with_options(
     if value.is_undefined() {
         return Ok([0; 6]);
     }
-    if let Some(Cell::TemporalPlainDateTime { .. }) = vm.heap.get(value) {
+    if let Some(Cell::TemporalPlainDateTime { .. }) = vm.heap_reads().get(value) {
         validate_overflow_options_type(vm, p, options)?;
         let time = vm
             .temporal_plain_date_time_slots(p, value)?
@@ -56,7 +56,7 @@ pub(super) fn to_time_with_options(
         let _ = vm.plain_date_overflow(p, options)?;
         return Ok(time);
     }
-    if let Some(Cell::TemporalZonedDateTime { instant, .. }) = vm.heap.get(value) {
+    if let Some(Cell::TemporalZonedDateTime { instant, .. }) = vm.heap_reads().get(value) {
         let (epoch_nanoseconds, time_zone) =
             (instant.epoch_nanoseconds, instant.time_zone.clone());
         validate_overflow_options_type(vm, p, options)?;
@@ -100,13 +100,13 @@ pub(super) fn to_date_time(
     value: Value,
     options: Value,
 ) -> Result<[i32; 6], JsError> {
-    if matches!(vm.heap.get(value), Some(Cell::TemporalPlainDate { .. })) {
+    if matches!(vm.heap_reads().get(value), Some(Cell::TemporalPlainDate { .. })) {
         let _ = vm.plain_date_overflow(p, options)?;
         return Ok([0; 6]);
     }
     if !vm.is_object_like(value)
         || matches!(
-            vm.heap.get(value),
+            vm.heap_reads().get(value),
             Some(Cell::TemporalPlainDateTime { .. } | Cell::TemporalZonedDateTime { .. })
         )
     {
@@ -435,6 +435,6 @@ fn construct(
     for (argument, part) in args[3..9].iter_mut().zip(time) {
         *argument = Value::number(f64::from(part));
     }
-    args[9] = vm.heap.alloc_string(calendar.into());
+    args[9] = vm.allocate_string(calendar.into());
     vm.temporal_plain_date_time_construct(p, &args, constructor)
 }

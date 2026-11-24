@@ -34,8 +34,7 @@ impl Vm {
             .insert(global, constructor);
         self.set_builtin_function_name(constructor, "Collator")?;
         let prototype = self
-            .heap
-            .alloc_object(Self::empty_object(object_prototype));
+            .allocate_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_collator_prototypes
@@ -118,7 +117,7 @@ impl Vm {
                         overrides,
                     );
 
-                let collator = vm.heap.alloc_object(Self::empty_object(prototype));
+                let collator = vm.allocate_object(Self::empty_object(prototype));
                 vm.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
                 vm.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
                 vm.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
@@ -311,7 +310,7 @@ impl Vm {
             );
             self_.set_builtin_function_name(compare, "compare")?;
             let bound = self_.bind_function(p, compare, &[this])?;
-            let name = self_.heap.alloc_string("".into());
+            let name = self_.allocate_string("".into());
             let name_atom = self_.intern_atom("name");
             self_.set_property_attributes(
                 bound,
@@ -417,22 +416,21 @@ impl Vm {
             .collator_locale_slot(this)
             .ok_or_else(|| self.type_error(p, "not an Intl object".into()))?;
         let result = self
-            .heap
-            .alloc_object(Self::empty_object(self.object_proto));
+            .allocate_object(Self::empty_object(self.object_proto));
         for (key, value) in [
-            ("locale", self.heap.alloc_string(locale.into())),
+            ("locale", self.allocate_string(locale.into())),
             (
                 "usage",
                 self.collator_string_slot(this, COLLATOR_USAGE_SLOT)
                     .map_or(Value::UNDEFINED, |v| {
-                        self.heap.alloc_string(v.into())
+                        self.allocate_string(v.into())
                     }),
             ),
             (
                 "sensitivity",
                 self.collator_string_slot(this, COLLATOR_SENSITIVITY_SLOT)
                     .map_or(Value::UNDEFINED, |v| {
-                        self.heap.alloc_string(v.into())
+                        self.allocate_string(v.into())
                     }),
             ),
             (
@@ -445,7 +443,7 @@ impl Vm {
             ),
             (
                 "collation",
-                self.heap.alloc_string(
+                self.allocate_string(
                     self.collator_string_slot(this, COLLATOR_COLLATION_SLOT)
                         .unwrap_or_else(|| "default".into())
                         .into(),
@@ -463,7 +461,7 @@ impl Vm {
                 "caseFirst",
                 self.collator_string_slot(this, COLLATOR_CASE_FIRST_SLOT)
                     .map_or(Value::UNDEFINED, |v| {
-                        self.heap.alloc_string(v.into())
+                        self.allocate_string(v.into())
                     }),
             ),
         ] {
@@ -479,7 +477,7 @@ impl Vm {
         key: &str,
         value: &str,
     ) -> Result<(), JsError> {
-        let value = self.heap.alloc_string(value.into());
+        let value = self.allocate_string(value.into());
         self.set_collator_value(object, key, value)
     }
 
@@ -500,7 +498,7 @@ impl Vm {
 
     fn collator_string_slot(&self, object: Value, key: &str) -> Option<String> {
         self.collator_value_slot(object, key)
-            .and_then(|value| self.heap.string(value).map(ToString::to_string))
+            .and_then(|value| self.heap_reads().string(value).map(ToString::to_string))
     }
 
     fn collator_bool_slot(&self, object: Value, key: &str) -> bool {

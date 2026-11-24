@@ -142,7 +142,7 @@ impl Vm {
         let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return Ok(());
         };
-        let tag = self.heap.alloc_string("Temporal.Instant".into());
+        let tag = self.allocate_string("Temporal.Instant".into());
         self.set_symbol_property(prototype, symbol, tag)?;
         self.set_property_attributes(
             prototype,
@@ -178,7 +178,7 @@ impl Vm {
         } else {
             self.object_proto
         };
-        Ok(self.heap.alloc(Cell::TemporalInstant {
+        Ok(self.allocate_cell(Cell::TemporalInstant {
             object: Box::new(Self::empty_object(prototype)),
             epoch_nanoseconds: Box::new(epoch),
         }))
@@ -291,7 +291,7 @@ impl Vm {
         let epoch = self.temporal_instant_epoch(p, this)?;
         match native {
             Native::TemporalInstantEpochNanosecondsGetter => {
-                Ok(self.heap.alloc(Cell::bigint(epoch.into())))
+                Ok(self.allocate_cell(Cell::bigint(epoch.into())))
             }
             Native::TemporalInstantEpochMillisecondsGetter => Ok(Value::number(
                 epoch.div_euclid(INSTANT_NANOSECONDS_PER_MILLISECOND) as f64,
@@ -345,7 +345,7 @@ impl Vm {
             crate::temporal_instant_format::format_temporal_datetime(epoch, &options, None, "Z")
         }
         .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
-        Ok(self.heap.alloc_string(text.into()))
+        Ok(self.allocate_string(text.into()))
     }
 
     fn temporal_instant_value_of(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
@@ -409,7 +409,7 @@ impl Vm {
         } else {
             self.object_proto
         };
-        Ok(self.heap.alloc(Cell::TemporalInstant {
+        Ok(self.allocate_cell(Cell::TemporalInstant {
             object: Box::new(Self::empty_object(prototype)),
             epoch_nanoseconds: Box::new(epoch),
         }))
@@ -420,7 +420,7 @@ impl Vm {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<i128, JsError> {
-        match self.heap.get(value) {
+        match self.heap_reads().get(value) {
             Some(Cell::TemporalInstant {
                 epoch_nanoseconds, ..
             }) => Ok(**epoch_nanoseconds),
@@ -448,11 +448,11 @@ impl Vm {
     ) -> Result<i128, JsError> {
         if let Some(Cell::TemporalInstant {
             epoch_nanoseconds, ..
-        }) = self.heap.get(value)
+        }) = self.heap_reads().get(value)
         {
             return Ok(**epoch_nanoseconds);
         }
-        if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(value) {
+        if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap_reads().get(value) {
             return Ok(instant.epoch_nanoseconds);
         }
         if value.is_null() || value.is_undefined() {

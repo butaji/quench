@@ -2064,7 +2064,7 @@ pub struct Vm {
     /// `Host::runs_lane`, read once: whether bodies run in the lane (`dispatch_fast`).
     pub runs_lane: bool,
     pub specialized: bool,
-    pub heap: Heap,
+    pub(crate) heap: Heap,
     pub realm: Realm,
     pub object_proto: Value,
     function_proto: Value,

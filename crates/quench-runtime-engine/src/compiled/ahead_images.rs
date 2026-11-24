@@ -257,7 +257,7 @@ impl Vm {
             eprintln!("aot-lanes: install function {function} ({name}): {kind} body");
         }
         method.ahead = true;
-        let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
+        let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); }
         Some(published)

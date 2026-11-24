@@ -536,11 +536,11 @@ impl PropertyFrame<Concrete> for HostFrame<'_> {
 impl crate::staged::ElementFrame<Concrete> for HostFrame<'_> {}
 
 impl NumericFrame<Concrete> for HostFrame<'_> {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> {
         unreachable!("a call-out row has no numeric operand")
     }
 
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> {
         unreachable!("a call-out row has no numeric operand")
     }
 

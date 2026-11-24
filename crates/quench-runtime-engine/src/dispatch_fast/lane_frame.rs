@@ -8,7 +8,7 @@ use super::lane_reads::Reads;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -2045,17 +2045,17 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
         // A register no accumulator stands for: its tag half-word tested in memory
         // (`Registers::int`), not the whole word loaded and masked.
         if ACC == ACC_NONE && let Some(register) = operand.register_index() {
             if self.operands_int {
-                return Some(u64::from(self.registers.get(register).to_bits() as u32));
+                return Some(unsafe { Int32::proven(u64::from(self.registers.get(register).to_bits() as u32)) }); // Fact: `operands_int`.
             }
-            return self.registers.int(register).map(|int| u64::from(int as u32));
+            return self.registers.int(register).map(|int| unsafe { Int32::proven(u64::from(int as u32)) }); // Fact: `Registers::int` tested the tag half-word.
         }
         let word = self.operand_word(stage, operand)?;
-        Value::from_bits(word).as_int().map(|int| u64::from(int as u32))
+        Int32::checked(Value::from_bits(word))
     }
 
     /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
@@ -2065,9 +2065,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Float64<u64>> {
         let word = self.operand_word(stage, operand)?;
-        Value::from_bits(word).as_number().map(f64::to_bits)
+        Float64::checked(Value::from_bits(word))
     }
 
     /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
@@ -2081,15 +2081,15 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
     /// is read as an int and never converted to binary64.
     #[inline(always)]
-    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
         let value = Value::from_bits(self.operand_word(stage, operand)?);
-        if let Some(int) = value.as_int() {
-            return Some(u64::from(int as u32));
+        if let Some(int) = Int32::checked(value) {
+            return Some(int);
         }
         // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
         // computes no conversion of its own.
-        let number = value.as_number()?;
-        quench_runtime::staged::NumericStage::to_int32(stage, number.to_bits(), ())
+        let number = Float64::checked(value)?;
+        Int32::truncating(stage, number, ())
     }
 
     #[inline(always)]

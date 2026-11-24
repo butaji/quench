@@ -190,7 +190,7 @@ impl LoopTier {
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
     fn start(&mut self, started: Option<crate::compiled::PendingOsrRegion>, vm: &mut Vm, site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs)).map(|pending| Box::new(pending) as Box<dyn std::any::Any>);
+        self.pending = started.filter(|pending| { let (mut facts, programs) = vm.fact_watch(); pending.watch(&mut facts, programs) }).map(|pending| Box::new(pending) as Box<dyn std::any::Any>);
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = site.tiers.loops.max_compilations;
@@ -207,7 +207,7 @@ impl LoopTier {
         // A promoted site's stencil code goes as the u-jit region takes its place.
         if let Some(replaced) = self.code.take() { replaced.retire(); }
         self.promoting = false;
-        self.code = Some(vm.programs.publish_region(region, &mut vm.heap, vm.method_cache_atoms.readers()));
+        self.code = Some({ let (mut facts, programs) = vm.fact_watch(); programs.publish_region(region, &mut facts) });
     }
 }
 

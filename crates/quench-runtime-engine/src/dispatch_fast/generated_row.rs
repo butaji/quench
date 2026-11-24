@@ -142,7 +142,7 @@ lane_handler! {
         } else { std::ptr::null() };
         let mut stage = if store {
             // A store's gate reads the heap's barrier state (`Stage::store_gate`).
-            Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap)
+            Concrete::storing_in(unsafe { vm(view.memory.bytes.cast::<LaneContext>()) })
         } else { Concrete::new(property_values) };
         let mut frame = row_frame::<OP, ACC, FLAG>(cx, r, ip, i, view);
         // merge: `typed_site`/`proved_site`/`element_move_site` (trunk helpers over PROVED_SITE, PROVED_MOVE_SITE, ELEMENT_MOVE_SITE) do not exist here; TYPED_SITE is the current constant.
