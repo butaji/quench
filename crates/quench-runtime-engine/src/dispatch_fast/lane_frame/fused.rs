@@ -15,7 +15,7 @@ fn raw_word(raw: bool, value: u64) -> Value {
     if raw && double.is_nan() { Value::number(double) } else { Value::from_bits(value) }
 }
 
-sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
+sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler;
     /// Two adjacent rows as one record, generated from their staged rows (`staged::FUSED_ROWS`):
     /// row `A` steps over this record, then row `B` over the next one, with no dispatch between
     /// them. Neither row is written for the pair: each is its own row's decode and step, so the
@@ -37,6 +37,9 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
     /// back edge runs that one test with no switch on the record's operator.
     #[inline(never)]
     pub(crate) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
+        // Both rows of the pair come from one program: `A`'s opcode names the view its records
+        // are dispatched from (`row_context`).
+        let cx: *mut LaneContext = row_context::<A>(cx);
         // The settings word of this record (the pair's head), read before `B`'s record is named.
         let mode = i.mode;
         // A proven loop step (`PROVEN_STEP` of `CMP`, `prove_loop_steps`): `A` is `i++` of a register the
@@ -156,7 +159,7 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler;
     }
 }
 
-sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler;
+sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler;
     /// Three or four adjacent rows as one record, generated from their staged rows
     /// (`staged::FUSED_CHAINS`): each link is its row's own decode and step over its record,
     /// with no dispatch between links, as `fused_rows` does for two. A link's miss takes its
@@ -167,6 +170,8 @@ sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler;
     /// double result raw (`LaneFrame::raw_result`), which the next link reads as its operand or key.
     #[inline(never)]
     pub(crate) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
+        // Every link of the chain comes from one program: `L0`'s opcode names the view.
+        let cx: *mut LaneContext = row_context::<L0>(cx);
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
         // Each macro takes its link's record (`$ip`, `$i`) as arguments: a `macro_rules!` body's own

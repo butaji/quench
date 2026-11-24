@@ -2759,7 +2759,7 @@ fn following(ip: Ip) -> Ip {
     unsafe { ip.add(1) }
 }
 
-lane_handler! {
+view_handler! {
     /// Not a lane instruction: the general path executes it.
     fn exit_lane<>(cx, r, ip, i, view) {
         exit(ip)
@@ -3003,7 +3003,7 @@ unsafe fn clone_environment_of(cx: *mut (), r: Registers, window: u16, plan: u32
 
 
 
-lane_handler! {
+script_handler! {
     /// An instruction whose general step only continues or throws (`Op::steps_in_lane`),
     /// run in place by that step when the lane runs the frame's own code: the frame's
     /// registers are the lane's, and its PC is published as the general loop publishes it.
@@ -3619,7 +3619,7 @@ fn string_element_in_lane(vm: &mut Vm, base: Value, key: Value) -> Option<Value>
     Some(value)
 }
 
-lane_handler! {
+script_handler! {
     /// A present dense array element; any other read takes the general path.
     fn get_index_miss<>(cx, r, ip, i, view) {
         let (Some(base), Some(key)) =
@@ -7638,7 +7638,7 @@ pub(crate) mod wasm_instance;
 use wasm_instance::lane_instance_binding_memory;
 
 
-lane_handler! {
+script_handler! {
     /// f64 square root: an arithmetic operator, so a NaN operand matters
     /// only as a NaN (see `float_bits64`), and its result is held in place.
     fn f64_sqrt_miss<ACC: u8>(cx, r, ip, i, view) {

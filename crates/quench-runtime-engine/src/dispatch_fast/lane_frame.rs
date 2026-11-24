@@ -3199,13 +3199,14 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler;
     }
 }
 
-lane_handler! {
+view_handler! {
     /// Where a generated row's planned named read misses (`generated_row`'s `property_miss!`): the own
     /// read past its record's hint, which reads through the site's cache and rebinds the hint; a held
     /// read, the site's holder entry. Out of the row's body, so each row instance holds one jump here
     /// rather than this chain at each of its misses.
     #[inline(never)]
     pub(crate) fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         let script: *mut LaneContext = view.memory.bytes.cast();
         // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
         if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
