@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 mod compile;
-mod dispatch;
+pub mod dispatch;
 pub mod machine;
 pub mod matcher;
 pub mod native;
@@ -28,6 +28,10 @@ mod specialize;
 mod workspace;
 use dispatch::Dispatch;
 use matcher::{Admission, AssertionTest};
+// The instructions and unit tests, which the stencil build mounts beside the rows.
+mod insts;
+pub use insts::{Assertion, Inst, UnitTest};
+pub(crate) use insts::{FOLDED_WORD_UNITS, LINE_TERMINATORS, WORD_UNITS};
 use native::NativeSlot;
 pub use machine::CAPTURE_REGISTERS;
 use specialize::{replay, step, Concrete, Cursor, Replay, Step};
@@ -36,7 +40,7 @@ use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
     canonical, canonical_preimages_of, class_is_single_unit, class_match_widths, class_max_width, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, merge_flags,
-    literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
+    literal_finder, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
 
@@ -105,14 +109,6 @@ impl Text for [Unit] {
     fn bytes(&self) -> Option<&[u8]> {
         None
     }
-}
-
-/// What one subject unit must be.
-#[derive(Clone, Copy)]
-enum UnitTest {
-    Exact(u32),
-    /// An index into `Program::sets`.
-    Set(u32),
 }
 
 /// A set of units: exact for ASCII by bitmap, and by `beyond` for any other unit.
@@ -431,127 +427,6 @@ fn escape_ascii_mask(escape: oxc::regular_expression::ast::CharacterClassEscapeK
     });
     let index = CLASS_ESCAPES.iter().position(|known| *known == escape).expect("every class escape has a mask");
     masks[index][usize::from(ignore_case)][usize::from(unicode)]
-}
-
-#[derive(Clone, Copy)]
-enum Inst {
-    Unit(UnitTest),
-    /// `Unit` read backward, in a lookbehind body: the unit before the position.
-    UnitBack(UnitTest),
-    /// `UnitRepeat` read backward: the units before the position, the run ending there.
-    UnitRepeatBack {
-        test: UnitTest,
-        min: u32,
-        max: u32,
-        greedy: bool,
-    },
-    /// `min..=max` units of a test, without captures and never empty, so its choices are
-    /// only how many units it takes.
-    UnitRepeat {
-        test: UnitTest,
-        min: u32,
-        max: u32,
-        greedy: bool,
-        /// A greedy repeat that never gives a unit back (`possessive::mark`).
-        atomic: bool,
-    },
-    Assert(AssertionTest),
-    /// Continue at the next instruction; on backtracking, at `alternative`.
-    Split {
-        alternative: u32,
-    },
-    /// `Split` whose next instruction begins a body that can start only at the positions
-    /// `Program::guards[guard]` admits: elsewhere the body fails at once, so the run goes
-    /// straight to `alternative` and keeps no choice.
-    GuardedSplit {
-        alternative: u32,
-        guard: u32,
-    },
-    /// An alternation's branches, each beginning with known units: continue at the first
-    /// branch `Program::dispatches[table]` finds for the unit, the others being choices.
-    Dispatch {
-        table: u32,
-    },
-    Jump(u32),
-    /// A group's start into its temporary register: with a restore entry where the group
-    /// may run again on one path (`Compiler::repeated`), plainly elsewhere, as the group's
-    /// own open then always writes the temporary again before its close reads it.
-    CaptureOpen {
-        temporary: u32,
-        /// Groups opening together, as `((a)b)` does, write `count` consecutive temporaries.
-        count: u32,
-        restores: bool,
-    },
-    CaptureClose {
-        capture: u32,
-        temporary: u32,
-    },
-    /// `CaptureClose` of a backward body: the open recorded the capture's end, the close
-    /// is at its start.
-    CaptureCloseBack {
-        capture: u32,
-        temporary: u32,
-    },
-    /// Unset the captures listed in `Program::lists[first..first + count]`.
-    ResetCaptures {
-        first: u32,
-        count: u32,
-    },
-    LoopInit {
-        counter: u32,
-    },
-    /// A quantifier's decision before an iteration of the body that follows it.
-    LoopHead {
-        counter: u32,
-        min: u32,
-        max: u32,
-        greedy: bool,
-        exit: u32,
-    },
-    /// The start of one iteration, kept for the empty check.
-    LoopIterate {
-        start: u32,
-    },
-    /// The end of the one iteration an optional atom (`max` of one, `min` of zero) makes:
-    /// it fails having consumed nothing.
-    EmptyCheck {
-        start: u32,
-    },
-    LoopTail {
-        counter: u32,
-        start: u32,
-        min: u32,
-        head: u32,
-    },
-    /// A backreference to the first set capture of `Program::lists[first..first + count]`.
-    Backreference {
-        first: u32,
-        count: u32,
-        ignore_case: bool,
-        unicode: bool,
-    },
-    /// `Backreference` in a backward body: the captured units end at the position.
-    BackreferenceBack {
-        first: u32,
-        count: u32,
-        ignore_case: bool,
-        unicode: bool,
-    },
-    /// A class that can match strings of several units (`Program::classes[class]`): the
-    /// longest match first, each shorter one kept as a choice. Read backward in a lookbehind
-    /// body, where its matches end at the position.
-    ClassWidths {
-        class: u32,
-        backward: bool,
-    },
-    /// A lookaround whose body follows, ending at `LookSucceed`; matching continues at `end`.
-    /// A lookbehind's body is compiled backward, so both run the same way.
-    Look {
-        negative: bool,
-        end: u32,
-    },
-    LookSucceed,
-    Match,
 }
 
 /// A backtracking stack entry.

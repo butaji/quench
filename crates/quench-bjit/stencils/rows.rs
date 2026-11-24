@@ -42,46 +42,46 @@ mod entry;
 #[path = "entry_a64.rs"]
 mod entry;
 mod facade;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod heap_rows;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod ic_rows;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod environment_rows;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod key_rows;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod name_rows;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod site_rows;
 pub mod layout;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod numeric;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_call;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_guard;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_property;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_environment;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_heap;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_view;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod places_names;
 #[path = "../../quench-stack/src/projection.rs"]
 pub(crate) mod projection;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod stage;
 mod staged;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 #[macro_use]
 mod staged_rows;
-#[cfg(not(stencil_family = "wasm"))]
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
 mod supernode_rows;
 mod wasm;
 mod wasm_kinds;
@@ -91,8 +91,15 @@ mod wasm_entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64", not(target_vendor = "apple")))]
 #[path = "wasm_entry_a64.rs"]
 mod wasm_entry;
-#[cfg(not(stencil_family = "js"))]
+#[cfg(not(any(stencil_family = "js", stencil_family = "regexp")))]
 mod wasm_rows;
+// The regexp rows (`regexp_rows.rs`): their own family, with their entry and leave routines.
+#[cfg(stencil_family = "regexp")]
+pub mod regexp_layout;
+#[cfg(stencil_family = "regexp")]
+mod regexp_rows;
+#[cfg(all(stencil_family = "regexp", target_arch = "x86_64"))]
+mod regexp_entry;
 mod words;
 pub(crate) use facade::{Value, ValueType, bytecode, float_layout, heap, operations, typed_ir, units, value, value_vec, vm};
 pub(crate) use wasm::{WasmTrap, WasmType};
@@ -184,6 +191,28 @@ macro_rules! wasm_row {
                     Out::Exit(s) => {
                         core::hint::cold_path();
                         go!(HOLE_EXIT0, s)
+                    }
+                }
+            }
+        }
+    };
+}
+
+/// A regexp row: its way on is the next or taken row, the backtrack row (exit 0), or a row by its
+/// address (`regexp_rows::Way::Jump`).
+macro_rules! regexp_row {
+    ($name:ident, $k:expr, $a:expr, $b:expr) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+            unsafe {
+                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                match regexp_rows::row::<{ $k }, { $a }, { $b }>(s) {
+                    regexp_rows::Way::Next(s) => go!(HOLE_NEXT, s),
+                    regexp_rows::Way::Taken(s) => go!(HOLE_TAKEN, s),
+                    regexp_rows::Way::Fail(s) => go!(HOLE_EXIT0, s),
+                    regexp_rows::Way::Jump(s, address) => {
+                        let next: Row = core::mem::transmute(address);
+                        become next(s.frame, s.ctx, s.p[0], s.p[1], s.p[2], s.p[3], s.f[0], s.f[1], s.f[2], s.f[3], s.f[4], s.f[5], s.f[6], s.f[7])
                     }
                 }
             }

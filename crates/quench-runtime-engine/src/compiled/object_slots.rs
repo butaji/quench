@@ -480,12 +480,12 @@ impl CheckedObject {
 
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
     /// behind its extras (`staged::arena_extras_layout`), as a global object by name does: its
-    /// shape is held by a dependency, so only the representation is tested.
-    pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
+    /// shape is held by a dependency (`fact`, `HeldLayouts::hold`), so only the representation is tested.
+    pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, (record, fact): (ir::Value, ShapeFact), inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
         let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None };
         quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss)
-            .map(|layout| Self(layout, ShapeFact::held_by_dependency()))
+            .map(|layout| Self(layout, fact))
     }
 
     /// The layout this proof carries, for a staged read of fresh contents through it.

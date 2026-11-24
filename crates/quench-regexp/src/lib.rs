@@ -158,16 +158,10 @@ enum Expr {
     },
 }
 
-#[derive(Clone, Copy)]
-pub enum Assertion {
-    Start,
-    End,
-    StartBuffer,
-    EndBuffer,
-    EndBufferOptionalNewline,
-    Boundary,
-    NonBoundary,
-}
+pub use backtrack::Assertion;
+// The projection seal, which the rows' stages name as `crate::projection` in every build that mounts them.
+use quench_stack::projection;
+use backtrack::{FOLDED_WORD_UNITS, LINE_TERMINATORS, WORD_UNITS};
 #[derive(Clone, Copy)]
 enum Lookaround {
     Ahead,
@@ -2163,10 +2157,7 @@ fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> 
 }
 
 /// The units `\w` matches, as inclusive ranges.
-const WORD_UNITS: [(u32, u32); 4] = [(b'0' as u32, b'9' as u32), (b'A' as u32, b'Z' as u32), (b'_' as u32, b'_' as u32), (b'a' as u32, b'z' as u32)];
 /// The units `\w` also matches under unicode case folding: long s and the Kelvin sign.
-const FOLDED_WORD_UNITS: [(u32, u32); 2] = [(0x017F, 0x017F), (0x212A, 0x212A)];
-const LINE_TERMINATORS: [(u32, u32); 3] = [(0x000A, 0x000A), (0x000D, 0x000D), (0x2028, 0x2029)];
 fn in_units(value: u32, ranges: &[(u32, u32)]) -> bool {
     ranges.iter().any(|&(first, last)| first <= value && value <= last)
 }

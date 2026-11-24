@@ -1,0 +1,91 @@
+//! Unit repeats, loops and the resume blocks backtracking jumps to.
+use super::{Emit, RegexpMachine, Resume, FIRST_OPERAND, SECOND_OPERAND};
+use quench_regexp::backtrack::machine::{self as m, Resumed};
+use quench_regexp::backtrack::matcher::MatchStage;
+use crate::staged::machine::{Binary, Lane, Relation};
+use quench_regexp::backtrack::{Inst, UnitTest};
+
+impl<M: RegexpMachine> Emit<'_, M> {
+    /// The first position in `from..to` whose unit fails `test`, or `to`.
+    pub(super) fn scan(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
+        let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let index = self.b.block_parameter(head, Lane::I64);
+        let end = self.b.block_parameter(exit, Lane::I64);
+        self.b.goto(head, &[from]);
+        self.b.enter_open(head);
+        let inside = self.compare(Relation::UnsignedLess, index, to);
+        self.b.branch_if(inside, (body, &[]), (exit, &[index]));
+        self.b.enter_open(body);
+        let unit = self.unit_at(index);
+        let passes = self.passes(unit, test);
+        let next = self.b.raw_binary_imm(Binary::Add, index, 1);
+        self.b.branch_if(passes, (head, &[next]), (exit, &[index]));
+        self.b.enter_open(exit);
+        end
+    }
+
+    /// The start of the run of units from `from` back to at least `to` that pass `test`.
+    pub(super) fn scan_down(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
+        let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let index = self.b.block_parameter(head, Lane::I64);
+        let start = self.b.block_parameter(exit, Lane::I64);
+        self.b.goto(head, &[from]);
+        self.b.enter_open(head);
+        let above = self.compare(Relation::UnsignedGreater, index, to);
+        self.b.branch_if(above, (body, &[]), (exit, &[index]));
+        self.b.enter_open(body);
+        let before = self.b.raw_binary_imm(Binary::Add, index, -1);
+        let unit = self.unit_at(before);
+        let passes = self.passes(unit, test);
+        self.b.branch_if(passes, (head, &[before]), (exit, &[index]));
+        self.b.enter_open(exit);
+        start
+    }
+
+    /// The last unit in `floor..end` that passes `test`, branching to the backtrack block
+    /// where none does.
+    pub(super) fn scan_back(&mut self, test: UnitTest, floor: M::Word, end: M::Word) -> M::Word {
+        let (look, lower, found) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let at = self.b.block_parameter(look, Lane::I64);
+        let last = self.b.raw_binary_imm(Binary::Add, end, -1);
+        self.b.goto(look, &[last]);
+        self.b.enter_open(look);
+        let unit = self.unit_at(at);
+        let passes = self.passes(unit, test);
+        let more = self.b.new_block();
+        self.branch(passes, found, more);
+        self.b.enter_open(more);
+        let above = self.compare(Relation::UnsignedGreater, at, floor);
+        self.branch(above, lower, self.backtrack);
+        self.b.enter_open(lower);
+        let below = self.b.raw_binary_imm(Binary::Add, at, -1);
+        self.b.goto(look, &[below]);
+        self.b.enter_open(found);
+        at
+    }
+
+    /// The code a resume frame continues at: `sp` is the popped frame's address.
+    pub(super) fn resume(&mut self, resume: Resume) {
+        let frame = self.top();
+        let flags = self.flags;
+        let first = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
+        let second = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
+        // A repeat's frame names the repeat; the shared row resumes after it.
+        let entry = match resume {
+            Resume::Choice(pc) => Resumed::Choice { pc, position: second },
+            Resume::Greedy(pc) => Resumed::Greedy { pc: pc + 1, floor: first, position: second },
+            Resume::Lazy(pc) => {
+                let Inst::UnitRepeat { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a lazy frame names a repeat") };
+                Resumed::Lazy { pc: pc + 1, test, ceiling: first, position: second }
+            }
+            Resume::GreedyBack(pc) => Resumed::GreedyBack { pc: pc + 1, ceiling: first, position: second },
+            Resume::LazyBack(pc) => {
+                let Inst::UnitRepeatBack { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a backward lazy frame names a backward repeat") };
+                Resumed::LazyBack { pc: pc + 1, test, floor: first, position: second }
+            }
+            Resume::LookFail(pc) => return self.look_failed(pc, first),
+        };
+        let step = m::resume(self, entry);
+        self.finish_step(step);
+    }
+}

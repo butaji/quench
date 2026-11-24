@@ -46,7 +46,7 @@ impl Compiler<'_> {
             return self.reject_released_method(method, place);
         };
         let snippet = &self.text[span.start as usize..span.end as usize];
-        let (text, offset) = text_alone(snippet, replay::CLASS_METHOD_WRAPPER, false, self.source_type);
+        let (text, offset) = text_alone((self.leading_doc(span.start), snippet), replay::CLASS_METHOD_WRAPPER, false, self.source_type);
         // Bodies parse lazily past the method's own start, so its own parses whole again.
         let own = offset + (method.value.span.start - span.start);
         let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| super::arena(&text));

@@ -2826,7 +2826,7 @@ impl<'a> Compiler<'a> {
         }
         let snippet = &self.text[function.span.start as usize..function.span.end as usize];
         let (text, offset) = lazy_bodies::text_alone(
-            snippet,
+            (self.leading_doc(function.span.start), snippet),
             replay::plain_function_wrapper(&context),
             context.inherited_strict,
             self.source_type,
@@ -2871,7 +2871,7 @@ impl<'a> Compiler<'a> {
         let body = function.body.as_ref()?.span;
         let strict = context.inherited_strict;
         let header = format!("{}{{}}", &self.text[function.span.start as usize..body.start as usize]);
-        let (text, offset) = lazy_bodies::text_alone(&header, replay::plain_function_wrapper(context), strict, self.source_type);
+        let (text, offset) = lazy_bodies::text_alone((self.leading_doc(function.span.start), &header), replay::plain_function_wrapper(context), strict, self.source_type);
         let allocator = Allocator::default();
         let mut reparsed = lazy_bodies::reparse(
             &allocator,
@@ -2956,6 +2956,12 @@ impl<'a> Compiler<'a> {
     /// the program's saved ones.
     pub(super) fn body_type_names(&self) -> Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>> {
         self.type_names.clone().or_else(|| self.declared_types.type_names.clone())
+    }
+
+    /// The JSDoc comment that types the function starting at `start` from outside its text
+    /// (`DeclaredTypes::leading_doc`), or nothing.
+    pub(super) fn leading_doc(&self, start: u32) -> &str {
+        self.declared_types.leading_doc(start).and_then(|(from, to)| self.text.get(from as usize..to as usize)).unwrap_or("")
     }
 
     /// The names a function's formal annotations resolve against (`typescript::declared_parameters`).

@@ -618,6 +618,14 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
 /// an async generator, whose `yield` and `await` its own body does not see. An arrow keeps the
 /// `this`, `super` and `new.target` of a constructor (strict code) or of a method (sloppy
 /// code, which has no `super()` to keep).
+/// `prefix` with the JSDoc comment that types the function at `start` from outside its text put
+/// after it (`DeclaredTypes::leading_doc`), so the tree is the one the load annotated.
+fn documented_prefix(program: &crate::bytecode::ResidualProgram, text: &str, start: u32, prefix: &str) -> String {
+    let doc = program.declared_types.as_deref().and_then(|declared| declared.leading_doc(start))
+        .and_then(|(from, to)| text.get(from as usize..to as usize));
+    match doc { Some(doc) => format!("{prefix}{doc} "), None => prefix.to_string() }
+}
+
 fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static str) {
     match call {
         ReplayCall::Plain(context) => plain_function_wrapper(context),
@@ -817,6 +825,7 @@ pub(crate) fn recompile(
             ReplayCall::ClassMethod(_) => true,
         };
     let (prefix, suffix) = replay_wrapper(&function_replay.call, strict);
+    let prefix = documented_prefix(program, text, start, prefix);
     let wrapped = format!("{prefix}{snippet}{suffix}");
     // Sized as a program's parse is (`lazy_bodies::arena`, 32 bytes per source byte), so a large
     // function's tree fits its first chunk instead of adding chunks past the 6 bytes per byte here.
@@ -863,6 +872,8 @@ pub(crate) fn recompile(
             span
         })
         .collect();
+    // A body inside it compiled from its text alone gets its JSDoc back the same way (`Compiler::leading_doc`).
+    compiler.declared_types.docs = program.declared_types.as_deref().map(|declared| declared.docs.clone()).unwrap_or_default();
     compiler.source_type = replay.source_type;
     compiler.root_strict = replay.root_strict;
     compiler.module_goal = replay.module_goal;

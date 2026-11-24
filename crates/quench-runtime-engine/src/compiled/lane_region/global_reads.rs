@@ -70,15 +70,15 @@ impl Lowering<'_, '_> {
     /// type, and the realm that names the global object (`hold_global_slot`); a store also holds
     /// that no method cache names its atom (`emit_store_atom_admitted`).
     pub(crate) fn global_cell(&mut self, state: &mut State, pc: usize, row: &quench_runtime::staged::Operation<ir::Value, EmitProof>, exit: ir::Block)
-        -> Option<GlobalSlot> {
+        -> Option<(GlobalSlot, quench_runtime::staged::ShapeFact)> {
         let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
         if !self.division().folds(BindingTime::Stable) { return None; }
-        self.hold_global_slot(state, exit, slot);
+        let fact = self.hold_global_slot(state, exit, slot);
         if let quench_runtime::staged::Operation::GlobalWrite { atom, .. } = *row {
             let admitted = self.emit_store_atom_admitted(atom);
             emit_js_guard(&mut self.builder, admitted, exit);
         }
-        Some(slot)
+        Some((slot, fact))
     }
 
     /// Before loop `header`, the proofs its blocks would otherwise make each iteration: the

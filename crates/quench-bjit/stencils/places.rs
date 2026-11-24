@@ -318,16 +318,39 @@ macro_rules! at_place {
 }
 pub(crate) use at_place;
 const _: () = assert!(PLACE_CODE_COUNT as usize == 16, "at_place! names every place code");
+const _: () = assert!(MEM == 0 && MEMINT == 1 && CONST == 2 && IMM == 3 && PIN == 4, "on_place! names the place codes by value");
+
+/// A place: its code and its hole (0, `HOLE_A` or `HOLE_B`), values the row's constants fold.
+#[derive(Clone, Copy)]
+pub(crate) struct Place {
+    pub(crate) code: u8,
+    pub(crate) hole: u8,
+}
+
+/// `f::<code, hole>(args)` of the place `$place`: one arm per code and hole where the hole matters (a frame slot, an
+/// immediate, a constant), one per code at hole 0 for a pinned register, which reads no hole. With the place chosen
+/// first (`Places::place`), a row's helper is 24 arms before its constants fold them, not 48 (16 codes x 3 holes).
+macro_rules! on_place {
+    ($place:expr, $f:ident($($arg:expr),*)) => {{
+        match ($place.code, $place.hole) {
+            (0, 0) => $f::<0, 0>($($arg),*), (0, HOLE_A) => $f::<0, HOLE_A>($($arg),*), (0, _) => $f::<0, HOLE_B>($($arg),*),
+            (1, 0) => $f::<1, 0>($($arg),*), (1, HOLE_A) => $f::<1, HOLE_A>($($arg),*), (1, _) => $f::<1, HOLE_B>($($arg),*),
+            (2, 0) => $f::<2, 0>($($arg),*), (2, HOLE_A) => $f::<2, HOLE_A>($($arg),*), (2, _) => $f::<2, HOLE_B>($($arg),*),
+            (3, 0) => $f::<3, 0>($($arg),*), (3, HOLE_A) => $f::<3, HOLE_A>($($arg),*), (3, _) => $f::<3, HOLE_B>($($arg),*),
+            (4, _) => $f::<4, 0>($($arg),*), (5, _) => $f::<5, 0>($($arg),*), (6, _) => $f::<6, 0>($($arg),*), (7, _) => $f::<7, 0>($($arg),*),
+            (8, _) => $f::<8, 0>($($arg),*), (9, _) => $f::<9, 0>($($arg),*), (10, _) => $f::<10, 0>($($arg),*), (11, _) => $f::<11, 0>($($arg),*),
+            (12, _) => $f::<12, 0>($($arg),*), (13, _) => $f::<13, 0>($($arg),*), (14, _) => $f::<14, 0>($($arg),*), _ => $f::<15, 0>($($arg),*),
+        }
+    }};
+}
+pub(crate) use on_place;
 
 /// `f::<place, hole>` of the place `register` names.
 macro_rules! by_place {
-    ($self:ident, $register:expr, $f:ident($($arg:expr),*)) => {
-        match $register {
-            LEFT => at_place!($self.a, |P| $f::<P, HOLE_A>($($arg),*)),
-            RIGHT => at_place!($self.b, |P| $f::<P, HOLE_B>($($arg),*)),
-            _ => at_place!($self.d, |P| $f::<P, 0>($($arg),*)),
-        }
-    };
+    ($self:ident, $register:expr, $f:ident($($arg:expr),*)) => {{
+        let place = $self.place($register);
+        on_place!(place, $f($($arg),*))
+    }};
 }
 
 impl Places {
@@ -336,11 +359,21 @@ impl Places {
         Self { s, ints: None, refused: false, taken: false, d: D, a: A, b: B }
     }
 
+    /// The place `register` names: an operand at its hole, any other register the destination at hole 0.
+    #[inline(always)]
+    pub(crate) fn place(&self, register: Register) -> Place {
+        match register {
+            LEFT => Place { code: self.a, hole: HOLE_A },
+            RIGHT => Place { code: self.b, hole: HOLE_B },
+            _ => Place { code: self.d, hole: 0 },
+        }
+    }
+
     /// The pair guard on both operands' tagged words (`Int32::guard_pair`): whether both are int
     /// words, keeping their int32s for the row's operands so no second test runs.
     #[inline(always)]
     pub(crate) fn prove_ints(&mut self) -> bool {
-        self.ints = Int32::guard_pair(at_place!(self.a, |P| tagged_place::<P, HOLE_A>(&self.s)), at_place!(self.b, |P| tagged_place::<P, HOLE_B>(&self.s)));
+        self.ints = Int32::guard_pair(by_place!(self, LEFT, tagged_place(&self.s)), by_place!(self, RIGHT, tagged_place(&self.s)));
         self.ints.is_some()
     }
 

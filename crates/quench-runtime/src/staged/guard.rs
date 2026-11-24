@@ -50,8 +50,7 @@ pub(crate) fn declared<S: Stage>(stage: &mut S, source: S::Word, mask: u64, miss
 #[inline(always)]
 pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<super::Shaped<S::Word>> {
     let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
-    super::entry::shape_link_matches(stage, record, (shape, link), miss)?;
-    Some(super::Shaped::of_guard(record))
+    super::entry::shape_link_matches(stage, record, (shape, link), miss).map(super::Linked::shaped)
 }
 
 /// `shape`: `source` is a direct object whose record, found in the object record table `records`, has exact shape

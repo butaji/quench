@@ -2567,57 +2567,20 @@ macro_rules! script_handler {
 }
 
 /// `lane_handler!` (or `script_handler!`, `$kind`) for a handler with many const instances: rustc keeps all
-/// instances of one generic function in its module's codegen unit, so the body is defined in 8 shard modules
+/// instances of one generic function in its module's codegen unit, so the body is defined in 12 shard modules
 /// (`$mods::s*`) and `$handler::<..>()` names the instance of the shard its parameters pick, as
 /// `generated_row_handler` does. Only constant evaluation may call `$handler` (a compiled call would name every
 /// shard's instance), so a use names it through its call-site macro (`protocol_row!` and the rest).
 macro_rules! sharded_handler {
-    ($kind:ident, $mods:ident, $handler:ident; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+    (@mods $mods:ident [$($shard:ident)*] $item:tt) => {
         #[allow(non_snake_case)]
-        pub(crate) mod $mods {
-        pub(crate) mod s0 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s1 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s2 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s3 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s4 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s5 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s6 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        pub(crate) mod s7 {
-            #[allow(unused_imports)]
-            use super::super::*;
-            $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body }
-        }
-        }
+        pub(crate) mod $mods { $(pub(crate) mod $shard { #[allow(unused_imports)] use super::super::*; sharded_handler!(@item $item); })* }
+    };
+    (@item { $($item:tt)* }) => { $($item)* };
+    ($kind:ident, $mods:ident, $handler:ident, [$($op:ident),+]; $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($($arg:ident),*) $body:block) => {
+        sharded_handler!(@mods $mods [s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11] { $kind! { $(#[$meta])* pub(crate) fn $name<$($param: $ty),*>($($arg),*) $body } });
         $vis const fn $handler<$(const $param: $ty),*>() -> Handler {
-            match crate::dispatch_fast::handler_shard(&[$($param as u64),*]) {
+            match crate::dispatch_fast::handler_shard(&[$($param as u64),*], crate::dispatch_fast::numeric_row(&[$($op),+])) {
             0 => $mods::s0::$name::<$($param),*>,
             1 => $mods::s1::$name::<$($param),*>,
             2 => $mods::s2::$name::<$($param),*>,
@@ -2625,21 +2588,43 @@ macro_rules! sharded_handler {
             4 => $mods::s4::$name::<$($param),*>,
             5 => $mods::s5::$name::<$($param),*>,
             6 => $mods::s6::$name::<$($param),*>,
-            _ => $mods::s7::$name::<$($param),*>,
+            7 => $mods::s7::$name::<$($param),*>,
+            8 => $mods::s8::$name::<$($param),*>,
+            9 => $mods::s9::$name::<$($param),*>,
+            10 => $mods::s10::$name::<$($param),*>,
+            _ => $mods::s11::$name::<$($param),*>,
             }
         }
     };
 }
 
-/// The shard (`sharded_handler!`) of a handler instance with const parameters `params`.
-pub(crate) const fn handler_shard(params: &[u64]) -> usize {
+/// The shard (`sharded_handler!`) of a handler instance with const parameters `params`: 8 to 11 for a `numeric` row
+/// (`numeric_row`), so an edit to the Number step recompiles only those units; any other keeps its shard of 0 to 7.
+pub(crate) const fn handler_shard(params: &[u64], numeric: bool) -> usize {
     let mut hash = 0u64;
     let mut index = 0;
     while index < params.len() {
         hash = hash.wrapping_mul(31).wrapping_add(params[index]);
         index += 1;
     }
-    (hash % 8) as usize
+    if numeric { 8 + (hash % 4) as usize } else { (hash % 8) as usize }
+}
+
+/// Whether a row of opcodes `ops` runs the Number step (`staged::row_step`: Number, Arith, or Generic, whose
+/// comparisons and keys convert numbers), which places its instance beside the other numeric rows
+/// (`handler_shard`, `generated_row_shard`). A chain's absent link (`staged::NO_LINK`) names no opcode.
+pub(crate) const fn numeric_row(ops: &[u16]) -> bool {
+    use quench_runtime::staged::RowStep;
+    let mut index = 0;
+    while index < ops.len() {
+        if let Some(op) = quench_runtime::bytecode::Op::from_index(ops[index] as usize) {
+            if matches!(quench_runtime::staged::row_step(op), RowStep::Number | RowStep::Arith | RowStep::Generic) {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
 }
 
 /// `lane_handler!` for a return record of any view that has a leaf form

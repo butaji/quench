@@ -24,7 +24,7 @@ mod concrete;
 mod word_ops;
 pub mod numeric;
 pub mod proof;
-pub use proof::{Float64, Int32, IntFact, IntOf, NumberFact, NumberOf, ShapeFact, Shaped};
+pub use proof::{Float64, HeldLayouts, HeldShapes, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped};
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub mod layout_offsets;
 /// The const checks of `layout_offsets` against the runtime's own layouts.
@@ -53,6 +53,9 @@ pub(crate) mod typed_array_catalog;
 pub(crate) use quench_bjit::shared_words;
 pub mod flow;
 pub mod machine;
+/// Native code for a regexp program, over the shared machine traits.
+#[cfg(not(stencil_build))]
+pub mod regexp;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's composition
 pub mod barrier;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's operations; the interpreter has native Numbers

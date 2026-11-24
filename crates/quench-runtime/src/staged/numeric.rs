@@ -45,6 +45,9 @@ pub enum NegativeZero {
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
 pub trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
+    /// The shard module of this frame type's out-of-line `step` (`step_out_of_line`), 0 to 3: frame types with
+    /// large instances name different shards, so that each instance gets its own codegen unit.
+    const STEP_SHARD: u8 = 0;
     /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
     /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>>;

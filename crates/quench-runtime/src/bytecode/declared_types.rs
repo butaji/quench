@@ -172,6 +172,18 @@ pub(crate) struct DeclaredParameter {
     pub(crate) languages: u16,
 }
 
+/// The JSDoc comment that types a function from outside its source (`/** @param … */ function f`,
+/// `/** … */ const f = () => …`): the function's own text holds none, so a body compiled later from
+/// that text alone parses with the comment put back before it (`compile::typescript::jsdoc`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredDoc {
+    /// The function's source span start (as `DeclaredSignature::start`).
+    pub(crate) function: u32,
+    /// The comment's source range.
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+}
+
 /// A type-level name the program declares at its top level, resolved when the program loads, owned
 /// so a body compiled later resolves its annotations against it (`TypeNames::resolved`). Entries are
 /// sorted by name.
@@ -213,6 +225,8 @@ pub struct DeclaredTypes {
     pub(crate) parameters: Vec<DeclaredParameter>,
     /// The receiver layouts of base classes (`DeclaredLayout`), in source order.
     pub(crate) layouts: Vec<DeclaredLayout>,
+    /// The JSDoc comments that type functions from outside their text (`DeclaredDoc`), in source order.
+    pub(crate) docs: Vec<DeclaredDoc>,
     /// The program's top-level type names (sorted), which a lazily parsed body's annotations resolve
     /// against; `None` where the program declares none saved (a JavaScript program, or a chunk's own).
     pub(crate) type_names: Option<std::rc::Rc<[SavedTypeName]>>,
@@ -266,6 +280,18 @@ impl DeclaredTypes {
         self.parameter_classes.extend(other.parameter_classes);
         self.parameters.extend(other.parameters);
         self.layouts.extend(other.layouts);
+        self.docs.extend(other.docs);
+    }
+
+    /// Records that the JSDoc comment at `start..end` types the function starting at `function`.
+    pub(crate) fn document(&mut self, function: u32, start: u32, end: u32) {
+        self.docs.push(DeclaredDoc { function, start, end });
+    }
+
+    /// The source range of the JSDoc comment that types the function starting at `function` from
+    /// outside its text, if any (`document`).
+    pub(crate) fn leading_doc(&self, function: u32) -> Option<(u32, u32)> {
+        self.docs.iter().rev().find(|doc| doc.function == function).map(|doc| (doc.start, doc.end))
     }
 
     /// The declarations keyed inside `start..end` (a function's source range, its nested functions and
@@ -286,6 +312,7 @@ impl DeclaredTypes {
             parameter_classes: self.parameter_classes.iter().filter(|entry| inside(entry.function)).copied().collect(),
             parameters: self.parameters.iter().filter(|entry| inside(entry.function)).copied().collect(),
             layouts: self.layouts.iter().filter(|layout| inside(layout.class_start)).cloned().collect(),
+            docs: self.docs.iter().filter(|doc| inside(doc.function)).copied().collect(),
         }
     }
 
@@ -293,7 +320,7 @@ impl DeclaredTypes {
     pub(crate) fn has_declarations(&self) -> bool {
         !self.declared.is_empty() || !self.enum_constants.is_empty() || !self.fields.is_empty()
             || !self.signatures.is_empty() || !self.locals.is_empty() || !self.members.is_empty() || !self.local_members.is_empty()
-            || !self.parameter_classes.is_empty() || !self.parameters.is_empty() || !self.layouts.is_empty()
+            || !self.parameter_classes.is_empty() || !self.parameters.is_empty() || !self.layouts.is_empty() || !self.docs.is_empty()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -330,6 +357,11 @@ impl DeclaredTypes {
         }
         for entry in &mut self.parameters {
             at(&mut entry.function);
+        }
+        for doc in &mut self.docs {
+            at(&mut doc.function);
+            at(&mut doc.start);
+            at(&mut doc.end);
         }
         for member in &mut self.local_members {
             at_function(&mut member.function);
