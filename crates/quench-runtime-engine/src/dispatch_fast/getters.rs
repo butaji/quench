@@ -288,22 +288,11 @@ unsafe fn lane_run_leaf_getter(
     }
     // SAFETY: as `lane_run_leaf`'s window: `plain_room` proved the admitted room, which the
     // stack's length covers only once the leaf is materialized; no collection runs before.
-    let registers = unsafe {
-        let registers = vm.lane_stack.values.top();
-        fill_admitted_window(registers, usize::from(entry.fill), usize::from(entry.registers));
-        Registers(registers)
-    };
-    // SAFETY: the program store keeps a derived view alive with its program; the tier claims
-    // no leaf's view, so its run starts at its first record.
-    let base = unsafe { (*entry.view).records() };
-    // SAFETY: the running lane's context; the window is the callee's, and `ip`, the read
-    // record, belongs to the caller's live view.
+    // `ip`, the read record, belongs to the caller's live view.
     unsafe {
-        lane_enter_leaf(cx, registers, ip, r, entry, form, 0, this, None);
-        (*cx).registers = registers;
-        (*cx).base = base;
+        let window = Registers(vm.lane_stack.values.top());
+        Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None))
     }
-    Some((registers, base))
 }
 
 /// `lane_read_getter` of a native getter: called as a lane `Call` of it with no arguments is.

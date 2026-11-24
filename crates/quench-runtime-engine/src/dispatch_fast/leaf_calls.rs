@@ -3,6 +3,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+use quench_runtime::staged::call_leaf::LeafWindow;
+use quench_runtime::staged::Concrete;
 
 script_handler! {
     /// A plain call of a leaf target of form `LEAF` (`CallEntry::leaf`): the callee's records
@@ -149,25 +151,13 @@ pub(crate) unsafe fn lane_run_leaf<const LEAF: u8, const ARGC: u16>(
     target: &ScriptCallTarget,
     this: Value,
 ) -> (Registers, Ip) {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: as `push_passed_in_lane`'s window, which the stack's length covers only once
-    // the leaf is materialized: no collection runs before.
-    let registers = unsafe {
-        let registers = vm.lane_stack.values.top();
-        fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
-        copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
-        Registers(registers)
-    };
-    // SAFETY: the program store keeps a derived view alive with its program; the tier
-    // claims no leaf's view, so its activation starts at its first record.
-    let base = unsafe { (*target.view).records() };
-    // SAFETY: the running lane's context; the window is the callee's.
+    // SAFETY: the function's contract; the window is `push_passed_in_lane`'s, which the
+    // stack's length covers only once the leaf is materialized: no collection runs before.
     unsafe {
-        lane_enter_leaf(cx, registers, ip, r, target, LEAF, ARGC, this, None);
-        (*cx).registers = registers;
-        (*cx).base = base;
+        let window = Registers(vm(cx).lane_stack.values.top());
+        let passed = r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm())));
+        lane_enter_leaf(cx, AdmittedWindow::of(target, passed, ARGC), window, ip, r, target, LEAF, ARGC, this, None)
     }
-    (registers, base)
 }
 
 /// The handler of a site meeting another leaf form's callee: `entry`'s leaf form at the record's
@@ -230,20 +220,60 @@ fn binds_directly_in_lane(target: &ScriptCallTarget, receiver: Value) -> bool {
     .is_some()
 }
 
+/// The admitted window of a leaf call (`step_leaf_call_of`'s fill): `argc` values from `passed`,
+/// then `undefined` by the admitted room's block stores (`fill_admitted_window`).
+pub(crate) struct AdmittedWindow {
+    fill: usize,
+    registers: usize,
+    passed: *const Value,
+    argc: u16,
+}
+
+impl AdmittedWindow {
+    #[inline(always)]
+    pub(crate) fn of(target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Self {
+        Self { fill: usize::from(target.fill), registers: usize::from(target.registers), passed, argc }
+    }
+}
+
+impl LeafWindow<Concrete> for AdmittedWindow {
+    #[inline(always)]
+    fn fill(&mut self, _: &mut Concrete, window: u64) {
+        let registers = std::ptr::with_exposed_provenance_mut(window as usize);
+        // SAFETY: `lane_enter_leaf`'s contract: the window holds the target's admitted room.
+        unsafe {
+            fill_admitted_window(registers, self.fill, self.registers);
+            copy_arguments(registers, self.passed, self.argc);
+        }
+    }
+}
+
+/// The window of a leaf call its tier filled already (a cell body's, `fill_window_in_lane`).
+pub(crate) struct FilledWindow;
+
+impl LeafWindow<Concrete> for FilledWindow {
+    #[inline(always)]
+    fn fill(&mut self, _: &mut Concrete, _: u64) {}
+}
+
 /// Make the call record `call` of `caller`'s registers the running leaf of `target` in `form`
-/// with `argc` values on `window` (`LaneContext::leaf`): the staged leaf row
-/// (`call_leaf::enter_leaf`) on machine words writes the leaf record and the window's context
-/// words its form makes the callee's (`this` where it binds its receiver, the target's
-/// environment and captures where it swaps them); `caller_program` is the program a crossing
-/// leaf's return enters again. The context's registers and records stay the caller's.
+/// with `argc` values on `window` (`LaneContext::leaf`): the staged leaf call
+/// (`call_leaf::step_leaf_call_of`) on machine words fills the window (`window_fill`) and writes
+/// the leaf record and the window's context words its form makes the callee's (`this` where it
+/// binds its receiver, the target's environment and captures where it swaps them);
+/// `caller_program` is the program a crossing leaf's return enters again. The context's
+/// registers and records become the callee's: its window and its first record, which the
+/// caller dispatches.
 ///
 /// # Safety
 /// `cx` is the running lane's context, and `window` the callee's window with its context words
-/// below it.
+/// below it and the target's admitted room past it; the program store keeps the target's
+/// derived view alive with its program, and the tier claims no leaf's view.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn lane_enter_leaf(
+pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
     cx: *mut LaneContext,
+    mut window_fill: F,
     window: Registers,
     call: Ip,
     caller: Registers,
@@ -252,8 +282,8 @@ pub(crate) unsafe fn lane_enter_leaf(
     argc: u16,
     this: Value,
     caller_program: Option<ProgramId>,
-) {
-    use quench_runtime::staged::call_leaf::{enter_leaf, LeafContext, LeafEntry};
+) -> (Registers, Ip) {
+    use quench_runtime::staged::call_leaf::{step_leaf_call_of, LeafContext, LeafEntry};
     // SAFETY: the function's contract.
     unsafe {
         let entry = LeafEntry {
@@ -266,11 +296,14 @@ pub(crate) unsafe fn lane_enter_leaf(
         };
         let context = LeafContext { this: this.to_bits(), env: target.env.to_bits(), capture: target.capture.expose_provenance() as u64 };
         let leaf = std::ptr::addr_of_mut!((*cx).leaf);
-        enter_leaf(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, window.0.expose_provenance() as u64,
-            entry, context,
+        step_leaf_call_of(
+            &mut Concrete::new(std::ptr::null()), &mut window_fill, leaf.expose_provenance() as u64,
+            window.0.expose_provenance() as u64, entry, context,
         );
         (*leaf).caller_program = caller_program;
+        let base = (*target.view).records();
+        ((*cx).registers, (*cx).base) = (window, base);
+        (window, base)
     }
 }
 
@@ -279,15 +312,13 @@ pub(crate) unsafe fn lane_enter_leaf(
 /// activation's return makes them (`return_plain_in_lane`). `None` while no leaf runs.
 #[inline(always)]
 pub(crate) fn complete_leaf_in_lane(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
-    // SAFETY: the running lane's context.
-    let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
-    let caller = leave_leaf_in_lane(leaf)?;
-    if let Some(program) = unsafe { (*leaf).caller_program.take() } {
+    let resumed = lane_return_leaf(cx, value, form)?;
+    // SAFETY: the running lane's context, whose leaf just completed.
+    if let Some(program) = unsafe { (*cx).leaf.caller_program.take() } {
         std::hint::cold_path();
         enter_program_in_lane(cx, program);
     }
-    // SAFETY: `caller` is the leaf's, just completed.
-    Some(unsafe { resume_leaf_caller_in_lane(cx, leaf, caller, value, form) })
+    Some(resumed)
 }
 
 /// `complete_leaf_in_lane` of a running leaf of the caller's own program, the common leaf return
@@ -297,46 +328,37 @@ pub(crate) fn complete_leaf_in_lane(cx: *mut LaneContext, value: Value, form: Le
 #[inline(always)]
 pub(crate) fn lane_return_leaf_header(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
-    let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
-    if unsafe { (*leaf).caller_program }.is_some() {
+    if unsafe { (*cx).leaf.caller_program }.is_some() {
         return None;
     }
-    let caller = leave_leaf_in_lane(leaf)?;
-    // SAFETY: `caller` is the leaf's, just completed.
-    Some(unsafe { resume_leaf_caller_in_lane(cx, leaf, caller, value, form) })
+    lane_return_leaf(cx, value, form)
 }
 
-/// The staged row (`call_leaf::complete_leaf`) on machine words: the running leaf's caller,
-/// its call word cleared; `None`, which changes nothing, while no leaf runs.
+/// The staged leaf return (`call_leaf::step_leaf_return_of`) on machine words: the running
+/// leaf's caller, its call word cleared and `value` in the call's result register; the
+/// context's registers and records the caller's again, and where it continues past the call.
+/// `None`, which changes nothing, while no leaf runs.
 #[inline(always)]
-fn leave_leaf_in_lane(leaf: *mut LeafCall) -> Option<quench_runtime::staged::call_leaf::LeafCaller<u64>> {
-    quench_runtime::staged::call_leaf::complete_leaf(&mut quench_runtime::staged::Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, ())
-}
-
-/// The caller of a completed leaf resumed: its registers and records the context's again and
-/// `value` in the call's result register; where it continues.
-///
-/// # Safety
-/// `caller` is what `leave_leaf_in_lane` returned for the context's `leaf` just now.
-#[inline(always)]
-unsafe fn resume_leaf_caller_in_lane(
-    cx: *mut LaneContext,
-    leaf: *mut LeafCall,
-    caller: quench_runtime::staged::call_leaf::LeafCaller<u64>,
-    value: Value,
-    form: LeafForm,
-) -> (Registers, Ip) {
+fn lane_return_leaf(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
+    // SAFETY: the running lane's context.
+    let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
+    // SAFETY: a running leaf's call record belongs to the caller's live view.
+    let result_at = |_: &mut Concrete, call: u64| unsafe {
+        let call: Ip = std::ptr::with_exposed_provenance(call as usize);
+        u64::from((*call).a & quench_runtime::bytecode::REGISTER_MASK) * 8
+    };
+    let caller = quench_runtime::staged::call_leaf::step_leaf_return_of(
+        &mut Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, value.to_bits(), result_at, (),
+    )?;
     let call: Ip = std::ptr::with_exposed_provenance(caller.call as usize);
     let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
     let base: Ip = std::ptr::with_exposed_provenance(caller.base as usize);
-    // SAFETY: the call record belongs to the caller's live view; the target stays cached.
+    // SAFETY: the running lane's context; the target stays cached.
     unsafe {
         debug_assert!((*leaf).form == form);
-        (*cx).registers = registers;
-        (*cx).base = base;
-        registers.set((*call).a & quench_runtime::bytecode::REGISTER_MASK, value);
+        ((*cx).registers, (*cx).base) = (registers, base);
     }
-    (registers, following(call))
+    Some((registers, following(call)))
 }
 
 /// `materialize_leaf_in_lane` of the running leaf, if one runs: where a leaf's records reach
@@ -384,22 +406,13 @@ pub(crate) fn cross_leaf_call_in_lane(
         return None;
     }
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    // SAFETY: as `script_call_leaf_miss`'s window.
-    let registers = unsafe {
-        let registers = vm.lane_stack.values.top();
-        fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
-        copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), argc);
-        Registers(registers)
-    };
-    // SAFETY: as `script_call_leaf_miss`'s first record.
-    let base = unsafe { (*target.view).records() };
-    // SAFETY: as `script_call_leaf_miss`'s leaf.
+    // SAFETY: as `script_call_leaf_miss`'s window and leaf.
     unsafe {
+        let window = Registers(vm.lane_stack.values.top());
+        let passed = r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm())));
         let caller_program = (*cx).program;
-        lane_enter_leaf(cx, registers, ip, r, target, form, argc, this, Some(caller_program));
+        let entered = lane_enter_leaf(cx, AdmittedWindow::of(target, passed, argc), window, ip, r, target, form, argc, this, Some(caller_program));
         enter_program_in_lane(cx, target.program());
-        (*cx).registers = registers;
-        (*cx).base = base;
+        Some(entered)
     }
-    Some((registers, base))
 }
