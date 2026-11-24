@@ -2,28 +2,26 @@
 //! functions, the interpreter's own, run here with the program's operands static, so each
 //! instruction's code is derived from the semantics rather than written beside it. A flag the
 //! machine requires branches to the backtrack block; a choice branches and finishes both paths.
-#[allow(unused_imports)]
-use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, RESTORE};
-use quench_runtime::staged::machine::{Binary, Relation};
+use crate::staged::machine::{Binary, Relation};
 use quench_regexp::backtrack::native::NATIVE_ASCII_UNITS;
 use quench_regexp::backtrack::machine::{self as m, Cursor, Machine, Step, CAPTURE_REGISTERS, UNBOUNDED};
 use quench_regexp::backtrack::matcher::{Admission, MatchStage};
 use quench_regexp::backtrack::native::{native_class_ends, CASE_BIT, CLASS_COUNT_SHIFT, CLASS_NONE, CLASS_OVERFLOW};
 use quench_regexp::backtrack::{Inst, UnitTest};
-use quench_runtime::staged::machine::Lane;
+use crate::staged::machine::Lane;
 use super::FRAME_BYTES;
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// The code of the instruction at `pc`: its row, specialized to it.
-    pub(crate) fn instruction(&mut self, pc: u32, inst: Inst) {
+    pub(super) fn instruction(&mut self, pc: u32, inst: Inst) {
         let at = Cursor::at(pc, self.position());
         let step = m::step(self, inst, at);
         self.finish_step(step);
     }
 
     /// Ends the current block where `step` goes.
-    pub(crate) fn finish_step(&mut self, step: Step<M::Word>) {
+    pub(super) fn finish_step(&mut self, step: Step<M::Word>) {
         match step {
             Step::Continue(next) => {
                 self.set_position(next.position);

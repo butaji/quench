@@ -158,6 +158,9 @@ pub(crate) enum UnitKind {
     Wasm,
     /// A Wasm module compiled whole at its first entry, when the runtime's first-entry flag allows it.
     WasmEager,
+    /// A hot regexp program's native search (`regexp_native::start`): always cleared, since only a VM
+    /// under a compiling mode counts its searches toward one (`regexp_native::enable`).
+    Regexp,
     /// A JavaScript function's numeric or lane compile at an entry, when the Cranelift tiers run here.
     Entry,
     /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
@@ -228,7 +231,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Aot => true,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
-        UnitKind::Wasm | UnitKind::Base => true,
+        UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
         UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
             unreachable!("facts decide these kinds, in `specialize`"),
     }
@@ -322,7 +325,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if facts.entry_none && !facts.called_by_regions && facts.observed_none && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
             true
         }
-        UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm => may_compile(kind),
+        UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
     if cleared && bisected_out() { return Decision::Declined; }
     if cleared { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Declined }

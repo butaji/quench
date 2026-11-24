@@ -1,10 +1,8 @@
 //! `MatchStage` on the emitter: the matcher's operations of `quench_regexp::backtrack::matcher`
 //! as Cranelift IR over an ASCII subject. A position or unit is an `i64` value, a flag an `i8`
 //! one, and a guarded operation a pair of blocks that join on the flag.
-#[allow(unused_imports)]
-use crate::ext_traits::*;
 use super::{Emit, RegexpMachine};
-use quench_runtime::staged::machine::{Binary, Extend, Lane, Relation};
+use crate::staged::machine::{Binary, Extend, Lane, Relation};
 use quench_regexp::backtrack::matcher::MatchStage;
 use quench_regexp::backtrack::native::NATIVE_ASCII_UNITS;
 use quench_regexp::backtrack::UnitTest;
@@ -17,7 +15,7 @@ const MASK_WORDS: usize = (NATIVE_ASCII_UNITS as i64 / WORD_BITS) as usize;
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// Bit `byte` of the 128-bit `mask`.
-    pub(crate) fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: M::Word) -> M::Word {
+    pub(super) fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: M::Word) -> M::Word {
         let low = self.constant(mask[0] as i64);
         let high = self.constant(mask[1] as i64);
         let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
@@ -29,7 +27,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// Whether `byte` lies in `first..=last`.
-    pub(crate) fn in_range(&mut self, byte: M::Word, (first, last): (u32, u32)) -> M::Word {
+    pub(super) fn in_range(&mut self, byte: M::Word, (first, last): (u32, u32)) -> M::Word {
         if first == last {
             return self.compare_constant(Relation::Equal, byte, i64::from(first));
         }

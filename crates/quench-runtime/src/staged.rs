@@ -53,6 +53,9 @@ pub(crate) mod typed_array_catalog;
 pub(crate) use quench_bjit::shared_words;
 pub mod flow;
 pub mod machine;
+/// Native code for a regexp program, over the shared machine traits.
+#[cfg(not(stencil_build))]
+pub mod regexp;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's composition
 pub mod barrier;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's operations; the interpreter has native Numbers

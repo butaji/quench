@@ -1,15 +1,13 @@
 //! Unit repeats, loops and the resume blocks backtracking jumps to.
-#[allow(unused_imports)]
-use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, FIRST_OPERAND, SECOND_OPERAND};
 use quench_regexp::backtrack::machine::{self as m, Resumed};
 use quench_regexp::backtrack::matcher::MatchStage;
-use quench_runtime::staged::machine::{Binary, Lane, Relation};
+use crate::staged::machine::{Binary, Lane, Relation};
 use quench_regexp::backtrack::{Inst, UnitTest};
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// The first position in `from..to` whose unit fails `test`, or `to`.
-    pub(crate) fn scan(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
+    pub(super) fn scan(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
         let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let index = self.b.block_parameter(head, Lane::I64);
         let end = self.b.block_parameter(exit, Lane::I64);
@@ -27,7 +25,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// The start of the run of units from `from` back to at least `to` that pass `test`.
-    pub(crate) fn scan_down(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
+    pub(super) fn scan_down(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
         let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let index = self.b.block_parameter(head, Lane::I64);
         let start = self.b.block_parameter(exit, Lane::I64);
@@ -46,7 +44,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
 
     /// The last unit in `floor..end` that passes `test`, branching to the backtrack block
     /// where none does.
-    pub(crate) fn scan_back(&mut self, test: UnitTest, floor: M::Word, end: M::Word) -> M::Word {
+    pub(super) fn scan_back(&mut self, test: UnitTest, floor: M::Word, end: M::Word) -> M::Word {
         let (look, lower, found) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let at = self.b.block_parameter(look, Lane::I64);
         let last = self.b.raw_binary_imm(Binary::Add, end, -1);
@@ -67,7 +65,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// The code a resume frame continues at: `sp` is the popped frame's address.
-    pub(crate) fn resume(&mut self, resume: Resume) {
+    pub(super) fn resume(&mut self, resume: Resume) {
         let frame = self.top();
         let flags = self.flags;
         let first = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);

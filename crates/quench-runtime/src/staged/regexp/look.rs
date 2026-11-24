@@ -2,10 +2,8 @@
 //! the stack; reaching `LookSucceed` decides a positive lookahead (its choices go, the
 //! restores of its captures stay) or fails a negative one (every entry above the mark is
 //! undone), and a backtrack down to the mark decides the other way.
-#[allow(unused_imports)]
-use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, FRAME_BYTES, FIRST_OPERAND, RESTORE, SECOND_OPERAND};
-use quench_runtime::staged::machine::{Binary, Lane, Relation};
+use crate::staged::machine::{Binary, Lane, Relation};
 use quench_regexp::backtrack::Inst;
 
 impl<M: RegexpMachine> Emit<'_, M> {
@@ -28,7 +26,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// Pushes the lookahead's mark, with the position the match goes on from, and runs its body.
-    pub(crate) fn look(&mut self, pc: u32) {
+    pub(super) fn look(&mut self, pc: u32) {
         let mark = self.mark(pc);
         let top = self.top();
         self.b.define_variable(mark, top);
@@ -39,7 +37,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// The body matched.
-    pub(crate) fn look_succeed(&mut self, pc: u32) {
+    pub(super) fn look_succeed(&mut self, pc: u32) {
         let (look, negative) = self.look_of(pc);
         let mark = self.mark(look);
         let mark = self.b.read_variable(mark);
@@ -58,7 +56,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     }
 
     /// The backtrack popped the mark: the body found no match.
-    pub(crate) fn look_failed(&mut self, pc: u32, position: M::Word) {
+    pub(super) fn look_failed(&mut self, pc: u32, position: M::Word) {
         let Inst::Look { negative, end } = self.plan.insts[pc as usize] else { unreachable!("a lookahead's mark") };
         if !negative {
             self.fail();
