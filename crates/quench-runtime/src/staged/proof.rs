@@ -2,16 +2,18 @@
 //!
 //! A numeric row computes only on an `Int32` or a `Float64`, never on a bare word. Each has a
 //! private field, so a word becomes one in only these ways:
-//! - `proven`: the frame holds a fact that proves the representation (a type, a register it
-//!   already guarded, a representation the specializer fixed). Constructing one is `unsafe`
-//!   because no test runs: the caller cites the fact in a `// Fact:` comment.
-//! - a row's own result (`pub(crate)` constructors), whose representation the row defines;
-//! - a constant the row folds (`constant`).
-//!
-//! The census counts `proven(` outside `staged`, so the places that assert a fact without a
-//! test only shrink.
+//! - `guard`: the single staged guard, the same in every projection: the tag test of a tagged
+//!   word, leaving at the frame's miss edge (`checked` is its concrete form).
+//! - `by_fact`: a fact token (`IntFact`, `NumberFact`) that only a fact makes: a type the
+//!   analysis proved (`of_type`) or a representation the specializer fixed (`of_representation`).
+//!   No test runs, and none is needed: the fact is the proof.
+//! - `proven`: `unsafe`, for a frame that still tests a word itself or holds a fact no token
+//!   names yet; the caller cites it in a `// Fact:` comment. The census counts these
+//!   (`unguarded_number_proofs`), so they only shrink.
+//! - a row's own result (`pub(crate)` constructors), and a constant the row folds (`constant`).
 
-use super::Stage;
+use super::{NumericStage, Stage};
+use crate::typed_ir::{Representation, Type};
 
 /// The low 32 bits of an int32, proved; the stage's word otherwise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,12 +25,42 @@ pub struct Int32<W>(W);
 #[repr(transparent)]
 pub struct Float64<W>(W);
 
+/// A fact that a word is an int32's low 32 bits. Only a fact makes one.
+#[derive(Clone, Copy, Debug)]
+pub struct IntFact(());
+
+/// A fact that a word is a binary64's IEEE bits. Only a fact makes one.
+#[derive(Clone, Copy, Debug)]
+pub struct NumberFact(());
+
+impl IntFact {
+    /// The analysis proved the value an int32 (its type is a subtype of `INT32`).
+    #[inline]
+    pub fn of_type(ty: Type) -> Option<Self> { ty.is_subtype(Type::INT32).then_some(IntFact(())) }
+    /// The specializer holds the value unboxed as an int32 (`Representation::Int32`).
+    #[inline]
+    pub fn of_representation(representation: Representation) -> Option<Self> {
+        (representation == Representation::Int32).then_some(IntFact(()))
+    }
+}
+
+impl NumberFact {
+    /// The specializer holds the value unboxed as a binary64 (`Representation::Float64`).
+    #[inline]
+    pub fn of_representation(representation: Representation) -> Option<Self> {
+        (representation == Representation::Float64).then_some(NumberFact(()))
+    }
+}
+
 impl<W: Copy> Int32<W> {
-    /// The int32 `word` holds by the caller's fact, read with no test.
+    /// The int32 `word` holds by a fact; no test runs.
+    #[inline]
+    pub fn by_fact(word: W, _fact: IntFact) -> Self { Int32(word) }
+    /// The int32 `word` holds by the caller's own test or an unnamed fact.
     ///
     /// # Safety
-    /// The caller holds a fact (a type proof, a guard it already ran, a fixed representation)
-    /// that `word` is an int32's low 32 bits in its stage. A wrong fact gives a wrong answer.
+    /// The caller holds a fact (a guard it already ran, a fixed representation) that `word` is
+    /// an int32's low 32 bits in its stage. A wrong fact gives a wrong answer.
     #[inline(always)]
     pub unsafe fn proven(word: W) -> Self { Int32(word) }
     /// A word a staged row computed as an int32.
@@ -37,10 +69,28 @@ impl<W: Copy> Int32<W> {
     /// The proved word.
     #[inline(always)]
     pub fn word(self) -> W { self.0 }
+    /// The single int32 guard: `tagged` is an int-tagged word, else leave at `miss`; its low half.
+    #[inline(always)]
+    pub fn guard<S: NumericStage<Word = W>>(stage: &mut S, tagged: W, miss: S::Miss) -> Option<Self> {
+        let int = super::value::is_int(stage, tagged);
+        stage.guard(int, miss)?;
+        Some(Int32(stage.narrow(tagged)))
+    }
+    /// The int32 constant `value`, folded into `stage`.
+    #[inline(always)]
+    pub fn constant<S: NumericStage<Word = W>>(stage: &mut S, value: i32) -> Self { Int32(stage.i32_constant(value)) }
+    /// ToInt32 of a proved binary64 by the stage's own conversion (`NumericStage::to_int32`).
+    #[inline(always)]
+    pub fn truncating<S: NumericStage<Word = W>>(stage: &mut S, number: Float64<W>, miss: S::Miss) -> Option<Self> {
+        stage.to_int32(number.0, miss).map(Int32)
+    }
 }
 
 impl<W: Copy> Float64<W> {
-    /// The binary64 `word` holds by the caller's fact, read with no test.
+    /// The binary64 `word` holds by a fact; no test runs.
+    #[inline]
+    pub fn by_fact(word: W, _fact: NumberFact) -> Self { Float64(word) }
+    /// The binary64 `word` holds by the caller's own test or an unnamed fact.
     ///
     /// # Safety
     /// As `Int32::proven`: the caller holds a fact that `word` is a binary64's IEEE bits.
@@ -52,45 +102,65 @@ impl<W: Copy> Float64<W> {
     /// The proved word.
     #[inline(always)]
     pub fn word(self) -> W { self.0 }
-}
-
-impl<W: Copy> Int32<W> {
-    /// The int32 constant `value`, folded into `stage`.
+    /// The single Number guard: a double word is its own bits, an int-tagged word widens, and any
+    /// other word leaves at `miss`. The double test comes first, as `Value::as_number` orders it.
     #[inline(always)]
-    pub fn constant<S: super::NumericStage<Word = W>>(stage: &mut S, value: i32) -> Self { Int32(stage.i32_constant(value)) }
-}
-
-impl<W: Copy> Float64<W> {
+    pub fn guard<S: NumericStage<Word = W>>(stage: &mut S, tagged: W, miss: S::Miss) -> Option<Self> {
+        let (double, int) = super::value::number_classes(stage, tagged);
+        stage.choose_leaving(double, #[inline(always)] |_| Some(tagged), #[inline(always)] |stage| {
+            stage.guard(int, miss)?;
+            let low = stage.narrow(tagged);
+            Some(stage.i32_to_f64(low))
+        }).map(Float64)
+    }
     /// The binary64 constant `value`, folded into `stage`.
     #[inline(always)]
-    pub fn constant<S: super::NumericStage<Word = W>>(stage: &mut S, value: f64) -> Self { Float64(stage.f64_constant(value)) }
+    pub fn constant<S: NumericStage<Word = W>>(stage: &mut S, value: f64) -> Self { Float64(stage.f64_constant(value)) }
+}
+
+#[cfg(not(stencil_build))]
+impl Int32<u64> {
+    /// `guard` at the interpreter's stage: a tagged value's int32; `None` where it holds none.
+    #[inline(always)]
+    pub fn checked(value: crate::Value) -> Option<Self> {
+        Self::guard(&mut super::Concrete::new(core::ptr::null()), value.to_bits(), ())
+    }
+}
+
+#[cfg(not(stencil_build))]
+impl Float64<u64> {
+    /// `guard` at the interpreter's stage: a tagged value's Number; `None` where it is none.
+    #[inline(always)]
+    pub fn checked(value: crate::Value) -> Option<Self> {
+        Self::guard(&mut super::Concrete::new(core::ptr::null()), value.to_bits(), ())
+    }
+}
+
+/// The guards a machine-word stage (a specializer's) runs on numbers it holds unboxed.
+impl<W: Copy> Int32<W> {
+    /// The int32 a proved binary64 is exactly (`value::exact_int32`: no fraction, no -0, in
+    /// range), else leave at `miss`.
+    #[inline]
+    pub fn exact<S>(stage: &mut S, number: Float64<W>, miss: <S as Stage>::Miss) -> Option<Self>
+    where S: NumericStage<Word = W, Cond = W> + super::machine::MachineScalar<Word = W> {
+        let (int, exact) = super::value::exact_int32(stage, number.0);
+        stage.guard(exact, miss)?;
+        Some(Int32(int))
+    }
+    /// The int32 a signed 64-bit integer word is, where the word fits one, else leave at `miss`.
+    #[inline]
+    pub fn of_long<S>(stage: &mut S, word: W, miss: <S as Stage>::Miss) -> Option<Self>
+    where S: NumericStage<Word = W, Cond = W> + super::machine::MachineScalar<Word = W> {
+        use super::machine::{Lane, Relation, Unary};
+        let int = stage.raw_unary(Unary::Narrow(Lane::I32), word);
+        let widened = stage.raw_unary(Unary::SignExtend(Lane::I64), int);
+        let fits = stage.raw_compare(Relation::Equal, widened, word);
+        stage.guard(fits, miss)?;
+        Some(Int32(int))
+    }
 }
 
 /// The proved operand types a stage's numeric rows take.
 pub type IntOf<S> = Int32<<S as Stage>::Word>;
 /// The proved binary64 operand type a stage's numeric rows take.
 pub type NumberOf<S> = Float64<<S as Stage>::Word>;
-
-#[cfg(not(stencil_build))]
-/// The single concrete guard: a tagged value's int32, tested once by its tag; `None` where it
-/// holds none. Every machine-word frame (the interpreter's, the lane's) proves its operands here.
-impl Int32<u64> {
-    #[inline(always)]
-    pub fn checked(value: crate::Value) -> Option<Self> { value.as_int().map(|int| Int32(u64::from(int as u32))) }
-}
-
-#[cfg(not(stencil_build))]
-/// The single concrete guard for a Number: an int32 widened, a double as it is; `None` where the
-/// value is no Number.
-impl Float64<u64> {
-    #[inline(always)]
-    pub fn checked(value: crate::Value) -> Option<Self> { value.as_number().map(|number| Float64(number.to_bits())) }
-}
-
-impl<W: Copy> Int32<W> {
-    /// ToInt32 of a proved binary64 by the stage's own conversion (`NumericStage::to_int32`).
-    #[inline(always)]
-    pub fn truncating<S: super::NumericStage<Word = W>>(stage: &mut S, number: Float64<W>, miss: S::Miss) -> Option<Self> {
-        stage.to_int32(number.0, miss).map(Int32)
-    }
-}
