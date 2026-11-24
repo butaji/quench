@@ -9,6 +9,10 @@
 //! reads the flag; an emitting machine branches on it and goes on along both paths.
 use super::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTest, MatchStage};
 
+// The instructions a lookbehind body runs, read backward, and backreferences either way.
+mod backward;
+pub use backward::{backreference, capture_close_back, give_back_back, take_more_back, unit_back, unit_repeat_back};
+
 /// A static count that exceeds any subject (`Inst::UnitRepeat`, `Inst::LoopHead`).
 pub const UNBOUNDED: u32 = u32::MAX;
 /// A loop whose body cannot match empty keeps no iteration start (`Inst::LoopTail`).
@@ -91,6 +95,31 @@ pub trait Machine: MatchStage {
     fn keep_greedy(&mut self, pc: u32, floor: Self::Pos, position: Self::Pos);
     /// Backtracking a lazy repeat that can take more keeps its entry, ending at `position`.
     fn keep_lazy(&mut self, pc: u32, test: Self::Test, ceiling: Self::Pos, position: Self::Pos);
+    /// The `index`th entry of the program's capture lists (`Program::lists`), static.
+    fn listed(&mut self, index: u32) -> u32;
+    /// `then` where `flag` holds, else `otherwise`.
+    fn pick(&mut self, flag: Self::Flag, then: Self::Pos, otherwise: Self::Pos) -> Self::Pos;
+    /// `left + right`, which stays inside the subject.
+    fn plus(&mut self, left: Self::Pos, right: Self::Pos) -> Self::Pos;
+    /// `left - right`, where `right` is at most `left`.
+    fn minus(&mut self, left: Self::Pos, right: Self::Pos) -> Self::Pos;
+    /// `position` moved back by `count` units, at least to the start; `UNBOUNDED` reaches it.
+    fn reach_back(&mut self, position: Self::Pos, count: u32) -> Self::Pos;
+    /// The start of the run of units from `from` back to at least `to` that pass `test`.
+    fn run_start(&mut self, test: Self::Test, from: Self::Pos, to: Self::Pos) -> Self::Pos;
+    /// Whether the units of `span` (`from..to`) equal those from `at` on, compared as `flags`
+    /// (ignore case, unicode); the subject holds them all.
+    fn same_units(&mut self, span: (Self::Pos, Self::Pos), at: Self::Pos, flags: (bool, bool)) -> Self::Flag;
+    /// A backward greedy repeat that started at `position`, before `pc`, may give back units
+    /// up to `ceiling`.
+    fn push_greedy_back(&mut self, pc: u32, ceiling: Self::Pos, position: Self::Pos);
+    /// A backward lazy repeat that started at `position`, before `pc`, may take units of
+    /// `test` down to `floor`.
+    fn push_lazy_back(&mut self, pc: u32, test: Self::Test, floor: Self::Pos, position: Self::Pos);
+    /// `keep_greedy` of a backward repeat.
+    fn keep_greedy_back(&mut self, pc: u32, ceiling: Self::Pos, position: Self::Pos);
+    /// `keep_lazy` of a backward repeat.
+    fn keep_lazy_back(&mut self, pc: u32, test: Self::Test, floor: Self::Pos, position: Self::Pos);
     /// Whether the run goes on: `false` where `flag` does not hold, the step then failing. An
     /// emitting machine branches to its backtracking and goes on where it holds.
     fn require(&mut self, flag: Self::Flag) -> bool;
@@ -206,9 +235,19 @@ pub fn capture_close<M: Machine>(machine: &mut M, (capture, temporary): (u32, u3
     Step::Continue(at.next())
 }
 
+/// Unsets the captures listed in `Program::lists[first..first + count]`.
+#[inline(always)]
+pub fn reset_captures<M: Machine>(machine: &mut M, (first, count): (u32, u32), at: At<M>) -> Next<M> {
+    for index in first..first + count {
+        let capture = machine.listed(index);
+        reset_capture(machine, capture);
+    }
+    Step::Continue(at.next())
+}
+
 /// Unsets `capture` where it is set (`Inst::ResetCaptures`, one listed capture).
 #[inline(always)]
-pub fn reset_capture<M: Machine>(machine: &mut M, capture: u32) {
+fn reset_capture<M: Machine>(machine: &mut M, capture: u32) {
     let (current, unset) = (machine.load(start_register(capture)), machine.unset());
     let same = machine.equal(current, unset);
     let is_set = machine.not(same);

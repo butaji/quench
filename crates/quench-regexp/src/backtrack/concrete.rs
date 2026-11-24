@@ -160,6 +160,62 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn listed(&mut self, index: u32) -> u32 {
+        self.program.lists[index as usize]
+    }
+
+    #[inline(always)]
+    fn pick(&mut self, flag: bool, then: usize, otherwise: usize) -> usize {
+        if flag { then } else { otherwise }
+    }
+
+    #[inline(always)]
+    fn plus(&mut self, left: usize, right: usize) -> usize {
+        left + right
+    }
+
+    #[inline(always)]
+    fn minus(&mut self, left: usize, right: usize) -> usize {
+        left - right
+    }
+
+    #[inline(always)]
+    fn reach_back(&mut self, position: usize, count: u32) -> usize {
+        position.saturating_sub(count as usize)
+    }
+
+    #[inline(always)]
+    fn run_start(&mut self, test: UnitTest, from: usize, to: usize) -> usize {
+        self.program.run_start_back(test, self.text, from, to)
+    }
+
+    #[inline(always)]
+    fn same_units(&mut self, (from, to): (usize, usize), at: usize, (ignore_case, unicode): (bool, bool)) -> bool {
+        let distance = at.wrapping_sub(from);
+        (from..to).all(|expected| equal(self.text.unit(expected), self.text.unit(expected.wrapping_add(distance)), ignore_case, unicode))
+    }
+
+    #[inline(always)]
+    fn push_greedy_back(&mut self, pc: u32, ceiling: usize, position: usize) {
+        self.push(Frame::GreedyBack { pc, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn push_lazy_back(&mut self, pc: u32, test: UnitTest, floor: usize, position: usize) {
+        self.push(Frame::LazyBack { pc, test, floor, position });
+    }
+
+    #[inline(always)]
+    fn keep_greedy_back(&mut self, pc: u32, ceiling: usize, position: usize) {
+        self.keep(Frame::GreedyBack { pc, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn keep_lazy_back(&mut self, pc: u32, test: UnitTest, floor: usize, position: usize) {
+        self.keep(Frame::LazyBack { pc, test, floor, position });
+    }
+
+    #[inline(always)]
     fn require(&mut self, flag: bool) -> bool {
         flag
     }
@@ -178,17 +234,6 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
 }
 
 impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
-
-    #[inline(always)]
-    fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize {
-        self.program.run_start_back(test, self.text, from, to)
-    }
-
-    #[inline(always)]
-    fn register(&self, register: u32) -> usize {
-        self.registers[register as usize]
-    }
-
     #[inline(always)]
     fn assign(&mut self, register: u32, value: usize) {
         self.registers[register as usize] = value;
@@ -246,11 +291,6 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
             Inst::Unit(test) => Some(test),
             _ => None,
         }
-    }
-
-    #[inline(always)]
-    fn listed(&self, index: u32) -> u32 {
-        self.program.lists[index as usize]
     }
 
     fn look(&mut self, body: Cursor, negative: bool) -> bool {

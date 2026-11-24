@@ -23,19 +23,16 @@
 //! machine sees it as a constant and folds it.
 //!
 //! Here stays what only the interpreter runs: `Stage`, the operations on frames themselves
-//! (backtracking as `replay`, the same machine read backwards), dispatch tables,
-//! backreferences, lookbehind bodies and the nested lookahead run. Their native forms are next.
+//! (backtracking as `replay`), dispatch tables, classes of strings and the nested lookahead
+//! run. Their native forms are next (TOD-2078).
 
 use crate::in_units;
-// Lookbehind's backward reads and the classes of strings, over the same stage.
-#[path = "backtrack/backward.rs"]
-mod backward;
 // The interpreter's stage: the operations on the machine's own state.
 #[path = "backtrack/concrete.rs"]
 mod concrete;
 pub(super) use concrete::Concrete;
 use super::machine::{self as m, Machine};
-pub(super) use super::machine::{set_capture, start_register, Cursor, Step};
+pub(super) use super::machine::{start_register, Cursor, Step};
 use super::matcher::{Admission, MatchStage};
 use super::{equal, Frame, Inst, Program, Text, UnitTest, UNSET};
 
@@ -47,9 +44,6 @@ use super::{equal, Frame, Inst, Program, Text, UnitTest, UNSET};
 /// through the engine's `staged::machine` traits, and implements this trait over them. A fold
 /// needs the matcher moved into `quench-runtime` or `staged::machine` moved below both crates.
 pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> + quench_stack::projection::Sealed {
-    /// The start of the run of units from at least `to` up to `from` that pass `test`.
-    fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize;
-    fn register(&self, register: u32) -> usize;
     /// Writes a register with no restore entry.
     fn assign(&mut self, register: u32, value: usize);
     fn push(&mut self, frame: Frame);
@@ -63,8 +57,6 @@ pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = Uni
     /// The target of dispatch table `table` for the unit at `position`, its other branches
     /// pushed as choices.
     fn dispatch(&mut self, table: u32, position: usize) -> Option<u32>;
-    /// The `index`th entry of `Program::lists`.
-    fn listed(&self, index: u32) -> u32;
     /// The test of the instruction at `pc` where it takes one unit (`Inst::Unit`).
     fn unit_follower(&self, pc: u32) -> Option<UnitTest>;
     /// The positions a match of string class `class` at `position` ends at, longest first
@@ -124,8 +116,19 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
             let follower = stage.unit_follower(pc);
             resumed(m::give_back(stage, pc, follower, (floor, position)))
         }
-        Some(frame @ (Frame::GreedyBack { .. } | Frame::LazyBack { .. })) => backward::replay(stage, frame),
+        Some(frame @ (Frame::GreedyBack { .. } | Frame::LazyBack { .. })) => replay_back(stage, frame),
         Some(Frame::Lazy { pc, test, ceiling, position }) => resumed(m::take_more(stage, pc, test, (ceiling, position))),
+    }
+}
+
+/// Backtracks a backward repeat's entry, as `replay` does a forward one's. Out of line: a
+/// lookbehind's repeats are rare, and the interpreter's loop stays tight without them.
+#[inline(never)]
+fn replay_back<S: Stage>(stage: &mut S, frame: Frame) -> Replay {
+    match frame {
+        Frame::GreedyBack { pc, ceiling, position } => resumed(m::give_back_back(stage, pc, (ceiling, position))),
+        Frame::LazyBack { pc, test, floor, position } => resumed(m::take_more_back(stage, pc, test, (floor, position))),
+        _ => unreachable!("`replay` hands over only backward repeats"),
     }
 }
 
@@ -156,14 +159,14 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
         Inst::CaptureOpen { temporary, count, restores } => m::capture_open(stage, (temporary, count, restores), at),
         Inst::CaptureClose { capture, temporary } => m::capture_close(stage, (capture, temporary), at),
-        Inst::ResetCaptures { first, count } => reset_captures(stage, (first, count), at),
+        Inst::ResetCaptures { first, count } => m::reset_captures(stage, (first, count), at),
         Inst::LoopInit { counter } => m::loop_init(stage, counter, at),
         Inst::LoopHead { counter, min, max, greedy, exit } => m::loop_head(stage, (counter, min, max), (greedy, exit), at),
         Inst::LoopIterate { start } => m::loop_iterate(stage, start, at),
         Inst::EmptyCheck { start } => m::empty_check(stage, start, at),
         Inst::LoopTail { counter, start, min, head } => m::loop_tail(stage, (counter, start, min, head), at),
-        Inst::Backreference { first, count, ignore_case, unicode } => backreference(stage, (first, count, ignore_case, unicode), at),
-        inst => backward::step(stage, inst, at),
+        Inst::Backreference { first, count, ignore_case, unicode } => m::backreference(stage, (first, count), (ignore_case, unicode, false), at),
+        inst => rare(stage, inst, at),
     }
 }
 
@@ -174,16 +177,6 @@ fn look<S: Stage>(stage: &mut S, (negative, end): (bool, u32), at: Cursor) -> St
     if holds { Step::Continue(at.jump(end)) } else { Step::Fail }
 }
 
-/// Unsets the captures listed in `Program::lists[first..first + count]`.
-#[inline(always)]
-fn reset_captures<S: Stage>(stage: &mut S, (first, count): (u32, u32), at: Cursor) -> Step {
-    for index in first..first + count {
-        let capture = stage.listed(index);
-        m::reset_capture(stage, capture);
-    }
-    Step::Continue(at.next())
-}
-
 #[inline(always)]
 fn dispatch<S: Stage>(stage: &mut S, table: u32, at: Cursor) -> Step {
     match stage.dispatch(table, at.position) {
@@ -192,15 +185,45 @@ fn dispatch<S: Stage>(stage: &mut S, table: u32, at: Cursor) -> Step {
     }
 }
 
-/// A backreference to the first set capture of the list: it matches the captured units at the
-/// position, and trivially where no listed capture is set.
+/// The instructions a lookbehind body runs, read backward, and the classes of strings: each
+/// continues at the next pc or fails.
 #[inline(always)]
-fn backreference<S: Stage>(stage: &mut S, (first, count, ignore_case, unicode): (u32, u32, bool, bool), at: Cursor) -> Step {
-    let set_bound = (first..first + count).map(|index| start_register(stage.listed(index))).find(|bound| stage.register(*bound) != UNSET);
-    let Some(bound) = set_bound else { return Step::Continue(at.next()) };
-    let (from, to) = (stage.register(bound), stage.register(bound + 1));
-    let width = to - from;
-    let matches = at.position + width <= stage.length()
-        && (from..to).zip(at.position..).all(|(expected, actual)| equal(stage.unit_at(expected), stage.unit_at(actual), ignore_case, unicode));
-    if matches { Step::Continue(at.then_at(at.position + width)) } else { Step::Fail }
+fn rare<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
+    match rare_position(stage, inst, at) {
+        Some(position) => Step::Continue(at.then_at(position)),
+        None => Step::Fail,
+    }
+}
+
+/// `rare`'s position at the next pc, `None` where the instruction fails. Out of line, and
+/// returning in registers, so the patterns with none of these instructions, the common ones,
+/// keep the interpreter's loop tight.
+#[inline(never)]
+fn rare_position<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Option<usize> {
+    let step = match inst {
+        Inst::UnitBack(test) => m::unit_back(stage, test, at),
+        Inst::UnitRepeatBack { test, min, max, greedy } => m::unit_repeat_back(stage, (test, min, max, greedy), at),
+        Inst::CaptureCloseBack { capture, temporary } => m::capture_close_back(stage, (capture, temporary), at),
+        Inst::BackreferenceBack { first, count, ignore_case, unicode } => m::backreference(stage, (first, count), (ignore_case, unicode, true), at),
+        Inst::ClassWidths { class, backward } => class_widths(stage, (class, backward), at),
+        _ => unreachable!("`registers` hands over only these"),
+    };
+    match step {
+        Step::Continue(next) => {
+            debug_assert_eq!(next.pc, at.pc + 1);
+            Some(next.position)
+        }
+        _ => None,
+    }
+}
+
+/// A class of strings: its longest match, the shorter ones kept as choices in order.
+#[inline(always)]
+fn class_widths<S: Stage>(stage: &mut S, (class, backward): (u32, bool), at: Cursor) -> Step {
+    let ends = stage.class_ends(class, at.position, backward);
+    let Some((&first, rest)) = ends.split_first() else { return Step::Fail };
+    for &end in rest.iter().rev() {
+        stage.push(Frame::Choice { pc: at.pc + 1, position: end });
+    }
+    Step::Continue(at.then_at(first))
 }

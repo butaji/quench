@@ -32,7 +32,8 @@ pub enum NativeInst {
     /// `count` consecutive temporaries from `temporary`.
     CaptureOpen { temporary: u32, count: u32, restores: bool },
     CaptureClose { capture: u32, temporary: u32 },
-    ResetCaptures { captures: Vec<u32> },
+    /// The captures listed in `NativePlan::lists[first..first + count]`.
+    ResetCaptures { first: u32, count: u32 },
     LoopInit { counter: u32 },
     LoopHead { counter: u32, min: u32, max: u32, greedy: bool, exit: u32 },
     LoopIterate { start: u32 },
@@ -52,6 +53,8 @@ pub struct NativePlan {
     /// The registers a run uses; each holds `unset` between runs.
     pub registers: usize,
     pub unset: usize,
+    /// The capture lists the instructions name (`Program::lists`).
+    pub lists: Box<[u32]>,
     /// How the code moves on from a start that failed (`Program::native_restarts`).
     pub restarts: NativeRestarts,
     /// The test of the leading atomic repeat whose units a failed start skips, and the unit
@@ -161,7 +164,7 @@ impl Program {
         let insts = self.instructions.iter().map(|inst| self.native_inst(*inst)).collect::<Option<Vec<_>>>()?;
         let restarts = self.native_restarts();
         let restart_skip = self.restart_skip.map(|test| native_test(test, &self.sets));
-        Some(NativePlan { insts, entry: self.entry.unwrap_or(0), registers: self.register_count, unset: super::UNSET, restarts, restart_skip })
+        Some(NativePlan { insts, entry: self.entry.unwrap_or(0), registers: self.register_count, unset: super::UNSET, lists: self.lists.clone(), restarts, restart_skip })
     }
 
     /// How native code moves past a failed start: on itself where `next_start` admits a
@@ -210,7 +213,7 @@ impl Program {
         match inst {
             Inst::CaptureOpen { temporary, count, restores } => NativeInst::CaptureOpen { temporary, count, restores },
             Inst::CaptureClose { capture, temporary } => NativeInst::CaptureClose { capture, temporary },
-            Inst::ResetCaptures { first, count } => NativeInst::ResetCaptures { captures: self.lists[first as usize..(first + count) as usize].to_vec() },
+            Inst::ResetCaptures { first, count } => NativeInst::ResetCaptures { first, count },
             // A lookbehind's body is backward instructions, which keep the program interpreted.
             Inst::Look { negative, end } => NativeInst::Look { negative, end },
             Inst::LookSucceed => NativeInst::LookSucceed,
