@@ -136,6 +136,30 @@ impl Float64<u64> {
     }
 }
 
+/// The guards a machine-word stage (a specializer's) runs on numbers it holds unboxed.
+impl<W: Copy> Int32<W> {
+    /// The int32 a proved binary64 is exactly (`value::exact_int32`: no fraction, no -0, in
+    /// range), else leave at `miss`.
+    #[inline]
+    pub fn exact<S>(stage: &mut S, number: Float64<W>, miss: <S as Stage>::Miss) -> Option<Self>
+    where S: NumericStage<Word = W, Cond = W> + super::machine::MachineScalar<Word = W> {
+        let (int, exact) = super::value::exact_int32(stage, number.0);
+        stage.guard(exact, miss)?;
+        Some(Int32(int))
+    }
+    /// The int32 a signed 64-bit integer word is, where the word fits one, else leave at `miss`.
+    #[inline]
+    pub fn of_long<S>(stage: &mut S, word: W, miss: <S as Stage>::Miss) -> Option<Self>
+    where S: NumericStage<Word = W, Cond = W> + super::machine::MachineScalar<Word = W> {
+        use super::machine::{Lane, Relation, Unary};
+        let int = stage.raw_unary(Unary::Narrow(Lane::I32), word);
+        let widened = stage.raw_unary(Unary::SignExtend(Lane::I64), int);
+        let fits = stage.raw_compare(Relation::Equal, widened, word);
+        stage.guard(fits, miss)?;
+        Some(Int32(int))
+    }
+}
+
 /// The proved operand types a stage's numeric rows take.
 pub type IntOf<S> = Int32<<S as Stage>::Word>;
 /// The proved binary64 operand type a stage's numeric rows take.

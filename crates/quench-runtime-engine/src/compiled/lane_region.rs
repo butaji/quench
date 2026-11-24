@@ -911,7 +911,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// Prove an exact int32 view once; a Number already in a float register
     /// needs no canonical encoding or tag test to establish that projection.
     fn int(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-        frame::register_int_value(&mut self.builder, &mut self.registers, state, register, otherwise)
+        frame::register_int_value(&mut self.builder, &mut self.registers, state, register, otherwise).word()
     }
 
     /// Prove Number only for a new untrusted value; later uses read its unboxed view.
@@ -1293,7 +1293,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// An operand's int32 value, statically where it is a constant int32.
     fn operand_int(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
         frame::operand_int(&mut self.builder, &mut self.registers, state, &self.program.constants,
-            operand, otherwise)
+            operand, otherwise).map(quench_runtime::staged::Int32::word)
     }
 
     /// An operand's tagged bits: its register's, or its immediate constant's.

@@ -5,12 +5,12 @@ use super::*;
 use crate::compiled::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
-use quench_runtime::staged::{Int32, IntFact, NumericStage, Stage};
+use quench_runtime::staged::{Float64, Int32, IntFact, NumberFact, NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, constants: &[quench_runtime::bytecode::Constant], operand: quench_runtime::bytecode::Operand,
-    otherwise: ir::Block) -> Option<ir::Value> {
+    otherwise: ir::Block) -> Option<Int32<ir::Value>> {
     match operand.kind()? {
         quench_runtime::bytecode::OperandKind::Register =>
             Some(register_int_value(builder, registers, state, operand.register_index()?, otherwise)),
@@ -24,7 +24,7 @@ pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
                 let never = stage.ne_imm(zero, 0u32);
                 stage.guard(never, otherwise)?;
             }
-            Some(stage.i32_constant(if int32 { value.wasm_bits32() as i32 } else { 0 }))
+            Some(Int32::constant(&mut stage, if int32 { value.wasm_bits32() as i32 } else { 0 }))
         }
         _ => None,
     }
@@ -48,7 +48,7 @@ pub(crate) fn operand_long(builder: &mut FunctionBuilder<'_>, registers: &mut Re
     if let Some(word) = operand.register_index().and_then(|register| held_long(builder, registers, state, register)) {
         return Some(word);
     }
-    let int = operand_int(builder, registers, state, constants, operand, otherwise)?;
+    let int = operand_int(builder, registers, state, constants, operand, otherwise)?.word();
     Some(emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn operand_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mu
             .and_then(super::super::facts::immediate).is_some_and(super::super::facts::is_int32),
         OperandKind::Field | OperandKind::Local => return None,
     };
-    if integral { return operand_int(builder, registers, state, constants, operand, exit); }
+    if integral { return operand_int(builder, registers, state, constants, operand, exit).map(Int32::word); }
     // A register only its tag types is its int where the tag says so, else its Number's
     // ToInt32; neither path proves a fact the other does not.
     let tagged = operand.register_index()
@@ -132,44 +132,53 @@ fn guard_unless(builder: &mut FunctionBuilder<'_>, condition: ir::Value, proved:
     }
 }
 
-/// `register`'s int32 value, proving it where the fact does not.
+/// `register`'s int32 value: by its fact, or by the staged guard of the representation it holds.
 pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
+    state: &mut State, register: Register, otherwise: ir::Block) -> Int32<ir::Value> {
     let index = usize::from(register);
     let fact = state.values[index];
+    let typed = IntFact::of_type(fact.value.ty);
     let int = match fact.value.representation {
         Representation::Int32 => {
             let variable = register_int(builder, registers, index);
-            return builder.use_var(variable);
+            let held = IntFact::of_representation(Representation::Int32).expect("an int32 home");
+            return Int32::by_fact(builder.use_var(variable), held);
         }
-        Representation::Float64 if !fact.tagged.current() => {
-            let variable = register_float(builder, registers, index);
-            let number = builder.use_var(variable);
-            let (int, exact) = emit_js_exact_int32(builder, number);
-            guard_unless(builder, exact, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            int
-        }
+        Representation::Float64 if !fact.tagged.current() => float_home_int(builder, registers, index, typed, otherwise),
         Representation::Int64 => {
             let variable = register_long(builder, registers, index);
-            let word = builder.use_var(variable);
-            let int = emit(builder).raw_unary(Unary::Narrow(Lane::I32), word);
-            let exact = int_is_word(builder, int, word);
-            guard_unless(builder, exact, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            int
+            let (word, mut stage) = (builder.use_var(variable), emit(builder));
+            match typed {
+                Some(proof) => Int32::by_fact(stage.raw_unary(Unary::Narrow(Lane::I32), word), proof),
+                None => Int32::of_long(&mut stage, word, otherwise).expect("an emitted guard continues"),
+            }
         }
         Representation::Tagged | Representation::Float64 => {
             let (bits, mut stage) = (register_tagged(builder, registers, state, register), emit(builder)); // Staged guard, or the type's proof.
-            match IntFact::of_type(fact.value.ty) {
-                Some(proof) => Int32::by_fact(stage.narrow(bits), proof).word(),
-                None => Int32::guard(&mut stage, bits, otherwise).expect("an emitted guard continues").word(),
+            match typed {
+                Some(proof) => Int32::by_fact(stage.narrow(bits), proof),
+                None => Int32::guard(&mut stage, bits, otherwise).expect("an emitted guard continues"),
             }
         }
     };
     let variable = register_int(builder, registers, index);
-    builder.def_var(variable, int);
+    builder.def_var(variable, int.word());
     state.values[index] = RegisterFact { tagged: state.values[index].tagged,
         ..RegisterFact::definition(Type::INT32, Representation::Int32) };
     int
+}
+
+/// The int32 of a register held as a binary64: the staged exactness guard, or the truncation
+/// alone where its type proves it an int32.
+fn float_home_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, index: usize,
+    typed: Option<IntFact>, otherwise: ir::Block) -> Int32<ir::Value> {
+    let variable = register_float(builder, registers, index);
+    let home = NumberFact::of_representation(Representation::Float64).expect("a float home");
+    let (number, mut stage) = (Float64::by_fact(builder.use_var(variable), home), emit(builder));
+    match typed {
+        Some(proof) => Int32::by_fact(quench_runtime::staged::value::exact_int32(&mut stage, number.word()).0, proof),
+        None => Int32::exact(&mut stage, number, otherwise).expect("an emitted guard continues"),
+    }
 }
 
 /// The binary64 view a test already proved of tagged `bits` in this block (`LocalProofs::numbers`), if any.
