@@ -1,20 +1,13 @@
 // The body of `generated_row`, included once per shard module (`lane_frame::generated_rows_*`,
 // `generated_row_handler`): each module is its own codegen unit.
-script_handler! { @unasserted
+view_handler! {
     /// The lane handler of every opcode `admits_row` admits, generated from its staged row
     /// rather than written: the record decodes by the row family's one decoder
     /// (`Operation::decode_flow`), the row steps on `Concrete` over the lane's frame, and the
     /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
     /// row to the residual a hand-written handler would be (Futamura's first projection).
     pub(crate) fn generated_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
-        // A JavaScript view carries the lane context its rows run in; a Wasm view carries its
-        // memory there and reads the thread's, one dynamic thread-local access a Wasm row pays.
-        let cx: *mut LaneContext = if const {
-            LaneFields::<OP, FLAG>::OPCODE.traits().has(quench_runtime::bytecode::Traits::WASM_OPCODE)
-        } { context_in_lane() } else {
-            debug_assert_eq!(cx, context_in_lane(), "a JavaScript view carries its context");
-            cx
-        };
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         // An accumulator field the opcode reads no register at: the view never selects this
         // instance, which every table and handler set still names. It continues as the row that
         // reads none, so its code is this one jump rather than another copy of the row.

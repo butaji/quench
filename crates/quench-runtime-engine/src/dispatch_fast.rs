@@ -2581,12 +2581,6 @@ macro_rules! lane_handler {
 /// `lane_handler!` for a handler only JavaScript views dispatch: the run's context comes
 /// from the carried view (`MemoryView::script`) rather than the thread-local load.
 macro_rules! script_handler {
-    // `script_handler!` for a handler whose records a non-script view also dispatches (a Wasm
-    // row): the prologue takes the view's bytes with no assertion, and the body asserts where
-    // its records are a JavaScript view's and reads the thread's where they are not.
-    (@unasserted $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
-        lane_handler!(@define bytes [{ bytes.cast::<LaneContext>() }] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
-    };
     ($(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         lane_handler!(@define bytes [{
             let cx: *mut LaneContext = bytes.cast();
@@ -2594,6 +2588,28 @@ macro_rules! script_handler {
             cx
         }] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
     };
+}
+
+/// `lane_handler!` for a handler whose records a Wasm view also dispatches: the prologue takes
+/// the view's bytes (`MemoryView::script` makes them the lane context) and the body reads the
+/// thread's where its record is a Wasm one (`thread_context_row`).
+macro_rules! view_handler {
+    ($(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+        lane_handler!(@define bytes [{ bytes.cast::<LaneContext>() }] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
+    };
+}
+
+/// The lane context record `OP`'s row runs in: the view's bytes, which `MemoryView::script` makes
+/// that context, for a JavaScript record; the thread's for a Wasm one, whose view's bytes carry
+/// no context (`Traits::WASM_OPCODE`). A JavaScript view's bytes are the assertion.
+#[inline(always)]
+fn row_context<const OP: u16>(view: *mut LaneContext) -> *mut LaneContext {
+    if const { matches!(Op::from_index(OP as usize), Some(op) if op.traits().has(quench_runtime::bytecode::Traits::WASM_OPCODE)) } {
+        context_in_lane()
+    } else {
+        debug_assert_eq!(view, context_in_lane(), "a JavaScript view carries its context");
+        view
+    }
 }
 
 /// `lane_handler!` (or `script_handler!`, `$kind`) for a handler with many const instances: rustc keeps all

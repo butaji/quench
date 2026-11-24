@@ -3085,7 +3085,7 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     None
 }
 
-sharded_handler! { lane_handler, row_jump_shards, row_jump_handler;
+sharded_handler! { view_handler, row_jump_shards, row_jump_handler;
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
@@ -3094,6 +3094,7 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler;
     /// target run: its target's `PREFIX` row (or none), then the `COPY` row (or none), then the test `TEST`,
     /// run in this record (`target_run`). Any other `TEST` takes the jump as it always does.
     pub(crate) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, COPY: u16, TEST: u16>(cx, r, ip, i, view) {
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
         // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
         // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
@@ -3439,7 +3440,7 @@ pub(crate) const fn protocol_handler<const OP: u16, const ACC: u8, const MISS: u
     }
 }
 
-sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler;
+sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler;
     /// The lane handler of a protocol record (a call, a construction, a return, an iterator or
     /// generator step, a frame or tier protocol record), generated from its staged row as
     /// `generated_row` is but with no site plan: the record decodes by its opcode's decoder, the row
@@ -3449,6 +3450,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler;
     /// handler. An opcode with no staged decoder decodes to nothing and takes that arm directly
     /// until its row lands.
     pub(crate) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         // A plain or leaf script call's row (`call_form`) decodes by the call decoder, which the
         // generic decode (`row_decode!`) leaves out, and steps over a frame whose call hooks make the
         // proved call (`call_frame`, `CallFrame::call_activate`).
