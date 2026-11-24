@@ -287,7 +287,7 @@ fn enter_activation<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutc
 /// A known call: an activation of `function`, or the call's frame where the lane has no room.
 /// `None` leaves the lane.
 #[inline(always)]
-pub fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
+pub fn step_call_known_of<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
     match enter_function(stage, function) {
         CallOutcome::Resume(resumed) => Some(resumed),
         CallOutcome::NoRoom => Some(push_frame(stage)),
@@ -299,7 +299,7 @@ pub fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::
 /// instance, or an import), then entered as a known call would be. Any other callee, or no room,
 /// leaves the lane.
 #[inline(always)]
-pub fn call_reference<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
+pub fn step_call_reference_of<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
     match stage.reference() {
         CallTarget::Function(function) => match enter_function(stage, function) {
             CallOutcome::Resume(resumed) => Some(resumed),
