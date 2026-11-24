@@ -219,7 +219,7 @@ impl Vm {
             self.profile.call_source(CallSource::Known);
             // The native entry the lane makes first, by the same rule (`wasm_activation::enter_native`).
             let mut call = GeneralWasmCall { vm: self, f, i, offered: None, raised: None };
-            if let Some(resumed) = crate::staged::wasm_activation::enter_native(&mut call, u32::from(i.known_function_index())) {
+            if let crate::staged::wasm_activation::NativeEntry::Ran(resumed) = crate::staged::wasm_activation::enter_native(&mut call, u32::from(i.known_function_index())) {
                 return resumed;
             }
             self.frames[f].pc = pc;
@@ -403,13 +403,13 @@ impl crate::staged::wasm_activation::WasmNativeEntry for GeneralWasmCall<'_> {
         self.vm.execution_mode == crate::ExecutionMode::Compiled
     }
 
-    /// The code a tier holds for `function`, where the general loop's entry counters and the compiles
-    /// they make due at this entry leave one (`Vm::offer_compiled`): the general loop is where a
-    /// compile the lane hands over (`WasmActivation::note_tier_entry`) is made.
+    /// The tiers' answer to this entry (`Vm::offer_compiled`, which runs `offer_entry` over the
+    /// general loop's tiers and makes the compiles the entry makes due in place, a compile the
+    /// lane left for included); never `Leave`.
     #[inline(always)]
-    fn has_native(&mut self, function: u32) -> bool {
-        self.offered = self.vm.offer_compiled(self.f, function);
-        self.offered.is_some()
+    fn offer(&mut self, function: u32) -> crate::staged::wasm_activation::EntryOffer<()> {
+        use crate::staged::wasm_activation::EntryOffer;
+        self.vm.offer_compiled(self.f, function).map_or(EntryOffer::Interpret, EntryOffer::Held).keep(&mut self.offered)
     }
 
     #[inline(always)]
