@@ -106,28 +106,6 @@ pub fn step_plain_return_of<S: Stage>(stage: &mut S, plain: S::Word, window: S::
     Some(caller)
 }
 
-/// The pop of the plain frame at `window` whose call returns its callee's completion
-/// (`return f()`), `plain` the lane's plain-frame words: where a plain frame runs, its header
-/// completes it (`completes_plainly`) and its call record's result word `destination` returns the
-/// callee's completion, the header pops (`protocol::pop_plain`) and the caller, which completes
-/// with the same value, runs next. A run of such frames pops one step each; the tier releases the
-/// windows. Leaves at `miss`, changing nothing, for any other frame.
-#[inline(always)]
-pub fn step_returning_pop_of<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word,
-    destination: impl FnOnce(&mut S, S::Word) -> S::Word, miss: S::Miss) -> Option<super::protocol::PlainCaller<S::Word>> {
-    let depth = stage.load_u64(Region::Payload.mutable(), plain, frame::PLAIN_DEPTH_AT as i32);
-    let running = stage.ne_imm(depth, 0u64);
-    stage.guard(running, miss)?;
-    let packed = frame_packed(stage, window);
-    let plainly = completes_plainly(stage, packed);
-    stage.guard(plainly, miss)?;
-    let call = stage.load_u64(Region::Frame.mutable(), window, -word_offset(frame::CONTEXT_CALL as u16));
-    let destination = destination(stage, call);
-    let returning = returns_callee_completion(stage, destination);
-    stage.guard(returning, miss)?;
-    Some(super::protocol::pop_plain(stage, plain, window))
-}
-
 /// Whether a settling call's return settles its promise in the lane: unless the host observes
 /// promise lifecycles, whose hooks may run guest code, so the frame's pending call settles it.
 /// Reads the fact; writes nothing.

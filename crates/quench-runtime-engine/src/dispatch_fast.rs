@@ -1864,6 +1864,27 @@ impl LaneStack {
         Some(ActivationView::of_record(&activation, payload))
     }
 
+    /// The return of the innermost plain activation, whose window is `window`: its caller's
+    /// call record, registers and records. Its window is released.
+    ///
+    /// # Safety
+    /// A plain activation runs (`plain.depth > 0`) and `window` is its window
+    /// (`plain.registers`).
+    #[inline(always)]
+    unsafe fn pop_plain(&mut self, window: *mut Value) -> (Ip, Registers, Ip) {
+        debug_assert!(self.plain.depth.get() != 0 && self.plain.registers.get() == window, "the innermost plain activation returns");
+        let caller = quench_runtime::staged::protocol::pop_plain(
+            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.addr() as u64,
+        );
+        // SAFETY: a plain window is the lane stack's own (`header_flags`), never a heap window, so
+        // its release is the top's move without `release_window`'s test.
+        unsafe { self.values.set_top(window) };
+        (
+            std::ptr::with_exposed_provenance(caller.call as usize),
+            Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize)),
+            std::ptr::with_exposed_provenance(caller.base as usize),
+        )
+    }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
     /// iterators, their `with` objects and eval records (a trap's check pops with its side
