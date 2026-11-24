@@ -4,7 +4,9 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::getters::{lane_memoize_getter, lane_read_getter, lane_script_getter_answer, set_getter_hint};
+use super::getters::{lane_read_getter, set_getter_hint, LaneGetterAnswer};
+use quench_runtime::staged::call_getter::step_getter_answer_of;
+use quench_runtime::staged::Concrete;
 use super::proxy_traps::{get_trap_call, keyed_trap_atom, owe_invariants, set_trap_call};
 use super::setters::{met_setter, stored_setter};
 use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
@@ -39,25 +41,8 @@ impl AccessorCall {
             quench_runtime::vm::accessor_cache::GetterEntryRead::Call(getter) => getter,
             quench_runtime::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
         };
-        let Some(value) = (unsafe { self.getter_answer(getter, object) }) else {
-            return Some(None);
-        };
-        lane_memoize_getter(self.cx, getter, object, index);
-        Some(Some(value))
-    }
-
-    /// What `getter` returns for a read of `object` where its call runs no guest code: a pure
-    /// native read, or a frameless read target (`getter_read`).
-    ///
-    /// # Safety
-    /// `self.cx` is the running lane's context.
-    #[inline(never)]
-    unsafe fn getter_answer(&self, getter: Value, object: Value) -> Option<Value> {
-        if let Some(value) = (unsafe { vm(self.cx) }).pure_native_getter_value(getter, object) {
-            return Some(value);
-        }
-        let target = script_target_in_lane(self.cx, getter)?;
-        unsafe { lane_script_getter_answer(self.cx, &target, object) }
+        let mut answer = LaneGetterAnswer { cx: self.cx, memo: Some(index) };
+        Some(step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter.to_bits(), object.to_bits()).map(Value::from_bits))
     }
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: the interpreter's getter
@@ -71,7 +56,7 @@ impl AccessorCall {
         lane_read_getter(self.cx, r, ip, i, getter, base)
     }
 
-    /// What the getter the site cached answers for `base` (`getter_answer`), made the record's
+    /// What the getter the site cached answers for `base` (`step_getter_answer_of`), made the record's
     /// hint where the getter returns an own field of its receiver; any other getter moves the record
     /// to `get_field_getter_miss` for good.
     ///
@@ -81,7 +66,8 @@ impl AccessorCall {
         let vm = unsafe { vm(self.cx) };
         let site = vm.field_cache_index(i.c);
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
-        let value = unsafe { self.getter_answer(getter, base) }?;
+        let mut answer = LaneGetterAnswer { cx: self.cx, memo: None };
+        let value = step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter.to_bits(), base.to_bits()).map(Value::from_bits)?;
         let slot = self
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
