@@ -6,7 +6,8 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
-use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
+use quench_runtime::staged::machine::{Lane, MachineScalar};
+use quench_runtime::staged::ShapeFact;
 
 /// `owner`'s value: a register's, or the fixed `this`.
 pub(crate) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State, entry: &Entry,
@@ -86,28 +87,32 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
     header
 }
 
-/// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's header
-/// then holds the shape as that constant, which folds every later test of it.
+/// The staged shape guard (`ic::guard_shape`) on `owner`'s object, whose header `header` read its
+/// shape word: the shape is `expected`, else leave at `exit`. The owner's header then holds the
+/// shape as that constant, under the guard's fact, which folds every later test of it.
 pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
-    shape: ir::Value, expected: u32, exit: ir::Block) {
-    let same = emit(builder).raw_compare_imm(Relation::Equal, shape, i64::from(expected));
-    emit_js_guard(builder, same, exit);
-    note_header_shape(builder, state, owner, expected);
+    header: ObjectHeader, expected: u32, exit: ir::Block) {
+    let at = quench_runtime::staged::ic::Reached { shape: Some(header.shape), ..quench_runtime::staged::ic::Reached::bare(header.address) };
+    let shaped = quench_runtime::staged::ic::guard_shape(&mut emit(builder), &at, expected, exit).expect("an emitted guard continues");
+    note_header_shape(builder, state, owner, (expected, shaped.fact()));
 }
 
-/// The owner's header holds the shape `expected`, as a constant.
-pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>, expected: u32) {
+/// The owner's header holds the shape `expected`, as a constant, under `fact`.
+pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
+    (expected, fact): (u32, ShapeFact)) {
     let index = state.header_index(owner);
     if let Some(proof) = &mut state.proofs.headers[index] {
         proof.shape = emit(builder).raw_const(Lane::I32, i64::from(expected));
+        proof.shape_fact = Some(fact);
     }
 }
 
-/// The exact shape `owner`'s header holds as a constant: what a fact of the register's type,
-/// or an earlier guard, proved.
-pub(crate) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, owner: Option<Register>) -> Option<u32> {
+/// The exact shape `owner`'s header holds as a constant, and the fact that proved it: a fact of
+/// the register's type, or an earlier guard.
+pub(crate) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, owner: Option<Register>) -> Option<(u32, ShapeFact)> {
     let header = state.proofs.headers[state.header_index(owner)]?;
+    let fact = header.shape_fact?;
     let ir::ValueDef::Result(constant, _) = builder.func.dfg.value_def(header.shape) else { return None };
     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = builder.func.dfg.insts[constant] else { return None };
-    u32::try_from(imm.bits()).ok()
+    u32::try_from(imm.bits()).ok().map(|shape| (shape, fact))
 }

@@ -167,9 +167,9 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     match arms {
         [arm] => {
-            guard_receiver_shape(stage, frame, (owner, true), &at, arm.shape, miss)?;
+            let shaped = guard_receiver_shape(stage, frame, (owner, true), &at, arm.shape, miss)?;
             if let (true, Some(number)) = (arm.raw_double, value.2) {
-                return raw_through_layout(stage, frame, (owner, &at), *arm, number, miss);
+                return raw_through_layout(stage, frame, (owner, &Reached { shaped: Some(shaped), ..at }), *arm, number, miss);
             }
             if let Some(base) = kept_flat(frame, owner, *arm) {
                 return tagged_through_layout(stage, (base, object), *arm, value, miss);
@@ -223,7 +223,7 @@ fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
         Some(layout) => layout,
         None => {
             let layout = ic::slot_layout(stage, at, super::Form::Arena, storage_len, miss)?;
-            frame.keep_layout(owner, arm.shape, layout);
+            frame.keep_layout(owner, (arm.shape, at.shaped.expect("a slot store follows the guard of its shape").fact()), layout);
             layout
         }
     };

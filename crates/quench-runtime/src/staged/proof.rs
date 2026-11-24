@@ -231,3 +231,46 @@ impl<W: Copy> Float64<W> {
 pub type IntOf<S> = Int32<<S as Stage>::Word>;
 /// The proved binary64 operand type a stage's numeric rows take.
 pub type NumberOf<S> = Float64<<S as Stage>::Word>;
+
+/// An object record whose exact shape a guard proved (`ic::guard_shape`, `ic::guard_layout`,
+/// `guard::shape`, `guard::prototype`), or a fact holds (`by_fact`): its slots are read at the
+/// shape's offsets with no test of their own. The field is private, so a slot read
+/// (`ic::slot_layout`, `object::proved_own_layout`) runs only past a guard or a fact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Shaped<W>(W);
+
+/// A fact that a record has the exact shape a read was planned for. Only a guard
+/// (`Shaped::fact`), a type (`of_type`) or a region's entry guard (`entry_guard`) makes one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShapeFact(());
+
+impl ShapeFact {
+    /// The analysis proved the value a direct object of one exact shape (`Type::object_shape`):
+    /// that shape, and the fact.
+    #[inline]
+    pub fn of_type(ty: Type) -> Option<(u32, Self)> { ty.object_shape().map(|shape| (shape, ShapeFact(()))) }
+    /// The region's entry guarded the receiver's exact shape and flat form (`guard::shape` at
+    /// `Form::Arena`, `base_region::proofs`), and a row inside the region reads under it.
+    #[inline]
+    pub const fn entry_guard() -> Self { ShapeFact(()) }
+    /// A code dependency holds the record's shape (a global object read by name): the code is
+    /// invalidated before the shape changes, so it reads under the shape it was compiled for.
+    #[inline]
+    pub const fn held_by_dependency() -> Self { ShapeFact(()) }
+}
+
+impl<W: Copy> Shaped<W> {
+    /// The record `record` of the shape a fact proved; no test runs.
+    #[inline]
+    pub fn by_fact(record: W, _fact: ShapeFact) -> Self { Shaped(record) }
+    /// A record a staged guard in this module tree just tested.
+    #[inline]
+    pub(crate) fn of_guard(record: W) -> Self { Shaped(record) }
+    /// The proved record.
+    #[inline]
+    pub fn record(self) -> W { self.0 }
+    /// The fact this proof stands for, which a frame keeps for the later reads of the same record.
+    #[inline]
+    pub fn fact(self) -> ShapeFact { ShapeFact(()) }
+}

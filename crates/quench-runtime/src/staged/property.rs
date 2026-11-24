@@ -297,12 +297,12 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
 
     /// The exact shape `owner`'s object is proved to have, which makes a guard of it redundant.
     #[inline(always)]
-    fn proven_shape(&mut self, _stage: &mut S, _owner: Owner) -> Option<u32> { None }
+    fn proven_shape(&mut self, _stage: &mut S, _owner: Owner) -> Option<(u32, super::ShapeFact)> { None }
 
-    /// Records that `owner`'s object has `shape`, after the guard that tested it; `direct` where
-    /// the plan proves the receiver a direct object, not a function's record.
+    /// Records that `owner`'s object has `shape`, by the guard's proof that tested it; `direct`
+    /// where the plan proves the receiver a direct object, not a function's record.
     #[inline(always)]
-    fn prove_shape(&mut self, _stage: &mut S, _owner: Owner, _shape: u32, _direct: bool) {}
+    fn prove_shape(&mut self, _stage: &mut S, _owner: Owner, _proof: (u32, super::Shaped<S::Word>), _direct: bool) {}
 
     /// The layout proved of `owner`'s object of exact `shape`, which a read reuses.
     #[inline(always)]
@@ -310,7 +310,7 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
 
     /// Records the layout a read proved of `owner`'s object of exact `shape`.
     #[inline(always)]
-    fn keep_layout(&mut self, _owner: Owner, _shape: u32, _layout: Layout<S::Word, S::Cond>) {}
+    fn keep_layout(&mut self, _owner: Owner, _proof: (u32, super::ShapeFact), _layout: Layout<S::Word, S::Cond>) {}
 
     /// Holds the values of the prototypes of exact shape `shape` as constants, under a code
     /// dependency. A frame that takes none answers `None`.
@@ -518,8 +518,8 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
             for held in list.iter().filter_map(|arm| arm.holds) { frame.hold_prototype(stage, held, miss)?; }
             let records = frame.object_records(stage);
             let proven = frame.proven_shape(stage, owner);
-            if let Some(arm) = proven.and_then(|shape| list.iter().find(|arm| arm.shapes.contains(&shape))) {
-                return ic::run(stage, arm.ops, at, records, miss);
+            if let Some((arm, fact)) = proven.and_then(|(shape, fact)| list.iter().find(|arm| arm.shapes.contains(&shape)).map(|arm| (arm, fact))) {
+                return ic::run(stage, arm.ops, Reached { shaped: Some(super::Shaped::by_fact(at.record, fact)), ..at }, records, miss);
             }
             let shape = ic::shape_word(stage, &at);
             arms(stage, list, Reached { shape: Some(shape), ..at }, records, miss)
@@ -574,11 +574,11 @@ fn read_nested<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owne
 /// nothing, else the guard is made and recorded. `direct` where the receiver is a direct object.
 #[inline(always)]
 pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
-    at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
-    if frame.proven_shape(stage, owner) == Some(shape) { return Some(()); }
-    ic::guard_shape(stage, at, shape, miss)?;
-    frame.prove_shape(stage, owner, shape, direct);
-    Some(())
+    at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<super::Shaped<S::Word>> {
+    if let Some((proven, fact)) = frame.proven_shape(stage, owner) && proven == shape { return Some(super::Shaped::by_fact(at.record, fact)); }
+    let shaped = ic::guard_shape(stage, at, shape, miss)?;
+    frame.prove_shape(stage, owner, (shape, shaped), direct);
+    Some(shaped)
 }
 
 /// `run_owned` of `FieldPlan::Own`: the layout guard and the slot it proves.
@@ -599,11 +599,11 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
-        && frame.proven_shape(stage, owner) != Some(*shape)
+        && frame.proven_shape(stage, owner).map(|(proven, _)| proven) != Some(*shape)
         && frame.kept_layout(owner, *shape).is_none() {
         return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
     }
-    guard_receiver_shape(stage, frame, (owner, direct), &at, *shape, miss)?;
+    let at = Reached { shaped: Some(guard_receiver_shape(stage, frame, (owner, direct), &at, *shape, miss)?), ..at };
     match rest {
         [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
@@ -611,19 +611,19 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     }
 }
 
-/// The first of `plans` whose shape set holds the record's shape reads it; the last is
-/// the guard of the whole.
+/// The first of `plans` whose shape set holds the record's shape reads it; the last is the guard of the
+/// whole. The member test is the arm's shape guard (`Shaped`): its shapes share the slots it reads.
 #[inline(always)]
 fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
-    let (arm, rest) = plans.split_first()?;
+    let ((arm, rest), shaped) = (plans.split_first()?, Reached { shaped: Some(super::Shaped::of_guard(at.record)), ..at });
     let exact = ic::shape_word(stage, &at);
     let member = stage.shape_in_site(exact, arm.shapes);
     if rest.is_empty() {
         stage.guard(member, miss)?;
-        return ic::run(stage, arm.ops, at, records, miss);
+        return ic::run(stage, arm.ops, shaped, records, miss);
     }
-    stage.choose_leaving(member, #[inline(always)] |stage| ic::run(stage, arm.ops, at, records, miss),
+    stage.choose_leaving(member, #[inline(always)] |stage| ic::run(stage, arm.ops, shaped, records, miss),
         #[inline(always)] |stage| arms(stage, rest, at, records, miss))
 }
 
