@@ -2487,9 +2487,18 @@ impl Vm {
         site: u16,
     ) -> Option<(Value, u32)> {
         debug_assert!(self.specialized_operations_enabled(p));
+        // The site's head entry, proved against the receiver, answers without the walk and
+        // without the holder's slot read (its constant is kept under a watch on that holder):
+        // a site whose reads alternate between receiver shapes walks from the head to its own.
+        let site = self.field_cache_index(site);
+        // SAFETY: as `cached_inherited_field_value`: every site index was installed with its entry.
+        let head = unsafe { self.inherited_field_indices.get_unchecked(site) };
+        if head != NO_INHERITED_FIELD && let Some(value) = self.proved_inherited_entry_value(head, object) {
+            return Some((value, head));
+        }
         let (receiver, kind) = self.inherited_receiver(object)?;
         let (hit, index, proof) =
-            self.cached_inherited_field_value(self.field_cache_index(site), receiver, kind == super::field_cache::InheritedReceiver::Function)?;
+            self.cached_inherited_field_value(site, receiver, kind == super::field_cache::InheritedReceiver::Function)?;
         self.inherited_entry_answers(kind, index).then_some(())?;
         if let Some(proof) = proof {
             self.prove_inherited_chain(proof);
