@@ -52,7 +52,7 @@ impl Lowering<'_, '_> {
 
     /// The binding `pc`'s read takes, and the fact that holds it: what the read's own binding
     /// time (`GlobalBinding::time`) leaves this lowering's division to fold, else the lane's read.
-    fn global_binding(&self, pc: usize) -> (GlobalBinding, Option<(quench_runtime::heap::GlobalFact, Value, i32)>) {
+    fn global_binding(&self, pc: usize) -> (GlobalBinding, Option<(quench_runtime::tier_surface::GlobalFact, Value, i32)>) {
         let (binding, held) = match self.global_reads[&pc] {
             GlobalRead::Constant(value) => (GlobalBinding::Constant(value), None),
             GlobalRead::Stable { value, ty, fact, global, realm_offset } =>

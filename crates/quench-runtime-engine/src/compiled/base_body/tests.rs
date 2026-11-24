@@ -446,7 +446,7 @@ fn a_callee_of_another_realm_is_not_inlinable() {
     vm.execute(&program).unwrap();
     let atom = vm.lookup_atom("g").unwrap();
     let callee = vm.own_property(vm.realm.globals, atom).unwrap();
-    let Some(quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::User(_, function), .. }) = vm.function_record(callee) else { panic!("a script function") };
+    let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::User(_, function), .. }) = vm.function_record(callee) else { panic!("a script function") };
     let function = *function;
     let residual = vm.programs.get(vm.active_program).unwrap();
     assert!(vm.same_realm_user_target(callee).is_some(), "the function belongs to the active realm");

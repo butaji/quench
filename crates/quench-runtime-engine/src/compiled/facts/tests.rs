@@ -183,7 +183,7 @@ fn an_entry_guarded_range_seeds_its_input_and_an_unguarded_int32_proves_nothing(
 
 #[test]
 fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
-    use quench_runtime::heap::TypedArrayKind as Kind;
+    use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let program = quench_runtime::Engine::specialize(
         "function run(d){let c=0;for(let i=0;i<100;i++){c=(c^d[i])&255;}return c;}", "typed.js").unwrap();
     let function = program.function(1);

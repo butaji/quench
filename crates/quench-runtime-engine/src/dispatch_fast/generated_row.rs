@@ -373,7 +373,7 @@ lane_handler! {
                     // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
                     // a narrow site whose object is no longer narrow goes back to the own store.
                     if const { FLAG == FLAG_UNREAD || FLAG == crate::dispatch_fast::NARROW_SITE } && !unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                        let narrow = quench_runtime::heap::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM == quench_runtime::value_vec::NARROW_FORM;
+                        let narrow = quench_runtime::tier_surface::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM == quench_runtime::value_vec::NARROW_FORM;
                         if const { FLAG == FLAG_UNREAD } {
                             if narrow { requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::NARROW_SITE)); }
                         } else if !narrow {

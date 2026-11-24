@@ -53,7 +53,7 @@ pub(crate) unsafe fn body_locals(cx: *mut (), registers: *mut Value, caller: Loc
             }
             // SAFETY: as above; `frame_locals` takes the context as it is.
             let (locals, count) = unsafe { frame_locals(cx.cast()) };
-            BodyLocals { locals, count, environment: quench_runtime::heap::absent_environment_storage() }
+            BodyLocals { locals, count, environment: quench_runtime::tier_surface::absent_environment_storage() }
         }
         // SAFETY: the caller's contract.
         LocalsOf::Osr => unsafe { osr_locals(cx, registers) },
@@ -65,7 +65,7 @@ pub(crate) unsafe fn body_locals(cx: *mut (), registers: *mut Value, caller: Loc
 /// # Safety
 /// As `body_locals`.
 unsafe fn osr_locals(cx: *mut LaneContext, registers: *mut Value) -> BodyLocals {
-    let absent = quench_runtime::heap::absent_environment_storage();
+    let absent = quench_runtime::tier_surface::absent_environment_storage();
     let none = BodyLocals { locals: std::ptr::null_mut(), count: 0, environment: absent };
     if cx.is_null() {
         return none;

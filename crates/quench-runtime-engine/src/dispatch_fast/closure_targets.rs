@@ -93,7 +93,7 @@ impl Vm {
                 return None;
             }
             let stores = entry.capture.addr() & CAPTURE_STORES;
-            let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
+            let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
                 return None;
             };
             let storage = slots.dense_storage()?;
@@ -147,11 +147,11 @@ impl Vm {
         if entry.capture.is_null() {
             return None;
         }
-        let Some(quench_runtime::heap::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap_reads().reachable_environment(entry.env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap_reads().reachable_environment(entry.env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
-        let Some(quench_runtime::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap_reads().reachable_environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function, slots, scope, .. }) = self.heap_reads().reachable_environment(env) else {
             return None;
         };
         if *function != old || scope.program() != old_program {

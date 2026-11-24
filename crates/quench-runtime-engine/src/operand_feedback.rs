@@ -112,7 +112,7 @@ impl OperandKinds {
     #[cold]
     #[inline(never)]
     fn of_cell(heap: quench_runtime::vm::tier_queries::HeapReads<'_>, value: Value) -> Self {
-        if matches!(heap.get(value), Some(quench_runtime::heap::Cell::BigInt(_))) {
+        if matches!(heap.get(value), Some(quench_runtime::tier_surface::Cell::BigInt(_))) {
             Self::BIGINT
         } else {
             Self::OTHER

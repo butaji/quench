@@ -248,7 +248,7 @@ impl Vm {
         let data = self.object_data(prototype)?;
         let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
         let constructor = self.heap_reads().property_get(data, slot)?;
-        let Some(quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::User(_, index), .. }) = self.function_record(constructor) else { return None };
+        let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::User(_, index), .. }) = self.function_record(constructor) else { return None };
         let body = program.function_get(*index as usize)?;
         if !body.is_class_constructor || body.source_span.map(|span| span.start) != Some(class) { return None; }
         let members = code.iter().filter_map(|instruction| match instruction.field_lookup()? {

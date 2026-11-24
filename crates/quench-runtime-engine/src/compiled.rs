@@ -543,7 +543,7 @@ pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
     // A helper may have changed the backing's storage form in place (narrow or double kind,
     // a flagged length word): the view then reads as empty, so every access through it
     // misses its bounds test and leaves.
-    let encoded = stage.ugt_imm(length, u64::from(!quench_runtime::heap::ENCODED_LEN));
+    let encoded = stage.ugt_imm(length, u64::from(!quench_runtime::tier_surface::ENCODED_LEN));
     let empty = stage.constant(0);
     let length = stage.select(encoded, empty, length);
     (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
@@ -723,7 +723,7 @@ fn emit_js_cached_field_slot(
     header: Option<object_slots::ObjectHeader>,
     packed_slot: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
-    use quench_runtime::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
     use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
     use quench_runtime::staged::region::Region;
@@ -1003,7 +1003,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
     use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
-    let layout = quench_runtime::heap::NATIVE_OBJECT_LAYOUT;
+    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
@@ -2480,7 +2480,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             };
             let same_program_function = match vm.function_record(callee) {
                 Some(FunctionRecord {
-                    kind: quench_runtime::heap::FunctionKind::User(target_program, function),
+                    kind: quench_runtime::tier_surface::FunctionKind::User(target_program, function),
                     env,
                     ..
                 }) if *target_program == program => Some((*target_program, *function, *env)),
@@ -3538,7 +3538,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: u64, at
     };
     // A receiver of another shape the site met stores through its polymorphic entries, as
     // long as the store keeps the record's layout, which the caller's proofs rely on.
-    let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), quench_runtime::heap::PropertyStoreLayout::PreserveNative);
+    let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative);
     // Only the primary entry's hit proves its slot's representation (`general_store`).
     let primary = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
     if primary { general_store::record_store_class(vm, site as u16, value); }
@@ -3655,7 +3655,7 @@ unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, rec
     };
     let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
     let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
-    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::heap::PropertyStoreLayout::Preserve) {
+    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
         return 1;
     }
     if vm.collection_due() {
@@ -3663,7 +3663,7 @@ unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, rec
     }
     // A site past one shape stores through its megamorphic own entries, which may widen the
     // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, quench_runtime::heap::PropertyStoreLayout::MayWiden).is_none()
+    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden).is_none()
         && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }
@@ -3709,7 +3709,7 @@ unsafe extern "C" fn pop_observed_header_in_lane(vm: u64, _residual: u64) -> u64
 }
 
 unsafe extern "C" fn retire_array_proofs_in_lane(_vm: u64, _residual: u64) -> u64 {
-    quench_runtime::heap::retire_array_storage_proofs();
+    quench_runtime::tier_surface::retire_array_storage_proofs();
     0
 }
 
@@ -4195,15 +4195,15 @@ impl JsStepDispatch {
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),
-                environment_storage: quench_runtime::heap::absent_environment_storage(),
+                environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
                 array_mark_blocks: 0, array_mark_block_count: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
                 object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
                 array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
                 ascii_unit_strings: 0,
-                armed_array_proofs: quench_runtime::heap::armed_proofs_address(),
-                array_chain_index_free_address: quench_runtime::heap::index_free_chain_link_address(),
+                armed_array_proofs: quench_runtime::tier_surface::armed_proofs_address(),
+                array_chain_index_free_address: quench_runtime::tier_surface::index_free_chain_link_address(),
                 plain_depth: 0, plain_depth_limit: 0, body_table: 0, activation_count: 0, body_top: 0, native_table: 0,
                 pop_observed_header: pop_observed_header_in_lane as *const () as usize,
             },
@@ -4278,7 +4278,7 @@ impl JsStepDispatch {
         self.ascii_unit_strings = vm.heap_reads().ascii_unit_strings_base().map_or(0, |base| base as usize);
         let (directory, pages) = vm.heap_reads().typed_view_directory();
         (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
-        self.buffer_relocations = quench_runtime::heap::buffer_relocations_address().addr();
+        self.buffer_relocations = quench_runtime::tier_surface::buffer_relocations_address().addr();
         self.epoch = vm.heap_reads().collection_epoch();
         let (blocks, count) = vm.heap_reads().native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
@@ -4341,7 +4341,7 @@ impl JsStepDispatch {
         self.set_captures_word(0);
         (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
-        self.environment_storage = quench_runtime::heap::absent_environment_storage();
+        self.environment_storage = quench_runtime::tier_surface::absent_environment_storage();
         self.outcome = None;
     }
 
@@ -4843,7 +4843,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                     .copied()
                     .and_then(|callee| vm.function_record(callee))
                     .and_then(|record| match &record.kind {
-                        quench_runtime::heap::FunctionKind::User(program, function) => {
+                        quench_runtime::tier_surface::FunctionKind::User(program, function) => {
                             Some((program.raw(), *function))
                         }
                         _ => None,
@@ -10303,7 +10303,7 @@ mod tests {
             // never dereferences the synthetic arena or returned address.
             let run = unsafe { std::mem::transmute::<*mut u8,
                 unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
-            let width = quench_runtime::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
+            let width = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
             let base = width;
             for (length, storage, slot) in [
                 (0, 0, 0), (1, 0, 0), (1, 0, 1), (1, 0, 2),
@@ -10420,7 +10420,7 @@ mod tests {
             assert!(activation.fixed_this_slot.is_null());
         }).unwrap();
         vm.frames[0].fixed_this = true;
-        let slots = quench_runtime::heap::EnvironmentSlots::from(vec![Value::number(7.0)]);
+        let slots = quench_runtime::tier_surface::EnvironmentSlots::from(vec![Value::number(7.0)]);
         vm.frames[0].capture_cache = quench_runtime::CaptureCache {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
             epoch: vm.cache_epochs.gc, slots: &slots, root: None,

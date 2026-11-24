@@ -5,7 +5,7 @@ use crate::ext_traits::*;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use super::shape::{Arg, NodeOp, Scalar, Stride};
 use super::typed;
-use quench_runtime::heap::TypedArrayKind;
+use quench_runtime::tier_surface::TypedArrayKind;
 use super::*;
 
 /// Iterations per chunk: each column holds this many f64s.

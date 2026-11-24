@@ -110,7 +110,7 @@ pub(crate) fn embed_inherited(links: &[LinkInput], stable: &mut super::stable::S
 /// the load's shape: one compare of the record's word then proves the shape and the storage form
 /// (`IcOp::GuardLayout`), and the slot's form is the id's (`ic::form_of_layout`).
 fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
-    load.formed.filter(|&id| load.holder.is_none() && (id as usize) < quench_runtime::heap::layouts::LAYOUT_CAPACITY
+    load.formed.filter(|&id| load.holder.is_none() && (id as usize) < quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY
         && quench_runtime::staged::ic::layout_shape(id) == load.shape)
 }
 
@@ -119,7 +119,7 @@ fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
 /// shape and the storage form, as `formed_id` does for a receiver. Id 0 names no holder.
 fn holder_id(load: &NativeFieldLoad) -> Option<u32> {
     let holder = load.holder?;
-    load.holder_id.filter(|&id| id != 0 && (id as usize) < quench_runtime::heap::layouts::LAYOUT_CAPACITY
+    load.holder_id.filter(|&id| id != 0 && (id as usize) < quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY
         && quench_runtime::staged::ic::layout_shape(id) == holder)
 }
 

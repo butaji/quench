@@ -92,7 +92,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let pc = code.instructions().position(|instruction| instruction.op().is_call()).unwrap();
     let mut direct = vec![super::compiled::DirectCandidates::new(); code.code.len()];
     // Resolve the capture view exactly as production direct-call publication does.
-    let (capture_values, capture_len) = unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     direct[pc].push(super::compiled::DirectCallee {
         target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),

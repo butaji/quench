@@ -113,7 +113,7 @@ use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
 use quench_runtime::vm::iterators::InPlaceStep;
 use smallvec::SmallVec;
-use quench_runtime::heap::InlineObjectHeader;
+use quench_runtime::tier_surface::InlineObjectHeader;
 use quench_runtime::value_vec::INLINE_PROPERTY_COUNT;
 use crate::engine_prelude::*;
 use quench_runtime::bytecode::{RegisterList, Traits};
@@ -2104,7 +2104,7 @@ const NO_FRAME_STORAGE: FrameStorage =
 /// for a frame run of a function other than the root whose frame holds one; `None` leaves
 /// the access to the heap.
 #[inline(always)]
-fn frame_storage_in_lane(cx: *mut LaneContext) -> Option<&'static mut quench_runtime::heap::EnvironmentSlots> {
+fn frame_storage_in_lane(cx: *mut LaneContext) -> Option<&'static mut quench_runtime::tier_surface::EnvironmentSlots> {
     let vm = unsafe { vm(cx) };
     let index = unsafe { (*cx).frame() };
     let frame = &vm.frames[index];
@@ -2128,10 +2128,10 @@ fn find_frame_storage_in_lane(
     cx: *mut LaneContext,
     frame: usize,
     env: Value,
-) -> *mut quench_runtime::heap::EnvironmentSlots {
+) -> *mut quench_runtime::tier_surface::EnvironmentSlots {
     let vm = unsafe { vm(cx) };
     let slots = match vm.environment_mut(env) {
-        Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) => std::ptr::from_mut(slots),
+        Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) => std::ptr::from_mut(slots),
         _ => std::ptr::null_mut(),
     };
     unsafe { (*cx).frame_storage = FrameStorage { frame, env, slots } };
@@ -2183,7 +2183,7 @@ pub(crate) fn capture_stores(capture: *const usize) -> Option<*const usize> {
 #[inline(always)]
 pub(crate) unsafe fn capture_view(capture: *const usize) -> (Option<(*const Value, usize)>, bool) {
     // SAFETY: as the caller promises.
-    (unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(capture)) }, capture_stores(capture).is_some())
+    (unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(capture)) }, capture_stores(capture).is_some())
 }
 
 /// A lane handler returns the next record for the lane loop, tagged with
@@ -2963,7 +2963,7 @@ unsafe fn clone_environment_of(cx: *mut (), r: Registers, window: u16, plan: u32
         return false;
     };
     note_allocation(vm);
-    let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = vm.heap_reads().environment(environment) else {
+    let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = vm.heap_reads().environment(environment) else {
         unreachable!("an iteration copy is an environment");
     };
     let storage = std::ptr::from_ref(slots);
@@ -4006,7 +4006,7 @@ fn store_own_capture(cx: *mut LaneContext, slot: u16, value: Value) -> bool {
     capture_stores(unsafe { (*cx).registers }.capture())
         // SAFETY: the running function's dense capture slots, which admit this write
         // (`CAPTURE_STORES`); no collection runs in the lane.
-        .and_then(|slots| unsafe { quench_runtime::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
+        .and_then(|slots| unsafe { quench_runtime::tier_surface::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
         .is_some()
 }
 
@@ -4233,7 +4233,7 @@ unsafe fn literal_value_in_lane(
         start,
         usize::from(array.element_count()),
     )?;
-    let array_value = vm.allocate_array(quench_runtime::heap::ArrayObject::new(Vm::empty_object(vm.array_proto), elements));
+    let array_value = vm.allocate_array(quench_runtime::tier_surface::ArrayObject::new(Vm::empty_object(vm.array_proto), elements));
     r.set(array.result_register(), array_value);
     for part in [first, second] {
         let left = operand_value_in_lane(cx, r, part.operand_b().0)?;
@@ -4802,7 +4802,7 @@ fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler {
     // other forms skip the decode where float slots are off for the process.
     let tagged = !quench_runtime::vm::switches::float_slots();
     // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
-    let form = match hint.map(quench_runtime::heap::layouts::auxiliary) {
+    let form = match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
         None => 0,
         Some(hint) if hint & NARROW_FORM != 0 => 5,
         Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
@@ -5308,7 +5308,7 @@ script_handler! {
                         set_record_hint(ip, layout, slot);
                         // A tagged arena run is a fixed form: the row folds the layout's form test and the slot decode.
                         use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-                        let run = quench_runtime::heap::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
+                        let run = quench_runtime::tier_surface::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
                             && !quench_runtime::vm::switches::float_slots();
                         Some(if run {
                             single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS),
@@ -5962,7 +5962,7 @@ fn private_brand_in_lane(
     ip: Ip,
     code: &ResidualProgram,
     atom: quench_runtime::bytecode::Atom,
-) -> Option<quench_runtime::heap::PrivateBrand> {
+) -> Option<quench_runtime::tier_surface::PrivateBrand> {
     let (environment, function, frame) = private_site_in_lane(cx)?;
     unsafe { vm(cx) }.site_private_brand(code, ip.addr(), environment, function, frame, atom)
 }
@@ -7380,7 +7380,7 @@ fn loop_entry_checked_in_lane(
             }
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
-            let value = unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(slots, *slot) }
+            let value = unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, *slot) }
                 .or_else(|| capture_read_value(cx, 0, *slot))
                 .or_else(|| {
                     // A projected global var aliases its global object's property. Native
@@ -7849,7 +7849,7 @@ impl Vm {
     /// iterator, whose step reads its source alone. A generator's step resumes its frame and an
     /// iterator helper's may step one, so those take frames first.
     fn steps_beside_activations(&self, native: Native, receiver: Value) -> bool {
-        use quench_runtime::heap::IteratorKind;
+        use quench_runtime::tier_surface::IteratorKind;
         native == Native::IteratorNext
             && self.heap_reads().iterator(receiver).is_some_and(|iterator| {
                 matches!(
@@ -8637,7 +8637,7 @@ impl Vm {
         // A frameless activation's function has no environment of its own: its depth-0
         // captures are the closure environment's dense slots (`Vm::environment_capture_slots`),
         // read here with the facts the store tag needs from the same cell.
-        let Some(quench_runtime::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap_reads().environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function, slots, scope, .. }) = self.heap_reads().environment(env) else {
             return std::ptr::null();
         };
         // A root environment's slot may project a global var, a global lexical binding or an
@@ -12063,7 +12063,7 @@ fn forwarded_resolution(
     apply: Value,
 ) -> Option<ForwardedResolution> {
     let plan = holding_construct_plan(vm, callee).filter(|plan| plan.fields == 0)?;
-    let data_slot = |owner: &quench_runtime::heap::Object, atom| {
+    let data_slot = |owner: &quench_runtime::tier_surface::Object, atom| {
         let shape = owner.shape();
         if vm.shape_is_dictionary(shape) {
             return None;
@@ -12776,7 +12776,7 @@ impl Vm {
     pub(crate) fn callee_capture_slots(&self, callee: Value) -> (usize, usize) {
         self.script_call_entry(callee)
             // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
-            .and_then(|target| unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads((*target).capture)) })
+            .and_then(|target| unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads((*target).capture)) })
             .map_or((0, 0), |(values, len)| (values.addr(), len))
     }
 }
@@ -12859,7 +12859,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
     let view_of = unsafe { &*target.view };
     let (method, body) = view_of.pinned_callee(target.function == function);
     // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-    let (capture_values, capture_len) = unsafe { quench_runtime::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(crate::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
@@ -13787,7 +13787,7 @@ fn activate_environment_in_lane(
             && environment_row::ENTRY_SLOTS == WINDOW_SLOTS
             && environment_row::ENTRY_CAPTURED == WINDOW_CAPTURED
             && environment_row::ENTRY_STORAGE == WINDOW_STORAGE
-            && environment_row::STORAGE_WORDS as usize == quench_runtime::heap::IN_PLACE_SLOTS_WORDS
+            && environment_row::STORAGE_WORDS as usize == quench_runtime::tier_surface::IN_PLACE_SLOTS_WORDS
             && environment_row::ENTRY_WORDS == WINDOW_LOCALS
     );
     let shape = environment_row::EnvironmentShape {
@@ -13897,13 +13897,13 @@ unsafe fn window_environment(
         let (environment, storage) = vm.allocate_environment(parent, function, slots, scope);
         // Its storage links to its parent's for its closures' outer captures
         // (`EnvironmentSlots::link`), as a capture walk would find the parent's.
-        if let Some(quench_runtime::heap::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = vm.heap_reads().environment(parent)
+        if let Some(quench_runtime::tier_surface::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = vm.heap_reads().environment(parent)
             && *owner != u32::MAX
             && *owner != quench_runtime::vm::ROOT_FUNCTION_ID
             && let Some(parent_storage) = parent_slots.dense_storage()
             && let Some(own) = (*storage).dense_storage()
         {
-            quench_runtime::heap::EnvironmentSlots::link(own, parent_storage, vm.heap_reads().collection_epoch());
+            quench_runtime::tier_surface::EnvironmentSlots::link(own, parent_storage, vm.heap_reads().collection_epoch());
         }
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
         entries
@@ -13918,16 +13918,16 @@ unsafe fn window_environment(
 ///
 /// # Safety
 /// `entries` starts the entries of a live environment window (`activate_environment_in_lane`).
-unsafe fn window_slots_taken(entries: *mut Value) -> quench_runtime::heap::EnvironmentSlots {
+unsafe fn window_slots_taken(entries: *mut Value) -> quench_runtime::tier_surface::EnvironmentSlots {
     // SAFETY: as the caller guarantees.
     unsafe {
         let captured = std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_CAPTURED)));
         let in_place = &*(std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_SLOTS)))
-            as *const quench_runtime::heap::EnvironmentSlots);
+            as *const quench_runtime::tier_surface::EnvironmentSlots);
         let locals = entries.add(usize::from(WINDOW_LOCALS));
         let window = EnvironmentWindow { locals: in_place.len() as u16, captured, rest: false, self_binding: None, parameter_registers: 0 };
         // SAFETY: the mask names locals of the window, which hold owned values.
-        let slots = quench_runtime::heap::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
+        let slots = quench_runtime::tier_surface::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
         // Each captured local, one per bit of the mask, which names no slot past the locals.
         debug_assert_eq!(captured.checked_shr(u32::from(window.locals)).unwrap_or(0), 0);
         let mut remaining = captured;
@@ -13941,11 +13941,11 @@ unsafe fn window_slots_taken(entries: *mut Value) -> quench_runtime::heap::Envir
 
 /// The scope of a window's environment: its program's alone, which needs no allocation, or
 /// holding the dynamic `bindings` it takes over.
-fn window_scope_ref(program: ProgramId, bindings: Vec<(quench_runtime::bytecode::Atom, Value)>) -> quench_runtime::heap::EnvironmentScopeRef {
+fn window_scope_ref(program: ProgramId, bindings: Vec<(quench_runtime::bytecode::Atom, Value)>) -> quench_runtime::tier_surface::EnvironmentScopeRef {
     if bindings.is_empty() {
-        return quench_runtime::heap::EnvironmentScopeRef::of_program(program.raw());
+        return quench_runtime::tier_surface::EnvironmentScopeRef::of_program(program.raw());
     }
-    quench_runtime::heap::EnvironmentScopeRef::new(quench_runtime::heap::EnvironmentScope {
+    quench_runtime::tier_surface::EnvironmentScopeRef::new(quench_runtime::tier_surface::EnvironmentScope {
         program: Some(program.raw()),
         root_eval_scope: false,
         binding_site_pc: None,
@@ -14685,7 +14685,7 @@ unsafe fn read_capture_in_lane(vm: &mut Vm, target: &ScriptCallTarget) -> Option
     let slots = capture_reads(target.capture);
     if depth == 0 && !slots.is_null() {
         // SAFETY: as `ScriptCallTarget::capture`.
-        return unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(slots, slot) };
+        return unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, slot) };
     }
     let (slots, root) = vm.walked_capture_slots(target.env, false, depth)?;
     // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
@@ -15022,7 +15022,7 @@ impl MemoLeaf {
         vm: &Vm,
         arguments: ReadArguments,
         this: Value,
-        this_record: Option<&quench_runtime::heap::Object>,
+        this_record: Option<&quench_runtime::tier_surface::Object>,
     ) -> Option<Value> {
         match *self {
             Self::Field { base: field_base, field } if shape == MEMO_FIELD => memo_first_step(vm, field, field_base, arguments, this, this_record),
@@ -15060,7 +15060,7 @@ fn memo_first_step(
     base: u16,
     arguments: ReadArguments,
     this: Value,
-    this_record: Option<&quench_runtime::heap::Object>,
+    this_record: Option<&quench_runtime::tier_surface::Object>,
 ) -> Option<Value> {
     match this_record {
         Some(record) if base == quench_runtime::bytecode::FieldBase::THIS.0 => vm.record_field_formed_hit_in(field, record),
@@ -17712,9 +17712,9 @@ fn specialize_proved_arrays(decoded: &[WideInstruction], records: &mut [LaneInst
         })
         .collect();
     for &(pc, proved, base, index) in &candidates {
-        let slot = quench_runtime::heap::ArrayStorageProofs::slot(base);
+        let slot = quench_runtime::tier_surface::ArrayStorageProofs::slot(base);
         let shared = candidates.iter().any(|&(_, _, other, other_index)| {
-            other_index == index && other != base && quench_runtime::heap::ArrayStorageProofs::slot(other) == slot
+            other_index == index && other != base && quench_runtime::tier_surface::ArrayStorageProofs::slot(other) == slot
         });
         if !shared {
             records[pc].handler = proved as *const ();

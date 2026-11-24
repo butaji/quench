@@ -440,7 +440,7 @@ pub(crate) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objec
             return;
         }
         let shape = vm.heap_reads().object(object).map(|data| data.exact_shape());
-        if !shape.is_some_and(|shape| quench_runtime::heap::hold_prototype_values(shape, &code)) {
+        if !shape.is_some_and(|shape| quench_runtime::tier_surface::hold_prototype_values(shape, &code)) {
             watch.retire();
             return;
         }

@@ -56,7 +56,7 @@ pub(crate) unsafe extern "C" fn scalar_native_in_lane(vm: u64, residual: u64, pa
     receiver: u64, first: Value, second: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
-    let Some(quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. }) = vm.function_record(callee) else {
+    let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. }) = vm.function_record(callee) else {
         return Value::DELETED.to_bits();
     };
     let native = *native;

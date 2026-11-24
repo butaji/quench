@@ -160,7 +160,7 @@ pub(crate) fn start_called_generator(
 #[derive(Clone, Copy)]
 pub(crate) struct WindowLocals {
     captured: u64,
-    own_slots: Option<*const quench_runtime::heap::EnvironmentSlots>,
+    own_slots: Option<*const quench_runtime::tier_surface::EnvironmentSlots>,
 }
 
 /// The collection epoch (the capture's remembered environment), program-store epoch (its
@@ -286,7 +286,7 @@ pub(crate) fn window_environments(
     environment: bool,
 ) -> Option<(Value, Option<WindowLocals>)> {
     let own = if captured {
-        let Some(quench_runtime::heap::EnvironmentRecord { parent, slots, .. }) = vm.heap_reads().environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { parent, slots, .. }) = vm.heap_reads().environment(env) else {
             return None;
         };
         Some((*parent, std::ptr::from_ref(slots)))

@@ -14,7 +14,7 @@ use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{Analysis, AnalysisState, CallContext, Emitter, JsError, Kind, Slot, Value, Vm, finish_callout};
 use quench_runtime::bytecode::{Function, Op, WideInstruction};
-use quench_runtime::heap::WasmGcRecord;
+use quench_runtime::tier_surface::WasmGcRecord;
 use quench_runtime::staged::layout_offsets::NATIVE_WASM_GC_LAYOUT;
 use quench_runtime::staged::machine::{Extend, Lane, MachineAccess, MachineFlow, MachineScalar, MachineStage, Relation};
 use quench_runtime::staged::value_encoding::{DIRECT_WASM_GC_HANDLE_BITS, HEAP_FAMILY_MASK, TAG_HEAP};

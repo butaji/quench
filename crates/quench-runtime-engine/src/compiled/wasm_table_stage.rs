@@ -19,7 +19,7 @@ use super::{
     Slot, Vm, internal_signature, invariant,
 };
 use quench_runtime::bytecode::WideInstruction;
-use quench_runtime::heap::{TableTarget, TableWords};
+use quench_runtime::tier_surface::{TableTarget, TableWords};
 use quench_runtime::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;

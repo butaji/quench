@@ -146,7 +146,7 @@ impl CaptureStores {
             && super::capture_stores(Registers(context.cast()).capture())
                 // SAFETY: the running function's dense capture slots, which admit this write
                 // (`CAPTURE_STORES`); no collection runs in the lane.
-                .and_then(|slots| unsafe { quench_runtime::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
+                .and_then(|slots| unsafe { quench_runtime::tier_surface::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
                 .is_some() }
     }
 }
@@ -247,7 +247,7 @@ impl FieldStores {
                 let vm = unsafe { vm(cx) };
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
-                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, quench_runtime::heap::PropertyStoreLayout::MayWiden) {
+                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden) {
                     return None;
                 }
                 Some(vm.form_hint(vm.field_cache_entry(site), object))
@@ -286,7 +286,7 @@ impl FieldStores {
                 let vm = unsafe { vm(cx) };
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
-                vm.polymorphic_own_field_store_hit(code, object, atom, value, site, quench_runtime::heap::PropertyStoreLayout::MayWiden)
+                vm.polymorphic_own_field_store_hit(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden)
             },
             general: |context, object, atom, site, value| {
                 let cx = context.cast::<LaneContext>();
@@ -306,7 +306,7 @@ impl FieldStores {
                 let vm = unsafe { vm(cx) };
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
-                vm.primary_own_field_store_hit::<false>(code, object, atom, value, site, quench_runtime::heap::PropertyStoreLayout::Preserve)
+                vm.primary_own_field_store_hit::<false>(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve)
             },
         }
     }
@@ -603,8 +603,8 @@ struct WasmVectors {
 #[derive(Clone, Copy)]
 struct EnvironmentReads {
     context: *mut (),
-    read: unsafe fn(*mut ()) -> Option<*mut quench_runtime::heap::EnvironmentSlots>,
-    write: unsafe fn(*mut (), u16) -> Option<*mut quench_runtime::heap::EnvironmentSlots>,
+    read: unsafe fn(*mut ()) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots>,
+    write: unsafe fn(*mut (), u16) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots>,
     /// The value of one slot where `read` declines the whole storage (`environment_slot_read`): a
     /// function that captures selectively reads each slot its environment holds.
     slot_read: unsafe fn(*mut (), u16) -> Option<Value>,
@@ -1457,7 +1457,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             && let Some(slots) = self.capture_slots
             // SAFETY: the running function's dense storage, found this run
             // (`LaneContext::capture`); the scoped read retains the bounds and marker checks.
-            && let Some(value) = unsafe { quench_runtime::heap::EnvironmentSlots::read_storage(slots, slot) }
+            && let Some(value) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, slot) }
         {
             return Some((value.to_bits(), Boxing::Value));
         }
@@ -1660,7 +1660,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 /// `cx` is the running lane's context.
 #[inline(always)]
 unsafe fn environment_of(cx: *mut LaneContext, store: Option<u16>)
-    -> Option<(*mut quench_runtime::heap::EnvironmentSlots, Value)> {
+    -> Option<(*mut quench_runtime::tier_surface::EnvironmentSlots, Value)> {
     if !unsafe { (*cx).registers }.env().is_deleted() {
         return None;
     }
@@ -1711,7 +1711,7 @@ unsafe fn environment_slot_read(cx: *mut (), slot: u16) -> Option<Value> {
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::heap::EnvironmentSlots> {
+unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots> {
     unsafe { environment_of(cx.cast(), None) }.map(|(storage, _)| storage)
 }
 
@@ -1720,7 +1720,7 @@ unsafe fn environment_read(cx: *mut ()) -> Option<*mut quench_runtime::heap::Env
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn environment_write_storage(cx: *mut (), slot: u16) -> Option<*mut quench_runtime::heap::EnvironmentSlots> {
+unsafe fn environment_write_storage(cx: *mut (), slot: u16) -> Option<*mut quench_runtime::tier_surface::EnvironmentSlots> {
     let (storage, environment) = unsafe { environment_of(cx.cast(), Some(slot)) }?;
     unsafe { vm(cx.cast::<LaneContext>()) }.write_barrier(environment);
     Some(storage)
@@ -1831,14 +1831,14 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         };
         // SAFETY: the heap is the lane's, live for the read.
         if functions && let Some(record) = unsafe { &*heap }.function_receiver(Value::from_bits(object)) {
-            return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::heap::Object as u64));
+            return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
         }
         if let Some(id) = Value::from_bits(object).direct_object_index() {
             return Some(quench_runtime::staged::ic::Reached::bare(quench_runtime::staged::object::object_record_at(stage, records, u64::from(id))));
         }
         // SAFETY: as above.
         let record = unsafe { &*heap }.held_other_receiver(Value::from_bits(object))?;
-        Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::heap::Object as u64))
+        Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64))
     }
 
     /// `base[key]` past the dense and any-backing reads: the VM's element read at the row's site
@@ -3977,7 +3977,7 @@ unsafe fn fast_names_step(cx: *mut (), call: CallOut, [first, second]: [Option<V
             if !vm.array_iteration_intact(source) {
                 return None;
             }
-            let iterator = vm.array_iterator_of(quench_runtime::heap::IteratorKind::ArrayValues, source);
+            let iterator = vm.array_iterator_of(quench_runtime::tier_surface::IteratorKind::ArrayValues, source);
             note_allocation(vm);
             Some(iterator)
         }

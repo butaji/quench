@@ -13,7 +13,7 @@ use super::{
     ProgramId, Vm, diagnostic_reference_callout, displacement_base,
 };
 use quench_runtime::Value;
-use quench_runtime::heap::{Cell, TableWords};
+use quench_runtime::tier_surface::{Cell, TableWords};
 use quench_runtime::vm::tier_queries::WasmBindingArea;
 use cranelift_codegen::ir::{self, types};
 use std::rc::Rc;
@@ -184,7 +184,7 @@ impl Vm {
     /// The environment slot of `env`'s instance record: the last before the imported functions,
     /// which end the layout (`wasm_function_reference` derives their base from the end).
     pub(crate) fn wasm_context_slot(&self, env: Value, program: ProgramId) -> Option<usize> {
-        let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
             return None;
         };
         let imports = self.programs.wasm_signatures(program)?.imports().len();
@@ -209,7 +209,7 @@ impl Vm {
     /// function of the instance.
     pub(crate) fn install_wasm_instance(&mut self, env: Value, program: ProgramId) -> Option<()> {
         let slot = self.wasm_context_slot(env, program)?;
-        let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
             return None;
         };
         let record = InstanceRecord::new(env, program, slots.len());

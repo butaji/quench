@@ -802,11 +802,11 @@ impl ElementViews {
     }
 
     /// The kind a typed view's site observed.
-    fn observed_kind(self) -> Option<quench_runtime::heap::TypedArrayKind> {
+    fn observed_kind(self) -> Option<quench_runtime::tier_surface::TypedArrayKind> {
         match self {
             Self::Typed(kind) => kind,
             // A double backing's words are a `Float64Array`'s.
-            Self::Double => Some(quench_runtime::heap::TypedArrayKind::Float64),
+            Self::Double => Some(quench_runtime::tier_surface::TypedArrayKind::Float64),
             Self::Dense => None,
         }
     }
@@ -3586,8 +3586,8 @@ impl Lowering<'_, '_> {
         let mut addresses = [base; 2];
         for (address, bits) in addresses.iter_mut().zip([left, right]) {
             let index = self.raw_binary_imm(Binary::And, bits, i64::from(u32::MAX));
-            let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::heap::SMALL_STRING_ID_MASK));
-            let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::heap::SMALL_STRING_ID_BASE));
+            let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_MASK));
+            let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_BASE));
             decided = self.raw_binary(Binary::And, decided, recorded);
             let offset = self.raw_binary_imm(Binary::Mul, index, quench_runtime::staged::string_form::RECORD_SIZE as i64);
             *address = self.raw_binary(Binary::Add, base, offset);
@@ -4434,7 +4434,7 @@ impl Lowering<'_, '_> {
                         // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
                         let others = {
                             let mut stage = super::object_slots::emit(&mut self.builder);
-                            stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::heap::OTHERS_FROM_VALUES)
+                            stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
                         };
                         let none = self.raw_compare_imm(Relation::Equal, others, 0);
                         emit_js_guard(&mut self.builder, none, exit);

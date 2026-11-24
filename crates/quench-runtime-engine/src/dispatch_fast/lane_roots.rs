@@ -191,7 +191,7 @@ impl Vm {
             outer: NO_OUTER_WALK,
             root_walk: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
-            proofs: quench_runtime::heap::ArrayStorageProofs::new(),
+            proofs: quench_runtime::tier_surface::ArrayStorageProofs::new(),
             region_payload: 0,
         }
     }
@@ -219,7 +219,7 @@ impl Vm {
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
         // SAFETY: `cx` outlives the run, which restores the outer fuel before it ends.
         let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
-        let _proofs = quench_runtime::heap::LaneProofScope::enter();
+        let _proofs = quench_runtime::tier_surface::LaneProofScope::enter();
         let (first, left) = exited(start(cx));
         let ip = if left { first } else { dispatch_in_lane(cx, first) };
         #[cfg(feature = "profile-lane-exits")]

@@ -8,7 +8,7 @@
 use crate::ext_traits::*;
 use super::{CompiledProgram, MAX_JIT_PROFILED_INDIRECT_TARGETS, ProgramId, Vm};
 use quench_runtime::Value;
-use quench_runtime::heap::{Cell, TableTarget};
+use quench_runtime::tier_surface::{Cell, TableTarget};
 use std::cell::RefCell;
 
 use quench_runtime::vm::engine_types::TargetHits;

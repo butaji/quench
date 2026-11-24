@@ -94,7 +94,7 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let string = Type::language(quench_runtime::ValueType::String);
-        let string_method = matches!(native, quench_runtime::heap::Native::StringCharCodeAt | quench_runtime::heap::Native::StringCharAt);
+        let string_method = matches!(native, quench_runtime::tier_surface::Native::StringCharCodeAt | quench_runtime::tier_surface::Native::StringCharAt);
         let receiver = match (folds, receiver) {
             (true, _) => None,
             (false, Some(register)) if string_method && (string.is_subtype(state.values[usize::from(register)].value.ty) || state.values[usize::from(register)].value.ty.is_subtype(string)) => Some(register),

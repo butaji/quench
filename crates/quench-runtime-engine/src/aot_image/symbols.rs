@@ -243,7 +243,7 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
 /// The value of heap value recipe `key`, in `vm`.
 fn heap_value(image: &AotImage, vm: &mut Vm, key: u32) -> Option<Value> {
     match *image.heap_values.get(key as usize)? {
-        HeapValueRecipe::Intrinsic(id) => Some(vm.native_value(*quench_runtime::heap::Native::ALL.get(id as usize)?)),
+        HeapValueRecipe::Intrinsic(id) => Some(vm.native_value(*quench_runtime::tier_surface::Native::ALL.get(id as usize)?)),
         HeapValueRecipe::Global(atom) => {
             let atom = vm.intern_atom(image.atoms.get(atom as usize)?);
             let globals = vm.realm.globals;

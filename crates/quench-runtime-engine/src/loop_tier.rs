@@ -544,7 +544,7 @@ pub(crate) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::type
     use quench_runtime::typed_ir::Type;
     // A float typed array's kind fixes its elements as Numbers, as a C array's element type does.
     if let Some(kind) = vm.typed_array_kind(value) {
-        use quench_runtime::heap::TypedArrayKind as Kind;
+        use quench_runtime::tier_surface::TypedArrayKind as Kind;
         return matches!(kind, Kind::Float16 | Kind::Float32 | Kind::Float64).then_some(Type::NUMBER);
     }
     let elements = vm.heap_reads().record_array(value)?.elements().as_slice();
