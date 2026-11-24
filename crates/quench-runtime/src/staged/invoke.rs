@@ -155,6 +155,12 @@ pub trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// The base an accessor's call binds (`Receiver::Base`).
+    #[inline(always)]
+    fn call_base(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
     /// The receiver `constructor`'s plan allocates; the deleted marker where it declines.
     #[inline(always)]
     fn call_receiver(&mut self, _stage: &mut S, _constructor: S::Word) -> Option<S::Word> {
@@ -316,6 +322,7 @@ fn receiver_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fr
         Receiver::This { path: None } => frame.field_this(stage, miss),
         Receiver::This { path: Some((atom, cache_site)) } =>
             get_field(stage, frame, FieldBase::THIS, FieldLookup::Atom { atom, base: FieldBase::THIS, cache_site }, miss),
+        Receiver::Base => frame.call_base(stage),
         Receiver::Allocated => None,
     }
 }

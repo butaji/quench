@@ -12,7 +12,9 @@
 //!   by a read (`return k`, `return this`, `return this.f`), memoized for the receiver's layout
 //!   where the tier can; anything else activates the getter, its target resolved once.
 
-use super::Stage;
+use super::invoke::{invoke, CallFrame};
+use super::{Arguments, Callee, FunctionId, Invocation, PropertyFrame, Receiver, Stage, Step};
+use crate::bytecode::Register;
 
 /// Which kind of callee a getter is: a native, or a script function (whose call target the tier
 /// resolves once, `GetterAnswer::target`).
@@ -97,4 +99,15 @@ pub fn step_getter_answer_of<S: Stage, G: GetterAnswer<S>>(stage: &mut S, call: 
             Some(value)
         }
     }
+}
+
+/// A script getter's call through the one call row (`invoke`): the getter is the callee, a function
+/// of the running program (`function`) whose identity the frame's plan holds, called on the base the
+/// read met (`Receiver::Base`) with no arguments, its value the read's register `result`.
+#[inline(always)]
+pub fn step_getter_invoke_of<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss,
+    function: FunctionId, result: Register) -> Step<S::Word, F::Control> {
+    let site = Invocation { callee: Callee::Known(function), receiver: Receiver::Base, arguments: Arguments::Window { first: 0, count: 0 },
+        result, returns: false, forwards: false };
+    invoke(stage, frame, miss, site)
 }

@@ -110,7 +110,7 @@ impl<'a> BodyCall<'a> {
                     FieldCacheProbe::OrdinaryMiss | FieldCacheProbe::Ineligible => None,
                 }
             }
-            Receiver::Allocated => None,
+            Receiver::Allocated | Receiver::Base => None,
         }
     }
 

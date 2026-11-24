@@ -95,6 +95,48 @@ impl<const ACC: u8> quench_runtime::staged::PrologueFrame<Concrete> for LaneFram
     }
 }
 
+/// The plan of `call`'s call to `target`, its `this` bound as `direct_call_this_in_lane` binds it: lexical
+/// (and plain) as the bound `this`, sloppy through `bind_this` with the global object, else as it is.
+#[inline(always)]
+fn direct_plan(call: &LaneCall, target: &ScriptCallTarget) -> quench_runtime::staged::CallEntry {
+    let lexical = || Some(quench_runtime::staged::plan::Bound { this: target.lexical_this.to_bits(),
+        arguments: quench_runtime::staged::plan::WordList { start: 0, count: 0 } });
+    let (sloppy, bound) = if call.form.plain {
+        // A plain call's receiver is `undefined` by its record, whose `this` is its target's.
+        (None, lexical())
+    } else {
+        match target.this_binding {
+            ThisBinding::Lexical => (None, lexical()),
+            // SAFETY: the realm's global object, read only for a sloppy callee.
+            ThisBinding::Sloppy => (Some(unsafe { *call.globals }.to_bits()), None),
+            _ => (None, None),
+        }
+    };
+    quench_runtime::staged::CallEntry::Direct(quench_runtime::staged::DirectPlan {
+        kind: quench_runtime::staged::CalleeKind::Script,
+        identity: quench_runtime::staged::Identity::Guarded(target.callee.to_bits()),
+        sloppy,
+        registers: target.registers,
+        returned: 0,
+        bound,
+    })
+}
+
+/// A getter's entry (`getters::invoke_getter`), a plain call where it is one: a read that writes its register,
+/// no `with` scope, an entry that activates its registers alone, of the running program; else `Helper`.
+#[inline(always)]
+fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> quench_runtime::staged::CallEntry {
+    let cx = call.context.cast::<LaneContext>();
+    // SAFETY: the running lane's context; `target` is the entry the read resolved, which outlives the call.
+    let (vm, target) = unsafe { (vm(cx), &*call.target.get()) };
+    let returns = unsafe { (*call.record).a } & quench_runtime::bytecode::RETURN_REGISTER != 0;
+    if site.returns || returns || vm.with_scope_entered || !target.entry.activates() || target.forwards() || target.settles()
+        || target.program() != unsafe { (*cx).program } {
+        return quench_runtime::staged::CallEntry::Helper;
+    }
+    direct_plan(call, target)
+}
+
 /// The call hooks of a call row's frame (`protocol_row`, `LaneCall`): the proved plain call
 /// (`script_call_miss`'s proven arm, `lane_plain_activation!`) and the proved leaf call
 /// (`script_call_leaf_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
@@ -158,6 +200,9 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
     fn call_entry(&self, site: &quench_runtime::staged::Invocation) -> quench_runtime::staged::CallEntry {
         use quench_runtime::staged::{Arguments, Callee, Receiver};
         let Some(call) = &self.call else { return quench_runtime::staged::CallEntry::Helper };
+        if site.receiver == Receiver::Base {
+            return getter_entry(call, site);
+        }
         // The form the proved calls make: a callee and a receiver register and a window, a
         // result defined, not returned (a returning call's admission is the run's,
         // `returning_call_admitted`, which the miss arm makes).
@@ -187,27 +232,13 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         }
         debug_assert!(leaf != NOT_LEAF || target.entry.activates(), "a proved plain call's entry activates");
         call.target.set(std::ptr::from_ref(target));
-        let lexical = || Some(quench_runtime::staged::plan::Bound { this: target.lexical_this.to_bits(),
-            arguments: quench_runtime::staged::plan::WordList { start: 0, count: 0 } });
-        let (sloppy, bound) = if call.form.plain {
-            // A plain call's receiver is `undefined` by its record, whose `this` is its target's.
-            (None, lexical())
-        } else {
-            match target.this_binding {
-                ThisBinding::Lexical => (None, lexical()),
-                // SAFETY: the realm's global object, read only for a sloppy callee.
-                ThisBinding::Sloppy => (Some(unsafe { *call.globals }.to_bits()), None),
-                _ => (None, None),
-            }
-        };
-        quench_runtime::staged::CallEntry::Direct(quench_runtime::staged::DirectPlan {
-            kind: quench_runtime::staged::CalleeKind::Script,
-            identity: quench_runtime::staged::Identity::Guarded(target.callee.to_bits()),
-            sloppy,
-            registers: target.registers,
-            returned: 0,
-            bound,
-        })
+        direct_plan(call, target)
+    }
+
+    /// A getter's base (`Receiver::Base`).
+    #[inline(always)]
+    fn call_base(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        Some(self.call.as_ref()?.base.to_bits())
     }
 
     #[inline(always)]

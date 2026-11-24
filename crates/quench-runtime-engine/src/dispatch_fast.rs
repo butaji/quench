@@ -5743,14 +5743,13 @@ fn activate_getter_in_lane(
     materialize_running_leaf_in_lane(cx);
     let vm = unsafe { vm(cx) };
     if let Some(target) = resolved.or_else(|| script_target_in_lane(cx, getter)).filter(|target| !target.forwards()) {
+        // A getter is an ordinary call: the one call row where it is plain, else the kept activation.
+        if let Some(entered) = getters::invoke_getter(cx, r, ip, &target, base) {
+            return Ok(entered);
+        }
         let Some(this) = call_this_in_lane(vm, &target, base) else {
             return Err(exit(ip));
         };
-        // A getter is an ordinary call: the plain header push where the call is plain
-        // (getters-as-calls.md), else the kept activation's checks and push.
-        if let Some(entered) = getters::lane_push_getter(cx, r, ip, &target, this) {
-            return Ok(entered);
-        }
         return activate_kept_in_lane::<false>(cx, r, ip, &target, &[], this);
     }
     // A getter that makes closures, of this program or another, runs as the environment

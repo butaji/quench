@@ -97,6 +97,9 @@ pub enum Receiver {
     Undefined,
     /// The object a construction's plan allocates.
     Allocated,
+    /// The base a read met, whose accessor the call is (a getter's receiver): a value, not an
+    /// operand, which the frame holds (`CallFrame::call_base`).
+    Base,
 }
 
 /// The static operands of a call instruction: its callee, receiver and arguments, and where its

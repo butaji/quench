@@ -350,6 +350,8 @@ pub(crate) struct LaneCall {
     /// header's push writes past.
     depth: usize,
     activate: CallActivation,
+    /// The base a getter's call binds (`Receiver::Base`, `getters::invoke_getter`); `undefined` for a call record.
+    base: Value,
 }
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
@@ -3598,8 +3600,22 @@ fn call_frame<const OP: u16, const ACC: u8, const MISS: u16>(cx: *mut LaneContex
             target: std::cell::Cell::new(std::ptr::null()),
             depth: 0,
             activate: const { call_activation(MISS) },
+            base: Value::UNDEFINED,
         });
     }
+    frame
+}
+
+/// The frame a getter's call steps over (`getters::invoke_getter`): the read's registers, and the call of
+/// the entry `target` the read resolved on `base`, handed off to `activate`.
+#[inline(always)]
+pub(crate) fn getter_frame(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, base: Value,
+    activate: CallActivation) -> LaneFrame<ACC_NONE> {
+    let vm = unsafe { vm(cx) };
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, Carried::script(cx));
+    frame.call = Some(LaneCall { context: cx.cast(), stack: &raw const *vm.lane_stack, globals: &raw const vm.realm.globals,
+        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false }, target: std::cell::Cell::new(target),
+        depth: 0, activate, base });
     frame
 }
 
