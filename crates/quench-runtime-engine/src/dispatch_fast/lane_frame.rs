@@ -174,7 +174,7 @@ impl Decisions {
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
-            records: |context| unsafe { vm(context.cast::<LaneContext>()) }.heap.object_record_base().map(|base| base as u64),
+            records: |context| unsafe { vm(context.cast::<LaneContext>()) }.heap_reads().object_record_base().map(|base| base as u64),
             instance: instance_decision }
     }
 }
@@ -231,7 +231,7 @@ impl MathCalls {
     fn of(cx: *mut LaneContext) -> Self {
         Self { context: cx.cast(), call: |context, callee, arguments| {
             let vm = unsafe { vm(context.cast::<LaneContext>()) };
-            let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return None };
+            let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return None };
             super::number::math_inline_call(*native, arguments)
         } }
     }
@@ -3949,7 +3949,7 @@ unsafe fn delete_value_in_lane(cx: *mut (), base: Value, key: Value) -> Option<V
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let plain = base.direct_object_index().is_some()
-        && vm.heap.string(key).is_some()
+        && vm.heap_reads().string(key).is_some()
         && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
 }

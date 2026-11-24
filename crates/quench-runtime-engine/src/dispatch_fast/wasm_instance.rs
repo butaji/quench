@@ -104,7 +104,7 @@ pub(crate) unsafe fn wasm_vector_alloc(context: *mut (), bytes: [u8; 16]) -> Opt
 #[inline(never)]
 fn lane_instance_slot_miss(cx: *mut LaneContext, env: Value, slot: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(env)
+    if let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = vm.heap_reads().environment(env)
         && let Some(storage) = slots.dense_storage()
     {
         unsafe { (*cx).instance_slots = (env, storage) };

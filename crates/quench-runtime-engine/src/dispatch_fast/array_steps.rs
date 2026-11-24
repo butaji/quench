@@ -196,9 +196,9 @@ fn array_iteration_setup_in_lane(
 /// `Vm::own_array_length` finds it, or a slot's.
 #[inline(always)]
 pub(crate) fn array_object_in_lane(vm: &Vm, receiver: Value) -> Option<&quench_runtime::heap::ArrayObject> {
-    match vm.heap.record_array(receiver) {
+    match vm.heap_reads().record_array(receiver) {
         Some(object) => Some(object),
-        None => vm.heap.array(receiver),
+        None => vm.heap_reads().array(receiver),
     }
 }
 

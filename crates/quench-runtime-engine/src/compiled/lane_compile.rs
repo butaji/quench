@@ -74,8 +74,8 @@ fn root_constants(vm: &Vm, function: u32, unit: &lane_unit::Unit) -> std::collec
         let Some(quench_runtime::staged::Operation::LoadCapture { depth, slot, .. }) = crate::compiled::decoded(instruction) else { return None };
         let own = matches!(unit.origins.get(pc)?, lane_unit::Origin::Caller(_));
         if !own || !reaches_root(program, function, depth) || !vm.root_slot_written_once(program_id, slot) { return None; }
-        let value = vm.heap.environment_slot(environment, usize::from(slot))?;
-        (value != Value::DELETED && vm.heap.function(value).is_some()).then_some((pc, value))
+        let value = vm.heap_reads().environment_slot(environment, usize::from(slot))?;
+        (value != Value::DELETED && vm.function_record(value).is_some()).then_some((pc, value))
     }).collect()
 }
 

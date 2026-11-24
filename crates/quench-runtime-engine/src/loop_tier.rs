@@ -275,7 +275,7 @@ pub(crate) fn loop_compile_in_lane(
     // A loop array's base is no entry register of the region: its string is sampled here too.
     let strings: Vec<quench_runtime::bytecode::Register> = region.entry_registers()
         .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register))
-        .filter(|register| machine.heap.is_string(r.get(*register))).collect();
+        .filter(|register| machine.heap_reads().is_string(r.get(*register))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
@@ -285,7 +285,7 @@ pub(crate) fn loop_compile_in_lane(
     let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
-    let policy = machine.heap.memory_policy();
+    let policy = machine.heap_reads().memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     // A Cranelift region calls the callees its sites reached by their entries.
     let calls = program.as_deref().map(|program| if base { region_calls(cx, machine, program, function) }
@@ -335,8 +335,8 @@ fn unit_region_calls(cx: *mut LaneContext, machine: &mut Vm, program: &ResidualP
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
 fn native_field_loads(machine: &Vm, own: Option<&super::LaneView>, region: &crate::compiled::LoopRegion)
     -> Vec<Vec<crate::compiled::NativeFieldLoad>> {
-    let (properties_base, properties_len) = machine.heap.native_property_values();
-    let available = machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
+    let (properties_base, properties_len) = machine.heap_reads().native_property_values();
+    let available = machine.heap_reads().object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
     // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
     // which code that embeds its shapes guards whole. Base regions read the live cache instead,
     // whose entries name no form (the caller passes no view for one).
@@ -357,7 +357,7 @@ fn native_field_loads(machine: &Vm, own: Option<&super::LaneView>, region: &crat
 /// code stores in place through the arms they give (`site_store_plan`), as a read does.
 fn native_store_loads(machine: &Vm, region: &crate::compiled::LoopRegion)
     -> Vec<(u16, Vec<crate::compiled::NativeFieldLoad>)> {
-    let available = machine.heap.object_record_base().is_some() && region.inlining.is_none();
+    let available = machine.heap_reads().object_record_base().is_some() && region.inlining.is_none();
     // A receiver the region keeps stores through the same arms: a store with no read of its
     // field carries no projected slot (`Lowering::loop_stores`), and with no arm it would leave.
     let mut sites: Vec<u16> = region.dynamic_store_sites().chain(region.field_store_sites.iter().map(|store| store.cache_site)).collect();
@@ -380,21 +380,21 @@ pub(crate) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion
         Some(index) => entry.field_value(region, index),
     };
     let doubles = !region.arrays.is_empty() && region.arrays.iter().all(|array| {
-        vm.heap.record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().double_values().is_some())
+        vm.heap_reads().record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().double_values().is_some())
     });
     let mut views = None;
     for array in &region.arrays {
         let value = value_of((array.register, array.field), &*entry);
         // A string the loop only reads is no array: its element reads take the string row
         // (`Lowering::string_or_row`), and its slot holds no view, so the others keep their places.
-        if !array.written && vm.heap.is_string(value) {
+        if !array.written && vm.heap_reads().is_string(value) {
             entry.push_array(std::ptr::null_mut::<u64>(), 0, 0)?;
             continue;
         }
-        let found = if vm.heap.record_array(value).is_some() && doubles {
+        let found = if vm.heap_reads().record_array(value).is_some() && doubles {
             push_double_array(vm, value, array.written, entry)?;
             ElementViews::Double
-        } else if vm.heap.record_array(value).is_some() {
+        } else if vm.heap_reads().record_array(value).is_some() {
             push_dense_array(vm, value, array.written, entry)?;
             ElementViews::Dense
         } else {
@@ -416,7 +416,7 @@ fn push_double_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopE
     if written && (vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value)) {
         return None;
     }
-    let elements = vm.heap.record_array(value)?.elements();
+    let elements = vm.heap_reads().record_array(value)?.elements();
     if written && elements.owner_count() != 1 {
         return None;
     }
@@ -432,7 +432,7 @@ fn push_dense_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopEn
     if !written {
         // A region reads the values in place: a narrow backing widens first.
         vm.heap.widen_array_elements(value);
-        let elements = vm.heap.record_array(value)?.elements().wide_values()?;
+        let elements = vm.heap_reads().record_array(value)?.elements().wide_values()?;
         return entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len());
     }
     if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {
@@ -547,7 +547,7 @@ pub(crate) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::type
         use quench_runtime::heap::TypedArrayKind as Kind;
         return matches!(kind, Kind::Float16 | Kind::Float32 | Kind::Float64).then_some(Type::NUMBER);
     }
-    let elements = vm.heap.record_array(value)?.elements().as_slice();
+    let elements = vm.heap_reads().record_array(value)?.elements().as_slice();
     let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
     if sample.is_empty() { return None; }
     if sample.iter().all(|value| value.as_int().is_some()) { Some(Type::INT32) }

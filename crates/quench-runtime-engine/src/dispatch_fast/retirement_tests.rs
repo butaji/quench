@@ -16,7 +16,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     vm.execute(&program).unwrap();
     let atom = vm.intern_atom("owner");
     let owner = vm.own_property(vm.realm.globals, atom).unwrap();
-    let shape = vm.heap.object(owner).unwrap().shape();
+    let shape = vm.heap_reads().object(owner).unwrap().shape();
     let mut publications = Vec::new();
     for view in vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
         .iter().filter_map(super::program_store::derived_lane_view) {
@@ -73,7 +73,7 @@ fn store_edge_value(vm: &mut Vm, value: f64) {
     let owner_atom = vm.intern_atom("owner");
     let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
     let atom = vm.intern_atom("edgeValue");
-    let slot = vm.shape_slot(vm.heap.object(owner).unwrap().shape(), atom).unwrap();
+    let slot = vm.shape_slot(vm.heap_reads().object(owner).unwrap().shape(), atom).unwrap();
     vm.heap.property_set(owner, slot, Value::number(value));
 }
 

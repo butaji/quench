@@ -15,11 +15,11 @@ use quench_runtime::Value;
 ///
 /// # Safety
 /// As `general_user_call`.
-pub(crate) unsafe extern "C" fn general_frameless_admit(vm: u64, residual: u64, payload: u64, callee: u64) -> u64 {
+pub(crate) unsafe extern "C" fn general_frameless_admit(vm: u64, residual: u64, payload: u64, callee: Value) -> u64 {
     // SAFETY: as the caller promises; admission reads the heap and allocates nothing.
     let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram),
         &*(payload as *const JsStepDispatch)) };
-    admit(vm, program, dispatch, Value::from_bits(callee)).map_or(0, |entry| entry as u64)
+    admit(vm, program, dispatch, callee).map_or(0, |entry| entry as u64)
 }
 
 fn admit(vm: &mut Vm, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<*const CallEntry> {

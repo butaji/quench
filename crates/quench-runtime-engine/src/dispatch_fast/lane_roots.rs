@@ -153,7 +153,7 @@ impl Vm {
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
-            binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding, retire: retire_lane_binding },
+            binding: LaneBinding { object_base: self.heap_reads().object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding, retire: retire_lane_binding },
             vm: self,
             code,
             program,

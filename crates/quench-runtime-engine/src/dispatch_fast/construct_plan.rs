@@ -278,7 +278,7 @@ pub(crate) unsafe fn context_constructs_in_lane(context: *mut ()) -> bool {
 /// # Safety
 /// `arguments` are the body's `argc` registers.
 pub(crate) unsafe fn body_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() {
+    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.collection_due() {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.
@@ -296,7 +296,7 @@ pub(crate) unsafe fn body_construction_in_lane(vm: &mut Vm, code: &ResidualProgr
 /// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
 /// the body to its helper path before any effect.
 pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value) -> Option<Value> {
-    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() || vm.with_scope_entered {
+    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.collection_due() || vm.with_scope_entered {
         return None;
     }
     let index = holding_construct_plan_index(vm, callee)?;
@@ -398,7 +398,7 @@ pub(crate) fn scalar_construct_plan(vm: &Vm, callee: Value) -> Option<crate::com
 /// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it
 /// where the construction would run, so the receiver a leave allocates is the plan's.
 pub(crate) fn construct_plan_holds(vm: &Vm, callee: Value) -> bool {
-    vm.construct_target.is_none() && !vm.heap.should_collect() && holding_construct_plan_index(vm, callee).is_some()
+    vm.construct_target.is_none() && !vm.collection_due() && holding_construct_plan_index(vm, callee).is_some()
 }
 
 /// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
@@ -439,7 +439,7 @@ pub(crate) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objec
             watch.retire();
             return;
         }
-        let shape = vm.heap.object(object).map(|data| data.exact_shape());
+        let shape = vm.heap_reads().object(object).map(|data| data.exact_shape());
         if !shape.is_some_and(|shape| quench_runtime::heap::hold_prototype_values(shape, &code)) {
             watch.retire();
             return;

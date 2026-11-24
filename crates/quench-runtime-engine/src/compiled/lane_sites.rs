@@ -108,7 +108,7 @@ impl Vm {
     /// (`global_facts::scalar_native`): the native, its value, and the watched exact shape of the global object.
     fn native_slot_of(&mut self, slot: GlobalSlot, atom: quench_runtime::bytecode::Atom) -> Option<GlobalRead> {
         let Some(Some(value)) = self.own_plain_data(slot.global, atom) else { return None };
-        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
+        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
         if !scalar_native(native) { return None; }
         let holder = self.native_holder(slot.global)?;
@@ -206,7 +206,7 @@ impl Vm {
         if !quench_runtime::staged::meaning::means(load, quench_runtime::staged::meaning::Meaning::ThrowingNameLoad) || !self.reads_global_scope(program, function, load.atom_index()) { return None; }
         let GlobalRead::Stable { value: object, .. } = self.stable_global_read(program, load.atom_index(), load.cache_site_index()) else { return None };
         let value = self.own_plain_data(object, atom)??;
-        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
+        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
         Some((value, native, self.native_holder(object)?))
     }
@@ -226,7 +226,7 @@ impl Vm {
             _ => self.string_proto,
         };
         let value = self.own_plain_data(holder, atom)??;
-        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
+        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
         (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None })
     }
 
@@ -245,7 +245,7 @@ impl Vm {
             _ => return None,
         };
         let value = self.own_plain_data(holder, atom)??;
-        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
+        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
         (*held == row.native).then(|| self.native_holder(holder)).flatten()
             .map(|holder| GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None })
     }
@@ -291,7 +291,7 @@ impl Vm {
         let Some(quench_runtime::bytecode::FieldLookup::Atom { base: read_base, atom, .. }) = member.field_lookup() else { return None };
         if read_base.register_index() != Some(base) { return None; }
         let value = self.own_plain_data(object, atom)??;
-        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
+        let quench_runtime::heap::FunctionRecord { kind: quench_runtime::heap::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
         Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell }))
     }

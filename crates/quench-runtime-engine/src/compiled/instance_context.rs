@@ -183,7 +183,7 @@ impl Vm {
     /// The environment slot of `env`'s instance record: the last before the imported functions,
     /// which end the layout (`wasm_function_reference` derives their base from the end).
     pub(crate) fn wasm_context_slot(&self, env: Value, program: ProgramId) -> Option<usize> {
-        let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
+        let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
             return None;
         };
         let imports = self.programs.wasm_signatures(program)?.imports().len();
@@ -193,7 +193,7 @@ impl Vm {
     /// The record of the instance `env` of `program`.
     pub(crate) fn wasm_instance_record(&self, env: Value, program: ProgramId) -> Option<&InstanceContext> {
         let slot = self.wasm_context_slot(env, program)?;
-        match self.heap.get(self.heap.environment_slot(env, slot)?)? {
+        match self.heap_reads().get(self.heap_reads().environment_slot(env, slot)?)? {
             Cell::WasmInstance(record) => Some(&**record),
             _ => None,
         }
@@ -208,7 +208,7 @@ impl Vm {
     /// function of the instance.
     pub(crate) fn install_wasm_instance(&mut self, env: Value, program: ProgramId) -> Option<()> {
         let slot = self.wasm_context_slot(env, program)?;
-        let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
+        let Some(quench_runtime::heap::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
             return None;
         };
         let record = InstanceRecord::new(env, program, slots.len());
@@ -223,7 +223,7 @@ impl Vm {
         let count = self.wasm_instance_record(env, program)?.global_area.len();
         let (mut globals, mut tables) = (Vec::new(), Vec::new());
         for slot in 0..count {
-            let Some(binding) = self.heap.environment_slot(env, slot) else {
+            let Some(binding) = self.heap_reads().environment_slot(env, slot) else {
                 continue;
             };
             match self.heap.get_mut(binding) {
@@ -235,7 +235,7 @@ impl Vm {
             }
         }
         let context = self.wasm_context_slot(env, program)?;
-        let record = self.heap.environment_slot(env, context)?;
+        let record = self.heap_reads().environment_slot(env, context)?;
         let Some(Cell::WasmInstance(record)) = self.heap.get_mut(record) else {
             return None;
         };
@@ -250,7 +250,7 @@ impl Vm {
         let Some(slot) = compiled.memory_slot else {
             return Some(MemoryBinding { binding: Value::UNDEFINED, base: 0, length: 0, guard: None });
         };
-        let binding = self.heap.environment_slot(env, slot as usize)?;
+        let binding = self.heap_reads().environment_slot(env, slot as usize)?;
         let ((base, length), guard) = super::dispatch_fast::direct_memory_and_guard(self, binding)?;
         // Code compiled without bounds checks needs this memory's guard, and code compiled for a
         // base needs this memory's.
@@ -274,7 +274,7 @@ impl Vm {
     ) -> Option<(*const InstanceContext, (u64, u64))> {
         let memory = self.memory_binding(compiled, env)?;
         let context = self.wasm_context_slot(env, program)?;
-        let record = self.heap.environment_slot(env, context)?;
+        let record = self.heap_reads().environment_slot(env, context)?;
         let Some(Cell::WasmInstance(record)) = self.heap.get_mut(record) else {
             return None;
         };

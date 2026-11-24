@@ -191,7 +191,7 @@ impl Vm {
                 Origin::Entry => parameters.get(usize::from(register)).copied(),
                 Origin::Written(_) | Origin::Merged => None,
             };
-            named.filter(|constructor| self.heap.function(*constructor).is_some())
+            named.filter(|constructor| self.function_record(*constructor).is_some())
         }).collect()
     }
 

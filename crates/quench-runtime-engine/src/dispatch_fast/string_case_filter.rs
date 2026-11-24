@@ -115,7 +115,7 @@ pub(crate) unsafe fn case_index_in_lane(cx: *mut (), filter: *const StringCaseFi
     let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + count) };
     let vm = unsafe { vm(cx) };
     let index = match unsafe { filter.as_ref() } {
-        Some(filter) => match vm.heap.string(value) {
+        Some(filter) => match vm.heap_reads().string(value) {
             Some(text) => filter.select(vm, value, text, cases),
             None => count as u32,
         },
