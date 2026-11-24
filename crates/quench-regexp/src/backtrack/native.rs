@@ -3,63 +3,86 @@
 //! runs the same steps as `Program::run` (so the interpreter stays the one source of meaning)
 //! on a stack of its own. A search the native code cannot finish (its stack is full) is run
 //! again by the interpreter from the same start.
-use super::matcher::{Admission, AssertionTest};
-use super::{Inst, MatchSet, Program, Search, Text, UnitTest, ASCII_UNITS, MAXIMUM_STACK_FRAMES};
+use super::dispatch::Interval;
+use super::matcher::Admission;
+use super::{canonical, Inst, Program, Search, StringClass, Text, UnitTest, ASCII_UNITS, MAXIMUM_STACK_FRAMES};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::task::Poll;
 use std::sync::OnceLock;
 
-/// What one ASCII unit must be: a literal at or past 128 matches no ASCII unit.
-#[derive(Clone, Copy)]
-pub enum NativeTest {
-    Never,
-    Exact(u8),
-    /// The set's ASCII units, bit `n` of the 128-bit mask (low word first).
-    Mask([u64; 2]),
-}
-
-/// `Inst`, for the instructions a native search runs; `Dispatch`, `Backreference` and
-/// lookarounds keep a program interpreted.
-#[derive(Clone)]
-pub enum NativeInst {
-    Unit(NativeTest),
-    /// `atomic`: a greedy repeat that keeps no frame (`possessive`).
-    UnitRepeat { test: NativeTest, min: u32, max: u32, greedy: bool, atomic: bool },
-    Assert(AssertionTest),
-    Split { alternative: u32 },
-    GuardedSplit { alternative: u32, guard: Admission<NativeTest> },
-    Jump(u32),
-    /// `count` consecutive temporaries from `temporary`.
-    CaptureOpen { temporary: u32, count: u32, restores: bool },
-    CaptureClose { capture: u32, temporary: u32 },
-    /// The captures listed in `NativePlan::lists[first..first + count]`.
-    ResetCaptures { first: u32, count: u32 },
-    LoopInit { counter: u32 },
-    LoopHead { counter: u32, min: u32, max: u32, greedy: bool, exit: u32 },
-    LoopIterate { start: u32 },
-    EmptyCheck { start: u32 },
-    LoopTail { counter: u32, start: u32, min: u32, head: u32 },
-    /// A lookahead whose body follows, ending at its `LookSucceed`; matching goes on at `end`.
-    Look { negative: bool, end: u32 },
-    LookSucceed,
-    Match,
-}
-
-/// A program for a native compiler. The search of an ASCII subject begins at `entry` with the
-/// position `start + entry` (`Program::entry`).
+/// A program for a native compiler: its own instructions and the static tables they name,
+/// owned, so the compile runs on another thread. The search of an ASCII subject begins at
+/// `entry` with the position `start + entry` (`Program::entry`).
 pub struct NativePlan {
-    pub insts: Vec<NativeInst>,
+    pub insts: Box<[Inst]>,
+    /// The ASCII units of each set an instruction tests (`UnitTest::Set` indexes it), bit `n`
+    /// of the 128-bit mask (low word first); the start set's last (`NativeRestarts`).
+    pub masks: Box<[[u64; 2]]>,
+    /// The capture and branch lists the instructions name (`Program::lists`).
+    pub lists: Box<[u32]>,
+    pub guards: Box<[Admission<UnitTest>]>,
+    /// Each dispatch table's intervals, sorted (`Inst::Dispatch`).
+    pub dispatches: Box<[Box<[Interval]>]>,
+    /// The program's classes of strings, which `native_class_ends` reads: an address the code
+    /// embeds, valid while the program, which owns the code, lives.
+    pub classes: usize,
+    /// The ASCII units whose case partner (`unit ^ CASE_BIT`) is the same character under
+    /// case folding, without and with `unicode` (`canonical`).
+    pub folds: [[u64; 2]; 2],
     pub entry: u32,
     /// The registers a run uses; each holds `unset` between runs.
     pub registers: usize,
     pub unset: usize,
-    /// The capture lists the instructions name (`Program::lists`).
-    pub lists: Box<[u32]>,
     /// How the code moves on from a start that failed (`Program::native_restarts`).
     pub restarts: NativeRestarts,
     /// The test of the leading atomic repeat whose units a failed start skips, and the unit
     /// past them (`Program::next_candidate`).
-    pub restart_skip: Option<NativeTest>,
+    pub restart_skip: Option<UnitTest>,
+}
+
+/// The bit an ASCII letter and its other case differ by.
+pub const CASE_BIT: u32 = 0x20;
+
+/// The ASCII units whose case partner (`unit ^ CASE_BIT`) has the same canonical form.
+fn case_partners(unicode: bool) -> [u64; 2] {
+    let mut mask = [0u64; 2];
+    for unit in (0..ASCII_UNITS).filter(|unit| canonical(*unit, unicode) == canonical(unit ^ CASE_BIT, unicode)) {
+        mask[(unit / u64::BITS) as usize] |= 1 << (unit % u64::BITS);
+    }
+    mask
+}
+
+/// `native_class_ends`' result where no match of the class is at the position.
+pub const CLASS_NONE: usize = usize::MAX;
+/// `native_class_ends`' result where the stack has no room for the shorter matches.
+pub const CLASS_OVERFLOW: usize = usize::MAX - 1;
+/// A packed result's count of shorter matches is above this many bits.
+pub const CLASS_COUNT_SHIFT: u32 = u32::BITS;
+
+/// `Inst::ClassWidths` for native code (`Machine::class_ends`): the matches of class
+/// `class` (`backward` in bit 0 of `class_and_backward`, the class above it) of the ASCII
+/// subject `bytes[..length]` at `position`. The shorter ones are pushed as choice frames
+/// `(choice, end, end)` from `top`, below `stack_end`, in the order the interpreter pushes
+/// them. Returns `CLASS_NONE`, `CLASS_OVERFLOW`, or the frames pushed above
+/// `CLASS_COUNT_SHIFT` and the longest match's end below.
+///
+/// # Safety
+/// `classes` is `NativePlan::classes` of a live program, `class` one of its classes,
+/// `bytes[..length]` readable, and `top..stack_end` writable words.
+pub unsafe extern "C" fn native_class_ends(classes: usize, class_and_backward: usize, bytes: *const u8, length: usize, position: usize, top: *mut usize, stack_end: *mut usize, choice: usize) -> usize {
+    // SAFETY: the caller's contract.
+    let (class, subject) = unsafe { (&*(classes as *const StringClass).add(class_and_backward >> 1), std::slice::from_raw_parts(bytes, length)) };
+    let ends = class.ends(subject, position, class_and_backward & 1 != 0);
+    let Some((&first, rest)) = ends.split_first() else { return CLASS_NONE };
+    let room = (stack_end as usize - top as usize) / (NATIVE_FRAME_WORDS * std::mem::size_of::<usize>());
+    if rest.len() > room {
+        return CLASS_OVERFLOW;
+    }
+    for (index, &end) in rest.iter().rev().enumerate() {
+        // SAFETY: `room` frames fit from `top`.
+        unsafe { top.add(index * NATIVE_FRAME_WORDS).cast::<[usize; NATIVE_FRAME_WORDS]>().write([choice, end, end]) };
+    }
+    rest.len() << CLASS_COUNT_SHIFT | first
 }
 
 /// Where a native search goes once no match starts at its start: back to its caller, which
@@ -70,7 +93,8 @@ pub struct NativePlan {
 pub enum NativeRestarts {
     Caller,
     Every,
-    Admitted(Admission<NativeTest>),
+    /// `Admission::units` is the plan's last mask.
+    Admitted(Admission<UnitTest>),
 }
 
 /// `fn(bytes, length, position, registers, stack, stack_end, last, found)`: the end of the
@@ -138,87 +162,45 @@ const INITIAL_STACK_FRAMES: usize = 1024;
 /// A full stack grows by this factor.
 const STACK_GROWTH: usize = 4;
 
-/// The loop instructions: counters, iteration starts and empty checks.
-fn native_loop_inst(inst: Inst) -> NativeInst {
-    match inst {
-        Inst::LoopInit { counter } => NativeInst::LoopInit { counter },
-        Inst::LoopHead { counter, min, max, greedy, exit } => NativeInst::LoopHead { counter, min, max, greedy, exit },
-        Inst::LoopIterate { start } => NativeInst::LoopIterate { start },
-        Inst::EmptyCheck { start } => NativeInst::EmptyCheck { start },
-        Inst::LoopTail { counter, start, min, head } => NativeInst::LoopTail { counter, start, min, head },
-        _ => unreachable!("`native_inst` takes the others"),
-    }
-}
-
-fn native_test(test: UnitTest, sets: &[MatchSet]) -> NativeTest {
-    match test {
-        UnitTest::Exact(unit) if unit < ASCII_UNITS => NativeTest::Exact(unit as u8),
-        UnitTest::Exact(_) => NativeTest::Never,
-        UnitTest::Set(set) => NativeTest::Mask(sets[set as usize].table.0),
-    }
-}
-
 impl Program {
-    /// The program as a native plan, or `None` where an instruction is not one native code runs.
-    fn native_plan(&self) -> Option<NativePlan> {
-        let insts = self.instructions.iter().map(|inst| self.native_inst(*inst)).collect::<Option<Vec<_>>>()?;
-        let restarts = self.native_restarts();
-        let restart_skip = self.restart_skip.map(|test| native_test(test, &self.sets));
-        Some(NativePlan { insts, entry: self.entry.unwrap_or(0), registers: self.register_count, unset: super::UNSET, lists: self.lists.clone(), restarts, restart_skip })
+    /// The program as a native plan: its instructions and the tables they name.
+    fn native_plan(&self) -> NativePlan {
+        let starts = self.starts.as_ref().map(|starts| (starts.at_start, starts.at_end, starts.units.table.0));
+        let masks = self.sets.iter().map(|set| set.table.0).chain(starts.map(|(_, _, units)| units)).collect();
+        let restarts = self.native_restarts(starts.map(|(at_start, at_end, _)| Admission { at_start, at_end, units: UnitTest::Set(self.sets.len() as u32) }));
+        NativePlan {
+            insts: self.instructions.clone(),
+            masks,
+            lists: self.lists.clone(),
+            guards: self.guards.clone(),
+            dispatches: self.dispatches.iter().map(|dispatch| dispatch.intervals().into()).collect(),
+            classes: self.classes.as_ptr() as usize,
+            folds: [false, true].map(case_partners),
+            entry: self.entry.unwrap_or(0),
+            registers: self.register_count,
+            unset: super::UNSET,
+            restarts,
+            restart_skip: self.restart_skip,
+        }
     }
 
     /// How native code moves past a failed start: on itself where `next_start` admits a
-    /// position by the start set alone, which a test of one unit decides in place; through
-    /// the caller where a prefix or lookahead scan finds it, or the pattern is anchored.
-    fn native_restarts(&self) -> NativeRestarts {
-        if self.anchored || self.prefix.is_some() || self.lookahead.is_some() || self.inner_literal.is_some() {
+    /// position by the start set alone (`starts`), which a test of one unit decides in place;
+    /// through the caller where a prefix or lookahead scan finds it, or the pattern is anchored.
+    fn native_restarts(&self, starts: Option<Admission<UnitTest>>) -> NativeRestarts {
+        if self.restarts_through_caller() {
             return NativeRestarts::Caller;
         }
-        match &self.starts {
+        match starts {
             None => NativeRestarts::Every,
-            Some(starts) => NativeRestarts::Admitted(Admission {
-                at_start: starts.at_start,
-                at_end: starts.at_end,
-                units: NativeTest::Mask(starts.units.table.0),
-            }),
+            Some(admission) => NativeRestarts::Admitted(admission),
         }
     }
 
-    fn native_inst(&self, inst: Inst) -> Option<NativeInst> {
-        let sets = &self.sets;
-        Some(match inst {
-            Inst::Unit(test) => NativeInst::Unit(native_test(test, sets)),
-            Inst::UnitRepeat { test, min, max, greedy, atomic } => NativeInst::UnitRepeat { test: native_test(test, sets), min, max, greedy, atomic },
-            Inst::Assert(test) => NativeInst::Assert(test),
-            Inst::Split { alternative } => NativeInst::Split { alternative },
-            Inst::GuardedSplit { alternative, guard } => {
-                let Admission { at_start, at_end, units } = self.guards[guard as usize];
-                NativeInst::GuardedSplit { alternative, guard: Admission { at_start, at_end, units: native_test(units, sets) } }
-            }
-            Inst::Jump(target) => NativeInst::Jump(target),
-            Inst::Match => NativeInst::Match,
-            Inst::Dispatch { .. }
-            | Inst::Backreference { .. }
-            | Inst::BackreferenceBack { .. }
-            | Inst::UnitBack(_)
-            | Inst::UnitRepeatBack { .. }
-            | Inst::CaptureCloseBack { .. }
-            | Inst::ClassWidths { .. } => return None,
-            registers => self.native_registers_inst(registers),
-        })
-    }
-
-    /// `native_inst` of the instructions that read and write registers.
-    fn native_registers_inst(&self, inst: Inst) -> NativeInst {
-        match inst {
-            Inst::CaptureOpen { temporary, count, restores } => NativeInst::CaptureOpen { temporary, count, restores },
-            Inst::CaptureClose { capture, temporary } => NativeInst::CaptureClose { capture, temporary },
-            Inst::ResetCaptures { first, count } => NativeInst::ResetCaptures { first, count },
-            // A lookbehind's body is backward instructions, which keep the program interpreted.
-            Inst::Look { negative, end } => NativeInst::Look { negative, end },
-            Inst::LookSucceed => NativeInst::LookSucceed,
-            loops => native_loop_inst(loops),
-        }
+    /// Whether a scan finds the next start (a prefix, lookahead or inner literal), or the
+    /// pattern is anchored: native code then gives a failed start back to its caller.
+    fn restarts_through_caller(&self) -> bool {
+        self.anchored || self.prefix.is_some() || self.lookahead.is_some() || self.inner_literal.is_some()
     }
 
     /// The native code for this program, asked of the embedder's compiler once the program has
@@ -245,10 +227,7 @@ impl Program {
         }
         let mut building = self.native.building.borrow_mut();
         if building.is_none() {
-            let Some(plan) = self.native_plan() else {
-                return self.native.code.get_or_init(|| None).as_ref();
-            };
-            *building = Some((compiler.start)(plan));
+            *building = Some((compiler.start)(self.native_plan()));
         } else if runs % POLL_EVERY != 0 {
             return None;
         }
@@ -274,7 +253,7 @@ impl Program {
         let bytes = text.bytes()?;
         let code = self.native_code()?;
         // Code that moves on by itself searches every start up to `last` in one call.
-        let last = if matches!(self.native_restarts(), NativeRestarts::Caller) { None } else { Some(search.last) };
+        let last = if self.restarts_through_caller() { None } else { Some(search.last) };
         loop {
             let (found, end) = self.native_attempt(code, bytes, (start, last.unwrap_or(start)), registers, stack)?;
             if end != NATIVE_FAIL {

@@ -5,11 +5,11 @@ use super::{Emit, RegexpMachine, Resume, FIRST_OPERAND, SECOND_OPERAND};
 use quench_regexp::backtrack::machine as m;
 use quench_regexp::backtrack::matcher::MatchStage;
 use quench_runtime::staged::machine::{Binary, Lane, Relation};
-use quench_regexp::backtrack::native::{NativeInst, NativeTest};
+use quench_regexp::backtrack::{Inst, UnitTest};
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// The first position in `from..to` whose unit fails `test`, or `to`.
-    pub(crate) fn scan(&mut self, test: NativeTest, from: M::Word, to: M::Word) -> M::Word {
+    pub(crate) fn scan(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
         let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let index = self.b.block_parameter(head, Lane::I64);
         let end = self.b.block_parameter(exit, Lane::I64);
@@ -26,9 +26,27 @@ impl<M: RegexpMachine> Emit<'_, M> {
         end
     }
 
+    /// The start of the run of units from `from` back to at least `to` that pass `test`.
+    pub(crate) fn scan_down(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
+        let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let index = self.b.block_parameter(head, Lane::I64);
+        let start = self.b.block_parameter(exit, Lane::I64);
+        self.b.goto(head, &[from]);
+        self.b.enter_open(head);
+        let above = self.compare(Relation::UnsignedGreater, index, to);
+        self.b.branch_if(above, (body, &[]), (exit, &[index]));
+        self.b.enter_open(body);
+        let before = self.b.raw_binary_imm(Binary::Add, index, -1);
+        let unit = self.unit_at(before);
+        let passes = self.passes(unit, test);
+        self.b.branch_if(passes, (head, &[before]), (exit, &[index]));
+        self.b.enter_open(exit);
+        start
+    }
+
     /// The last unit in `floor..end` that passes `test`, branching to the backtrack block
     /// where none does.
-    pub(crate) fn scan_back(&mut self, test: NativeTest, floor: M::Word, end: M::Word) -> M::Word {
+    pub(crate) fn scan_back(&mut self, test: UnitTest, floor: M::Word, end: M::Word) -> M::Word {
         let (look, lower, found) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let at = self.b.block_parameter(look, Lane::I64);
         let last = self.b.raw_binary_imm(Binary::Add, end, -1);
@@ -61,15 +79,24 @@ impl<M: RegexpMachine> Emit<'_, M> {
             }
             Resume::Greedy(pc) => {
                 let follower = match self.plan.insts.get(pc as usize + 1) {
-                    Some(NativeInst::Unit(test)) => Some(*test),
+                    Some(Inst::Unit(test)) => Some(*test),
                     _ => None,
                 };
                 let step = m::give_back(self, pc + 1, follower, (first, second));
                 self.finish_step(step);
             }
             Resume::Lazy(pc) => {
-                let NativeInst::UnitRepeat { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a lazy frame names a repeat") };
+                let Inst::UnitRepeat { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a lazy frame names a repeat") };
                 let step = m::take_more(self, pc + 1, test, (first, second));
+                self.finish_step(step);
+            }
+            Resume::GreedyBack(pc) => {
+                let step = m::give_back_back(self, pc + 1, (first, second));
+                self.finish_step(step);
+            }
+            Resume::LazyBack(pc) => {
+                let Inst::UnitRepeatBack { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a backward lazy frame names a backward repeat") };
+                let step = m::take_more_back(self, pc + 1, test, (first, second));
                 self.finish_step(step);
             }
             Resume::LookFail(pc) => self.look_failed(pc, first),

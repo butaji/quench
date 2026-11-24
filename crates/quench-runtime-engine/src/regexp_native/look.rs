@@ -6,7 +6,7 @@
 use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, FRAME_BYTES, FIRST_OPERAND, RESTORE, SECOND_OPERAND};
 use quench_runtime::staged::machine::{Binary, Lane, Relation};
-use quench_regexp::backtrack::native::NativeInst;
+use quench_regexp::backtrack::Inst;
 
 impl<M: RegexpMachine> Emit<'_, M> {
     /// The variable holding the mark of the lookahead at `look`.
@@ -22,7 +22,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
     /// The lookahead whose body ends at the `LookSucceed` at `pc`.
     fn look_of(&self, pc: u32) -> (u32, bool) {
         self.plan.insts.iter().enumerate().find_map(|(look, inst)| match inst {
-            NativeInst::Look { negative, end } if *end == pc + 1 => Some((look as u32, *negative)),
+            Inst::Look { negative, end } if *end == pc + 1 => Some((look as u32, *negative)),
             _ => None,
         }).expect("a LookSucceed ends a lookahead's body")
     }
@@ -53,13 +53,13 @@ impl<M: RegexpMachine> Emit<'_, M> {
         }
         self.keep_restores(mark);
         self.set_position(position);
-        let NativeInst::Look { end, .. } = self.plan.insts[look as usize] else { unreachable!("a lookahead") };
+        let Inst::Look { end, .. } = self.plan.insts[look as usize] else { unreachable!("a lookahead") };
         self.goto(end);
     }
 
     /// The backtrack popped the mark: the body found no match.
     pub(crate) fn look_failed(&mut self, pc: u32, position: M::Word) {
-        let NativeInst::Look { negative, end } = self.plan.insts[pc as usize] else { unreachable!("a lookahead's mark") };
+        let Inst::Look { negative, end } = self.plan.insts[pc as usize] else { unreachable!("a lookahead's mark") };
         if !negative {
             self.fail();
             return;

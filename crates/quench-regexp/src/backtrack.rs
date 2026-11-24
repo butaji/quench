@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 mod compile;
-mod dispatch;
+pub mod dispatch;
 pub mod machine;
 pub mod matcher;
 pub mod native;
@@ -109,7 +109,7 @@ impl Text for [Unit] {
 
 /// What one subject unit must be.
 #[derive(Clone, Copy)]
-enum UnitTest {
+pub enum UnitTest {
     Exact(u32),
     /// An index into `Program::sets`.
     Set(u32),
@@ -433,8 +433,10 @@ fn escape_ascii_mask(escape: oxc::regular_expression::ast::CharacterClassEscapeK
     masks[index][usize::from(ignore_case)][usize::from(unicode)]
 }
 
+/// One instruction of a program: the interpreter steps through them, and native code is
+/// their rows (`machine`) specialized to them.
 #[derive(Clone, Copy)]
-enum Inst {
+pub enum Inst {
     Unit(UnitTest),
     /// `Unit` read backward, in a lookbehind body: the unit before the position.
     UnitBack(UnitTest),

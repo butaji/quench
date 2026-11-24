@@ -11,6 +11,9 @@ use super::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTe
 
 // The instructions a lookbehind body runs, read backward, and backreferences either way.
 mod backward;
+// Each instruction's row.
+mod step;
+pub use step::step;
 pub use backward::{backreference, class_widths, capture_close_back, give_back_back, take_more_back, unit_back, unit_repeat_back};
 
 /// A static count that exceeds any subject (`Inst::UnitRepeat`, `Inst::LoopHead`).
@@ -97,6 +100,14 @@ pub trait Machine: MatchStage {
     fn keep_lazy(&mut self, pc: u32, test: Self::Test, ceiling: Self::Pos, position: Self::Pos);
     /// The `index`th entry of the program's capture lists (`Program::lists`), static.
     fn listed(&mut self, index: u32) -> u32;
+    /// The positions the body behind `GuardedSplit` guard `guard` can start at (static).
+    fn guard(&mut self, guard: u32) -> Admission<Self::Test>;
+    /// `Inst::Look`: the lookaround whose body follows, matching going on at `end` where it
+    /// holds. The interpreter runs the body as a nested run; native code runs it inline,
+    /// above a mark its `LookSucceed` or a backtrack to the mark decides at.
+    fn lookaround(&mut self, look: (bool, u32), at: Cursor<Self::Pos>) -> Step<Self::Pos>;
+    /// `Inst::LookSucceed`: the lookaround's body matched.
+    fn look_succeed(&mut self, at: Cursor<Self::Pos>) -> Step<Self::Pos>;
     /// The step of `arm` for the interval of dispatch table `table` that holds `unit`, with
     /// the interval's branches `Program::lists[first..first + count]`; `Step::Fail` where no
     /// interval holds it. The table is static: an emitting machine branches on `unit` to an

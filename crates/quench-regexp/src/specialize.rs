@@ -23,8 +23,7 @@
 //! machine sees it as a constant and folds it.
 //!
 //! Here stays what only the interpreter runs: `Stage`, the operations on frames themselves
-//! (backtracking as `replay`) and the nested lookahead run. Their native forms are next
-//! (TOD-2078).
+//! (backtracking as `replay`). Each instruction's row is `machine::step`.
 
 use crate::in_units;
 // The interpreter's stage: the operations on the machine's own state.
@@ -32,7 +31,7 @@ use crate::in_units;
 mod concrete;
 pub(super) use concrete::Concrete;
 use super::machine::{self as m, Machine};
-pub(super) use super::machine::{start_register, Cursor, Step};
+pub(super) use super::machine::{start_register, step, Cursor, Step};
 use super::matcher::{Admission, MatchStage};
 use super::{equal, Frame, Inst, Program, Text, UnitTest, UNSET};
 
@@ -52,13 +51,8 @@ pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = Uni
     fn keep(&mut self, frame: Frame);
     /// The latest backtrack entry, if the stack holds one.
     fn pop(&mut self) -> Option<Frame>;
-    /// The positions the body behind guard `guard` can start at.
-    fn guard(&self, guard: u32) -> Admission<UnitTest>;
     /// The test of the instruction at `pc` where it takes one unit (`Inst::Unit`).
     fn unit_follower(&self, pc: u32) -> Option<UnitTest>;
-    /// Runs the lookahead body at `body` as a nested run; whether the lookahead holds
-    /// (`found != negative`), its stack effects applied.
-    fn look(&mut self, body: Cursor, negative: bool) -> bool;
 }
 
 /// Puts back the registers a restore entry saved; any other entry restores nothing.
@@ -123,82 +117,5 @@ fn replay_back<S: Stage>(stage: &mut S, frame: Frame) -> Replay {
         Frame::GreedyBack { pc, ceiling, position } => resumed(m::give_back_back(stage, pc, (ceiling, position))),
         Frame::LazyBack { pc, test, floor, position } => resumed(m::take_more_back(stage, pc, test, (floor, position))),
         _ => unreachable!("`replay` hands over only backward repeats"),
-    }
-}
-
-/// The meaning of `inst` at `at`: each instruction's function over the machine (`machine.rs`),
-/// shared with the native compiler, or one this stage alone runs.
-#[inline(always)]
-pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
-    match inst {
-        Inst::Unit(test) => m::unit(stage, test, at),
-        Inst::UnitRepeat { test, min, max, greedy, atomic } => m::unit_repeat(stage, (test, min, max), (greedy, atomic), at),
-        Inst::Assert(test) => m::assertion(stage, test, at),
-        Inst::Split { alternative } => m::split(stage, alternative, at),
-        Inst::GuardedSplit { alternative, guard } => {
-            let guard = stage.guard(guard);
-            m::guarded_split(stage, alternative, guard, at)
-        }
-        Inst::Dispatch { table } => m::dispatch(stage, table, at),
-        Inst::Jump(target) => Step::Continue(at.jump(target)),
-        Inst::Look { negative, end } => look(stage, (negative, end), at),
-        Inst::LookSucceed | Inst::Match => Step::Accept,
-        inst => registers(stage, inst, at),
-    }
-}
-
-/// The instructions that read and write the register file: captures, loop counters, backreferences.
-#[inline(always)]
-fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
-    match inst {
-        Inst::CaptureOpen { temporary, count, restores } => m::capture_open(stage, (temporary, count, restores), at),
-        Inst::CaptureClose { capture, temporary } => m::capture_close(stage, (capture, temporary), at),
-        Inst::ResetCaptures { first, count } => m::reset_captures(stage, (first, count), at),
-        Inst::LoopInit { counter } => m::loop_init(stage, counter, at),
-        Inst::LoopHead { counter, min, max, greedy, exit } => m::loop_head(stage, (counter, min, max), (greedy, exit), at),
-        Inst::LoopIterate { start } => m::loop_iterate(stage, start, at),
-        Inst::EmptyCheck { start } => m::empty_check(stage, start, at),
-        Inst::LoopTail { counter, start, min, head } => m::loop_tail(stage, (counter, start, min, head), at),
-        Inst::Backreference { first, count, ignore_case, unicode } => m::backreference(stage, (first, count), (ignore_case, unicode, false), at),
-        inst => rare(stage, inst, at),
-    }
-}
-
-/// A lookahead: its body runs as a nested run, and matching goes on at `end` where it holds.
-#[inline(always)]
-fn look<S: Stage>(stage: &mut S, (negative, end): (bool, u32), at: Cursor) -> Step {
-    let holds = stage.look(at.next(), negative);
-    if holds { Step::Continue(at.jump(end)) } else { Step::Fail }
-}
-
-/// The instructions a lookbehind body runs, read backward, and the classes of strings: each
-/// continues at the next pc or fails.
-#[inline(always)]
-fn rare<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
-    match rare_position(stage, inst, at) {
-        Some(position) => Step::Continue(at.then_at(position)),
-        None => Step::Fail,
-    }
-}
-
-/// `rare`'s position at the next pc, `None` where the instruction fails. Out of line, and
-/// returning in registers, so the patterns with none of these instructions, the common ones,
-/// keep the interpreter's loop tight.
-#[inline(never)]
-fn rare_position<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Option<usize> {
-    let step = match inst {
-        Inst::UnitBack(test) => m::unit_back(stage, test, at),
-        Inst::UnitRepeatBack { test, min, max, greedy } => m::unit_repeat_back(stage, (test, min, max, greedy), at),
-        Inst::CaptureCloseBack { capture, temporary } => m::capture_close_back(stage, (capture, temporary), at),
-        Inst::BackreferenceBack { first, count, ignore_case, unicode } => m::backreference(stage, (first, count), (ignore_case, unicode, true), at),
-        Inst::ClassWidths { class, backward } => m::class_widths(stage, (class, backward), at),
-        _ => unreachable!("`registers` hands over only these"),
-    };
-    match step {
-        Step::Continue(next) => {
-            debug_assert_eq!(next.pc, at.pc + 1);
-            Some(next.position)
-        }
-        _ => None,
     }
 }

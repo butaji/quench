@@ -1,5 +1,5 @@
 //! Native code for a hot regexp program over an ASCII subject: `quench_regexp`'s plan, one
-//! block per instruction, backtracking as a pop of the native stack and a jump table to the
+//! block per instruction (its row, `machine::step`, specialized to it), backtracking as a pop of the native stack and a jump table to the
 //! frame's resume block. It runs the steps of `Program::run` exactly; the interpreter stays the
 //! one source of meaning, and a program or search the code cannot finish keeps it.
 //!
@@ -15,7 +15,8 @@ use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::FunctionBuilder;
 use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission};
-use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativePlan, NativeRestarts, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::{Inst, UnitTest};
 
 pub(crate) mod look;
 pub(crate) mod machine;
@@ -91,6 +92,10 @@ enum Resume {
     Greedy(u32),
     /// A lazy repeat that takes a unit, ceiling and position in the frame.
     Lazy(u32),
+    /// A backward greedy repeat that gives back a unit, ceiling and position in the frame.
+    GreedyBack(u32),
+    /// A backward lazy repeat that takes a unit, floor and position in the frame.
+    LazyBack(u32),
     /// The mark of the lookahead at this pc, its position in the frame's first word: the
     /// backtrack reached it, so the body found no match.
     LookFail(u32),
@@ -142,7 +147,7 @@ fn emit(plan: &NativePlan, isa: &dyn TargetIsa) -> ir::Function {
     let mut emit = Emit::<crate::compiled::emit_machine::Raw<'_>>::start(plan, crate::compiled::emit_machine::Raw(builder), MemFlagsData::trusted(), entry, parameters);
     for (pc, inst) in plan.insts.iter().enumerate() {
         emit.b.enter_open(emit.instructions[pc]);
-        emit.instruction(pc as u32, inst);
+        emit.instruction(pc as u32, *inst);
     }
     emit.finish();
     let mut raw = emit.into_machine();
@@ -330,16 +335,16 @@ impl<'a, M: RegexpMachine> Emit<'a, M> {
     /// Runs from the restart's start, `admission` having admitted it: past its leading
     /// assertions, which fail on to `next` with no frame of their own to undo, and above a
     /// new barrier.
-    fn run_from_start(&mut self, admission: Option<Admission<NativeTest>>, next: M::Block) {
+    fn run_from_start(&mut self, admission: Option<Admission<UnitTest>>, next: M::Block) {
         let start = self.b.read_variable(self.start);
         // The start set may say whether the unit at the start is a word unit, which leaves
         // `\b` and `\B` only the unit before it to read.
         let word = match admission {
-            Some(Admission { units: NativeTest::Mask(mask), at_end, .. }) => ascii_units_are_words(mask).filter(|word| !(*word && at_end)),
+            Some(Admission { units: UnitTest::Set(set), at_end, .. }) => ascii_units_are_words(self.plan.masks[set as usize]).filter(|word| !(*word && at_end)),
             _ => None,
         };
         let mut entry = self.plan.entry;
-        while let Some(NativeInst::Assert(test)) = self.plan.insts.get(entry as usize) {
+        while let Some(Inst::Assert(test)) = self.plan.insts.get(entry as usize) {
             let given = word.and_then(|word| word_assertion_given(self, *test, start, word));
             let holds = given.unwrap_or_else(|| assertion_holds(self, *test, start));
             let held = self.b.new_block();
@@ -357,7 +362,7 @@ impl<'a, M: RegexpMachine> Emit<'a, M> {
 
     /// Moves the failed start to the end of the units its leading atomic repeat took
     /// (`Program::next_candidate`), whose next position the restart tries.
-    fn skip_taken_units(&mut self, test: NativeTest) {
+    fn skip_taken_units(&mut self, test: UnitTest) {
         let (scan, step, done) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         self.b.goto(scan, &[]);
         self.b.enter_open(scan);

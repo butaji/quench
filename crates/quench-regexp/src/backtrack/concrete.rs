@@ -165,6 +165,23 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn guard(&mut self, guard: u32) -> Admission<UnitTest> {
+        self.program.guards[guard as usize]
+    }
+
+    /// The body runs as a nested run above a barrier (`nested_look`).
+    #[inline(always)]
+    fn lookaround(&mut self, (negative, end): (bool, u32), at: Cursor) -> Step {
+        if self.nested_look(at.next(), negative) { Step::Continue(at.jump(end)) } else { Step::Fail }
+    }
+
+    /// The nested run ends where its body matched.
+    #[inline(always)]
+    fn look_succeed(&mut self, _: Cursor) -> Step {
+        Step::Accept
+    }
+
+    #[inline(always)]
     fn dispatch_on(&mut self, unit: u32, table: u32, mut arm: impl FnMut(&mut Self, (u32, u32)) -> Step) -> Step {
         match self.program.dispatch_interval(table, unit) {
             Some(branches) => arm(self, branches),
@@ -289,19 +306,20 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn guard(&self, guard: u32) -> Admission<UnitTest> {
-        self.program.guards[guard as usize]
-    }
-
-    #[inline(always)]
     fn unit_follower(&self, pc: u32) -> Option<UnitTest> {
         match self.program.instructions[pc as usize] {
             Inst::Unit(test) => Some(test),
             _ => None,
         }
     }
+}
 
-    fn look(&mut self, body: Cursor, negative: bool) -> bool {
+impl<T: Text + ?Sized> Concrete<'_, T> {
+    /// Runs the lookaround body at `body` as a nested run; whether the lookaround holds
+    /// (`found != negative`), its stack effects applied. Out of line, returning a flag, so
+    /// `Program::run`'s loop keeps its step in registers.
+    #[inline(never)]
+    fn nested_look(&mut self, body: Cursor, negative: bool) -> bool {
         let base = self.stack.len();
         self.push(Frame::Barrier);
         let found = self.program.run(self.text, (body.pc, body.position, body.position), None, self.registers, self.stack).is_some();

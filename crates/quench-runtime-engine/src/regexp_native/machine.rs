@@ -6,41 +6,20 @@
 use crate::ext_traits::*;
 use super::{Emit, RegexpMachine, Resume, RESTORE};
 use quench_runtime::staged::machine::{Binary, Relation};
+use quench_regexp::backtrack::native::NATIVE_ASCII_UNITS;
 use quench_regexp::backtrack::machine::{self as m, Cursor, Machine, Step, CAPTURE_REGISTERS, UNBOUNDED};
-use quench_regexp::backtrack::native::{NativeInst, NativeTest};
+use quench_regexp::backtrack::matcher::{Admission, MatchStage};
+use quench_regexp::backtrack::native::{native_class_ends, CASE_BIT, CLASS_COUNT_SHIFT, CLASS_NONE, CLASS_OVERFLOW};
+use quench_regexp::backtrack::{Inst, UnitTest};
+use quench_runtime::staged::machine::Lane;
+use super::FRAME_BYTES;
 
 impl<M: RegexpMachine> Emit<'_, M> {
-    /// The code of the instruction at `pc`.
-    pub(crate) fn instruction(&mut self, pc: u32, inst: &NativeInst) {
+    /// The code of the instruction at `pc`: its row, specialized to it.
+    pub(crate) fn instruction(&mut self, pc: u32, inst: Inst) {
         let at = Cursor::at(pc, self.position());
-        let step = match inst {
-            NativeInst::Unit(test) => m::unit(self, *test, at),
-            NativeInst::UnitRepeat { test, min, max, greedy, atomic } => m::unit_repeat(self, (*test, *min, *max), (*greedy, *atomic), at),
-            NativeInst::Assert(test) => m::assertion(self, *test, at),
-            NativeInst::Split { alternative } => m::split(self, *alternative, at),
-            NativeInst::GuardedSplit { alternative, guard } => m::guarded_split(self, *alternative, *guard, at),
-            NativeInst::Jump(target) => Step::Continue(at.jump(*target)),
-            NativeInst::Match => Step::Accept,
-            NativeInst::Look { .. } => return self.look(pc),
-            NativeInst::LookSucceed => return self.look_succeed(pc),
-            other => self.registers_step(other, at),
-        };
+        let step = m::step(self, inst, at);
         self.finish_step(step);
-    }
-
-    /// The instructions that read and write registers: captures and the loops' counters.
-    fn registers_step(&mut self, inst: &NativeInst, at: Cursor<M::Word>) -> Step<M::Word> {
-        match inst {
-            NativeInst::CaptureOpen { temporary, count, restores } => m::capture_open(self, (*temporary, *count, *restores), at),
-            NativeInst::CaptureClose { capture, temporary } => m::capture_close(self, (*capture, *temporary), at),
-            NativeInst::ResetCaptures { first, count } => m::reset_captures(self, (*first, *count), at),
-            NativeInst::LoopInit { counter } => m::loop_init(self, *counter, at),
-            NativeInst::LoopHead { counter, min, max, greedy, exit } => m::loop_head(self, (*counter, *min, *max), (*greedy, *exit), at),
-            NativeInst::LoopIterate { start } => m::loop_iterate(self, *start, at),
-            NativeInst::EmptyCheck { start } => m::empty_check(self, *start, at),
-            NativeInst::LoopTail { counter, start, min, head } => m::loop_tail(self, (*counter, *start, *min, *head), at),
-            _ => unreachable!("`instruction` handles the others"),
-        }
     }
 
     /// Ends the current block where `step` goes.
@@ -77,7 +56,7 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         self.store_register(register, value);
     }
 
-    fn taken_end(&mut self, test: NativeTest, from: M::Word, to: M::Word) -> M::Word {
+    fn taken_end(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
         self.scan(test, from, to)
     }
 
@@ -110,11 +89,11 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         self.push_resume(Resume::Greedy(pc - 1), floor, position);
     }
 
-    fn push_lazy(&mut self, pc: u32, _: NativeTest, ceiling: M::Word, position: M::Word) {
+    fn push_lazy(&mut self, pc: u32, _: UnitTest, ceiling: M::Word, position: M::Word) {
         self.push_resume(Resume::Lazy(pc - 1), ceiling, position);
     }
 
-    fn last_passing(&mut self, test: NativeTest, floor: M::Word, end: M::Word) -> Option<M::Word> {
+    fn last_passing(&mut self, test: UnitTest, floor: M::Word, end: M::Word) -> Option<M::Word> {
         Some(self.scan_back(test, floor, end))
     }
 
@@ -122,7 +101,7 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         self.push_greedy(pc, floor, position);
     }
 
-    fn keep_lazy(&mut self, pc: u32, test: NativeTest, ceiling: M::Word, position: M::Word) {
+    fn keep_lazy(&mut self, pc: u32, test: UnitTest, ceiling: M::Word, position: M::Word) {
         self.push_lazy(pc, test, ceiling, position);
     }
 
@@ -153,38 +132,114 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         self.b.raw_select(within, zero, reach)
     }
 
-    // The backward instructions, backreferences, dispatch tables and classes of strings keep a
-    // program interpreted (`Program::native_inst`) until the emitter reads the program itself (TOD-2078 step 2).
-    fn run_start(&mut self, _: NativeTest, _: M::Word, _: M::Word) -> M::Word {
-        unreachable!("a native plan holds no backward repeat")
+    fn run_start(&mut self, test: UnitTest, from: M::Word, to: M::Word) -> M::Word {
+        self.scan_down(test, from, to)
     }
 
-    fn dispatch_on(&mut self, _: M::Word, _: u32, _: impl FnMut(&mut Self, (u32, u32)) -> Step<M::Word>) -> Step<M::Word> {
-        unreachable!("a native plan holds no dispatch table")
+    fn same_units(&mut self, (from, to): (M::Word, M::Word), at: M::Word, (ignore_case, unicode): (bool, bool)) -> M::Word {
+        let (head, body, step, done) = (self.b.new_block(), self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let (expected, actual) = (self.b.block_parameter(head, Lane::I64), self.b.block_parameter(head, Lane::I64));
+        let same = self.b.block_parameter(done, Lane::I8);
+        let (held, failed) = (self.b.raw_const(Lane::I8, 1), self.b.raw_const(Lane::I8, 0));
+        self.b.goto(head, &[from, at]);
+        self.b.enter_open(head);
+        let inside = self.compare(Relation::UnsignedLess, expected, to);
+        self.b.branch_if(inside, (body, &[]), (done, &[held]));
+        self.b.enter_open(body);
+        let (left, right) = (self.unit_at(expected), self.unit_at(actual));
+        let mut equal = self.compare(Relation::Equal, left, right);
+        if ignore_case {
+            // An ASCII unit and its case partner are one character where folding says so.
+            let differ = self.b.raw_binary(Binary::Xor, left, right);
+            let partners = self.compare_constant(Relation::Equal, differ, i64::from(CASE_BIT));
+            let folds = self.in_mask(self.plan.folds[usize::from(unicode)], left);
+            let folded = self.b.raw_binary(Binary::And, partners, folds);
+            equal = self.b.raw_binary(Binary::Or, equal, folded);
+        }
+        self.b.branch_if(equal, (step, &[]), (done, &[failed]));
+        self.b.enter_open(step);
+        let (expected, actual) = (self.b.raw_binary_imm(Binary::Add, expected, 1), self.b.raw_binary_imm(Binary::Add, actual, 1));
+        self.b.goto(head, &[expected, actual]);
+        self.b.enter_open(done);
+        same
     }
 
-    fn class_ends(&mut self, _: u32, _: M::Word, _: bool, _: u32) -> (M::Word, M::Word) {
-        unreachable!("a native plan holds no class of strings")
+    fn push_greedy_back(&mut self, pc: u32, ceiling: M::Word, position: M::Word) {
+        self.push_resume(Resume::GreedyBack(pc - 1), ceiling, position);
     }
 
-    fn same_units(&mut self, _: (M::Word, M::Word), _: M::Word, _: (bool, bool)) -> M::Word {
-        unreachable!("a native plan holds no backreference")
+    fn push_lazy_back(&mut self, pc: u32, _: UnitTest, floor: M::Word, position: M::Word) {
+        self.push_resume(Resume::LazyBack(pc - 1), floor, position);
     }
 
-    fn push_greedy_back(&mut self, _: u32, _: M::Word, _: M::Word) {
-        unreachable!("a native plan holds no backward repeat")
+    fn keep_greedy_back(&mut self, pc: u32, ceiling: M::Word, position: M::Word) {
+        self.push_greedy_back(pc, ceiling, position);
     }
 
-    fn push_lazy_back(&mut self, _: u32, _: NativeTest, _: M::Word, _: M::Word) {
-        unreachable!("a native plan holds no backward repeat")
+    fn keep_lazy_back(&mut self, pc: u32, test: UnitTest, floor: M::Word, position: M::Word) {
+        self.push_lazy_back(pc, test, floor, position);
     }
 
-    fn keep_greedy_back(&mut self, _: u32, _: M::Word, _: M::Word) {
-        unreachable!("a native plan holds no backward repeat")
+    fn guard(&mut self, guard: u32) -> Admission<UnitTest> {
+        self.plan.guards[guard as usize]
     }
 
-    fn keep_lazy_back(&mut self, _: u32, _: NativeTest, _: M::Word, _: M::Word) {
-        unreachable!("a native plan holds no backward repeat")
+    fn lookaround(&mut self, _: (bool, u32), at: Cursor<M::Word>) -> Step<M::Word> {
+        self.look(at.pc);
+        Step::Branched
+    }
+
+    fn look_succeed(&mut self, at: Cursor<M::Word>) -> Step<M::Word> {
+        self.look_succeed(at.pc);
+        Step::Branched
+    }
+
+    /// The table's intervals as a chain of range tests, each ending in its arm's code; an
+    /// ASCII subject reaches only their ASCII part.
+    fn dispatch_on(&mut self, unit: M::Word, table: u32, mut arm: impl FnMut(&mut Self, (u32, u32)) -> Step<M::Word>) -> Step<M::Word> {
+        let plan = self.plan;
+        for interval in plan.dispatches[table as usize].iter().filter(|interval| interval.lo < NATIVE_ASCII_UNITS) {
+            let hit = self.in_range(unit, (interval.lo, interval.hi.min(NATIVE_ASCII_UNITS - 1)));
+            let (taken, next) = (self.b.new_block(), self.b.new_block());
+            self.branch(hit, taken, next);
+            self.b.enter_open(taken);
+            let step = arm(self, (interval.first, interval.count));
+            self.finish_step(step);
+            self.b.enter_open(next);
+        }
+        self.fail();
+        Step::Branched
+    }
+
+    /// The class's matches come from `native_class_ends`, which pushes the shorter ones as
+    /// choice frames itself.
+    fn class_ends(&mut self, class: u32, position: M::Word, backward: bool, pc: u32) -> (M::Word, M::Word) {
+        let choice = self.resume_id(Resume::Choice(pc));
+        let top = self.top();
+        let arguments = [
+            Emit::constant(self, self.plan.classes as i64),
+            Emit::constant(self, i64::from(class) << 1 | i64::from(backward)),
+            self.bytes,
+            self.length,
+            position,
+            top,
+            self.stack_end,
+            Emit::constant(self, choice),
+        ];
+        let ends = self.b.call_leaf(native_class_ends as *const () as usize, &arguments);
+        let overflowed = self.compare_constant(Relation::Equal, ends, CLASS_OVERFLOW as i64);
+        let fits = self.b.new_block();
+        self.branch(overflowed, self.overflow, fits);
+        self.b.enter_open(fits);
+        let found = self.compare_constant(Relation::NotEqual, ends, CLASS_NONE as i64);
+        let count = self.b.raw_binary_imm(Binary::ShiftRightUnsigned, ends, i64::from(CLASS_COUNT_SHIFT));
+        let zero = Emit::constant(self, 0);
+        let count = self.b.raw_select(found, count, zero);
+        let pushed = self.b.raw_binary_imm(Binary::Mul, count, FRAME_BYTES);
+        let top = self.b.raw_binary(Binary::Add, top, pushed);
+        self.b.define_variable(self.top, top);
+        let end = self.b.raw_binary_imm(Binary::And, ends, i64::from(u32::MAX));
+        (found, end)
     }
 
     fn require(&mut self, flag: M::Word) -> bool {

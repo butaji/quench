@@ -15,11 +15,12 @@ const DISPATCH_MAX_RANGES: usize = 256;
 
 /// The units from `lo` through `hi`, whose branches are `Program::lists[first..first + count]`
 /// (their entry pcs, in branch order).
-pub(super) struct Interval {
-    lo: u32,
-    hi: u32,
-    first: u32,
-    count: u32,
+#[derive(Clone, Copy)]
+pub struct Interval {
+    pub lo: u32,
+    pub hi: u32,
+    pub first: u32,
+    pub count: u32,
 }
 
 /// Sorted, disjoint intervals of the units some branch can begin with.
@@ -108,6 +109,12 @@ impl Compiler {
             intervals.push(Interval { lo, hi, first, count });
         }
         Ok(Dispatch { intervals: intervals.into_boxed_slice() })
+    }
+}
+
+impl Dispatch {
+    pub(super) fn intervals(&self) -> &[Interval] {
+        &self.intervals
     }
 }
 
