@@ -14,7 +14,7 @@ use crate::bytecode::Operand;
 use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::typed_ir::Representation;
 use crate::staged::math::FloatUnary;
-use crate::staged::{Comparison, Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, op_kind, step_arith_of, step_flow_of, step_generic_of, step_of};
+use crate::staged::{Comparison, Concrete, Domain, Int32, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, op_kind, step_arith_of, step_flow_of, step_generic_of, step_of};
 use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
 
@@ -176,7 +176,7 @@ fn bitwise_row<const K: u8, const D: u8, const A: u8>(mut frame: Places) -> Out 
         return finish(frame, done);
     }
     let mut stage = Concrete::from_hole(0);
-    let (Some(x), Some(y)) = (frame.int32_operand(&mut stage, left, ()), frame.int32_operand(&mut stage, right, ())) else {
+    let (Some(x), Some(y)) = (frame.int32_operand(&mut stage, left, ()).map(Int32::word), frame.int32_operand(&mut stage, right, ()).map(Int32::word)) else {
         return Out::Exit(frame.s);
     };
     let (x, y) = (x as u32 as i32, y as u32 as i32);
@@ -206,9 +206,9 @@ fn copy_row(mut frame: Places) -> Out {
 fn guard_row<const D: u8>(mut frame: Places) -> Out {
     let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
     let proved = match D {
-        PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word, Representation::Int32)),
+        PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word.word(), Representation::Int32)),
         MEMINT => frame.int_operand(&mut stage, operand, ()).map(|_| (0, Representation::Tagged)),
-        PINF.. => frame.number_operand(&mut stage, operand, ()).map(|bits| (bits, Representation::Float64)),
+        PINF.. => frame.number_operand(&mut stage, operand, ()).map(|bits| (bits.word(), Representation::Float64)),
         _ => frame.prove_number(&mut stage, LEFT, ()).map(|()| (0, Representation::Tagged)),
     };
     let Some((value, rep)) = proved else { return Out::Taken(frame.s) };
@@ -406,9 +406,9 @@ fn imul_row<const SPEC: bool>(mut frame: Places) -> Out {
 #[inline(always)]
 fn clz32_row(mut frame: Places) -> Out {
     let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
-    let uint32 = match frame.int_operand(&mut stage, operand, ()) {
+    let uint32 = match frame.int_operand(&mut stage, operand, ()).map(Int32::word) {
         Some(word) => Some(word as u32),
-        None => frame.number_operand(&mut stage, operand, ()).and_then(|bits| crate::value::exact_uint32(f64::from_bits(bits))),
+        None => frame.number_operand(&mut stage, operand, ()).and_then(|bits| crate::value::exact_uint32(f64::from_bits(bits.word()))),
     };
     let Some(uint32) = uint32 else { return Out::Exit(frame.s) };
     frame.write(&mut stage, DEST, u64::from(crate::staged::math::leading_zeros(uint32)), Representation::Int32);

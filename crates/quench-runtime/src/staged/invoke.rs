@@ -119,6 +119,21 @@ pub trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// The call's leading argument words where the frame reads them from places outside the caller's
+    /// window (a pinned register's value), which the window fill writes first; the window's slots
+    /// for them are not read. `None` where every argument is in its register.
+    #[inline(always)]
+    fn call_words(&self) -> Option<&[u64]> {
+        None
+    }
+
+    /// The registers the admitted callee's window fills, where the frame reads them at admission
+    /// (`call_room`) rather than fixing them in the plan; `None` for the plan's.
+    #[inline(always)]
+    fn call_fill(&self) -> Option<u16> {
+        None
+    }
+
     /// The method `atom` (method site `site`) of `receiver`, loaded through the frame's property
     /// rows; `None` where the frame has no plan for it, leaving at `miss` a method that is not there.
     #[inline(always)]
@@ -137,6 +152,12 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     /// record); `None` where the plan's global is the constant itself.
     #[inline(always)]
     fn call_global(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
+    /// The base an accessor's call binds (`Receiver::Base`).
+    #[inline(always)]
+    fn call_base(&mut self, _stage: &mut S) -> Option<S::Word> {
         None
     }
 
@@ -301,6 +322,7 @@ fn receiver_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fr
         Receiver::This { path: None } => frame.field_this(stage, miss),
         Receiver::This { path: Some((atom, cache_site)) } =>
             get_field(stage, frame, FieldBase::THIS, FieldLookup::Atom { atom, base: FieldBase::THIS, cache_site }, miss),
+        Receiver::Base => frame.call_base(stage),
         Receiver::Allocated => None,
     }
 }
@@ -347,13 +369,21 @@ pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
 #[inline(always)]
 pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
     (site, plan, registers): (&Invocation, &DirectPlan, u16)) -> Option<()> {
-    let passed = match site.arguments {
-        Arguments::Window { first, count } => Passed::Window { arguments: stage.add_imm(file, word_bytes(first)), count },
-        Arguments::List(list) => Passed::List { file, registers: frame.call_list(list)? },
-    };
-    let prefix: &[u64] = match plan.bound {
+    let constants: &[u64] = match plan.bound {
         Some(bound) => frame.call_constants(bound.arguments)?,
         None => &[],
+    };
+    // A bound function's arguments come first; else the words the frame read from their places.
+    let (prefix, held) = match frame.call_words() {
+        Some(words) if constants.is_empty() => (words, words.len() as u16),
+        _ => (constants, 0),
+    };
+    let passed = match site.arguments {
+        Arguments::Window { first, count } if held <= count =>
+            Passed::Window { arguments: stage.add_imm(file, word_bytes(first + held)), count: count - held },
+        Arguments::Window { .. } => return None,
+        Arguments::List(list) if held == 0 => Passed::List { file, registers: frame.call_list(list)? },
+        Arguments::List(_) => return None,
     };
     fill_call(stage, top, prefix, passed, registers);
     Some(())
@@ -379,7 +409,7 @@ fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fra
     if let Some(control) = frame.call_activate(stage, this, room) {
         return Some(Direct::Activated(control));
     }
-    fill_arguments(stage, frame, file, room.top, (site, &plan, plan.registers))?;
+    fill_arguments(stage, frame, file, room.top, (site, &plan, frame.call_fill().unwrap_or(plan.registers)))?;
     let entered = frame.call_enter(stage, this, room)?;
     let receiver = constructs.then_some(this);
     let value = complete_call(stage, entered.status, entered.word, receiver, plan.returned, entered.unfinished)?;

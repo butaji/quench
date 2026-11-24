@@ -1743,15 +1743,33 @@ impl ProgramStore {
         }
     }
 
-    /// Record another interpreter entry and return true exactly once when a
-    /// cold unsupported root reaches the threshold. Terminal attempt state
-    /// prevents repeated compile failures from turning hot calls into work.
-    pub fn note_wasm_tier_entry(&mut self, id: ProgramId, function: u32) -> bool {
-        let (policy, tiers) = (self.wasm_module_compile, self.tiers);
-        let Some(entry) = self.entry_mut(id) else {
-            return false;
-        };
-        entry.jit_tiers.wasm_promotes_roots(policy) && entry.jit_tiers.note_wasm_entry(tiers, function, false)
+    /// Whether a root tier may take `function` of Wasm module `id` (`wasm_activation::offer_entry`):
+    /// the module promotes its hot roots one by one, the function is small enough, and the code
+    /// budget could keep the artifact (a compile it could not keep is work thrown away).
+    pub fn wasm_root_admissible(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id).is_some_and(|entry| {
+            entry.residual.kind == crate::bytecode::ProgramKind::Wasm
+                && entry.jit_tiers.wasm_promotes_roots(self.wasm_module_compile)
+                && entry.residual.function_get(function as usize).is_some_and(|function| {
+                    function.code.len() <= crate::vm::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                })
+        }) && self.wasm_tier_has_room()
+    }
+
+    /// Records one entry of `function` of Wasm module `id` toward its root compile; whether the
+    /// compile is due. The entry that reaches the threshold claims the one attempt, so repeated
+    /// compile failures never turn hot calls into work; a `handoff` entry (the lane's, which
+    /// hands the compile to the general loop) finds it due without claiming it.
+    pub fn note_wasm_root_entry(&mut self, id: ProgramId, function: u32, handoff: bool) -> bool {
+        let tiers = self.tiers;
+        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_entry(tiers, function, handoff))
+    }
+
+    /// Whether the whole compile of program `id` holds `function`, borrow-only.
+    pub fn has_compiled_function(&self, id: ProgramId, function: usize) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.compiled.as_ref()?.as_ref())
+            .is_some_and(|program| program.has_function(function))
     }
 
     /// Credit `function` with one interpreter entry's worth of loop work, short of the
@@ -1863,34 +1881,6 @@ impl ProgramStore {
         self.jit_code_cache
             .release(JitArtifactKind::WasmTierRoot, artifacts, bytes);
         true
-    }
-
-    /// Count a nonterminal `CallKnown` activation that stays in the fast
-    /// interpreter lane. On the threshold call, leave the count unchanged and
-    /// hand it to the general dispatcher, whose normal entry hook records the
-    /// final observation and claims the one-shot compile attempt.
-    pub fn note_wasm_tier_lane_entry(&mut self, id: ProgramId, function: u32) -> bool {
-        let (policy, tiers) = (self.wasm_module_compile, self.tiers);
-        let Some(entry) = self.entry_mut(id) else {
-            return false;
-        };
-        // A due whole-module compile hands the call to the general dispatcher, which claims it.
-        if entry.jit_tiers.note_wasm_module_work(1, policy) {
-            return true;
-        }
-        if !entry.jit_tiers.wasm_promotes_roots(policy) {
-            return false;
-        }
-        if !entry
-            .residual
-            .function_get(function as usize)
-            .is_some_and(|function| {
-                function.code.len() <= crate::vm::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
-            })
-        {
-            return false;
-        }
-        entry.jit_tiers.note_wasm_entry(tiers, function, true) && self.wasm_tier_has_room() // else nothing is attempted
     }
 
     pub fn wasm_tier(
@@ -3354,4 +3344,54 @@ pub(super) fn zeroed_counts(len: usize) -> Vec<std::cell::Cell<u8>> {
     // SAFETY: `Cell<u8>` has the layout of `u8`, so the zeroed buffer is `len` counts of 0,
     // owned by the new vector alone.
     unsafe { Vec::from_raw_parts(zeros.as_mut_ptr().cast::<std::cell::Cell<u8>>(), zeros.len(), zeros.capacity()) }
+}
+
+/// The tiers of a Wasm entry made where no compile is (`wasm_activation::offer_entry`): the lane's.
+/// They count the entry as the general loop's tiers do, and hand a compile it makes due to the
+/// general loop, which makes it at the same call (`Compile::Leave`).
+pub struct HandoffTiers<'a> {
+    pub store: &'a mut ProgramStore,
+    pub program: ProgramId,
+}
+
+impl crate::staged::wasm_activation::WasmEntryTiers for HandoffTiers<'_> {
+    type Code = Rc<crate::vm::engine_types::CompiledProgram>;
+
+    #[inline(always)]
+    fn whole(&mut self, function: u32) -> Option<Self::Code> {
+        self.store.compiled(self.program).flatten().filter(|compiled| compiled.has_function(function as usize))
+    }
+
+    #[inline(always)]
+    fn note_module_work(&mut self) -> bool {
+        self.store.note_wasm_module_entry(self.program)
+    }
+
+    fn compile_whole(&mut self) -> crate::staged::wasm_activation::Compile {
+        crate::staged::wasm_activation::Compile::Leave
+    }
+
+    #[inline(always)]
+    fn root(&mut self, function: u32) -> Option<Self::Code> {
+        self.store.wasm_tier_containing(self.program, function)
+    }
+
+    #[inline(always)]
+    fn root_admissible(&mut self, function: u32) -> bool {
+        self.store.wasm_root_admissible(self.program, function)
+    }
+
+    #[inline(always)]
+    fn note_root_entry(&mut self, function: u32) -> bool {
+        self.store.note_wasm_root_entry(self.program, function, true)
+    }
+
+    fn compile_root(&mut self, _function: u32) -> crate::staged::wasm_activation::Compile {
+        crate::staged::wasm_activation::Compile::Leave
+    }
+
+    #[inline(always)]
+    fn note_fallback(&mut self, function: u32) {
+        self.store.has_compiled_function_or_note_fallback(self.program, function as usize);
+    }
 }

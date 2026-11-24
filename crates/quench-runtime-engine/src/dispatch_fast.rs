@@ -5758,14 +5758,13 @@ fn activate_getter_in_lane(
     materialize_running_leaf_in_lane(cx);
     let vm = unsafe { vm(cx) };
     if let Some(target) = resolved.or_else(|| script_target_in_lane(cx, getter)).filter(|target| !target.forwards()) {
+        // A getter is an ordinary call: the one call row where it is plain, else the kept activation.
+        if let Some(entered) = getters::invoke_getter(cx, r, ip, &target, base) {
+            return Ok(entered);
+        }
         let Some(this) = call_this_in_lane(vm, &target, base) else {
             return Err(exit(ip));
         };
-        // A getter is an ordinary call: the plain header push where the call is plain
-        // (getters-as-calls.md), else the kept activation's checks and push.
-        if let Some(entered) = getters::lane_push_getter(cx, r, ip, &target, this) {
-            return Ok(entered);
-        }
         return activate_kept_in_lane::<false>(cx, r, ip, &target, &[], this);
     }
     // A getter that makes closures, of this program or another, runs as the environment
@@ -9022,7 +9021,7 @@ macro_rules! lane_plain_activation {
 use lane_plain_activation;
 
 pub(crate) mod leaf_calls;
-use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
+use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, AdmittedWindow, materialize_running_leaf_in_lane, leaf_call_handler};
 
 /// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
 /// leaf's activation is pending (`script_call_leaf_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
@@ -13483,8 +13482,7 @@ fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers, target: &
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
     unsafe {
-        lane_enter_leaf(cx, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
-        ((*cx).registers, (*cx).base) = (window, (*target.view).records());
+        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
     }
 }
 
@@ -16149,16 +16147,11 @@ fn return_script_frame_in_lane(
         if matches!(call.completion, CallCompletion::DerivedConstructor) && !vm.is_object_like(value) {
             value = completed.this;
         }
-        match call.completion.take_generator() {
-            Some(resume) => {
-                let stop = quench_runtime::vm::generator::MaterializedStop::Returned;
-                value = vm.finish_materialized_generator_step(completed, resume, value, stop);
-                note_allocation(vm);
-            }
-            None => {
-                vm.finish_frame_scopes(&completed);
-                vm.pool_frame(completed);
-            }
+        // Retired as the general loop's return retires it (`Vm::retire_returned_frame`).
+        let (retired_value, generator) = vm.retire_returned_frame(completed, &mut call.completion, value, None);
+        value = retired_value;
+        if generator {
+            note_allocation(vm);
         }
         retired = true;
         // A call into another program returns to the caller's, which the loop executes again.
@@ -17740,9 +17733,9 @@ fn specialize_proved_arrays(decoded: &[WideInstruction], records: &mut [LaneInst
 
 /// The `FUSED_ROWS` pairs whose second row is `Jump`, by their index in that table: a row followed
 /// by a backward jump, which `FUSED_TARGET` may fuse with the target run at the jump's target.
-/// `(StoreLocalPlain, Jump)`, `(Move, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
-/// the pairs; the const check below names each one's second row.
-const BACK_EDGE_PAIRS: [usize; 4] = [31, 32, 33, 37];
+/// `(StoreLocalPlain, Jump)`, `(Move, Jump)` and `(IncDec, Jump)` are the pairs (the check names each one's second row);
+/// not `(WasmI32AddImmediate, Jump)`: only a Wasm body has that add, and a target run's rows are JavaScript rows.
+const BACK_EDGE_PAIRS: [usize; 3] = [31, 32, 37];
 const _: () = {
     let mut k = 0;
     while k < BACK_EDGE_PAIRS.len() {
@@ -17959,7 +17952,7 @@ fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
             )
         };
     }
-    let pairs = [pair!(31), pair!(32), pair!(33), pair!(37)];
+    let pairs = [pair!(31), pair!(32), pair!(37)];
     let lone = lone_target_forms();
     let lone_copy = lone_copy_target_forms();
     let back = jump_row::<JUMP>(true) as *const ();
@@ -17979,18 +17972,19 @@ fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
         let Some(head) = jump.checked_sub(1) else {
             // No record before the jump: a lone back jump.
             if let Some(handler) = lone_target_handler(&lone, &lone_copy, records, target, &after) {
+                records[jump].mode = target_test_word(|k| records.get(target + k));
                 records[jump].handler = handler as *const ();
             }
             continue;
         };
         let first = records[head].handler;
         if let Some((_, forms)) = pairs.iter().find(|(first_row, _)| first_row(first)) {
-            // A move or an add of a constant at a hot OSR latch keeps its own record, as `fuse_rows` keeps it.
-            let latch = osr_loop && (plain_row::<{ quench_runtime::staged::MOVE_ROW }>(first) || plain_row::<{ quench_runtime::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
+            // A move at a hot OSR latch keeps its own record, as `fuse_rows` keeps it.
+            let latch = osr_loop && plain_row::<{ quench_runtime::staged::MOVE_ROW }>(first);
             if !latch {
                 if let Some(handler) = target_run_handler(forms, target_handler, &after) {
                     let handler = fixed_comparison(handler, &records[target]);
-                    let word = target_word(&records[jump]);
+                    let word = target_word(&records[jump]) | target_test_word(|k| records.get(target + k));
                     records[head].handler = handler as *const ();
                     records[head].mode = word;
                 }
@@ -18002,9 +17996,18 @@ fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
             continue;
         }
         if let Some(handler) = lone_target_handler(&lone, &lone_copy, records, target, &after) {
+            records[jump].mode = target_test_word(|k| records.get(target + k));
             records[jump].handler = handler as *const ();
         }
     }
+}
+
+/// The target test code of a back edge's record `mode` (`lane_frame::TARGET_TEST_SHIFT`): the code of the run's first record (`run(k)`) past its prefix and copy rows where that is a plain comparison jump.
+fn target_test_word<'a>(run: impl Fn(usize) -> Option<&'a LaneInstruction>) -> u64 {
+    use quench_runtime::staged::{COMPARE_JUMP_ROW as TEST, FUSED_TARGET_COPY_ROWS as C, FUSED_TARGET_PREFIX_ROWS as P};
+    let passes = |h| plain_row::<{ P[0] }>(h) || plain_row::<{ P[1] }>(h) || plain_row::<{ P[2] }>(h) || plain_row::<{ C[0] }>(h);
+    let test = (0..3).map_while(&run).find(|record| !passes(record.handler)).filter(|record| plain_row::<TEST>(record.handler));
+    test.map_or(0, |record| u64::from(lane_frame::target_comparison(record)) << lane_frame::TARGET_TEST_SHIFT)
 }
 
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
@@ -18033,7 +18036,9 @@ fn update_fusion(update: &LaneInstruction, jump: &LaneInstruction, target: Optio
         if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
             // SAFETY: as the read of `target_handler`.
             let handler = fixed_comparison(handler, unsafe { &*target });
-            return Some((handler, target_word(jump)));
+            // SAFETY: as `after`: the run's rows fall through to records of the view.
+            let test = target_test_word(|k| Some(unsafe { &*(0..k).fold(target, |at, _| following(at)) }));
+            return Some((handler, target_word(jump) | test));
         }
     }
     let pair = lane_frame::fused_row::<{ quench_runtime::staged::INC_DEC_ROW }, { quench_runtime::staged::JUMP_ROW }, { quench_runtime::staged::FUSED_PLAIN }>(backward);

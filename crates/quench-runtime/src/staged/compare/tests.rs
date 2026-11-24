@@ -70,7 +70,7 @@ impl NumericFrame<Concrete> for Probe {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no int operand") }
     fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let number = Value::from_bits(self.registers[usize::from(operand.register_index()?)]).as_number()?;
-        Some(u64::from(crate::value::number_to_u32(number)))
+        Some(unsafe { crate::staged::Int32::proven(u64::from(crate::value::number_to_u32(number))) })
     }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no Number operand") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }

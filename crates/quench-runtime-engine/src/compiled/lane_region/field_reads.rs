@@ -161,7 +161,7 @@ impl Lowering<'_, '_> {
         // register holds that word, and the box, which nothing else reads, folds away; an exit
         // boxes the register on its own path.
         let bits = self.builder.func.dfg.resolve_aliases(value);
-        if let Some(number) = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number) {
+        if let Some(number) = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| number.word()) {
             self.set_number(state, destination, number);
             return;
         }

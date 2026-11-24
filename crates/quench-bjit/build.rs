@@ -197,7 +197,7 @@ fn main() {
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
         watch(&sources::watched(manifest));
-        fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
+        fs::write(&table, VARIANTS.map(|(name, _)| library_source(&out, name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
     let instances = instances(&listed, arch);
@@ -250,6 +250,11 @@ fn main() {
         }
 
     }
+    // Only a fresh target dir (no shard object yet) uses the shared cache, fetching what it can and publishing what it
+    // compiles. On the project's network mount a lookup or a write could hold the build for seconds (a write once for
+    // 30 s), which an incremental build, whose shards are on its own disk, gains nothing from.
+    println!("cargo::rerun-if-env-changed={SHARED_CACHE_VAR}");
+    FRESH.store(jobs.iter().all(|job| !job.object.is_file()), Ordering::Relaxed);
     let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&jobs, (arch, read), *cpu))).collect();
     // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
     if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
@@ -261,8 +266,11 @@ fn main() {
     }
     let mut tables = String::new();
     for (name, _) in VARIANTS {
-        let (_, (rows, counts)) = built.iter().find(|(built_name, _)| *built_name == name).unwrap_or(&built[0]);
-        tables += &library_source(name, *counts, rows);
+        // A variant this target does not build is the first one's table under its name.
+        tables += &match built.iter().find(|(built_name, _)| *built_name == name) {
+            Some((_, (rows, counts))) => library_source(&out, name, *counts, rows),
+            None => format!("pub(crate) use self::{} as {name};\n", built[0].0),
+        };
     }
     fs::write(&table, tables).unwrap();
     snapshot::Snapshot::save(&out, &all_watched);
@@ -313,7 +321,17 @@ struct Counts {
     unchained: usize,
 }
 
-type Rows = Vec<(String, String)>;
+/// A library's rows as (name, row), sorted by name once merged (`shards::merge`).
+type Rows = Vec<(String, TableRow)>;
+
+/// One checked row's table entry: its code laid out hot part first, the hot part's length, and its relocations as
+/// (offset, class, index, addend).
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct TableRow {
+    code: Vec<u8>,
+    hot_len: usize,
+    relocs: Vec<(u16, u8, u8, i32)>,
+}
 
 /// The rustc that builds the stencil objects: cargo's, else the one on the path.
 fn rustc() -> PathBuf {
@@ -497,6 +515,10 @@ fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRo
     // Unset, one worker per core that the box's available memory holds a shard's rustc for (`SHARD_MEMORY`).
     let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
         .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get).min(memory_workers()));
+    // The shards that compile first, then the cached ones, whose rows the workers then read and check beside the
+    // last compiles rather than ahead of them.
+    let mut order: Vec<usize> = (0..jobs.len()).collect();
+    order.sort_by_key(|&shard| jobs[shard].cached() || jobs[shard].unchanged_by_edit());
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..shards::workers(jobs.len(), parallelism))
@@ -504,8 +526,8 @@ fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRo
                 scope.spawn(|| {
                     let mut done = Vec::new();
                     loop {
-                        let shard = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(job) = jobs.get(shard) else { return done };
+                        let Some(&shard) = order.get(next.fetch_add(1, Ordering::Relaxed)) else { return done };
+                        let job = jobs[shard];
                         compile(job, shard);
                         done.push(stencil_rows(arch, read(&fs::read(&job.object).unwrap())));
                     }
@@ -529,11 +551,8 @@ fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRo
 /// Every compile holds `MEMORY` for reading. A rustc the kernel killed (out of memory beside the other shards) is
 /// run once more holding it for writing, alone, once the shards in flight are done.
 fn compile(job: &Shard, shard: usize) {
-    let shared = shared_cache().map(|dir| dir.join(format!("{}.o", job.key.trim())));
+    // A shard cached here asks nothing of the shared cache: a lookup per shard on its network mount was ~40 s.
     if job.cached() {
-        if let Some(shared) = shared.as_ref().filter(|path| !path.is_file()) {
-            publish(&job.object, shared);
-        }
         if !job.reach_file().is_file() {
             job.write_reach();
         }
@@ -544,6 +563,7 @@ fn compile(job: &Shard, shard: usize) {
         return;
     }
     let _ = fs::remove_file(&job.key_file);
+    let shared = shared_cache().map(|dir| dir.join(format!("{}.o", job.key.trim())));
     if let Some(shared) = shared.as_ref().filter(|path| path.is_file())
         && fs::copy(shared, &job.object).is_ok()
     {
@@ -599,13 +619,21 @@ fn compile(job: &Shard, shard: usize) {
 }
 
 /// Copies a built object into the shared cache: beside its final name, then renamed, so a reader in another build
-/// never sees half an object. A failure leaves the cache without it.
+/// never sees half an object. A failure leaves the cache without it. The copy to the cache runs after this script, from
+/// a local copy named by the cache entry (which a later build cannot overwrite with other contents): a write to the
+/// cache's network mount can block for tens of seconds, which held the shard's worker and the build's tail.
 fn publish(object: &Path, shared: &Path) {
-    let partial = shared.with_extension(format!("{}.part", std::process::id()));
-    if fs::copy(object, &partial).is_ok() {
-        let _ = fs::rename(&partial, shared);
+    let Some(name) = shared.file_name() else { return };
+    let staged = object.with_file_name("publish").join(name);
+    if fs::create_dir_all(staged.parent().unwrap()).is_err() || fs::copy(object, &staged).is_err() {
+        return;
     }
-    let _ = fs::remove_file(&partial);
+    let script = r#"part="$2.$$.part"; cp "$1" "$part" && mv "$part" "$2"; rm -f "$part" "$1""#;
+    let detached = Command::new("sh").args(["-c", script, "publish"]).arg(&staged).arg(shared)
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+    if detached.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
 }
 
 /// The command a shard's rustc runs under: at the lowest CPU priority where `nice` is on the path (Unix), so the
@@ -693,11 +721,16 @@ const SHARED_CACHE_DEFAULT: &str = "/mnt/project-files/research/stencil-cache";
 /// take it in place of running rustc.
 fn shared_cache() -> Option<&'static Path> {
     static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    if !FRESH.load(Ordering::Relaxed) {
+        return None;
+    }
     DIR.get_or_init(shared_cache_dir).as_deref()
 }
 
+/// Whether this build's target dir has no shard object yet (`main`): only then is there a shared cache.
+static FRESH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn shared_cache_dir() -> Option<PathBuf> {
-    println!("cargo::rerun-if-env-changed={SHARED_CACHE_VAR}");
     let dir = match env::var_os(SHARED_CACHE_VAR) {
         Some(dir) if dir.is_empty() => return None,
         Some(dir) => PathBuf::from(dir),
@@ -744,7 +777,7 @@ fn memory_workers() -> usize {
 }
 
 /// One row as (name, table entry), checked; adds to `counts` what `checks` counted.
-fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, String) {
+fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, TableRow) {
     check_no_return(arch, &row.name, &row.code);
     check_call(arch, &row.name, &row.code);
     let relocs = relocations(arch, row);
@@ -753,14 +786,34 @@ fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, Str
     let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
     counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
     counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
-    (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
+    (row.name.clone(), TableRow { code, hot_len, relocs })
 }
 
-/// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.
-fn library_source(table: &str, counts: Counts, rows: &[(String, String)]) -> String {
-    let body: String = rows.iter().map(|(_, row)| row.as_str()).collect();
+/// The static `RawLibrary` named `table`: what `checks` counted over its rows, and the rows as files of bytes in
+/// `out` that rustc reads as they are (`include_bytes!`, the layout `quench_bjit::rustc::RawLibrary` reads). As Rust
+/// literals the table was ~47 MB of source with two pointers a row, ~25 s of writing and compiling on every
+/// stencil edit.
+fn library_source(out: &Path, table: &str, counts: Counts, rows: &[(String, TableRow)]) -> String {
+    let (mut index, mut names, mut code, mut relocs) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut placed = std::collections::HashMap::new();
+    for (name, row) in rows {
+        // Rows with the same code bytes share them.
+        let start = *placed.entry(row.code.as_slice()).or_insert_with(|| { code.extend_from_slice(&row.code); code.len() - row.code.len() });
+        let fields = [names.len(), name.len(), start, row.code.len(), row.hot_len, relocs.len() / 8, row.relocs.len()];
+        index.extend(fields.into_iter().flat_map(|field| u32::try_from(field).expect("a stencil table field past u32").to_le_bytes()));
+        names.extend_from_slice(name.as_bytes());
+        for &(offset, class, at, addend) in &row.relocs {
+            relocs.extend(offset.to_le_bytes().into_iter().chain([class, at]).chain(addend.to_le_bytes()));
+        }
+    }
+    let part = |what: &str, bytes: &[u8]| {
+        let file = out.join(format!("stencils_{table}_{what}.bin"));
+        fs::write(&file, bytes).unwrap();
+        format!("{what}: include_bytes!({file:?})")
+    };
+    let parts = [part("index", &index), part("names", &names), part("code", &code), part("relocs", &relocs)].join(", ");
     let Counts { framed, unchained } = counts;
-    format!("pub(crate) static {table}: RawLibrary = RawLibrary {{ stencils_with_stack_frame: {framed}, stencils_not_ending_in_continuation: {unchained}, rows: &[\n{body}] }};\n")
+    format!("pub(crate) static {table}: RawLibrary = RawLibrary {{ stencils_with_stack_frame: {framed}, stencils_not_ending_in_continuation: {unchained}, {parts} }};\n")
 }
 
 /// The relocations of one row as (offset, class, index, addend).

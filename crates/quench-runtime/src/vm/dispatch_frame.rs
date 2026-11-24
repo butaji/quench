@@ -1427,6 +1427,27 @@ impl Vm {
         }
     }
 
+    /// The retirement of a frame that returned `value` to its pending call of `completion`, which
+    /// the general loop's return and the lane's return of a VM frame
+    /// (`return_script_frame_in_lane`) both make: a generator's activation finishes its step,
+    /// stopped as `stop` says (returned where `None`), and its result is the call's value; any
+    /// other frame ends its scopes and goes back to the pool, its value unchanged. True where a
+    /// generator's step finished, which may have allocated.
+    pub fn retire_returned_frame(&mut self, completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
+        stop: Option<super::generator::MaterializedStop>) -> (Value, bool) {
+        match completion.take_generator() {
+            Some(resume) => {
+                let stop = stop.unwrap_or(super::generator::MaterializedStop::Returned);
+                (self.finish_materialized_generator_step(completed, resume, value, stop), true)
+            }
+            None => {
+                self.finish_frame_scopes(&completed);
+                self.pool_frame(completed);
+                (value, false)
+            }
+        }
+    }
+
     /// Drops the `with` scopes a finished (not suspended) activation entered.
     #[inline(always)]
     pub fn finish_frame_scopes(&mut self, frame: &Frame) {
@@ -2431,22 +2452,16 @@ impl Vm {
                         // which its frame holds as it retires (`complete_user_frame` reads the same).
                         let derived_this = matches!(pending.completion, CallCompletion::DerivedConstructor)
                             .then_some(completed_frame.this);
-                        match pending.completion.take_generator() {
-                            Some(resume) => {
-                                let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
-                                value = self.finish_materialized_generator_step(completed_frame, resume, value, stop);
-                            }
-                            None => match pending.completion.take_async_request() {
-                                // SAFETY: as for `p` at the top of the loop; the frame's program.
-                                Some(root) => match self.settle_materialized_request(unsafe { &*executing_residual }, completed_frame, root, value, yielded.take()) {
-                                    Ok(promise) => value = promise,
-                                    Err(error) => request_error = Some((pending.call_pc, error)),
-                                },
-                                None => {
-                                    self.finish_frame_scopes(&completed_frame);
-                                    self.pool_frame(completed_frame);
-                                }
+                        match pending.completion.take_async_request() {
+                            // SAFETY: as for `p` at the top of the loop; the frame's program.
+                            Some(root) => match self.settle_materialized_request(unsafe { &*executing_residual }, completed_frame, root, value, yielded.take()) {
+                                Ok(promise) => value = promise,
+                                Err(error) => request_error = Some((pending.call_pc, error)),
                             },
+                            None => {
+                                let stop = if pending.completion.is_generator() { yielded.take() } else { None };
+                                value = self.retire_returned_frame(completed_frame, &mut pending.completion, value, stop).0;
+                            }
                         }
                         frame = pending.caller;
                         if let Some(saved) = pending.caller_program.take() {

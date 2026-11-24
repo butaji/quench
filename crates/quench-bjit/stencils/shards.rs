@@ -52,8 +52,8 @@ pub fn workers(shards: usize, parallelism: usize) -> usize {
 
 /// The rows (name, table entry) of every shard as one list sorted by name; a name two shards
 /// both define is a build error.
-pub fn merge(shards: impl IntoIterator<Item = Vec<(String, String)>>) -> Vec<(String, String)> {
-    let mut rows: Vec<(String, String)> = shards.into_iter().flatten().collect();
+pub fn merge<T: Ord>(shards: impl IntoIterator<Item = Vec<(String, T)>>) -> Vec<(String, T)> {
+    let mut rows: Vec<(String, T)> = shards.into_iter().flatten().collect();
     rows.sort();
     if let Some((row, _)) = rows.iter().zip(rows.iter().skip(1)).find(|(row, next)| row.0 == next.0) {
         panic!("stencil {} is defined by two shards", row.0);

@@ -27,6 +27,8 @@ macro_rules! need {
 
 #[cfg(fixed_rows)]
 mod call_rows;
+#[cfg(fixed_rows)]
+mod direct_frame;
 #[macro_use]
 #[path = "row_catalog.rs"]
 mod row_catalog;

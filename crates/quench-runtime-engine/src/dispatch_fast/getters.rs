@@ -5,20 +5,98 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::AccessorForward;
 use quench_runtime::vm::accessor_cache::GetterEntryRead;
+use quench_runtime::staged::call_getter::{step_getter_call_of, step_getter_invoke_of, GetterAnswer, GetterCall, GetterKind};
+use quench_runtime::staged::{Concrete, Step};
+use super::lane_frame::LaneControl;
 
-/// Memoizes at the accessor entry of cache index `site` that proves `object` what `getter`,
-/// whose call on `object` a read just answered, returns for receivers of its layout
-/// (`Vm::memoize_getter_answer`, `getter_forward`).
+/// The lane's primitives of a getter's answer without its call (`call_getter::step_getter_answer_of`),
+/// memoized at the field cache site `memo` names.
+#[derive(Clone, Copy)]
+pub(crate) struct LaneGetterAnswer<'a> {
+    pub(crate) cx: *mut LaneContext,
+    pub(crate) memo: GetterMemo<'a>,
+}
+
+/// Where a lane getter's answer is memoized: nowhere, a site operand, or a read record's site
+/// unless the read is nested (read only where an answer is memoized).
+#[derive(Clone, Copy)]
+pub(crate) enum GetterMemo<'a> {
+    Off,
+    Site(u16),
+    Read(&'a LaneInstruction),
+}
+
+impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
+    type Target = ScriptCallTarget;
+    type Value = Value;
+
+    #[inline(always)]
+    fn kind(&mut self, _: &mut Concrete, getter: Value) -> GetterKind {
+        match unsafe { vm(self.cx) }.function_record(getter) {
+            Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) => GetterKind::Native,
+            _ => GetterKind::Script,
+        }
+    }
+
+    #[inline(always)]
+    fn target(&mut self, _: &mut Concrete, getter: Value) -> Option<ScriptCallTarget> {
+        script_target_in_lane(self.cx, getter)
+    }
+
+    #[inline(always)]
+    fn pure_native(&mut self, _: &mut Concrete, getter: Value, base: Value) -> Option<Value> {
+        unsafe { vm(self.cx) }.pure_native_getter_value(getter, base)
+    }
+
+    /// Where a read answers the call (`CallEntry::answered_by_read`).
+    #[inline(always)]
+    fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: Value) -> Option<Value> {
+        let cx = self.cx;
+        if target.entry == CallEntry::Reads {
+            // A getter only the general path has called has not run its read in the lane yet: it
+            // takes the kind its first run would.
+            // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
+            let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
+            if unsafe { (*entry).handler } == row_returning_field_first::<NOT_LEAF> as *const () {
+                requicken(entry, returning_field_first_kind::<NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
+            }
+        // SAFETY: a cached target of the running program.
+        } else if let Some(value) = unsafe { constant_body_value(target) } {
+            // `return k`: no receiver to bind, nothing to read.
+            return Some(value);
+        } else if !target.entry.answered_by_read() {
+            return None;
+        }
+        let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, base)?;
+        // SAFETY: the running lane's context, a frameless target of its program.
+        unsafe { call_read_in_lane(cx, target, ReadArguments::NONE, this) }
+    }
+
+    /// Memoizes at the site's accessor entry the forward that proves `base` what the getter
+    /// returns for receivers of its layout (`Vm::memoize_getter_answer`, `getter_forward`); a
+    /// capture read (`() => binding`) has none.
+    #[inline(always)]
+    fn memoize(&mut self, _: &mut Concrete, target: &ScriptCallTarget, getter: Value, base: Value) {
+        let site = match self.memo {
+            _ if target.entry == CallEntry::ReadsCapture => return,
+            GetterMemo::Site(site) => site,
+            GetterMemo::Read(i) if i.b != quench_runtime::bytecode::FieldBase::NESTED => i.c,
+            _ => return,
+        };
+        memoize_getter(unsafe { vm(self.cx) }, site, getter, base);
+    }
+}
+
+/// `LaneGetterAnswer::memoize` at the site operand `site`, out of line.
 #[inline(never)]
-pub(crate) fn lane_memoize_getter(cx: *mut LaneContext, getter: Value, object: Value, site: usize) {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-    let Some(target) = vm.script_call_entry(getter).map(|entry| unsafe { *entry }) else {
-        return;
-    };
-    // SAFETY: a cached target of the running program.
-    if let Some(answer) = unsafe { getter_forward(vm, &target, object) } {
-        vm.memoize_getter_answer(object, site, getter, answer);
+fn memoize_getter(vm: &mut Vm, site: u16, getter: Value, base: Value) {
+    let site = vm.field_cache_index(site);
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects. The
+    // entry is a cached target of the running program.
+    if let Some(entry) = vm.script_call_entry(getter).map(|entry| unsafe { *entry })
+        && let Some(answer) = unsafe { getter_forward(vm, &entry, base) }
+    {
+        vm.memoize_getter_answer(base, site, getter, answer);
     }
 }
 
@@ -81,39 +159,46 @@ unsafe fn constant_body_value(target: &ScriptCallTarget) -> Option<Value> {
     constant.then(|| first.constant())
 }
 
-/// What the frameless script getter `target` returns for a read of `object` where a read
-/// answers its call (`CallEntry::answered_by_read`); `None` for any other getter.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-#[inline(always)]
-unsafe fn lane_script_getter_answer(cx: *mut LaneContext, target: &ScriptCallTarget, object: Value) -> Option<Value> {
-    if target.entry == CallEntry::Reads {
-        // A getter only the general path has called has not run its read in the lane yet: it
-        // takes the kind its first run would.
-        // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
-        let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        if unsafe { (*entry).handler } == row_returning_field_first::<NOT_LEAF> as *const () {
-            requicken(entry, returning_field_first_kind::<NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
-        }
-    } else if let Some(value) = unsafe { constant_body_value(target) } {
-        // `return k`: no receiver to bind, nothing to read.
-        return Some(value);
-    } else if !target.entry.answered_by_read() {
-        return None;
-    }
-    let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, object)?;
-    unsafe { call_read_in_lane(cx, target, ReadArguments::NONE, this) }
+/// The lane's primitives of a getter's call for the read record `i` at `ip` (`step_getter_call_of`).
+struct LaneGetter<'a> {
+    answer: LaneGetterAnswer<'a>,
+    r: Registers,
+    ip: Ip,
+    i: &'a LaneInstruction,
 }
 
-/// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
-/// answers the getter's call, else the getter's activation
-/// (`activate_getter_in_lane`), whose completion is the read's value. Only a read that writes its
-/// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
-/// activation, which only the getter's activation does. A native getter is called in place
-/// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
-/// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
-/// registers are the context's again.
+impl<'a> GetterCall<Concrete> for LaneGetter<'a> {
+    type Answer = LaneGetterAnswer<'a>;
+    type Out = Result<(Registers, Ip), Ip>;
+    #[inline(always)]
+    fn answers(&mut self) -> &mut LaneGetterAnswer<'a> {
+        &mut self.answer
+    }
+
+    /// The registers are the context's again: the answer's read may have made the activations frames.
+    #[inline(always)]
+    fn answer(&mut self, _: &mut Concrete, value: Value) -> Self::Out {
+        let r = unsafe { (*self.answer.cx).registers };
+        r.set(self.i.a, value);
+        Ok((r, following(self.ip)))
+    }
+
+    #[inline(always)]
+    fn call_native(&mut self, _: &mut Concrete, getter: Value, base: Value) -> Self::Out {
+        call_native_getter(self.answer.cx, self.ip, self.i, getter, base)
+    }
+
+    #[inline(always)]
+    fn call(&mut self, _: &mut Concrete, getter: Value, base: Value, target: Option<ScriptCallTarget>) -> Self::Out {
+        activate_getter_in_lane(self.answer.cx, self.r, self.ip, getter, base, target)
+    }
+}
+
+/// A lane read of `base` at the record `i` (at `ip`) that met `getter`: the staged getter call
+/// (`call_getter::step_getter_call_of`). Only a read that writes its register is answered in
+/// place: a returning read (`RETURN_REGISTER`) completes its activation, which only the getter's
+/// activation does. `Err` after a native call that raised leaves the error in `Vm::lane_raised`.
+/// A nested read's answer is not memoized.
 pub(crate) fn lane_read_getter(
     cx: *mut LaneContext,
     r: Registers,
@@ -122,37 +207,23 @@ pub(crate) fn lane_read_getter(
     getter: Value,
     base: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    let reads = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
-    // A native getter is answered or called in place; a script getter's target, resolved
-    // once, is answered by its read or activated.
-    if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.function_record(getter) {
-        let native = *native;
-        if reads {
-            if let Some(value) = unsafe { vm(cx) }.pure_native_getter_value(getter, base) {
-                let r = unsafe { (*cx).registers };
-                r.set(i.a, value);
-                return Ok((r, following(ip)));
-            }
-            return lane_native_getter(cx, ip, i, native, getter, base);
-        }
-        return activate_getter_in_lane(cx, r, ip, getter, base, None);
+    let writes = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
+    let mut call = LaneGetter { answer: LaneGetterAnswer { cx, memo: GetterMemo::Read(i) }, r, ip, i };
+    step_getter_call_of(&mut Concrete::new(std::ptr::null()), &mut call, getter, base, writes)
+}
+
+/// `LaneGetter::call_native`: the native getter called as a lane `Call` of it with no arguments;
+/// out of line, so script getters keep their code.
+#[cold]
+#[inline(never)]
+fn call_native_getter(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.function_record(getter) else {
+        unreachable!("`kind` named the getter native");
+    };
+    match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, *native, getter, base, &[])) {
+        Resumed::At(r, next, _) => Ok((r, next)),
+        Resumed::Exit(next) => Err(next),
     }
-    let target = script_target_in_lane(cx, getter);
-    if reads
-        && let Some(target) = &target
-        && let Some(value) = unsafe { lane_script_getter_answer(cx, target, base) }
-    {
-        // A capture read (`() => binding`) has no forward (`getter_forward` declines it after
-        // a target probe), so its memo attempt is skipped: no change but the probe's cost.
-        if i.b != quench_runtime::bytecode::FieldBase::NESTED && target.entry != CallEntry::ReadsCapture {
-            let site = unsafe { vm(cx) }.field_cache_index(i.c);
-            lane_memoize_getter(cx, getter, base, site);
-        }
-        let r = unsafe { (*cx).registers };
-        r.set(i.a, value);
-        return Ok((r, following(ip)));
-    }
-    activate_getter_in_lane(cx, r, ip, getter, base, target)
 }
 
 /// What a getter site's `GetField` record does after one walk of its site's accessor entries
@@ -193,93 +264,57 @@ pub(crate) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &L
     }
 }
 
-/// The getter call `activate_kept_in_lane` makes for `target`, of the running program, with
-/// receiver `this` and no arguments, as the plain call it is (getters-as-calls.md): the
-/// header goes below the window straight from the read's words (`enter_plain_window`),
-/// with no `Activation` value, no `LaneStack::header_flags` test and no keeping-record words. Its
-/// completion is `Plain`: the return writes the read record's register (`write_call_result`
-/// of the call record's `a`, which a `GetField` names as its destination). `None`, which
-/// changes nothing, for any call that is not such a plain call: a returning read (whose
-/// admission the kept path tests), a `with` scope, an entry that does not activate its
-/// registers alone (keeping, environment, settling), another program's target, or no room
-/// by the plain compare; `activate_kept_in_lane` takes those. A leaf getter that binds its
-/// receiver runs as a leaf instead, with no header (`lane_run_leaf_getter`).
+/// A script getter's call through the one call row (`step_getter_invoke_of`, getters-as-calls.md) over
+/// the read's frame (`lane_frame::getter_frame`): `target` the read resolved, `base` bound as any call's
+/// receiver. `None`, which changes nothing, for a call that is not plain: the kept activation takes it.
 #[inline(always)]
-pub(crate) fn lane_push_getter(
-    cx: *mut LaneContext,
-    r: Registers,
-    ip: Ip,
-    target: &ScriptCallTarget,
-    this: Value,
-) -> Option<(Registers, Ip)> {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: `ip` is a record of the running view.
-    let returns = unsafe { (*ip).a } & quench_runtime::bytecode::RETURN_REGISTER != 0;
-    if returns
-        || vm.with_scope_entered
-        || !target.entry.activates()
-        || target.forwards()
-        || target.settles()
-        || target.program() != unsafe { (*cx).program }
-    {
-        return None;
+pub(crate) fn invoke_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, base: Value) -> Option<(Registers, Ip)> {
+    let function = u16::try_from(target.function).ok()?;
+    let mut frame = super::lane_frame::getter_frame(cx, r, ip, target, base, getter_activation);
+    // SAFETY: `ip` is the read record of the running view.
+    let result = unsafe { (*ip).a };
+    match step_getter_invoke_of(&mut Concrete::new(std::ptr::null()), &mut frame, (), function, result) {
+        Step::Control(LaneControl::Resumed(Resumed::At(registers, next, _))) => Some((registers, next)),
+        _ => None,
     }
-    // The plain depth the push writes past, loaded once; at depth 0 the room test refreshes
-    // the bound for the pushes above (`LaneStack::plain_room`).
-    let depth = vm.lane_stack.plain.depth.get();
-    debug_assert_eq!(vm.lane_stack.plain_room(depth, target.room), activation_room_in_lane(vm, target));
-    if !vm.lane_stack.plain_room(depth, target.room) {
-        return None;
-    }
-    // A leaf getter (`get isGP() { return this._type == GP }`) runs as the plain call of a leaf
-    // runs it: on a window at the stack's top with no header (`lane_run_leaf_getter`).
-    if leaf_binds_this(target.entry.leaf_form())
-        && let Some(entered) = unsafe { lane_run_leaf_getter(cx, r, ip, target, this) }
-    {
-        vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-        return Some(entered);
-    }
-    // No values passed: the fill leaves every parameter `undefined`, as `push_passed_in_lane`'s
-    // of an empty slice does (a dangling, aligned pointer, never read for a count of 0).
-    let none: &[Value] = &[];
-    let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
-    let entered = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
-    // `enter_window_of_in_lane`'s `COUNTED`: a getter's call is no proved call, so the tier's
-    // diagnostics still count its entry.
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    Some(entered)
 }
 
-/// `lane_push_getter`'s call of a leaf getter `target` that binds its receiver (`THIS_LEAF`,
-/// `CONTEXT_LEAF`), as `script_call_leaf_miss` makes a leaf call (`lane_run_leaf`) with no
-/// values: the window at the lane stack's top filled, the leaf record entered with the read
-/// record at `ip` as its call. The leaf's return (`lane_return_leaf_header`,
-/// `complete_leaf_in_lane` → `lane_resume_leaf_caller`) writes the call record's `a`, which a
-/// `GetField` names as its destination, and resumes at `following(ip)`: what the plain
-/// header's return does (`write_call_result`). A materialization (`materialize_leaf_in_lane`)
-/// pushes the activation `lane_push_getter`'s plain push would have: the read record as its
-/// call, `Completion::Plain`, no values. Only receiver-binding forms are taken: the others'
-/// materialization rebinds `this` from the call record's `c`, which a `GetField` holds its site
-/// in, not a register. `None`, which changes nothing, where the cache does not hold the
-/// target's entry in place (the leaf record names its cache entry, which must stay put while
-/// the leaf runs, so a resolved copy is not enough).
+/// The getter's hand-off past the frame's admission (`CallActivation`): a receiver-binding leaf runs as a
+/// leaf (`leaf_getter`), else the plain header is pushed at `depth` with no values. Its entry is counted.
 ///
 /// # Safety
-/// `cx` is the running lane's context, with no leaf running; `target` passed
-/// `lane_push_getter`'s plain tests (running program, no `with` scope, room by `plain_room`);
-/// `this` is its binding of the read's base (`call_this_in_lane`).
+/// As `plain_call_activation`, `record` the read record at `ip`.
 #[inline(always)]
-unsafe fn lane_run_leaf_getter(
-    cx: *mut LaneContext,
-    r: Registers,
-    ip: Ip,
-    target: &ScriptCallTarget,
-    this: Value,
-) -> Option<(Registers, Ip)> {
+unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *const LaneInstruction, target: *const ScriptCallTarget,
+    depth: usize, this: Value) -> (Registers, Ip) {
+    let cx = context.cast::<LaneContext>();
+    let (vm, target) = unsafe { (vm(cx), &*target) };
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    if leaf_binds_this(target.entry.leaf_form())
+        && let Some(entered) = unsafe { leaf_getter(cx, r, ip, target, this) }
+    {
+        return entered;
+    }
+    // No values: every parameter `undefined` (a dangling, aligned pointer, never read for a count of 0).
+    let none: &[Value] = &[];
+    let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
+    enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this)
+}
+
+/// A receiver-binding leaf getter `target` (`THIS_LEAF`, `CONTEXT_LEAF`) run as a leaf call with no
+/// values, the read record at `ip` its call: its return writes the record's `a` and resumes at
+/// `following(ip)`, as the plain return does (the other forms rebind `this` from the record's `c`, a
+/// `GetField`'s site). `None` where the cache does not hold the target's entry in place (the leaf names
+/// its cache entry, which must stay put while it runs).
+///
+/// # Safety
+/// `cx` is the running lane's context, with no leaf running; `target` passed the frame's plain
+/// admission (running program, no `with` scope, room by `plain_room`); `this` is its binding.
+#[inline(always)]
+unsafe fn leaf_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, this: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a getter's read materializes a running leaf first");
     let form = target.entry.leaf_form();
-    debug_assert!(leaf_binds_this(form));
     // SAFETY: as `Vm::script_call_entry`; read in place before anything touches the cache, and
     // nothing in the leaf resolves a target or collects.
     let entry = unsafe { &*vm.script_call_entry(target.callee)? };
@@ -288,45 +323,15 @@ unsafe fn lane_run_leaf_getter(
     }
     // SAFETY: as `lane_run_leaf`'s window: `plain_room` proved the admitted room, which the
     // stack's length covers only once the leaf is materialized; no collection runs before.
-    let registers = unsafe {
-        let registers = vm.lane_stack.values.top();
-        fill_admitted_window(registers, usize::from(entry.fill), usize::from(entry.registers));
-        Registers(registers)
-    };
-    // SAFETY: the program store keeps a derived view alive with its program; the tier claims
-    // no leaf's view, so its run starts at its first record.
-    let base = unsafe { (*entry.view).records() };
-    // SAFETY: the running lane's context; the window is the callee's, and `ip`, the read
-    // record, belongs to the caller's live view.
     unsafe {
-        lane_enter_leaf(cx, registers, ip, r, entry, form, 0, this, None);
-        (*cx).registers = registers;
-        (*cx).base = base;
-    }
-    Some((registers, base))
-}
-
-/// `lane_read_getter` of a native getter: called as a lane `Call` of it with no arguments is.
-/// Out of line, so script getters' activations keep their code.
-#[cold]
-#[inline(never)]
-fn lane_native_getter(
-    cx: *mut LaneContext,
-    ip: Ip,
-    i: &LaneInstruction,
-    native: Native,
-    getter: Value,
-    base: Value,
-) -> Result<(Registers, Ip), Ip> {
-    match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, native, getter, base, &[])) {
-        Resumed::At(r, next, _) => Ok((r, next)),
-        Resumed::Exit(next) => Err(next),
+        let window = Registers(vm.lane_stack.values.top());
+        Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None))
     }
 }
 
 script_handler! {
     /// The generated getter read (`GETTER_THIS`, `GETTER_REGISTER`) past its hint: the read the
-    /// getter's answer makes (`AccessorCall::getter_answer`), whose getter's own field becomes the
+    /// getter's answer makes (`step_getter_answer_of`), whose getter's own field becomes the
     /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `get_field_getter_miss`.
     #[inline(never)]
     pub(crate) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {

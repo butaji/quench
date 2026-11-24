@@ -290,7 +290,7 @@ fn inc_dec_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
     let miss = frame.miss();
     let operation = if decrement { crate::vm::operations::NumberArithmetic::Subtract } else { crate::vm::operations::NumberArithmetic::Add };
     let operand = crate::bytecode::Operand::register(source);
-    let (word, fact) = match frame.int_operand(stage, operand, miss) {
+    let (word, fact) = match frame.int_operand(stage, operand, miss).map(super::Int32::word) {
         Some(value) => {
             let one = stage.i32_constant(1);
             let (sum, overflowed) = stage.int_arithmetic(operation, value, one);
@@ -299,7 +299,7 @@ fn inc_dec_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
                 None => return inc_dec_local_by_vm(stage, frame, local, source, decrement),
             }
         }
-        None => match frame.number_operand(stage, operand, miss) {
+        None => match frame.number_operand(stage, operand, miss).map(super::Float64::word) {
             Some(number) => {
                 let one = stage.f64_constant(1.0);
                 (stage.float_arithmetic(operation, number, one), frame.number_fact())

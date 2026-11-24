@@ -236,10 +236,10 @@ struct LocalProofs {
     /// Immutable reads; receiver definitions and memory effects retire these facts.
     fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
     /// Pure ToInt32 results, separate from each source value's semantic type.
-    int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
+    int32_projections: smallvec::SmallVec<[(ir::Value, quench_runtime::staged::Int32<ir::Value>); INLINE_NUMBER_PROJECTIONS]>,
     /// Number views of tagged values a test proved (`frame_operands::register_number_value`): a
     /// second register defined as the same value (`p.x * p.x`) takes the double without a test.
-    numbers: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
+    numbers: smallvec::SmallVec<[(ir::Value, quench_runtime::staged::Float64<ir::Value>); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
     /// The dense capture views (values, length) a frameless admission of an inlined callee gave, by the
@@ -261,7 +261,7 @@ struct LocalProofs {
 impl LocalProofs {
     /// Notes that tagged `bits` read as the double `number`: the most recent views win a full
     /// list (a loop body that proves many Numbers keeps the ones its next reads name).
-    pub(crate) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
+    pub(crate) fn note_number(&mut self, bits: ir::Value, number: quench_runtime::staged::Float64<ir::Value>) {
         if self.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { self.numbers.remove(0); }
         self.numbers.push((bits, number));
     }
@@ -911,12 +911,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// Prove an exact int32 view once; a Number already in a float register
     /// needs no canonical encoding or tag test to establish that projection.
     fn int(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-        frame::register_int_value(&mut self.builder, &mut self.registers, state, register, otherwise)
+        frame::register_int_value(&mut self.builder, &mut self.registers, state, register, otherwise).word()
     }
 
     /// Prove Number only for a new untrusted value; later uses read its unboxed view.
     fn number(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-        frame::register_number_value(&mut self.builder, &mut self.registers, state, register, otherwise)
+        frame::register_number_value(&mut self.builder, &mut self.registers, state, register, otherwise).word()
     }
 
     fn canonicalize(&mut self, state: &mut State, pc: usize) {
@@ -1287,13 +1287,13 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn operand_number(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
         frame::operand_number(&mut self.builder, &mut self.registers, state, &self.program.constants,
-            operand, otherwise)
+            operand, otherwise).map(quench_runtime::staged::Float64::word)
     }
 
     /// An operand's int32 value, statically where it is a constant int32.
     fn operand_int(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
         frame::operand_int(&mut self.builder, &mut self.registers, state, &self.program.constants,
-            operand, otherwise)
+            operand, otherwise).map(quench_runtime::staged::Int32::word)
     }
 
     /// An operand's tagged bits: its register's, or its immediate constant's.
@@ -2394,7 +2394,7 @@ pub(crate) fn lower(
 impl Lowering<'_, '_> {
     /// A bitwise operand's ToInt32 (`frame::operand_to_int32`).
     fn operand_to_int32(&mut self, state: &mut State, operand: Operand, exit: ir::Block) -> Option<ir::Value> {
-        frame::operand_to_int32(&mut self.builder, &mut self.registers, state, &self.program.constants, operand, exit)
+        frame::operand_to_int32(&mut self.builder, &mut self.registers, state, &self.program.constants, operand, exit).map(quench_runtime::staged::Int32::word)
     }
 
     /// Whether only the result's ToInt32 is read of `register`, written at `pc`: the next
@@ -3404,7 +3404,7 @@ impl Lowering<'_, '_> {
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
         for (bits, number) in super::take_boxed_numbers() {
             let bits = self.builder.func.dfg.resolve_aliases(bits);
-            state.proofs.note_number(bits, number);
+            state.proofs.note_number(bits, unsafe { quench_runtime::staged::Float64::proven(number) }); // Fact: `bits` boxes this binary64.
         }
         debug_assert!(!matches!(step, quench_runtime::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         // A step that ends in a branch makes no environment: only a closure's allocation, a value step, does.
@@ -3563,8 +3563,8 @@ impl Lowering<'_, '_> {
         self.branch_if(both, (numbers, &[]), (others, &[]));
         self.builder.switch_to_block(numbers);
         // A Number a test already projected in this block is reused; the decode is only for the rest.
-        let left_value = match frame::known_number(&self.builder, state, left) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, left, exit) };
-        let right_value = match frame::known_number(&self.builder, state, right) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, right, exit) };
+        let left_value = match frame::known_number(&self.builder, state, left) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, left, exit) };
+        let right_value = match frame::known_number(&self.builder, state, right) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, right, exit) };
         let number_equal = self.raw_compare(Relation::FloatEqual, left_value, right_value);
         self.goto(join, &[number_equal]);
         self.builder.switch_to_block(others);
@@ -3667,8 +3667,8 @@ impl Lowering<'_, '_> {
         let int_holds = quench_runtime::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
         self.goto(join, &[int_holds]);
         self.builder.switch_to_block(number_block);
-        let left = match frame::known_number(&self.builder, state, left) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, left, exit) };
-        let right = match frame::known_number(&self.builder, state, right) { Some(number) => number, None => emit_js_tagged_number(&mut self.builder, right, exit) };
+        let left = match frame::known_number(&self.builder, state, left) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, left, exit) };
+        let right = match frame::known_number(&self.builder, state, right) { Some(number) => number.word(), None => emit_js_tagged_number(&mut self.builder, right, exit) };
         let number_holds = quench_runtime::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left, right, NumberRelationDomain::Float64);
         self.goto(join, &[number_holds]);
         self.builder.switch_to_block(join);
@@ -4344,7 +4344,7 @@ impl Lowering<'_, '_> {
                 Representation::Float64 => {
                     let bits = self.builder.func.dfg.resolve_aliases(value);
                     match state.proofs.numbers.iter().find(|(source, _)| *source == bits) {
-                        Some((_, number)) => *number,
+                        Some((_, number)) => number.word(),
                         None => emit_js_tagged_number(&mut self.builder, value, exit),
                     }
                 }

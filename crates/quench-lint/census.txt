@@ -1,6 +1,6 @@
 opcodes 290
 opcodes_with_staged_operation 286
-derivation_debt_lines 49
+derivation_debt_lines 48
 tier_opcode_arms 0
 frame_structs 8
 exit_mechanisms 2
@@ -13,5 +13,6 @@ epoch_fields 27
 guest_reentries 147
 wall_clock_reads 36
 stable_epoch_reads 4
-tier_runtime_internals 195
-lane_dispatch_lines 38842
+tier_runtime_internals 194
+unguarded_number_proofs 6
+lane_dispatch_lines 38763

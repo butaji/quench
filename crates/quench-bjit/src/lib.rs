@@ -298,15 +298,6 @@ extern crate quench_stencils;
 pub mod rustc {
     use super::{class, trailing_jump, Imm32, Reloc, Stencil, NEXT};
 
-    /// A stencil as `build.rs` read it from the object: relocations as (offset, class, index, addend).
-    #[doc(hidden)]
-    pub struct RawStencil {
-        pub name: &'static str,
-        pub code: &'static [u8],
-        pub hot_len: usize,
-        pub relocs: &'static [(u16, u8, u8, i32)],
-    }
-
     /// One CPU variant's stencils, and what `build.rs` counted over them (`build/checks.rs`).
     #[doc(hidden)]
     pub struct RawLibrary {
@@ -314,8 +305,18 @@ pub mod rustc {
         pub stencils_with_stack_frame: usize,
         /// Rows whose hot path does not end with the continuation jump the stitcher drops.
         pub stencils_not_ending_in_continuation: usize,
-        pub rows: &'static [RawStencil],
+        /// One entry a row, sorted by name: `ROW_FIELDS` little-endian `u32`s, its name's start and length in
+        /// `names`, its code's start and length in `code`, its hot part's length, and its first relocation and
+        /// their count in `relocs`.
+        pub index: &'static [u8],
+        pub names: &'static [u8],
+        pub code: &'static [u8],
+        /// Eight bytes a relocation, as `build.rs` read it from the object: (offset `u16`, class, index, addend `i32`).
+        pub relocs: &'static [u8],
     }
+
+    /// The `u32` fields of a `RawLibrary::index` entry.
+    const ROW_FIELDS: usize = 7;
 
     // The tables are the `quench-stencils` crate's (its build compiles every row), linked into the binary by
     // `quench-layers`: the runtime crates depend on this crate alone, so they compile while the stencils build.
@@ -356,22 +357,28 @@ pub mod rustc {
 
     /// The stencil of the row function `name`, if the object has it.
     pub fn stencil(name: &str) -> Option<Stencil> {
-        let rows = library().rows;
-        let raw = &rows[rows.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
+        let library = library();
+        let (entries, _) = library.index.as_chunks::<{ 4 * ROW_FIELDS }>();
+        let field = |entry: &[u8; 4 * ROW_FIELDS], k: usize| u32::from_le_bytes(entry[4 * k..][..4].try_into().unwrap()) as usize;
+        let named = |entry: &[u8; 4 * ROW_FIELDS]| &library.names[field(entry, 0)..][..field(entry, 1)];
+        let entry = &entries[entries.binary_search_by(|entry| named(entry).cmp(name.as_bytes())).ok()?];
+        let code = &library.code[field(entry, 2)..][..field(entry, 3)];
+        let hot_len = field(entry, 4);
         let (mut relocs, mut imm32) = (Vec::new(), Vec::new());
-        for &(offset, kind, index, addend) in raw.relocs {
-            let (offset, index) = (u32::from(offset), u32::from(index));
+        for raw in library.relocs[8 * field(entry, 5)..][..8 * field(entry, 6)].chunks_exact(8) {
+            let (offset, kind, index) = (u32::from(u16::from_le_bytes([raw[0], raw[1]])), raw[2], u32::from(raw[3]));
+            let addend = i32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]]);
             match kind {
                 class::ABS32 => imm32.push(Imm32 { offset, index, negate: false, addend: addend as u32 }),
                 other => relocs.push(Reloc { offset, class: other, index, addend: i64::from(addend) }),
             }
         }
-        let len = raw.code.len();
-        let (next_jump, tail_len) = match trailing_jump(raw.code, &relocs, raw.hot_len) {
-            Some((NEXT, tail)) => (Some(raw.hot_len - tail), tail),
+        let len = code.len();
+        let (next_jump, tail_len) = match trailing_jump(code, &relocs, hot_len) {
+            Some((NEXT, tail)) => (Some(hot_len - tail), tail),
             _ => (None, 0),
         };
-        Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len: raw.hot_len })
+        Some(Stencil { code: code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len })
     }
 
     /// Stencils memoized by key (`memoized`): each is built once and leaked, so it lives for the life of the process.
