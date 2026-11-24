@@ -22,7 +22,7 @@ pub(crate) fn enable(enabled: bool, (stitch_runs, native_runs): (u32, u32)) {
 }
 
 /// The compiler `quench_regexp` asks for code: the tiers as the mode climbs them, as a
-/// JavaScript function climbs them (`jit_mode::Tier`). The stencil tier first where it runs and
+/// JavaScript function climbs them (`admission::Tier`). The stencil tier first where it runs and
 /// the target has the regexp rows, then the Cranelift tiers where they run; a `--b-jit` target
 /// without the rows compiles with Cranelift, as it did before the rows.
 fn compiler(stitch_runs: u32, native_runs: u32) -> NativeCompiler {
