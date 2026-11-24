@@ -45,6 +45,9 @@ impl IntFact {
 }
 
 impl NumberFact {
+    /// The analysis proved the value a Number (its type is a subtype of `NUMBER`).
+    #[inline]
+    pub fn of_type(ty: Type) -> Option<Self> { ty.is_subtype(Type::NUMBER).then_some(NumberFact(())) }
     /// The specializer holds the value unboxed as a binary64 (`Representation::Float64`).
     #[inline]
     pub fn of_representation(representation: Representation) -> Option<Self> {
@@ -107,7 +110,7 @@ impl<W: Copy> Float64<W> {
     #[inline(always)]
     pub fn guard<S: NumericStage<Word = W>>(stage: &mut S, tagged: W, miss: S::Miss) -> Option<Self> {
         let (double, int) = super::value::number_classes(stage, tagged);
-        stage.choose_leaving(double, #[inline(always)] |_| Some(tagged), #[inline(always)] |stage| {
+        stage.choose_leaving(double, #[inline(always)] |stage| Some(stage.f64_from_bits(tagged)), #[inline(always)] |stage| {
             stage.guard(int, miss)?;
             let low = stage.narrow(tagged);
             Some(stage.i32_to_f64(low))
@@ -157,6 +160,31 @@ impl<W: Copy> Int32<W> {
         let fits = stage.raw_compare(Relation::Equal, widened, word);
         stage.guard(fits, miss)?;
         Some(Int32(int))
+    }
+}
+
+impl<W: Copy> Int32<W> {
+    /// ToInt32 of a tagged word, as a bitwise operator reads it: an int-tagged word is its int32,
+    /// a Number truncates (`NumericStage::to_int32`), and any other word leaves at `miss`.
+    #[inline(always)]
+    pub fn guard_truncating<S: NumericStage<Word = W>>(stage: &mut S, tagged: W, miss: S::Miss) -> Option<Self>
+    where S::Miss: Copy {
+        let int = super::value::is_int(stage, tagged);
+        stage.choose_leaving(int, #[inline(always)] |stage| Some(stage.narrow(tagged)), #[inline(always)] |stage| {
+            let number = Float64::guard(stage, tagged, miss)?;
+            stage.to_int32(number.0, miss)
+        }).map(Int32)
+    }
+}
+
+impl<W: Copy> Float64<W> {
+    /// The binary64 an int32 is.
+    #[inline]
+    pub fn of_int<S: NumericStage<Word = W>>(stage: &mut S, int: Int32<W>) -> Self { Float64(stage.i32_to_f64(int.0)) }
+    /// The binary64 a signed 64-bit integer word converts to (every such word is a Number).
+    #[inline]
+    pub fn of_long<S: super::machine::MachineScalar<Word = W>>(stage: &mut S, word: W) -> Self {
+        Float64(stage.raw_unary(super::machine::Unary::FromSigned(super::machine::Lane::F64), word))
     }
 }
 

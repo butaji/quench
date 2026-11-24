@@ -124,7 +124,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The register's float64 view (`operand_number`): a Number by its fact, so no test runs.
     fn stored_number(&mut self, stage: &mut Emit<'b, 'c>, register: Register, miss: ir::Block) -> Option<ir::Value> {
         if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) { return None; }
-        super::frame::operand_number(stage.builder, self.registers, self.state, self.constants, quench_runtime::bytecode::Operand::register(register), miss)
+        super::frame::operand_number(stage.builder, self.registers, self.state, self.constants, quench_runtime::bytecode::Operand::register(register), miss).map(quench_runtime::staged::Float64::word)
     }
 
     fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {

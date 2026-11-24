@@ -14,5 +14,5 @@ guest_reentries 147
 wall_clock_reads 36
 stable_epoch_reads 4
 tier_runtime_internals 193
-unguarded_number_proofs 7
+unguarded_number_proofs 6
 lane_dispatch_lines 38712
