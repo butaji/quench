@@ -184,6 +184,8 @@ pub(crate) mod wasm_gc_callout;
 pub(crate) mod wasm_instance_switch;
 pub(crate) mod wasm_roots;
 pub(crate) mod wasm_simd_stage;
+// The one stitcher every b-jit family places its rows through.
+pub(crate) mod stitcher;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;

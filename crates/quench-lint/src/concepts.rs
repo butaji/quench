@@ -9,7 +9,7 @@
 //!   (a liveness solve, a successor table, a back-edge scan). Each is a recomputation of a fact
 //!   that should be derived once per function and read everywhere else.
 //!
-//! - The projection layers (`call-row`, `inliner`, `specializer`, `hand-clif`, `hand-stencil`):
+//! - The projection layers (`call-row`, `inliner`, `specializer`, `hand-clif`, `hand-stencil`, `stitch`):
 //!   the interpreter defines WHAT, b-jit (rustc/LLVM) and u-jit (Cranelift) define HOW and share
 //!   every layer but the last, so a second call path, inliner or specializer, or semantics
 //!   lowered by hand for one backend, is a twin.
@@ -129,6 +129,13 @@ const CONCEPTS: &[Concept] = &[
         name: "hand-stencil",
         homes: &["quench-bjit/stencils/staged.rs", "quench-bjit/stencils/staged_rows.rs", "quench-bjit/stencils/entry"],
         marks: &[Mark::Spelled("extern\"rust-preserve-none\"fn")],
+    },
+    Concept {
+        // One stitcher places every b-jit family's rows (JS, Wasm, RegExp): a family that copies
+        // and patches stencils itself places them a second way.
+        name: "stitch",
+        homes: &["quench-runtime-engine/src/compiled/stitcher.rs", "quench-bjit/src/"],
+        marks: &[Mark::Spelled("copy_patch("), Mark::Spelled("patch_successor(")],
     },
 ];
 
