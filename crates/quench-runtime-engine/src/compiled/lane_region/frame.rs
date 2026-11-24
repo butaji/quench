@@ -465,10 +465,9 @@ impl quench_runtime::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// A register its facts prove an int32: its int view, whose test (if any) never fails.
     fn held_int(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand) -> Option<Int32<ir::Value>> {
         let register = operand.register_index()?;
-        if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::INT32) { return None; }
+        let proof = quench_runtime::staged::IntFact::of_type(self.state.values[usize::from(register)].value.ty)?;
         let miss = quench_runtime::staged::NumericFrame::miss(self);
-        // Fact: the register's type is a subtype of INT32.
-        Some(unsafe { Int32::proven(register_int_value(stage.builder, self.registers, self.state, register, miss)) })
+        Some(Int32::by_fact(register_int_value(stage.builder, self.registers, self.state, register, miss), proof))
     }
 
     fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand,

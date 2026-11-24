@@ -5,7 +5,7 @@ use super::*;
 use crate::compiled::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
-use quench_runtime::staged::{NumericStage, Stage};
+use quench_runtime::staged::{Int32, IntFact, NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
@@ -158,10 +158,11 @@ pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &
             int
         }
         Representation::Tagged | Representation::Float64 => {
-            let bits = register_tagged(builder, registers, state, register);
-            let integer = is_int_tagged(builder, bits);
-            guard_unless(builder, integer, fact.value.ty.is_subtype(Type::INT32), otherwise);
-            crate::compiled::object_slots::emit(builder).narrow(bits)
+            let (bits, mut stage) = (register_tagged(builder, registers, state, register), emit(builder)); // Staged guard, or the type's proof.
+            match IntFact::of_type(fact.value.ty) {
+                Some(proof) => Int32::by_fact(stage.narrow(bits), proof).word(),
+                None => Int32::guard(&mut stage, bits, otherwise).expect("an emitted guard continues").word(),
+            }
         }
     };
     let variable = register_int(builder, registers, index);

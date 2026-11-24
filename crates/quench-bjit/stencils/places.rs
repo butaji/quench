@@ -72,7 +72,8 @@ fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
         Representation::Int32 | Representation::Int64 => Some(word),
-        Representation::Tagged => (proved || has_int_high(word)).then_some(word as u32 as u64),
+        Representation::Tagged if proved => Some(word as u32 as u64),
+        Representation::Tagged => Int32::guard(&mut stage(), word, ()).map(Int32::word),
         Representation::Float64 => {
             let narrow = truncate32(f64::from_bits(word));
             (widen(narrow as u32 as u64) == word).then_some(narrow as u32 as u64)
@@ -89,8 +90,7 @@ pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
         _ if P == CONST => Some(word),
         Representation::Float64 => Some(word),
         Representation::Int32 | Representation::Int64 => Some(widen(word)),
-        Representation::Tagged if value::is_int(&mut stage(), word) => Some(widen(word)),
-        Representation::Tagged => value::is_double(&mut stage(), word).then_some(word),
+        Representation::Tagged => Float64::guard(&mut stage(), word, ()).map(Float64::word),
     }
 }
 
