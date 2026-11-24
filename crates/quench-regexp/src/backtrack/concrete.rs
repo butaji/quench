@@ -165,6 +165,23 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn dispatch_on(&mut self, unit: u32, table: u32, mut arm: impl FnMut(&mut Self, (u32, u32)) -> Step) -> Step {
+        match self.program.dispatch_interval(table, unit) {
+            Some(branches) => arm(self, branches),
+            None => Step::Fail,
+        }
+    }
+
+    fn class_ends(&mut self, class: u32, position: usize, backward: bool, pc: u32) -> (bool, usize) {
+        let ends = self.program.classes[class as usize].ends(self.text, position, backward);
+        let Some((&first, rest)) = ends.split_first() else { return (false, position) };
+        for &end in rest.iter().rev() {
+            self.push(Frame::Choice { pc, position: end });
+        }
+        (true, first)
+    }
+
+    #[inline(always)]
     fn pick(&mut self, flag: bool, then: usize, otherwise: usize) -> usize {
         if flag { then } else { otherwise }
     }
@@ -274,15 +291,6 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     #[inline(always)]
     fn guard(&self, guard: u32) -> Admission<UnitTest> {
         self.program.guards[guard as usize]
-    }
-
-    #[inline(always)]
-    fn dispatch(&mut self, table: u32, position: usize) -> Option<u32> {
-        self.program.dispatch_target(table, self.text, position, self.stack)
-    }
-
-    fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize> {
-        self.program.classes[class as usize].ends(self.text, position, backward)
     }
 
     #[inline(always)]

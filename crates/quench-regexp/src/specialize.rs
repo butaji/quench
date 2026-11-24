@@ -23,8 +23,8 @@
 //! machine sees it as a constant and folds it.
 //!
 //! Here stays what only the interpreter runs: `Stage`, the operations on frames themselves
-//! (backtracking as `replay`), dispatch tables, classes of strings and the nested lookahead
-//! run. Their native forms are next (TOD-2078).
+//! (backtracking as `replay`) and the nested lookahead run. Their native forms are next
+//! (TOD-2078).
 
 use crate::in_units;
 // The interpreter's stage: the operations on the machine's own state.
@@ -54,14 +54,8 @@ pub(super) trait Stage: Machine<Pos = usize, Unit = u32, Flag = bool, Test = Uni
     fn pop(&mut self) -> Option<Frame>;
     /// The positions the body behind guard `guard` can start at.
     fn guard(&self, guard: u32) -> Admission<UnitTest>;
-    /// The target of dispatch table `table` for the unit at `position`, its other branches
-    /// pushed as choices.
-    fn dispatch(&mut self, table: u32, position: usize) -> Option<u32>;
     /// The test of the instruction at `pc` where it takes one unit (`Inst::Unit`).
     fn unit_follower(&self, pc: u32) -> Option<UnitTest>;
-    /// The positions a match of string class `class` at `position` ends at, longest first
-    /// (read backward: where the matches ending at `position` start).
-    fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize>;
     /// Runs the lookahead body at `body` as a nested run; whether the lookahead holds
     /// (`found != negative`), its stack effects applied.
     fn look(&mut self, body: Cursor, negative: bool) -> bool;
@@ -145,7 +139,7 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
             let guard = stage.guard(guard);
             m::guarded_split(stage, alternative, guard, at)
         }
-        Inst::Dispatch { table } => dispatch(stage, table, at),
+        Inst::Dispatch { table } => m::dispatch(stage, table, at),
         Inst::Jump(target) => Step::Continue(at.jump(target)),
         Inst::Look { negative, end } => look(stage, (negative, end), at),
         Inst::LookSucceed | Inst::Match => Step::Accept,
@@ -177,14 +171,6 @@ fn look<S: Stage>(stage: &mut S, (negative, end): (bool, u32), at: Cursor) -> St
     if holds { Step::Continue(at.jump(end)) } else { Step::Fail }
 }
 
-#[inline(always)]
-fn dispatch<S: Stage>(stage: &mut S, table: u32, at: Cursor) -> Step {
-    match stage.dispatch(table, at.position) {
-        Some(target) => Step::Continue(at.jump(target)),
-        None => Step::Fail,
-    }
-}
-
 /// The instructions a lookbehind body runs, read backward, and the classes of strings: each
 /// continues at the next pc or fails.
 #[inline(always)]
@@ -205,7 +191,7 @@ fn rare_position<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Option<usiz
         Inst::UnitRepeatBack { test, min, max, greedy } => m::unit_repeat_back(stage, (test, min, max, greedy), at),
         Inst::CaptureCloseBack { capture, temporary } => m::capture_close_back(stage, (capture, temporary), at),
         Inst::BackreferenceBack { first, count, ignore_case, unicode } => m::backreference(stage, (first, count), (ignore_case, unicode, true), at),
-        Inst::ClassWidths { class, backward } => class_widths(stage, (class, backward), at),
+        Inst::ClassWidths { class, backward } => m::class_widths(stage, (class, backward), at),
         _ => unreachable!("`registers` hands over only these"),
     };
     match step {
@@ -215,15 +201,4 @@ fn rare_position<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Option<usiz
         }
         _ => None,
     }
-}
-
-/// A class of strings: its longest match, the shorter ones kept as choices in order.
-#[inline(always)]
-fn class_widths<S: Stage>(stage: &mut S, (class, backward): (u32, bool), at: Cursor) -> Step {
-    let ends = stage.class_ends(class, at.position, backward);
-    let Some((&first, rest)) = ends.split_first() else { return Step::Fail };
-    for &end in rest.iter().rev() {
-        stage.push(Frame::Choice { pc: at.pc + 1, position: end });
-    }
-    Step::Continue(at.then_at(first))
 }

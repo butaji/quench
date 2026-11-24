@@ -1,7 +1,7 @@
 //! An alternation of branches that each begin with known units compiled to one lookup of the
 //! subject's unit (`Inst::Dispatch`), where trying each branch's guard in turn costs a test
 //! of its start units per branch at every start position.
-use super::{Beyond, Compiler, Expr, Flags, Frame, Inst, Program, Starts, Text, Unsupported, ASCII_UNITS, nullable, starts};
+use super::{Beyond, Compiler, Expr, Flags, Inst, Program, Starts, Unsupported, ASCII_UNITS, nullable, starts};
 
 /// The next unit after one: an interval ends where the next range's units begin.
 const NEXT_UNIT: u32 = 1;
@@ -112,20 +112,12 @@ impl Compiler {
 }
 
 impl Program {
-    /// The pc of the first branch that can begin with the unit at `position`, the other
-    /// branches that can being pushed as choices in order; `None` where none can.
+    /// The branches of dispatch table `table` that can begin with `unit`, as their entries'
+    /// span `(first, count)` of `Program::lists`; `None` where none can.
     #[inline(always)]
-    pub(super) fn dispatch_target<T: Text + ?Sized>(&self, table: u32, text: &T, position: usize, stack: &mut Vec<Frame>) -> Option<u32> {
-        if position >= text.len() {
-            return None;
-        }
-        let unit = text.unit(position);
+    pub(super) fn dispatch_interval(&self, table: u32, unit: u32) -> Option<(u32, u32)> {
         let intervals = &self.dispatches[table as usize].intervals;
         let at = intervals.partition_point(|interval| interval.hi < unit);
-        let interval = intervals.get(at).filter(|interval| interval.lo <= unit)?;
-        let pcs = &self.lists[interval.first as usize..(interval.first + interval.count) as usize];
-        let (first, rest) = pcs.split_first()?;
-        stack.extend(rest.iter().rev().map(|&pc| Frame::Choice { pc, position }));
-        Some(*first)
+        intervals.get(at).filter(|interval| interval.lo <= unit).map(|interval| (interval.first, interval.count))
     }
 }

@@ -108,6 +108,17 @@ pub fn backreference<M: Machine>(machine: &mut M, (first, count): (u32, u32), fl
     captured_units(machine, (from, to), flags, at)
 }
 
+/// `Inst::ClassWidths`: a class of strings, read either way. Its longest match runs, the
+/// shorter ones kept as choices in order.
+#[inline(always)]
+pub fn class_widths<M: Machine>(machine: &mut M, (class, backward): (u32, bool), at: At<M>) -> Next<M> {
+    let (found, end) = machine.class_ends(class, at.position, backward, at.pc + 1);
+    if !machine.require(found) {
+        return Step::Fail;
+    }
+    Step::Continue(at.then_at(end))
+}
+
 /// The captured units `from..to` at the position (read `backward`, ending there).
 #[inline(always)]
 fn captured_units<M: Machine>(machine: &mut M, (from, to): (M::Pos, M::Pos), (ignore_case, unicode, backward): (bool, bool, bool), at: At<M>) -> Next<M> {

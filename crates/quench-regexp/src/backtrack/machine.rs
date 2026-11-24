@@ -11,7 +11,7 @@ use super::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTe
 
 // The instructions a lookbehind body runs, read backward, and backreferences either way.
 mod backward;
-pub use backward::{backreference, capture_close_back, give_back_back, take_more_back, unit_back, unit_repeat_back};
+pub use backward::{backreference, class_widths, capture_close_back, give_back_back, take_more_back, unit_back, unit_repeat_back};
 
 /// A static count that exceeds any subject (`Inst::UnitRepeat`, `Inst::LoopHead`).
 pub const UNBOUNDED: u32 = u32::MAX;
@@ -97,6 +97,15 @@ pub trait Machine: MatchStage {
     fn keep_lazy(&mut self, pc: u32, test: Self::Test, ceiling: Self::Pos, position: Self::Pos);
     /// The `index`th entry of the program's capture lists (`Program::lists`), static.
     fn listed(&mut self, index: u32) -> u32;
+    /// The step of `arm` for the interval of dispatch table `table` that holds `unit`, with
+    /// the interval's branches `Program::lists[first..first + count]`; `Step::Fail` where no
+    /// interval holds it. The table is static: an emitting machine branches on `unit` to an
+    /// arm per interval.
+    fn dispatch_on(&mut self, unit: Self::Unit, table: u32, arm: impl FnMut(&mut Self, (u32, u32)) -> Step<Self::Pos>) -> Step<Self::Pos>;
+    /// Where the matches of string class `class` at `position` end (read `backward`, where
+    /// those ending there start): whether there is one, and the longest, the shorter ones
+    /// kept as choices at `pc` in order.
+    fn class_ends(&mut self, class: u32, position: Self::Pos, backward: bool, pc: u32) -> (Self::Flag, Self::Pos);
     /// `then` where `flag` holds, else `otherwise`.
     fn pick(&mut self, flag: Self::Flag, then: Self::Pos, otherwise: Self::Pos) -> Self::Pos;
     /// `left + right`, which stays inside the subject.
@@ -173,6 +182,29 @@ pub fn assertion<M: Machine>(machine: &mut M, test: AssertionTest, at: At<M>) ->
         return Step::Fail;
     }
     Step::Continue(at.next())
+}
+
+/// `Inst::Dispatch`: an alternation whose branches begin with known units, one lookup of the
+/// unit at the position. The first branch that can begin with it runs, the others kept as
+/// choices in order.
+#[inline(always)]
+pub fn dispatch<M: Machine>(machine: &mut M, table: u32, at: At<M>) -> Next<M> {
+    let takes = {
+        let length = machine.length();
+        machine.before(at.position, length)
+    };
+    if !machine.require(takes) {
+        return Step::Fail;
+    }
+    let unit = machine.unit_at(at.position);
+    machine.dispatch_on(unit, table, #[inline(always)] |machine, (first, count)| {
+        for index in (first + 1..first + count).rev() {
+            let pc = machine.listed(index);
+            machine.push_choice(pc, at.position);
+        }
+        let target = machine.listed(first);
+        Step::Continue(at.jump(target))
+    })
 }
 
 #[inline(always)]

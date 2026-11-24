@@ -153,10 +153,18 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         self.b.raw_select(within, zero, reach)
     }
 
-    // The backward instructions and backreferences keep a program interpreted
-    // (`Program::native_inst`) until the emitter reads the program itself (TOD-2078 step 2).
+    // The backward instructions, backreferences, dispatch tables and classes of strings keep a
+    // program interpreted (`Program::native_inst`) until the emitter reads the program itself (TOD-2078 step 2).
     fn run_start(&mut self, _: NativeTest, _: M::Word, _: M::Word) -> M::Word {
         unreachable!("a native plan holds no backward repeat")
+    }
+
+    fn dispatch_on(&mut self, _: M::Word, _: u32, _: impl FnMut(&mut Self, (u32, u32)) -> Step<M::Word>) -> Step<M::Word> {
+        unreachable!("a native plan holds no dispatch table")
+    }
+
+    fn class_ends(&mut self, _: u32, _: M::Word, _: bool, _: u32) -> (M::Word, M::Word) {
+        unreachable!("a native plan holds no class of strings")
     }
 
     fn same_units(&mut self, _: (M::Word, M::Word), _: M::Word, _: (bool, bool)) -> M::Word {
