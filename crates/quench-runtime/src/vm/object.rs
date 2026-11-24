@@ -1297,7 +1297,10 @@ impl Vm {
     /// Its holes are defined next (`define_literal_element`), so no young run holds them.
     pub fn hole_array(&mut self, length: usize) -> Value {
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        let elements = crate::heap::ArrayElements::from_fn(length, |_| Value::DELETED);
+        // `new Array(n)` starts double where backings take the kind (`double_elements`): a
+        // numeric program then stores and loads raw doubles. Holes read `undefined` still,
+        // and a value that is no Number widens the backing once (`make_mut`).
+        let elements = crate::heap::ArrayElements::double_holes(length);
         self.heap.alloc_fresh_array(prototype, elements)
     }
 

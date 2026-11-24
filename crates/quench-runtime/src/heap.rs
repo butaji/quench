@@ -1347,6 +1347,17 @@ impl Heap {
         self.alloc_slotless_array_of(object, prototype)
     }
 
+    /// A new array of `prototype` holding `len` holes as a double backing
+    /// (`ArrayElements::double_holes`): `new Array(len)`, whose Numbers then store and load as
+    /// their own bits. A hole reads `undefined` still, and a value that is no Number widens
+    /// the backing once (`ArrayElements::make_mut`).
+    #[inline(always)]
+    pub(crate) fn alloc_holes_array(&mut self, prototype: Value, len: usize) -> Value {
+        let elements = ArrayElements::double_holes(len);
+        let object = ArrayObject::fresh(prototype, elements);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
     /// `alloc_literal_array` of `len` copies of `value`, whose fallback is one slice-filled
     /// allocation (`ArrayElements::filled`) rather than a per-element closure.
     #[inline(always)]

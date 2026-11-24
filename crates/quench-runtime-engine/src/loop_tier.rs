@@ -387,6 +387,25 @@ pub(crate) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion
     let doubles = !region.arrays.is_empty() && region.arrays.iter().all(|array| {
         vm.heap.record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().double_values().is_some())
     });
+    if quench_runtime::trace::Channel::JsJit.on() {
+        for array in &region.arrays {
+            let value = value_of((array.register, array.field), &*entry);
+            let record = vm.heap.record_array(value).map(|object| object.elements());
+            eprintln!("ARRAY reg={} written={} double={} dvals={}", array.register, array.written,
+                record.is_some_and(|elements| elements.is_double()),
+                record.is_some_and(|elements| elements.double_values().is_some()));
+        }
+    }
+    // The view is per region: a `Dense` view reads and writes `Value`s, which a double
+    // backing's words are not. A region with one double array and one that is no double
+    // declines the entry rather than widen the double one for good (a `Dense` view widens
+    // its encoded arrays at entry); a region of double arrays alone takes `Double`.
+    if !doubles && region.arrays.iter().any(|array| {
+        vm.heap.record_array(value_of((array.register, array.field), &*entry))
+            .is_some_and(|object| object.elements().is_double())
+    }) {
+        return None;
+    }
     let mut views = None;
     for array in &region.arrays {
         let value = value_of((array.register, array.field), &*entry);

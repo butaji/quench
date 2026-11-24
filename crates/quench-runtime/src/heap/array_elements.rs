@@ -693,6 +693,13 @@ impl ArrayElements {
     #[inline(always)]
     pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
         if !self.is_unique() {
+            // A shared double backing copies as another double one for a Number store: the
+            // copy keeps the kind a proved view read, where a wide copy would lose it for
+            // good (`KEEP_WIDE`) and every later read would decode a `Value`.
+            if self.is_double() && self.header().owners != 1 && value.as_number().is_some() {
+                self.copy_double();
+                return self.replace_encoded_in_place(index, value);
+            }
             return self.replace_encoded_in_place(index, value);
         }
         if self.header().others == 0 && !value.is_tagged() && self.takes_double() {
@@ -792,6 +799,23 @@ impl ArrayElements {
         }
     }
 
+    /// `length` holes as a double backing of one owner (`double_elements`): `new Array(n)`,
+    /// whose Numbers then store and load as their own bits. A hole is `Value::DELETED`'s
+    /// word, which a double backing holds and `others` counts, so a hole still reads
+    /// `undefined`; any other value stored into it widens the backing first (`make_mut`).
+    pub(crate) fn double_holes(length: usize) -> Self {
+        let elements = Self::from_fn(length, |_| Value::DELETED);
+        if length == 0 || !double_elements() { return elements; }
+        // SAFETY: the backing is this array's alone, every one of its `length` words a hole,
+        // which `others` already counts, and no value is a heap reference.
+        unsafe {
+            let header = elements.header.as_ptr();
+            (*header).head.len |= DOUBLE_LEN;
+            (*header).head.others = length as u32;
+        }
+        elements
+    }
+
     /// An empty double backing of one owner with room for its first appends, where backings
     /// take the double kind (`double_elements`); the shared empty header where they do not.
     /// A TypeScript `number[]` binding's empty literal starts with it (`Vm::make_array`).
@@ -880,6 +904,31 @@ impl ArrayElements {
     #[inline(never)]
     fn detach(&mut self) {
         *self = self.widened();
+    }
+
+    /// Copies this double backing, which several arrays share, as another double one this
+    /// array alone owns: a raw word copy, the hole count kept. The words stop being reachable
+    /// through the old backing alone, so the running lane's proofs retire first.
+    #[cold]
+    #[inline(never)]
+    fn copy_double(&mut self) {
+        debug_assert!(self.is_double() && self.header().owners != 1);
+        super::array_proofs::retire_array_storage_proofs();
+        let (len, capacity) = (self.len(), self.capacity());
+        let copy = Self::allocate(capacity, len);
+        let words = self.double_words();
+        for index in 0..len {
+            // SAFETY: the source holds `len` double words, the copy `len` slots.
+            let word = unsafe { words.add(index).read() };
+            unsafe { copy.values().add(index).write(Value::from_bits(word)) };
+        }
+        // SAFETY: a fresh allocation of one owner, its `len` words doubles.
+        unsafe {
+            let header = copy.header.as_ptr();
+            (*header).head.len |= DOUBLE_LEN;
+            (*header).head.others = self.header().others;
+        }
+        *self = copy;
     }
 
     /// A wide copy of this backing, of one owner.
