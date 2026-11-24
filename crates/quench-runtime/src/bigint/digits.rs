@@ -251,7 +251,26 @@ pub(crate) fn div_rem(a: &[Digit], b: &[Digit], quotient: &mut [Digit], remainde
             }
         };
     }
-    fixed!((1, 1), (2, 1), (2, 2))
+    // A 256-bit field element is four digits, and its product with another eight: the pairs
+    // Ed25519's `(a * b) % p` divides, const-sized so the loops unroll and no length tests stay.
+    // Their bodies stay out of line, so `div_rem` keeps the size the other arms gave it.
+    match (a.len(), b.len()) {
+        (4, 4) => field_div_rem::<4, 4>(a, b, quotient, remainder),
+        (8, 4) => field_div_rem::<8, 4>(a, b, quotient, remainder),
+        _ => fixed!((1, 1), (2, 1), (2, 2)),
+    }
+}
+
+/// `div_rem_digits` out of line, for the length pairs whose specialization would otherwise
+/// inline its body into `div_rem` and grow every caller of the dispatch.
+#[inline(never)]
+fn field_div_rem<const M: usize, const N: usize>(
+    a: &[Digit],
+    b: &[Digit],
+    quotient: &mut [Digit],
+    remainder: &mut [Digit],
+) -> (usize, usize) {
+    div_rem_digits::<M, N>(a, b, quotient, remainder)
 }
 
 /// `div_rem` of an `M`-digit dividend by an `N`-digit divisor, or of any lengths for 0.
