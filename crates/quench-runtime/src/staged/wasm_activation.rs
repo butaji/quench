@@ -242,3 +242,17 @@ pub fn import_argument(ty: WasmType, word: u64) -> f64 {
         _ => f64::from_bits(word),
     }
 }
+
+/// What a JavaScript import returns to its Wasm caller for the Number `number`, for the scalar
+/// result type `ty` (ToWebAssemblyValue of a Number): an i32 is its ToInt32, an f32 its rounding,
+/// an f64 itself. `None` for any other type, whose conversion is not of a Number alone. One body
+/// for the lane's import return and the general loop's (`Vm::js_to_wasm_value`).
+#[inline(always)]
+pub fn import_result(ty: WasmType, number: f64) -> Option<crate::WasmValue> {
+    match ty {
+        WasmType::I32 => Some(crate::WasmValue::I32(crate::value::number_to_u32(number) as i32)),
+        WasmType::F32 => Some(crate::WasmValue::F32((number as f32).to_bits())),
+        WasmType::F64 => Some(crate::WasmValue::F64(number.to_bits())),
+        _ => None,
+    }
+}
