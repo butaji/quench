@@ -29,7 +29,7 @@ impl Compiler<'_> {
         }
         let snippet = &self.text[arrow.span.start as usize..arrow.span.end as usize];
         let wrapper = replay::arrow_wrapper(context.inherited_strict || self.module_goal);
-        let (text, offset) = text_alone(snippet, wrapper, false, self.source_type);
+        let (text, offset) = text_alone((self.leading_doc(arrow.span.start), snippet), wrapper, false, self.source_type);
         let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| super::arena(&text));
         let saved_names = self.body_type_names();
         let nesting = if self.replay_target.is_some() { Nesting::Recorded(&self.lazy_bodies) } else { Nesting::Parse(&mut self.first_call.free_names, self.first_call.direct) };

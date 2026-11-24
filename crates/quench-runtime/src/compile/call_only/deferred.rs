@@ -49,7 +49,7 @@ impl Compiler<'_> {
         insert_span(found, span.start, span.end);
         let snippet = &self.text[span.start as usize..span.end as usize];
         let wrapper = replay::plain_function_wrapper(context);
-        let (text, offset) = lazy_bodies::text_alone(snippet, wrapper, context.inherited_strict, self.source_type);
+        let (text, offset) = lazy_bodies::text_alone((self.leading_doc(span.start), snippet), wrapper, context.inherited_strict, self.source_type);
         let allocator = lazy_bodies::arena(&text);
         let parsed = oxc_parser::Parser::new(&allocator, &text, self.source_type).parse();
         // The body checked whole at load; a parse that fails now claims nothing.
