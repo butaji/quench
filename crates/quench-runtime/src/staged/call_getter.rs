@@ -51,8 +51,9 @@ pub trait GetterCall<S: Stage> {
     fn answer(&mut self, stage: &mut S, value: Val<S, Self>) -> Self::Out;
     /// The native getter called in place on `base`.
     fn call_native(&mut self, stage: &mut S, getter: Val<S, Self>, base: Val<S, Self>) -> Self::Out;
-    /// The getter activated on `base`, with its target where it is a script getter.
-    fn activate(&mut self, stage: &mut S, getter: Val<S, Self>, base: Val<S, Self>, target: Option<<Self::Answer as GetterAnswer<S>>::Target>) -> Self::Out;
+    /// The getter called on `base` through the tier's own call path (no call row of this step's:
+    /// the lane's is `activate_getter_in_lane`), with its target where it is a script getter.
+    fn call(&mut self, stage: &mut S, getter: Val<S, Self>, base: Val<S, Self>, target: Option<<Self::Answer as GetterAnswer<S>>::Target>) -> Self::Out;
 }
 
 /// The value type of a getter call's answers.
@@ -67,7 +68,7 @@ pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut
             Some(value) => call.answer(stage, value),
             None => call.call_native(stage, getter, base),
         },
-        GetterKind::Native => call.activate(stage, getter, base, None),
+        GetterKind::Native => call.call(stage, getter, base, None),
         GetterKind::Script => {
             let target = call.answers().target(stage, getter);
             if writes
@@ -77,7 +78,7 @@ pub fn step_getter_call_of<S: Stage, G: GetterCall<S>>(stage: &mut S, call: &mut
                 call.answers().memoize(stage, known, getter, base);
                 return call.answer(stage, value);
             }
-            call.activate(stage, getter, base, target)
+            call.call(stage, getter, base, target)
         }
     }
 }

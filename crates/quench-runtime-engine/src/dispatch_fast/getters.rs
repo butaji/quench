@@ -188,7 +188,7 @@ impl<'a> GetterCall<Concrete> for LaneGetter<'a> {
     }
 
     #[inline(always)]
-    fn activate(&mut self, _: &mut Concrete, getter: Value, base: Value, target: Option<ScriptCallTarget>) -> Self::Out {
+    fn call(&mut self, _: &mut Concrete, getter: Value, base: Value, target: Option<ScriptCallTarget>) -> Self::Out {
         activate_getter_in_lane(self.answer.cx, self.r, self.ip, getter, base, target)
     }
 }
