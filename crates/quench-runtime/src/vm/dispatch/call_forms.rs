@@ -218,7 +218,7 @@ impl Vm {
         {
             self.profile.call_source(CallSource::Known);
             // The native entry the lane makes first, by the same rule (`wasm_activation::enter_native`).
-            let mut call = GeneralWasmCall { vm: self, f, i, raised: None };
+            let mut call = GeneralWasmCall { vm: self, f, i, offered: None, raised: None };
             if let Some(resumed) = crate::staged::wasm_activation::enter_native(&mut call, u32::from(i.known_function_index())) {
                 return resumed;
             }
@@ -385,11 +385,13 @@ impl Vm {
 }
 
 /// A Wasm known call of the general loop, as the native entry rule (`wasm_activation::enter_native`) sees
-/// it: frame `f`'s record `i`, and what a native run raised, which `left` raises.
+/// it: frame `f`'s record `i`, the code the tiers offered for its callee, and what a native run raised,
+/// which `left` raises.
 struct GeneralWasmCall<'a> {
     vm: &'a mut Vm,
     f: usize,
     i: WideInstruction,
+    offered: Option<std::rc::Rc<crate::vm::engine_types::CompiledProgram>>,
     raised: Option<JsError>,
 }
 
@@ -401,18 +403,20 @@ impl crate::staged::wasm_activation::WasmNativeEntry for GeneralWasmCall<'_> {
         self.vm.execution_mode == crate::ExecutionMode::Compiled
     }
 
-    /// The general loop offers every call to the native tiers: their entry (`call_compiled`) compiles
-    /// the program at its first offer, and declines a function no tier holds. The lane offers only a
-    /// function a tier holds already.
+    /// The code a tier holds for `function`, where the general loop's entry counters and the compiles
+    /// they make due at this entry leave one (`Vm::offer_compiled`): the general loop is where a
+    /// compile the lane hands over (`WasmActivation::note_tier_entry`) is made.
     #[inline(always)]
-    fn has_native(&mut self, _function: u32) -> bool {
-        true
+    fn has_native(&mut self, function: u32) -> bool {
+        self.offered = self.vm.offer_compiled(self.f, function);
+        self.offered.is_some()
     }
 
     #[inline(always)]
     fn enter_compiled(&mut self, function: u32) -> crate::staged::wasm_activation::NativeCall {
         use crate::staged::wasm_activation::NativeCall;
-        match self.vm.call_compiled(self.f, function, self.i.call_window()) {
+        let offered = self.offered.take().expect("a native entry runs the code its tiers offered");
+        match self.vm.run_offered(offered, self.f, function, self.i.call_window()) {
             None => NativeCall::Declined,
             Some(Ok(value)) => NativeCall::Ran(value.to_bits()),
             Some(Err(error)) => {

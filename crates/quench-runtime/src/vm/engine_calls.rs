@@ -24,7 +24,8 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_materialize_deferred_lane(this: &mut Vm) -> ();
     safe fn quench_engine_vm_wasm_instance_address(this: &Vm, env: Value, program: ProgramId) -> Option<usize>;
     safe fn quench_engine_vm_running_owner(this: &mut Vm) -> VarOwner;
-    safe fn quench_engine_vm_call_compiled(this: &mut Vm, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
+    safe fn quench_engine_vm_offer_compiled(this: &mut Vm, caller: usize, id: u32) -> Option<std::rc::Rc<CompiledProgram>>;
+    safe fn quench_engine_vm_run_offered(this: &mut Vm, compiled: std::rc::Rc<CompiledProgram>, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
     safe fn quench_engine_vm_js_jit_compiled_call(this: &mut Vm, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value>;
     safe fn quench_engine_vm_admits_in_lane(this: &Vm, program: &ResidualProgram) -> bool;
     safe fn quench_engine_vm_entry_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
@@ -100,7 +101,8 @@ pub trait EngineVm {
     fn materialize_deferred_lane(&mut self) -> ();
     fn wasm_instance_address(&self, env: Value, program: ProgramId) -> Option<usize>;
     fn running_owner(&mut self) -> VarOwner;
-    fn call_compiled(&mut self, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
+    fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<std::rc::Rc<CompiledProgram>>;
+    fn run_offered(&mut self, compiled: std::rc::Rc<CompiledProgram>, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
     fn js_jit_compiled_call(&mut self, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value>;
     fn admits_in_lane(&self, program: &ResidualProgram) -> bool;
     fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView;
@@ -174,7 +176,9 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn running_owner(&mut self) -> VarOwner { quench_engine_vm_running_owner(self) }
     #[inline(always)]
-    fn call_compiled(&mut self, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>> { quench_engine_vm_call_compiled(self, caller, id, window) }
+    fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<std::rc::Rc<CompiledProgram>> { quench_engine_vm_offer_compiled(self, caller, id) }
+    #[inline(always)]
+    fn run_offered(&mut self, compiled: std::rc::Rc<CompiledProgram>, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>> { quench_engine_vm_run_offered(self, compiled, caller, id, window) }
     #[inline(always)]
     fn js_jit_compiled_call(&mut self, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value> { quench_engine_vm_js_jit_compiled_call(self, program, arg1, returns, arguments) }
     #[inline(always)]
@@ -363,7 +367,8 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_materialize_deferred_lane = fn(&mut Vm) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_wasm_instance_address = fn(&Vm, Value, ProgramId) -> Option<usize>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_running_owner = fn(&mut Vm) -> VarOwner;
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_call_compiled = fn(&mut Vm, usize, u32, crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
+    #[allow(non_camel_case_types)] pub type quench_engine_vm_offer_compiled = fn(&mut Vm, usize, u32) -> Option<std::rc::Rc<CompiledProgram>>;
+    #[allow(non_camel_case_types)] pub type quench_engine_vm_run_offered = fn(&mut Vm, std::rc::Rc<CompiledProgram>, usize, u32, crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_js_jit_compiled_call = fn(&mut Vm, &ResidualProgram, (ProgramId, u32), bool, &[Value]) -> Option<Value>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_admits_in_lane = fn(&Vm, &ResidualProgram) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_entry_lane_view = fn(&Vm, ProgramId, u32) -> *const LaneView;

@@ -8642,32 +8642,33 @@ impl Vm {
         true
     }
 
-    /// Run known function `id` of the caller's program as native code, with
-    /// arguments from the caller's register `window`. `None` leaves the call
-    /// to the interpreter.
-    pub(crate) fn call_compiled(
-        &mut self,
-        caller: usize,
-        id: u32,
-        window: quench_runtime::bytecode::RegisterWindow,
-    ) -> Option<Result<Value, JsError>> {
-        if self.execution_mode != ExecutionMode::Compiled {
-            return None;
-        }
+    /// The native code a known call of function `id` from frame `caller` runs, offered as the
+    /// general loop's native entry (`wasm_activation::enter_native`) asks: the code a tier holds,
+    /// after the tiers' entry counters and compiles this entry makes (`offer_compiled_in`).
+    /// `None` where no tier runs it: the interpreter takes the call.
+    pub(crate) fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
         let (program, env) = {
             let frame = self.frames.get(caller)?;
             (frame.program, frame.env)
         };
-        self.run_compiled_inner(
-            program,
-            env,
-            id,
-            CompiledArgs::RegisterWindow {
-                caller,
-                base: usize::from(window.base),
-                count: usize::from(window.count),
-            },
-        )
+        self.offer_compiled_in(program, env, id)
+    }
+
+    /// Runs the code `offer_compiled` offered for function `id`, with arguments from frame
+    /// `caller`'s register `window`. `None` leaves the call to the interpreter.
+    pub(crate) fn run_offered(
+        &mut self,
+        compiled: Rc<CompiledProgram>,
+        caller: usize,
+        id: u32,
+        window: quench_runtime::bytecode::RegisterWindow,
+    ) -> Option<Result<Value, JsError>> {
+        let (program, env) = {
+            let frame = self.frames.get(caller)?;
+            (frame.program, frame.env)
+        };
+        let args = CompiledArgs::RegisterWindow { caller, base: usize::from(window.base), count: usize::from(window.count) };
+        self.run_offered_in(compiled, program, env, id, args)
     }
 
     /// Run function `id` of `program` in instance `env` as native code, with
@@ -8725,6 +8726,33 @@ impl Vm {
         id: u32,
         args: CompiledArgs<'_>,
     ) -> Option<Result<Value, JsError>> {
+        let compiled = self.offer_compiled_in(program, env, id)?;
+        self.run_offered_in(compiled, program, env, id, args)
+    }
+
+    /// The tiers' answer to an entry of function `id` of `program` in instance `env`: the code
+    /// that runs it natively, after the entry's counters and the compiles it makes due (the
+    /// program's first decision, a selective module's whole compile, a hot root's tier). `None`
+    /// where no tier holds it, which is noted as the function's interpreter fallback.
+    #[inline(always)]
+    fn offer_compiled_in(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
+        if self.execution_mode != ExecutionMode::Compiled {
+            return None;
+        }
+        // The common entry: the program's whole compile holds the function, which no counter,
+        // escalation or tier changes (the decisions below all start from a missing artifact).
+        if let Some(Some(baseline)) = self.programs.compiled(program)
+            && baseline.has_function(id as usize)
+        {
+            return Some(baseline);
+        }
+        self.offer_compiled_cold(program, env, id)
+    }
+
+    /// `offer_compiled_in` of a function the program's whole compile does not hold.
+    #[cold]
+    #[inline(never)]
+    fn offer_compiled_cold(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
@@ -8884,11 +8912,22 @@ impl Vm {
                 compiled = self.programs.wasm_tier(program, id);
             }
         }
-        let Some(compiled) = compiled else {
-            self.programs
-                .has_compiled_function_or_note_fallback(program, id as usize);
-            return None;
-        };
+        if compiled.is_none() {
+            self.programs.has_compiled_function_or_note_fallback(program, id as usize);
+        }
+        compiled
+    }
+
+    /// Runs `compiled`, the code `offer_compiled_in` offered for function `id` of `program`, in
+    /// instance `env` with `args`. `None` leaves the call to the interpreter.
+    fn run_offered_in(
+        &mut self,
+        compiled: Rc<CompiledProgram>,
+        program: ProgramId,
+        env: Value,
+        id: u32,
+        args: CompiledArgs<'_>,
+    ) -> Option<Result<Value, JsError>> {
         let result = (|| {
             let function = compiled.function(id as usize)?;
             let (record, (base, length)) = self.publish_wasm_instance(&compiled, env, program)?;

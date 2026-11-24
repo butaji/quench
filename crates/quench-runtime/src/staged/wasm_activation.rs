@@ -47,7 +47,10 @@ pub trait WasmNativeEntry {
     type Resume;
     /// Whether the call may run natively: the execution mode is compiled and the call keeps its result.
     fn native_mode(&mut self) -> bool;
-    /// Whether a native tier holds `function`, noting a fallback where it has none.
+    /// Whether a native tier holds `function` at this entry, noting a fallback where it has none.
+    /// The tiers count the entry where its interpreter makes their compiles: the general loop
+    /// counts and compiles here (`Vm::offer_compiled`); the lane only asks, and hands a due
+    /// compile to the general loop by leaving (`WasmActivation::note_tier_entry`).
     fn has_native(&mut self, function: u32) -> bool;
     /// Runs `function` in native code, with the call's window as its arguments.
     fn enter_compiled(&mut self, function: u32) -> NativeCall;
