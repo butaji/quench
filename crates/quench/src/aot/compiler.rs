@@ -330,7 +330,10 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         for (source, requires) in [
             ("eval('1');", true), ("new Function('return 1');", true), ("const F = value.constructor; F(text);", true),
-            ("const key = text(); value[key];", true), ("const o = { a: 1 }; o.a + o['b'] + [1][0];", false),
+            // A computed read alone is an index (`SourceDemands::computed`), not a name the program proves dynamic;
+            // only where it is called does it reach a constructor by a name the flow cannot follow.
+            ("const key = text(); value[key];", false), ("const key = text(); value[key](text);", true),
+            ("const o = { a: 1 }; o.a + o['b'] + [1][0];", false),
         ] {
             let entry = directory.join("entry.cjs");
             fs::write(&entry, source).unwrap();
