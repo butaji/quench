@@ -67,7 +67,7 @@ fn vector_bytes(memory: MemoryView, address: u64) -> Option<*mut [u8; quench_run
 struct RegionFrame<'a> {
     bank: &'a mut Bank,
     registers: Registers,
-    heap: quench_runtime::vm::tier_queries::HeapReads<'a>,
+    reads: quench_runtime::vm::tier_queries::HeapReads<'a>,
     memory: MemoryView,
     integers: quench_runtime::value::IntegerEncoding,
 }
@@ -144,7 +144,7 @@ impl staged::Frame<staged::Concrete> for RegionFrame<'_> {
 
     /// The 16 bytes of the v128 constant `constant` names.
     fn vector_constant(&mut self, _stage: &mut staged::Concrete, constant: staged::Constant) -> Option<[u8; quench_runtime::wasm::V128_BYTES]> {
-        self.heap.v128(constant.value)
+        self.reads.v128(constant.value)
     }
 
     /// Define `register` with the vector `bytes` in the bank. No tagged word is made: the run
@@ -283,7 +283,7 @@ impl VectorRegion {
                     },
                     Step::Row { op, at, leave } => {
                         let outcome = {
-                            let mut frame = RegionFrame { bank: &mut bank, registers: r, heap: vm.heap_reads(), memory, integers };
+                            let mut frame = RegionFrame { bank: &mut bank, registers: r, reads: vm.heap_reads(), memory, integers };
                             run_row(&mut stage, &mut frame, self.rows[op as usize])
                         };
                         match outcome {

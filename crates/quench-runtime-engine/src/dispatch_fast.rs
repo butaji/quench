@@ -13111,10 +13111,10 @@ pub(crate) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, c
 ///
 /// # Safety
 /// As `body_capture_in_lane`.
-pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
+pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: Value) -> u64 {
     if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return 0; }
     let cx = context as usize as *mut LaneContext;
-    let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
+    let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, value);
     let stored = match native_frames::innermost_callee_env(cx) {
         Some(env) => {
             // SAFETY: the context's program outlives the lane run.

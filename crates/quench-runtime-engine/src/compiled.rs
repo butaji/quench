@@ -3456,7 +3456,7 @@ unsafe extern "C" fn method_exit_in_lane(_context: u64, pc: u64, result: u64, _u
 /// A lane body's field read where its own-slot path does not apply: the VM's cache probe
 /// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
 /// leaves native code for the lane's full read.
-unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: Value, read: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
@@ -3468,26 +3468,26 @@ unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: u64, re
 ///
 /// # Safety
 /// `vm` and `residual` are the running VM and residual, live and unborrowed for the call.
-unsafe fn cached_field_read(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+unsafe fn cached_field_read(vm: u64, residual: u64, receiver: Value, read: u64) -> u64 {
     let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: as the caller promises; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
     // An array's `length`, an own data property no shape holds, answers first: a loop's
     // condition reads it every iteration (`Vm::array_length_field`).
-    if let Some(length) = vm.array_length_field(Value::from_bits(receiver), atom) {
+    if let Some(length) = vm.array_length_field(receiver, atom) {
         return length.to_bits();
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
-    if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
+    if let Some(value) = vm.cached_string_field_hit(residual, receiver, atom, site) { return value.to_bits(); }
     // A typed array's geometry, which no field cache records, as the lane's (`LaneFrame::cached_read`).
     if vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::VIRTUAL_FIELD)
-        && let Some(value) = vm.typed_array_geometry_read(Value::from_bits(receiver), atom) { return value.to_bits(); }
+        && let Some(value) = vm.typed_array_geometry_read(receiver, atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
-    if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
+    if let Some(value) = vm.proved_inherited_field_hit(residual, receiver, site) {
         return value.to_bits();
     }
-    let receiver = Value::from_bits(receiver); // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
+    // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
     match vm.compiled_field_hit(residual, receiver, site) {
         quench_runtime::vm::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         quench_runtime::vm::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
@@ -3519,14 +3519,14 @@ pub(crate) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
 /// store to the lane at its original PC after retiring dependent native entries.
-unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
+unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, atom: u64, site: u64, value: Value) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
     #[cfg(feature = "profile-native-ops")]
     let storage = {
         use quench_runtime::vm::native_op_profile::StoreStorage;
-        match Value::from_bits(receiver).direct_object_index() {
+        match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
             Some(id) => {
                 let object = vm.heap_reads().object_record_by_id(id);
@@ -3538,7 +3538,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: u64, at
     };
     // A receiver of another shape the site met stores through its polymorphic entries, as
     // long as the store keeps the record's layout, which the caller's proofs rely on.
-    let (receiver, value, layout) = (Value::from_bits(receiver), Value::from_bits(value), quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative);
+    let (receiver, value, layout) = (receiver, value, quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative);
     // Only the primary entry's hit proves its slot's representation (`general_store`).
     let primary = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
     if primary { general_store::record_store_class(vm, site as u16, value); }
@@ -3570,10 +3570,9 @@ pub(crate) fn raise_site_parts(site: u64) -> (u32, u32) {
 /// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
 /// The interpreter's `Throw` makes the same error; its source location is captured only if it
 /// escapes native code (`dispatch_fast::raised_exit_in_lane`).
-unsafe extern "C" fn compiled_raise(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
+unsafe extern "C" fn compiled_raise(vm: u64, _residual: u64, value: Value, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the message of a value reads no guest code.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    let value = Value::from_bits(value);
     let message = vm.detail_string(value);
     vm.lane_completion.raise(JsError::thrown(value, message));
     vm.lane_raise_site = site;
@@ -3608,11 +3607,10 @@ unsafe extern "C" fn strict_equal_cells_in_lane(vm: u64, _residual: u64, left: V
 /// decides it (`lane_instanceof_value`): the constructor's proof (`Vm::record_instanceof`),
 /// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
 /// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
-unsafe extern "C" fn instance_of_in_lane(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
+unsafe extern "C" fn instance_of_in_lane(vm: u64, _residual: u64, value: Value, constructor: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; both reads walk the heap, call nothing and allocate nothing
     // (the walk only fills the constructor-layout memo).
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    let (value, constructor) = (Value::from_bits(value), Value::from_bits(constructor));
     vm.record_instanceof(value, constructor)
         .or_else(|| vm.ordinary_instanceof(value, constructor))
         .map_or_else(|| Value::DELETED.to_bits(), u64::from)
@@ -3627,10 +3625,10 @@ unsafe extern "C" fn box_number_in_lane(_vm: u64, _residual: u64, bits: u64) -> 
     Value::number(f64::from_bits(bits)).to_bits()
 }
 
-unsafe extern "C" fn typeof_is_in_lane(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
+unsafe extern "C" fn typeof_is_in_lane(vm: u64, _residual: u64, value: Value, index: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm) };
-    u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
+    u64::from(vm.typeof_test_value(value, index as usize, false) == Value::TRUE)
 }
 
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof value` (`Vm::typeof_index_value`): a heap value's by its
@@ -3648,13 +3646,12 @@ unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: Value)
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
-unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, receiver: Value, write: u64, value: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running one.
     let (vm, residual, dispatch) = unsafe {
         (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
     };
     let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
-    let (receiver, value) = (Value::from_bits(receiver), Value::from_bits(value));
     if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
         return 1;
     }
@@ -3685,7 +3682,7 @@ unsafe extern "C" fn typed_array_view_in_lane(vm: u64, _residual: u64, object: V
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
-unsafe extern "C" fn index_set_in_lane(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
+unsafe extern "C" fn index_set_in_lane(vm: u64, _residual: u64, object: Value, key: Value, value: Value) -> u64 {
     // SAFETY: as `field_get_in_lane`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm) };
     // Collection debt leaves before the store, as the verified lowering's Grow exit does:
@@ -3693,7 +3690,6 @@ unsafe extern "C" fn index_set_in_lane(vm: u64, _residual: u64, object: u64, key
     if vm.collection_due() {
         return 0;
     }
-    let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
     u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
 }
 

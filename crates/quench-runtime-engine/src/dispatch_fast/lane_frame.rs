@@ -919,6 +919,17 @@ impl<const ACC: u8> LaneFrame<ACC> {
 /// The field reads a planned named read runs over the running lane's record: the cached read of
 /// a site, the private field of a record, and the private store.
 impl<const ACC: u8> LaneFrame<ACC> {
+    /// The value of `register` as a row reads it (`Frame::read`), typed: a proven int32 operand
+    /// (`operands_int`) is its value half re-tagged as a constant, so the staged row's tag tests fold;
+    /// the carried accumulator stands for field B, the one register a single-operand row reads, and a
+    /// row that reads several (one with heap records) reads the file, which every producer writes.
+    #[inline(always)]
+    fn read_value(&self, register: Register) -> Value {
+        if self.operands_int { return Value::integer(self.registers.get(register).to_bits() as u32 as i32); }
+        if self.heap.is_some() || register != self.accumulated { return self.registers.get(register); }
+        read::<ACC, ACC_B>(self.registers, register, self.view)
+    }
+
     /// `cached_read` of a read whose private name, if any, has the private-name site
     /// `private_site` (`private_slot`); `0` for none, which reads it uncached.
     #[inline(always)]
@@ -1107,17 +1118,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
-        // A proven int32 operand (`operands_int`): its value half, re-tagged as a constant, so the
-        // staged row's tag tests fold.
-        if self.operands_int {
-            return Value::integer(self.registers.get(register).to_bits() as u32 as i32).to_bits();
-        }
-        // The carried accumulator stands for field B, the one register a single-operand row reads;
-        // a row that reads several (one with heap records) reads the file, which every producer writes.
-        if self.heap.is_some() || register != self.accumulated { return self.registers.get(register).to_bits(); }
-        read::<ACC, ACC_B>(self.registers, register, self.view).to_bits()
-    }
+    fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 { self.read_value(register).to_bits() }
 
     #[inline(always)]
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, fact: Self::Fact) {
@@ -1158,8 +1159,8 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
-        let value = Value::from_bits(self.read(stage, register));
+    fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
+        let value = self.read_value(register);
         match value.truthiness() {
             Some(truthy) => Some(truthy),
             // A string or another cell the word leaves: its cell decides it in place, where the
@@ -1245,9 +1246,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     /// The window's environment is young (`window_environment`) or remembered, so a plain local
     /// needs no barrier: no collection runs in the lane.
     #[inline(always)]
-    fn case_index(&mut self, stage: &mut Concrete, source: Register, start: u32, count: u16) -> Option<(u64, Self::Fact)> {
+    fn case_index(&mut self, _stage: &mut Concrete, source: Register, start: u32, count: u16) -> Option<(u64, Self::Fact)> {
         let cases = self.string_cases?;
-        let value = Value::from_bits(self.read(stage, source));
+        let value = self.read_value(source);
         // SAFETY: the running lane's context, and the filter the record's operand names (null where none).
         let index = unsafe { (cases.index)(cases.context, cases.filter, value, start as usize, usize::from(count)) };
         Some((Value::integer(index as i32).to_bits(), Boxing::Value))
@@ -1319,7 +1320,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // A receiver's constant fields test reads one cache entry and the receiver's shape in place.
         if let CallOut::Protocol { step: quench_runtime::staged::Protocol::ConstantFieldsHeld { site }, operands: [_, Some(receiver)] } = operation {
             let host = self.host?;
-            let receiver = Value::from_bits(self.read(stage, receiver));
+            let receiver = self.read_value(receiver);
             // SAFETY: the host's context is the running lane's.
             let held = unsafe { (host.constant_fields)(host.cx, receiver, site) };
             return Some((Value::boolean(held).to_bits(), Boxing::Value));
@@ -1333,14 +1334,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
         }
         if let (CallOut::Unary { operator, value }, Some((context, _)), Some(unary)) = (operation, self.binary, self.unary) {
-            let operand = Value::from_bits(self.read(stage, value));
+            let operand = self.read_value(value);
             // SAFETY: the running lane's context, live for the row's step.
             return unsafe { unary(context, operator, operand) }.map(|value| (value.to_bits(), Boxing::Value));
         }
         match operation {
             CallOut::Decide { left, right, operator } => {
                 let Decisions { context, decide, .. } = self.decisions?;
-                let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+                let (left, right) = (self.read_value(left), self.read_value(right));
                 decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
             }
             // A Wasm GC value step: the interpreter's own (`Vm::wasm_gc_value_step`) over the running
@@ -2005,9 +2006,9 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
     /// The array a proof of the lane's span gives (`proof_span`), where the row is one a proof names;
     /// `None` where the slot does not prove the array, which proves it on the access's own check.
     #[inline(always)]
-    fn proved_view(&mut self, stage: &mut Concrete, base: Register, writable: bool) -> Option<quench_runtime::staged::elements::DenseView<u64>> {
+    fn proved_view(&mut self, _stage: &mut Concrete, base: Register, writable: bool) -> Option<quench_runtime::staged::elements::DenseView<u64>> {
         let (context, span) = self.element_span?;
-        let object = Value::from_bits(self.read(stage, base));
+        let object = self.read_value(base);
         // SAFETY: the context and its proofs are the running lane's, live for the row.
         let (values, length) = unsafe { span(context, base, object, writable) }?;
         Some(quench_runtime::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false, double: None, uncounted: false })
@@ -2072,9 +2073,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
     /// interpreter reads it from the objects each time, so it needs no dependency.
     #[inline(always)]
-    fn stable_prototype(&mut self, stage: &mut Concrete, constructor: Register) -> Option<u64> {
+    fn stable_prototype(&mut self, _stage: &mut Concrete, constructor: Register) -> Option<u64> {
         let Decisions { context, prototype, .. } = self.decisions?;
-        prototype(context, Value::from_bits(self.read(stage, constructor))).map(u64::from)
+        prototype(context, self.read_value(constructor)).map(u64::from)
     }
 
     /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
@@ -2092,8 +2093,8 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
-        Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
+    fn prove_number(&mut self, _stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
+        self.read_value(register).as_number().map(|_| ())
     }
 
     #[inline(always)]

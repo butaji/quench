@@ -37,10 +37,9 @@ pub(crate) unsafe extern "C" fn new_object_pair_in_lane(vm: u64, residual: u64, 
 /// A binary operator one operand of which is a string or BigInt, by the interpreter's own
 /// definition (`Vm::binary`); `DELETED` where an operand is an object (its coercion may run
 /// guest code), the operator throws, or a collection is due: the interpreter runs it then.
-pub(crate) unsafe extern "C" fn binary_in_lane(vm: u64, residual: u64, payload: u64, operator: u64, left: u64, right: u64) -> u64 {
+pub(crate) unsafe extern "C" fn binary_in_lane(vm: u64, residual: u64, payload: u64, operator: u64, left: Value, right: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
-    let (left, right) = (Value::from_bits(left), Value::from_bits(right));
     if vm.collection_due() || vm.is_object_like(left) || vm.is_object_like(right) { return Value::DELETED.to_bits(); }
     let Ok(value) = vm.binary(residual, operator as u32, left, right) else { return Value::DELETED.to_bits() };
     dispatch.refresh_object_bases(vm);
@@ -53,7 +52,7 @@ pub(crate) unsafe extern "C" fn binary_in_lane(vm: u64, residual: u64, payload: 
 /// collection), which the call's own step takes. Nothing is changed before a value is answered: the native runs no guest
 /// code and changes no array.
 pub(crate) unsafe extern "C" fn scalar_native_in_lane(vm: u64, residual: u64, payload: u64, callee: Value, argc: u64,
-    receiver: u64, first: Value, second: Value) -> u64 {
+    receiver: Value, first: Value, second: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. }) = vm.function_record(callee) else {
@@ -72,7 +71,7 @@ pub(crate) unsafe extern "C" fn scalar_native_in_lane(vm: u64, residual: u64, pa
     // A native that allocated nothing (a lookup: `Map.prototype.get`) moved no base the code holds.
     let unchanged = |vm: &Vm| (vm.heap_reads().allocated_weight(), vm.heap_reads().native_layout_epoch(), vm.heap_reads().store_watch_word(), vm.method_cache_atoms.words().len());
     let before = unchanged(vm);
-    let Some(value) = vm.in_place_native_value(residual, native, callee, Value::from_bits(receiver), &arguments[..argc as usize]) else {
+    let Some(value) = vm.in_place_native_value(residual, native, callee, receiver, &arguments[..argc as usize]) else {
         return Value::DELETED.to_bits();
     };
     if unchanged(vm) != before {
@@ -233,11 +232,11 @@ pub(crate) unsafe extern "C" fn new_concat_in_lane(vm: u64, residual: u64, paylo
 /// loop's entry proves. `DELETED` where the value is no string, its text has no record form a row
 /// reads (a wide rope's units are held beside its record), or a collection is due; nothing has
 /// changed then, so the loop's entry leaves.
-pub(crate) unsafe extern "C" fn flatten_string_in_lane(vm: u64, _residual: u64, payload: u64, string: u64) -> u64 {
+pub(crate) unsafe extern "C" fn flatten_string_in_lane(vm: u64, _residual: u64, payload: u64, string: Value) -> u64 {
     // SAFETY: as `concat_pair_in_lane`; the flattening allocates a record and runs no guest code.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
     if vm.collection_due() { return Value::DELETED.to_bits(); }
-    let Some(flat) = vm.heap_reads().string(Value::from_bits(string)).map(|text| text.unkept_flat()).filter(|flat| flat.holds_record_form())
+    let Some(flat) = vm.heap_reads().string(string).map(|text| text.unkept_flat()).filter(|flat| flat.holds_record_form())
         else { return Value::DELETED.to_bits() };
     let value = vm.allocate_string(flat);
     super::dispatch_fast::note_allocation(vm);

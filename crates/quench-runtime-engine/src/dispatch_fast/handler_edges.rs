@@ -53,10 +53,10 @@ pub(crate) unsafe extern "C" fn handler_edge(
     _residual: u64,
     context: u64,
     call_pc: u64,
-    value: u64,
+    value: Value,
 ) -> u64 {
     let cx = context as usize as *mut LaneContext;
-    let (call_pc, value) = (call_pc as u32, Value::from_bits(value));
+    let (call_pc, value) = (call_pc as u32, value);
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
