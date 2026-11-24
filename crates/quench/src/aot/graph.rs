@@ -73,8 +73,13 @@ impl DependencyGraph {
     /// The builtins the image's snapshot loads at compile time: every builtin the graph
     /// requires or imports, so a run finds them built instead of building them at startup.
     pub fn snapshot_builtins(&self) -> Vec<String> {
-        let names: BTreeSet<String> = self.builtins.iter().chain(&self.esm_builtins)
+        let mut names: BTreeSet<String> = self.builtins.iter().chain(&self.esm_builtins)
             .map(|name| name.strip_prefix("node:").unwrap_or(name).to_owned()).collect();
+        // A CommonJS file runs through the `module` loader (`Module.runMain`), which an image
+        // would otherwise build at startup.
+        if self.files.values().any(|file| file.kind == quench_runtime::SourceKind::Script) {
+            names.insert("module".to_owned());
+        }
         names.into_iter().collect()
     }
 
