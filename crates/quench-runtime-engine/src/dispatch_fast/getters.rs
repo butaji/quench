@@ -87,7 +87,7 @@ unsafe fn constant_body_value(target: &ScriptCallTarget) -> Option<Value> {
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-unsafe fn lane_script_getter_answer(cx: *mut LaneContext, target: &ScriptCallTarget, object: Value) -> Option<Value> {
+pub(crate) unsafe fn lane_script_getter_answer(cx: *mut LaneContext, target: &ScriptCallTarget, object: Value) -> Option<Value> {
     if target.entry == CallEntry::Reads {
         // A getter only the general path has called has not run its read in the lane yet: it
         // takes the kind its first run would.
