@@ -552,13 +552,13 @@ fn inherited<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     let at = frame.receiver_record(stage, owner, object, readable, miss)?;
     match proof {
         PrototypeProof::Watched { holder } => {
-            guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
+            let shaped = guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
             frame.hold_prototype(stage, holder, miss)?;
-            ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached::bare(at.record), None, miss)
+            ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached { shaped: Some(shaped), ..Reached::bare(at.record) }, None, miss)
         }
         PrototypeProof::Linked { expected_link } => {
             let &[(_, value)] = constants else { return None };
-            super::entry::held_constant(stage, at.record, (shape, expected_link), value, miss)
+            super::entry::shape_link_matches(stage, at.record, (u64::from(shape), u64::from(expected_link)), miss).map(|linked| super::entry::held_constant(stage, linked, value))
         }
     }
 }

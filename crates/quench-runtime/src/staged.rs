@@ -24,7 +24,7 @@ mod concrete;
 mod word_ops;
 pub mod numeric;
 pub mod proof;
-pub use proof::{Float64, Int32, IntFact, IntOf, NumberFact, NumberOf, ShapeFact, Shaped};
+pub use proof::{Float64, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped};
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub mod layout_offsets;
 /// The const checks of `layout_offsets` against the runtime's own layouts.

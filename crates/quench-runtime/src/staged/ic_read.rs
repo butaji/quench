@@ -196,8 +196,8 @@ pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>
 
 /// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
 #[inline(always)]
-pub(super) fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
-    let link = proto_link(stage, record);
+pub(super) fn prototype_constants<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
+    let link = proto_link(stage, receiver.record());
     let ((first, bits), rest) = values.split_first()?;
     let mut matched = stage.eq_imm(link, u64::from(*first));
     let mut read = stage.constant(*bits);
