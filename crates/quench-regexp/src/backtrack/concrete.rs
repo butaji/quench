@@ -160,6 +160,79 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn listed(&mut self, index: u32) -> u32 {
+        self.program.lists[index as usize]
+    }
+
+    #[inline(always)]
+    fn dispatch_on(&mut self, unit: u32, table: u32, mut arm: impl FnMut(&mut Self, (u32, u32)) -> Step) -> Step {
+        match self.program.dispatch_interval(table, unit) {
+            Some(branches) => arm(self, branches),
+            None => Step::Fail,
+        }
+    }
+
+    fn class_ends(&mut self, class: u32, position: usize, backward: bool, pc: u32) -> (bool, usize) {
+        let ends = self.program.classes[class as usize].ends(self.text, position, backward);
+        let Some((&first, rest)) = ends.split_first() else { return (false, position) };
+        for &end in rest.iter().rev() {
+            self.push(Frame::Choice { pc, position: end });
+        }
+        (true, first)
+    }
+
+    #[inline(always)]
+    fn pick(&mut self, flag: bool, then: usize, otherwise: usize) -> usize {
+        if flag { then } else { otherwise }
+    }
+
+    #[inline(always)]
+    fn plus(&mut self, left: usize, right: usize) -> usize {
+        left + right
+    }
+
+    #[inline(always)]
+    fn minus(&mut self, left: usize, right: usize) -> usize {
+        left - right
+    }
+
+    #[inline(always)]
+    fn reach_back(&mut self, position: usize, count: u32) -> usize {
+        position.saturating_sub(count as usize)
+    }
+
+    #[inline(always)]
+    fn run_start(&mut self, test: UnitTest, from: usize, to: usize) -> usize {
+        self.program.run_start_back(test, self.text, from, to)
+    }
+
+    #[inline(always)]
+    fn same_units(&mut self, (from, to): (usize, usize), at: usize, (ignore_case, unicode): (bool, bool)) -> bool {
+        let distance = at.wrapping_sub(from);
+        (from..to).all(|expected| equal(self.text.unit(expected), self.text.unit(expected.wrapping_add(distance)), ignore_case, unicode))
+    }
+
+    #[inline(always)]
+    fn push_greedy_back(&mut self, pc: u32, ceiling: usize, position: usize) {
+        self.push(Frame::GreedyBack { pc, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn push_lazy_back(&mut self, pc: u32, test: UnitTest, floor: usize, position: usize) {
+        self.push(Frame::LazyBack { pc, test, floor, position });
+    }
+
+    #[inline(always)]
+    fn keep_greedy_back(&mut self, pc: u32, ceiling: usize, position: usize) {
+        self.keep(Frame::GreedyBack { pc, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn keep_lazy_back(&mut self, pc: u32, test: UnitTest, floor: usize, position: usize) {
+        self.keep(Frame::LazyBack { pc, test, floor, position });
+    }
+
+    #[inline(always)]
     fn require(&mut self, flag: bool) -> bool {
         flag
     }
@@ -178,17 +251,6 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
 }
 
 impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
-
-    #[inline(always)]
-    fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize {
-        self.program.run_start_back(test, self.text, from, to)
-    }
-
-    #[inline(always)]
-    fn register(&self, register: u32) -> usize {
-        self.registers[register as usize]
-    }
-
     #[inline(always)]
     fn assign(&mut self, register: u32, value: usize) {
         self.registers[register as usize] = value;
@@ -232,25 +294,11 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn dispatch(&mut self, table: u32, position: usize) -> Option<u32> {
-        self.program.dispatch_target(table, self.text, position, self.stack)
-    }
-
-    fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize> {
-        self.program.classes[class as usize].ends(self.text, position, backward)
-    }
-
-    #[inline(always)]
     fn unit_follower(&self, pc: u32) -> Option<UnitTest> {
         match self.program.instructions[pc as usize] {
             Inst::Unit(test) => Some(test),
             _ => None,
         }
-    }
-
-    #[inline(always)]
-    fn listed(&self, index: u32) -> u32 {
-        self.program.lists[index as usize]
     }
 
     fn look(&mut self, body: Cursor, negative: bool) -> bool {

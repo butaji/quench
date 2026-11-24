@@ -309,7 +309,7 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
 
 /// The return of the running leaf with `value` (`LaneContext::leaf`): the caller's registers,
 /// records and context again, and the call's result in its register, as the plain
-/// activation's return makes them (`return_plain_in_lane`). `None` while no leaf runs.
+/// activation's return makes them (`call_return::step_activation_return_of`). `None` while no leaf runs.
 #[inline(always)]
 pub(crate) fn complete_leaf_in_lane(cx: *mut LaneContext, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     let resumed = lane_return_leaf(cx, value, form)?;

@@ -33,12 +33,7 @@ impl<M: RegexpMachine> Emit<'_, M> {
         match inst {
             NativeInst::CaptureOpen { temporary, count, restores } => m::capture_open(self, (*temporary, *count, *restores), at),
             NativeInst::CaptureClose { capture, temporary } => m::capture_close(self, (*capture, *temporary), at),
-            NativeInst::ResetCaptures { captures } => {
-                for capture in captures {
-                    m::reset_capture(self, *capture);
-                }
-                Step::Continue(at.next())
-            }
+            NativeInst::ResetCaptures { first, count } => m::reset_captures(self, (*first, *count), at),
             NativeInst::LoopInit { counter } => m::loop_init(self, *counter, at),
             NativeInst::LoopHead { counter, min, max, greedy, exit } => m::loop_head(self, (*counter, *min, *max), (*greedy, *exit), at),
             NativeInst::LoopIterate { start } => m::loop_iterate(self, *start, at),
@@ -129,6 +124,67 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
 
     fn keep_lazy(&mut self, pc: u32, test: NativeTest, ceiling: M::Word, position: M::Word) {
         self.push_lazy(pc, test, ceiling, position);
+    }
+
+    fn listed(&mut self, index: u32) -> u32 {
+        self.plan.lists[index as usize]
+    }
+
+    fn pick(&mut self, flag: M::Word, then: M::Word, otherwise: M::Word) -> M::Word {
+        self.b.raw_select(flag, then, otherwise)
+    }
+
+    fn plus(&mut self, left: M::Word, right: M::Word) -> M::Word {
+        self.b.raw_binary(Binary::Add, left, right)
+    }
+
+    fn minus(&mut self, left: M::Word, right: M::Word) -> M::Word {
+        self.b.raw_binary(Binary::Sub, left, right)
+    }
+
+    fn reach_back(&mut self, position: M::Word, count: u32) -> M::Word {
+        let zero = Emit::constant(self, 0);
+        if count == UNBOUNDED {
+            return zero;
+        }
+        let count = Emit::constant(self, i64::from(count));
+        let within = self.compare(Relation::UnsignedLess, position, count);
+        let reach = self.b.raw_binary(Binary::Sub, position, count);
+        self.b.raw_select(within, zero, reach)
+    }
+
+    // The backward instructions, backreferences, dispatch tables and classes of strings keep a
+    // program interpreted (`Program::native_inst`) until the emitter reads the program itself (TOD-2078 step 2).
+    fn run_start(&mut self, _: NativeTest, _: M::Word, _: M::Word) -> M::Word {
+        unreachable!("a native plan holds no backward repeat")
+    }
+
+    fn dispatch_on(&mut self, _: M::Word, _: u32, _: impl FnMut(&mut Self, (u32, u32)) -> Step<M::Word>) -> Step<M::Word> {
+        unreachable!("a native plan holds no dispatch table")
+    }
+
+    fn class_ends(&mut self, _: u32, _: M::Word, _: bool, _: u32) -> (M::Word, M::Word) {
+        unreachable!("a native plan holds no class of strings")
+    }
+
+    fn same_units(&mut self, _: (M::Word, M::Word), _: M::Word, _: (bool, bool)) -> M::Word {
+        unreachable!("a native plan holds no backreference")
+    }
+
+    fn push_greedy_back(&mut self, _: u32, _: M::Word, _: M::Word) {
+        unreachable!("a native plan holds no backward repeat")
+    }
+
+    fn push_lazy_back(&mut self, _: u32, _: NativeTest, _: M::Word, _: M::Word) {
+        unreachable!("a native plan holds no backward repeat")
+    }
+
+    fn keep_greedy_back(&mut self, _: u32, _: M::Word, _: M::Word) {
+        unreachable!("a native plan holds no backward repeat")
+    }
+
+    fn keep_lazy_back(&mut self, _: u32, _: NativeTest, _: M::Word, _: M::Word) {
+        unreachable!("a native plan holds no backward repeat")
     }
 
     fn require(&mut self, flag: M::Word) -> bool {

@@ -66,13 +66,23 @@ pub(super) fn parse_program_with<'a>(
             ..ParseOptions::default()
         })
         .parse();
-    // Every compile parse of typed text admits it here, so a body compiled later (lazily,
-    // streamed, replayed) is the tree its load admitted.
-    if source_type.is_typescript() && parsed.diagnostics.is_empty() && !parsed.stack_exhausted {
-        let mut discarded = crate::bytecode::DeclaredTypes::default();
-        super::typescript::admit(allocator, &mut parsed.program, declared.unwrap_or(&mut discarded));
+    if parsed.diagnostics.is_empty() && !parsed.stack_exhausted {
+        admit_typed(allocator, &mut parsed.program, source_type, declared);
     }
     parsed
+}
+
+/// Every compile parse of typed text admits it here, so a body compiled later (lazily,
+/// streamed, replayed) is the tree its load admitted. JavaScript whose JSDoc declares types is
+/// admitted the same way, once its JSDoc became the TypeScript annotations it spells
+/// (`typescript::annotate_jsdoc`): one type-to-fact source.
+fn admit_typed<'a>(allocator: &'a Allocator, program: &mut Program<'a>, source_type: SourceType,
+    declared: Option<&mut crate::bytecode::DeclaredTypes>) {
+    let mut discarded = crate::bytecode::DeclaredTypes::default();
+    let declared = declared.unwrap_or(&mut discarded);
+    if source_type.is_typescript() || super::typescript::annotate_jsdoc(allocator, program, declared) {
+        super::typescript::admit(allocator, program, declared);
+    }
 }
 
 pub(super) fn call_target<'s, 'a>(

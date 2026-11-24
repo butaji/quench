@@ -12992,7 +12992,7 @@ fn carried_at_in_lane(cx: *mut LaneContext, view: *const LaneView, registers: Re
 
 /// A lane body's call at `call_pc` of the running activation (`lane_region`'s `Call`): the
 /// activation `script_call_miss`'s common form makes, then the callee's own lane body. A
-/// callee whose body returns completes the call (`return_plain_in_lane`), the result in the
+/// callee whose body returns completes the call (`call_return::step_activation_return_of`), the result in the
 /// call's register; one that leaves, or has no body, leaves the lane at its record in that
 /// activation (`LaneContext::callee_resume`). A call the common form does not make misses,
 /// before any of its effects.
@@ -14195,19 +14195,12 @@ return_handler! {
     }
 }
 
-/// The return of the record of form `LEAF` with `value` as one op, making no call: a running
-/// leaf of the caller's program completes (`lane_return_leaf_header`), a plain activation pops
-/// its header from `window`, the running one (`completions::lane_return_header`, the first
-/// step of `return_plain_in_lane`). `None`,
-/// which changes nothing, for any other, which `complete_plain_activation_in_lane` and the
-/// general returns decide as before.
+/// The return of the record of form `LEAF` with `value` as one op, making no call
+/// (`call_return::step_return_one_op_of`), from the running plain frame's `window`. `None`,
+/// which changes nothing, for any other, which `lane_return_records` decides.
 #[inline(always)]
 fn lane_return_one_op<const LEAF: u8>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<(Registers, Ip)> {
-    if LEAF == NOT_LEAF {
-        lane_return_header::<false>(cx, window, value)
-    } else {
-        leaf_calls::lane_return_leaf_header(cx, value, LEAF)
-    }
+    quench_runtime::staged::call_return::step_return_one_op_of(&mut LaneScriptReturn::<LEAF> { cx, window }, value)
 }
 
 return_handler! {
@@ -14215,8 +14208,9 @@ return_handler! {
     /// record's (`complete_plain_activation_in_lane`), else the returns past the common one.
     #[inline(never)]
     fn lane_return_records<LEAF: u8>(cx, r, ip, i, view) {
-        if let Some(resumed) = complete_plain_activation_in_lane::<LEAF>(cx, r.get(i.a)) {
-            resume!(cx, resumed)
+        let returned = quench_runtime::staged::call_return::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), r.get(i.a));
+        if let Some(returned) = returned {
+            resume!(cx, completions::resumed_script(cx, returned))
         }
         sibling!(return_general_in_lane, r, ip, view)
     }
@@ -14279,7 +14273,7 @@ const fn returning_completion(crosses: bool, constructs: bool, settles: bool) ->
     if crosses { Completion::Cross } else if constructs { Completion::Constructs } else if settles { Completion::SettlesPromise } else { Completion::Plain }
 }
 
-/// `return_plain_in_lane` of the innermost activation, a script one whose call keeps its
+/// `call_return::step_activation_return_of` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
 /// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
 /// `new` of its program (`Completion::Constructs`), or, where `SETTLES`, a settling async
@@ -14300,7 +14294,7 @@ fn return_from_in_lane<const CROSSES: bool, const INTO_BODY: bool, const CONSTRU
     }
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // A plain header's own return (`completions::lane_return_header`) ran before this one
-    // (`return_plain_in_lane`, `return_to_body_in_lane`): what reaches here is a side record's
+    // (`call_return::step_activation_return_of`, `return_to_body_in_lane`): what reaches here is a side record's
     // completion, a returning call's chain or a record.
     // The innermost read where it is, a header with its side record or a record (no spill:
     // one-frame-one-call.md F4).
@@ -14339,7 +14333,7 @@ fn return_from_in_lane<const CROSSES: bool, const INTO_BODY: bool, const CONSTRU
     Some((caller_registers, following(call)))
 }
 
-/// `return_plain_in_lane` of a plain activation that returns the completion of its call, and
+/// `call_return::step_activation_return_of` of a plain activation that returns the completion of its call, and
 /// whose callers do in turn (`return f(...)`), down to the plain activation whose call takes
 /// `value`: that activation's caller resumes with it, as the run's completion one activation
 /// at a time (`complete_plain_chain_in_lane`) makes it. `None`, which changes nothing, for a run

@@ -30,8 +30,8 @@ pub(crate) struct CallOutSite {
     /// The body's written, live registers: stored to the file before the helper reads them.
     pub(crate) spill: Vec<Register>,
     /// The global slot a `GlobalWrite` or `GlobalTypeof` row here holds directly, under the
-    /// dependencies the lowering took (`Lowering::global_cell`).
-    pub(crate) cell: Option<GlobalSlot>,
+    /// dependencies the lowering took (`Lowering::global_cell`): the global object's layout fact is theirs.
+    pub(crate) cell: Option<(GlobalSlot, quench_runtime::staged::ShapeFact)>,
 }
 
 /// A row's slow case: the registers the body wrote go to the lane's file, the helper makes the
@@ -146,14 +146,14 @@ fn leave(stage: &mut Emit<'_, '_>, miss: ir::Block) -> (ir::Value, RegisterFact)
 
 /// The projection of the global object's arena run behind its extras, and the object's tagged
 /// word: its record by id, the realm and the layout proved by dependencies the lowering took.
-fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, cell: GlobalSlot, miss: ir::Block)
+fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fact): (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
     -> Option<(CheckedObject, ir::Value)> {
     let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let bits = stage.constant(cell.global.to_bits());
     let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
     let inline = inline_storage(stage.builder, address);
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
-    Some((CheckedObject::prove_arena_extras(stage.builder, address, inline, arena, cell.storage_len, miss)?, bits))
+    Some((CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?, bits))
 }
 
 /// A global-name store of the tagged `value` in `source` straight to the global's slot, which
@@ -162,11 +162,12 @@ fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, cell: GlobalSl
 /// type does not fit, calls the VM (`vm_step`).
 pub(crate) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, source: Register, value: ir::Value)
     -> Option<()> {
-    let cell = frame.call_out?.cell?;
+    let held = frame.call_out?.cell?;
+    let cell = held.0;
     let ty = frame.state.values[usize::from(source)].value.ty;
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
     if !ty.is_subtype(cell.ty) { return None; }
-    let (layout, bits) = global_layout(frame, stage, cell, miss)?;
+    let (layout, bits) = global_layout(frame, stage, held, miss)?;
     let address = layout.arena_address(stage.builder, cell.slot, miss)?;
     #[cfg(test)]
     quench_runtime::vm::call_out::counts::bump(&quench_runtime::vm::call_out::counts::DIRECT_GLOBAL_STORES);
