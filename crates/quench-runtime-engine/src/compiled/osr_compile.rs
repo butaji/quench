@@ -469,11 +469,11 @@ pub(crate) fn start_osr_region(
 impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.
-    pub(crate) fn watch(&self, heap: &mut quench_runtime::heap::Heap, method_atoms: &mut quench_runtime::code_dependencies::CodeReaders,
+    pub(crate) fn watch(&self, facts: &mut quench_runtime::vm::tier_queries::FactWatch<'_>,
         programs: &quench_runtime::vm::program_store::ProgramStore) -> bool {
-        self.watch.hold_roots(self.facts.roots.clone(), heap);
+        facts.hold_roots(&self.watch, self.facts.roots.clone());
         let watch: Rc<dyn quench_runtime::code_dependencies::DependentCode> = self.watch.clone();
-        self.facts.subscribe(&watch, heap, method_atoms) && programs.subscribe_root_constants(&self.facts.root_programs(), &watch)
+        self.facts.subscribe(&watch, facts) && programs.subscribe_root_constants(&self.facts.root_programs(), &watch)
     }
 
     /// The watch a collection that frees any of the callees its code names retires, and those callees
@@ -507,7 +507,7 @@ impl PendingOsrRegion {
         if self.taken.get(plan).and_then(Option::as_ref).is_some_and(|taken| !program.is_some_and(|program| taken.holds(vm, program, self.function))) {
             return Ok(OsrCompile::Stale);
         }
-        let (heap, method_atoms, programs) = (&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs);
+        let (mut facts, programs) = vm.fact_watch();
         let Ok(code) = code else { return Ok(OsrCompile::Failed) };
         let calls = match self.calls.take() {
             Some(calls) => calls,
@@ -518,9 +518,9 @@ impl PendingOsrRegion {
                 self.facts.roots = roots;
                 self.facts.stable = stable;
                 self.facts.calls = LaneDependencies::of(std::iter::empty(), &calls.direct);
-                self.watch.hold_roots(self.facts.roots.clone(), heap);
+                facts.hold_roots(&self.watch, self.facts.roots.clone());
                 let watch: Rc<dyn quench_runtime::code_dependencies::DependentCode> = self.watch.clone();
-                if !self.facts.calls.subscribe(&self.facts.stable, &watch, heap, method_atoms)
+                if !self.facts.calls.subscribe(&self.facts.stable, &watch, &mut facts)
                     || !programs.subscribe_root_constants(&self.facts.root_programs(), &watch) {
                     return Ok(OsrCompile::Stale);
                 }

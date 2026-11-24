@@ -85,7 +85,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let leaf_method = vm.compile_lane_method(&program, target.function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
     assert!(!leaf_method.dependencies.slots.is_empty());
-    let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let leaf_publication = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(leaf_method, &mut facts) }.unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
@@ -106,7 +106,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.dependencies.slots, leaf_body.dependencies.slots);
-    let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let root_publication = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(root_method, &mut facts) }.unwrap();
     let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);
     drop(leaf_body);

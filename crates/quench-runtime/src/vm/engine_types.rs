@@ -4262,11 +4262,11 @@ impl LaneDependencies {
     /// shape's departure, or one of its Stable facts or its direct callees'; `false` where a reader table is full.
     #[inline]
     pub fn subscribe(&self, stable: &StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
-        heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-        self.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
-            && self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
-            && subscribe_stable(stable, code, heap, method_atoms)
-            && self.subscribe_callees(code, heap, method_atoms)
+        facts: &mut crate::vm::tier_queries::FactWatch<'_>) -> bool {
+        self.slots.iter().all(|dependency| facts.subscribe_slot_observation(*dependency, code))
+            && self.departure_shapes.iter().all(|shape| facts.subscribe_shape(*shape, code))
+            && subscribe_stable(stable, code, facts)
+            && self.subscribe_callees(code, facts)
     }
 
     /// The programs whose root constants the code folds, its own and its direct callees' and theirs
@@ -4616,11 +4616,10 @@ impl OsrFacts {
     /// field use, so only a holder shape's departure discards it; a receiver shape ID still
     /// retires it at compaction (`shape_dependencies`).
     #[inline]
-    pub fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap,
-        method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-        self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
-            && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
-            && self.calls.subscribe(&self.stable, code, heap, method_atoms)
+    pub fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, facts: &mut crate::vm::tier_queries::FactWatch<'_>) -> bool {
+        self.departure_shapes.iter().all(|shape| facts.subscribe_shape(*shape, code))
+            && self.slot_dependencies.iter().all(|dependency| facts.subscribe_slot_observation(*dependency, code))
+            && self.calls.subscribe(&self.stable, code, facts)
     }
 
     /// The programs whose root constants the region's calls fold (`LaneDependencies::root_programs`),
@@ -4823,9 +4822,9 @@ impl LaneDependencies {
     /// Subscribes `code` to the Stable facts of its direct callees' bodies, and theirs in turn.
     #[inline]
     pub fn subscribe_callees(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>,
-        heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-        self.callees.iter().all(|callee| subscribe_stable(&callee.stable, code, heap, method_atoms)
-            && callee.dependencies.subscribe_callees(code, heap, method_atoms))
+        facts: &mut crate::vm::tier_queries::FactWatch<'_>) -> bool {
+        self.callees.iter().all(|callee| subscribe_stable(&callee.stable, code, facts)
+            && callee.dependencies.subscribe_callees(code, facts))
     }
 }
 

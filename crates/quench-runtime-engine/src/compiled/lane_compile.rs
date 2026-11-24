@@ -707,20 +707,21 @@ impl Vm {
                 if !self.lowering_holds(program, &pending, &lowered) { return Ok(LaneBodyOutcome::Stale); }
                 pending.plan.lowered = lowered;
                 let watch = pending.watch.clone();
-                watch.hold_roots(pending.plan.lowered.region.stable.roots.clone(), &mut self.heap);
+                let (mut facts, _) = self.fact_watch();
+                facts.hold_roots(&watch, pending.plan.lowered.region.stable.roots.clone());
                 let watcher: Rc<dyn quench_runtime::code_dependencies::DependentCode> = watch.clone();
-                if !pending.plan.dependencies().subscribe(&pending.plan.lowered.region.stable, &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
+                if !pending.plan.dependencies().subscribe(&pending.plan.lowered.region.stable, &watcher, &mut facts) {
                     refuse(self, Refusal::Dependencies);
                     return Ok(LaneBodyOutcome::Declined);
                 }
                 let PendingLaneMethod { plan, .. } = *pending;
                 plan.finish(&code.code, code.scalar, code.proven)
-                    .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
+                    .and_then(|method| { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) })
                     .inspect(|published| self.programs.note_installed_lane(key, published))
                     .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
             }
             Ok(LaneCompile::Done(method)) => method
-                .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
+                .and_then(|method| { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) })
                 .inspect(|published| self.programs.note_installed_lane(key, published))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
         })

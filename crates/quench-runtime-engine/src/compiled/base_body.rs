@@ -149,7 +149,7 @@ impl Vm {
         // length, as a Cranelift body does (`start_lane_method`).
         if !method.amortizes_entry() && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
-        self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
+        { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }.map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }
 
     /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)

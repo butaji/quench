@@ -8,6 +8,8 @@ use crate::heap::{ArrayElements, ArrayObject, Cell, EnvironmentRecord, FunctionR
 use crate::vm::engine_types::InstanceRecord;
 use crate::vm::wtf16::JsString;
 use crate::Value;
+use crate::code_dependencies::{DependentCode, PrototypeChain, PublishedCode, SlotDependency};
+use std::rc::Rc;
 
 impl Vm {
     /// Whether a collection is due (`Heap::should_collect`): an allocating tier helper leaves first,
@@ -315,4 +317,50 @@ impl Vm {
     /// Visits every Wasm table's elements for a store (`Heap::for_each_wasm_table_mut`).
     #[inline(always)]
     pub fn for_each_wasm_table_mut(&mut self, visit: impl FnMut(&mut crate::heap::WasmTableElements)) { self.heap.for_each_wasm_table_mut(visit) }
+}
+
+/// The fact subscriptions a compiled unit takes when it publishes (`Vm::fact_watch`): the heap's reader
+/// tables and the method atoms' readers, and nothing else of the heap. A tier subscribes its code through
+/// these methods; each fact it names retires the code when a tracked mutation changes it.
+pub struct FactWatch<'a> {
+    heap: &'a mut Heap,
+    readers: &'a mut crate::code_dependencies::CodeReaders,
+}
+
+impl Vm {
+    /// The fact subscriptions of a publication, beside the program store that publishes the code.
+    #[inline(always)]
+    pub fn fact_watch(&mut self) -> (FactWatch<'_>, &crate::vm::program_store::ProgramStore) {
+        (FactWatch { heap: &mut self.heap, readers: self.method_cache_atoms.readers() }, &self.programs)
+    }
+}
+
+impl<'a> FactWatch<'a> {
+    /// Retires `code` when a shape departs (`Heap::subscribe_shape`); `false` where the table is full.
+    #[inline(always)]
+    pub fn subscribe_shape(&mut self, shape: u32, code: &Rc<dyn DependentCode>) -> bool { self.heap.subscribe_shape(shape, code) }
+    /// Retires `code` when a slot's observation changes (`Heap::subscribe_slot_observation`).
+    #[inline(always)]
+    pub fn subscribe_slot_observation(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
+        self.heap.subscribe_slot_observation(dependency, code)
+    }
+    /// Retires `code` when a prototype of `chain` changes (`Heap::subscribe_prototype_chain`).
+    #[inline(always)]
+    pub fn subscribe_prototype_chain(&mut self, chain: PrototypeChain, code: &Rc<dyn DependentCode>) -> bool {
+        self.heap.subscribe_prototype_chain(chain, code)
+    }
+    /// Retires `code` when a method cache names `atom` (`CodeReaders::subscribe`).
+    #[inline(always)]
+    pub fn subscribe_atom(&mut self, atom: u32, code: &Rc<dyn DependentCode>) -> bool { self.readers.subscribe(atom, code) }
+    /// Keeps the heap identities `code` embeds alive until it retires (`PublishedCode::hold_roots`).
+    #[inline(always)]
+    pub fn hold_roots<T: 'static>(&mut self, code: &Rc<PublishedCode<T>>, roots: crate::folded_roots::FoldedRoots) {
+        code.hold_roots(roots, self.heap)
+    }
+    /// The heap and readers, for the runtime's own subscriptions.
+    #[inline(always)]
+    pub(crate) fn parts(&mut self) -> (&mut Heap, &mut crate::code_dependencies::CodeReaders) { (self.heap, self.readers) }
+    /// A watch over `heap` and `readers`, for the runtime's own publications.
+    #[inline(always)]
+    pub(crate) fn of(heap: &'a mut Heap, readers: &'a mut crate::code_dependencies::CodeReaders) -> Self { Self { heap, readers } }
 }

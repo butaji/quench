@@ -38,7 +38,7 @@ fn a_direct_store_holds_unnamed_method_atoms_until_a_cache_names_one() {
     let (a, m) = (vm.intern_atom("a"), vm.intern_atom("m"));
     assert_eq!(*method.stable.atoms, [a], "the store folds that no method cache names `a`");
     let invalidation = method.invalidation.clone();
-    let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
     let active = published.lease().unwrap();
     let owner_atom = vm.intern_atom("owner");
     let owner = vm.own_property(vm.realm.globals, owner_atom).unwrap();
@@ -58,7 +58,7 @@ fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
          for (var j = 0; j < 4; j++) read();", "read");
     assert!(!method.stable.holders.is_empty(), "the inherited read takes the prototype's value as a constant");
     let invalidation = method.invalidation.clone();
-    let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
     let (instance_atom, k) = (vm.intern_atom("c"), vm.intern_atom("k"));
     let instance = vm.own_property(vm.realm.globals, instance_atom).unwrap();
     let prototype = vm.heap_reads().object(instance).unwrap().proto();
@@ -88,7 +88,7 @@ fn a_folded_prototype_value_survives_other_prototypes_and_retires_at_its_chain()
          for (var j = 0; j < 4; j++) read();", "read");
     assert!(!method.stable.chains.is_empty(), "the inherited read holds the chain it read the value through");
     let invalidation = method.invalidation.clone();
-    let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
     let other = prototype_of(&mut vm, "d");
     vm.mark_prototype(other);
     let w = vm.intern_atom("w");
@@ -140,7 +140,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let (mut vm, program, method) = compiled_lane_body(source, "read");
     assert_eq!(method.stable.globals.len(), 1, "the read takes the global's value as a constant");
     let invalidation = method.invalidation.clone();
-    let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
     let k = vm.intern_atom("K");
     let globals = vm.realm.globals;
     let slot = vm.shape_slot(vm.heap_reads().object(globals).unwrap().shape(), k).unwrap();

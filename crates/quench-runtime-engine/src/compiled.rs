@@ -10149,7 +10149,7 @@ mod tests {
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
-        let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+        let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
         let receiver_atom = vm.intern_atom("receiver");
@@ -10224,7 +10224,7 @@ mod tests {
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
-            let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+            let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
