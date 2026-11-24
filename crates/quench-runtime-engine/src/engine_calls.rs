@@ -26,8 +26,11 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_wasm_ins
 fn quench_engine_vm_running_owner(this: &mut Vm) -> VarOwner { <Vm as DispatchFastWindowOwnerVm>::running_owner(this) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_running_owner = quench_engine_vm_running_owner;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_call_compiled(this: &mut Vm, caller: usize, id: u32, window: quench_runtime::bytecode::RegisterWindow) -> Option<Result<Value, JsError>> { <Vm as CompiledVm4>::call_compiled(this, caller, id, window) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_call_compiled = quench_engine_vm_call_compiled;
+fn quench_engine_vm_offer_compiled(this: &mut Vm, caller: usize, id: u32) -> Option<std::rc::Rc<CompiledProgram>> { <Vm as CompiledVm4>::offer_compiled(this, caller, id) }
+const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_offer_compiled = quench_engine_vm_offer_compiled;
+#[unsafe(no_mangle)]
+fn quench_engine_vm_run_offered(this: &mut Vm, compiled: std::rc::Rc<CompiledProgram>, caller: usize, id: u32, window: quench_runtime::bytecode::RegisterWindow) -> Option<Result<Value, JsError>> { <Vm as CompiledVm4>::run_offered(this, compiled, caller, id, window) }
+const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_run_offered = quench_engine_vm_run_offered;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_js_jit_compiled_call(this: &mut Vm, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value> { <Vm as CompiledVm4>::js_jit_compiled_call(this, program, arg1, returns, arguments) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_js_jit_compiled_call = quench_engine_vm_js_jit_compiled_call;

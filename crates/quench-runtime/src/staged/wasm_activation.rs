@@ -47,8 +47,9 @@ pub trait WasmNativeEntry {
     type Resume;
     /// Whether the call may run natively: the execution mode is compiled and the call keeps its result.
     fn native_mode(&mut self) -> bool;
-    /// Whether a native tier holds `function`, noting a fallback where it has none.
-    fn has_native(&mut self, function: u32) -> bool;
+    /// The tiers' answer to this entry of `function` (`offer_entry` over the interpreter's
+    /// tiers); `Held` keeps the code for `enter_compiled`.
+    fn offer(&mut self, function: u32) -> EntryOffer<()>;
     /// Runs `function` in native code, with the call's window as its arguments.
     fn enter_compiled(&mut self, function: u32) -> NativeCall;
     /// Leaves for the general loop, at the call (the general loop: raises what the native run raised).
@@ -66,8 +67,6 @@ pub trait WasmActivation: WasmStage + WasmNativeEntry {
     fn reference(&mut self) -> CallTarget;
     /// Whether the lane may make calls inline (the frame is not leaving for native code).
     fn inline_calls(&mut self) -> bool;
-    /// Notes a lane entry of `function` in its wasm tier; true where the general loop must enter it.
-    fn note_tier_entry(&mut self, function: u32) -> bool;
     /// The activation shape of `function`, where the lane has derived one.
     fn shape(&mut self, function: u32) -> Option<Self::Shape>;
     /// The registers the shape's frame holds.
@@ -131,29 +130,140 @@ pub(crate) fn push_frame<S: WasmActivation>(stage: &mut S) -> S::Resume {
 }
 
 /// Enters `function` as a Wasm call: out of the lane when inline calls are off, through native
-/// code where a tier holds it, else as an activation. The guard order is the lane's: depth, the
-/// frames and activations together, storage, then the value stack's room.
+/// code where a tier holds it, out of the lane where a compile came due (the general loop makes
+/// it), else as an activation. The guard order is the lane's: depth, the frames and activations
+/// together, storage, then the value stack's room.
 #[inline(always)]
 pub(crate) fn enter_function<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutcome<S::Resume> {
     if !stage.inline_calls() {
         return CallOutcome::Exit;
     }
-    if let Some(resumed) = enter_native(stage, function) {
-        return CallOutcome::Resume(resumed);
+    match enter_native(stage, function) {
+        NativeEntry::Ran(resumed) => CallOutcome::Resume(resumed),
+        NativeEntry::Leave => CallOutcome::Exit,
+        NativeEntry::Interpret => enter_activation(stage, function),
     }
-    if stage.native_mode() && stage.note_tier_entry(function) {
-        return CallOutcome::Exit;
-    }
-    enter_activation(stage, function)
+}
+
+/// Where a Wasm call's native entry (`enter_native`) leaves the call.
+pub enum NativeEntry<R> {
+    /// Native code ran it: the caller resumes, or leaves, as `R` says.
+    Ran(R),
+    /// A compile came due that this interpreter does not make: the general loop takes the call.
+    Leave,
+    /// The interpreter runs it.
+    Interpret,
 }
 
 /// A known call's native entry, the rule both interpreters make first: where the call may run
-/// natively and a tier holds `function`, native code runs it, and the caller resumes with its
-/// result or leaves. `None` where the call does not run natively (the mode, no tier, or the tier
-/// declines): the lane then activates it, the general loop pushes its frame.
+/// natively, the tiers answer the entry (`offer_entry`), native code runs what they hold, and the
+/// caller resumes with its result or leaves. A tier that declines the run leaves the call to the
+/// interpreter: the lane activates it, the general loop pushes its frame.
 #[inline(always)]
-pub fn enter_native<S: WasmNativeEntry>(stage: &mut S, function: u32) -> Option<S::Resume> {
-    if stage.native_mode() && stage.has_native(function) { call_compiled(stage, function) } else { None }
+pub fn enter_native<S: WasmNativeEntry>(stage: &mut S, function: u32) -> NativeEntry<S::Resume> {
+    if !stage.native_mode() {
+        return NativeEntry::Interpret;
+    }
+    match stage.offer(function) {
+        EntryOffer::Held(()) => call_compiled(stage, function).map_or(NativeEntry::Interpret, NativeEntry::Ran),
+        EntryOffer::Leave => NativeEntry::Leave,
+        EntryOffer::Interpret => NativeEntry::Interpret,
+    }
+}
+
+/// What the tiers answer one Wasm entry (`offer_entry`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EntryOffer<C> {
+    /// A tier holds the function: native code runs it.
+    Held(C),
+    /// A compile came due that this interpreter hands to the general loop.
+    Leave,
+    /// No tier runs it: the interpreter does.
+    Interpret,
+}
+
+impl<C> EntryOffer<C> {
+    /// The offer with its code kept in `slot`, for the run that follows (`enter_compiled`).
+    #[inline(always)]
+    pub fn keep(self, slot: &mut Option<C>) -> EntryOffer<()> {
+        match self {
+            Self::Held(code) => {
+                *slot = Some(code);
+                EntryOffer::Held(())
+            }
+            Self::Leave => EntryOffer::Leave,
+            Self::Interpret => EntryOffer::Interpret,
+        }
+    }
+}
+
+/// What an interpreter did with a compile an entry made due.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Compile {
+    /// It compiled (the artifact may hold the function or not).
+    Made,
+    /// It made no compile: the attempt was claimed elsewhere, or the budget refused it.
+    Refused,
+    /// It does not compile here: the general loop does, at the same call.
+    Leave,
+}
+
+/// The tiers an interpreter offers a Wasm entry to: the module's whole compile, its root tiers and
+/// their counters. Each method is one lookup, one count or one compile; `offer_entry` orders them.
+pub trait WasmEntryTiers {
+    /// What runs a held function (the artifact the tier keeps).
+    type Code;
+    /// The module's whole compile, where it holds `function`.
+    fn whole(&mut self, function: u32) -> Option<Self::Code>;
+    /// Counts one entry's work toward the module's whole compile; whether that compile is due.
+    fn note_module_work(&mut self) -> bool;
+    /// Makes the module's whole compile, which `note_module_work` found due.
+    fn compile_whole(&mut self) -> Compile;
+    /// A root tier holding `function`.
+    fn root(&mut self, function: u32) -> Option<Self::Code>;
+    /// Whether a root tier may take `function` (`ProgramStore::wasm_root_admissible`).
+    fn root_admissible(&mut self, function: u32) -> bool;
+    /// Counts one entry of `function` toward its root compile; whether the compile is due.
+    fn note_root_entry(&mut self, function: u32) -> bool;
+    /// Makes the root compile of `function`, which `note_root_entry` found due.
+    fn compile_root(&mut self, function: u32) -> Compile;
+    /// Notes that the interpreter runs `function` though the module has a whole compile.
+    fn note_fallback(&mut self, function: u32);
+}
+
+/// The tiers' answer to one entry of `function`, the compile trigger of both interpreters: the
+/// whole compile's code; else one entry's work counted toward the whole compile, made where it
+/// comes due; else a root tier's code; else one entry counted toward the function's own root
+/// compile, made where it comes due; else the interpreter. An interpreter that does not compile
+/// (the lane) leaves at a due compile, and the general loop, offered the same call, makes it.
+#[inline(always)]
+pub fn offer_entry<T: WasmEntryTiers>(tiers: &mut T, function: u32) -> EntryOffer<T::Code> {
+    if let Some(code) = tiers.whole(function) {
+        return EntryOffer::Held(code);
+    }
+    if tiers.note_module_work() {
+        match tiers.compile_whole() {
+            Compile::Leave => return EntryOffer::Leave,
+            Compile::Made => if let Some(code) = tiers.whole(function) {
+                return EntryOffer::Held(code);
+            },
+            Compile::Refused => {}
+        }
+    }
+    if let Some(code) = tiers.root(function) {
+        return EntryOffer::Held(code);
+    }
+    if tiers.root_admissible(function) && tiers.note_root_entry(function) {
+        match tiers.compile_root(function) {
+            Compile::Leave => return EntryOffer::Leave,
+            Compile::Made => if let Some(code) = tiers.root(function) {
+                return EntryOffer::Held(code);
+            },
+            Compile::Refused => {}
+        }
+    }
+    tiers.note_fallback(function);
+    EntryOffer::Interpret
 }
 
 /// The activation of `function` where the lane has its shape and room for it.

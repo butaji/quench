@@ -5,7 +5,8 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::machine::{Machine, MachineStage};
-use quench_runtime::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation, WasmNativeEntry};
+use quench_runtime::staged::wasm_activation::{self as activation, offer_entry, CallTarget, EntryOffer, NativeCall, WasmActivation, WasmNativeEntry};
+use quench_runtime::vm::program_store::HandoffTiers;
 use super::lane_stack_growth::LaneStackFull;
 use quench_runtime::vm::JsError;
 
@@ -27,6 +28,8 @@ struct LaneCall<'a> {
     ip: Ip,
     i: &'a LaneInstruction,
     memory: MemoryView,
+    /// The code the tiers offered for the callee (`WasmNativeEntry::offer`).
+    offered: Option<std::rc::Rc<quench_runtime::vm::engine_types::CompiledProgram>>,
 }
 
 impl LaneCall<'_> {
@@ -74,11 +77,11 @@ impl WasmNativeEntry for LaneCall<'_> {
         unsafe { vm(self.cx) }.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
     }
 
+    /// The lane makes no compile: one an entry makes due leaves for the general loop (`HandoffTiers`).
     #[inline(always)]
-    fn has_native(&mut self, function: u32) -> bool {
-        let (vm, program, function) = (unsafe { vm(self.cx) }, unsafe { (*self.cx).program }, function as usize);
-        vm.programs.has_compiled_function_or_note_fallback(program, function)
-            || vm.programs.has_wasm_tier_containing(program, function)
+    fn offer(&mut self, function: u32) -> EntryOffer<()> {
+        let (vm, program) = (unsafe { vm(self.cx) }, unsafe { (*self.cx).program });
+        offer_entry(&mut HandoffTiers { store: &mut vm.programs, program }, function).keep(&mut self.offered)
     }
 
     #[inline(always)]
@@ -87,8 +90,9 @@ impl WasmNativeEntry for LaneCall<'_> {
         // runs, so before guest code could make the activations frames.
         let args = unsafe { call_window_in_lane(self.r, self.i) };
         let (program, env) = (unsafe { (*self.cx).program }, instance_env_in_lane(self.cx));
+        let offered = self.offered.take().expect("a native entry runs the code its tiers offered");
         let called = in_place_in_lane(self.cx, self.ip, |vm, _| {
-            vm.run_compiled(program, env, function, args).transpose()
+            vm.run_offered_values(offered, program, env, function, args).transpose()
         });
         match called {
             None => NativeCall::Left,
@@ -153,13 +157,6 @@ impl WasmActivation for LaneCall<'_> {
     #[inline(always)]
     fn inline_calls(&mut self) -> bool {
         unsafe { (*self.cx).inline_calls }
-    }
-
-    #[inline(always)]
-    fn note_tier_entry(&mut self, function: u32) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        let program = unsafe { (*self.cx).program };
-        vm.programs.note_wasm_tier_lane_entry(program, function)
     }
 
     #[inline(always)]
@@ -346,7 +343,7 @@ lane_handler! {
     /// A Wasm call to a function of the same program, pushed as the general
     /// loop's inline call would be.
     fn lane_call_known<>(cx, r, ip, i, view) {
-        let mut call = LaneCall { cx, r, ip, i, memory: view.memory };
+        let mut call = LaneCall { cx, r, ip, i, memory: view.memory, offered: None };
         match activation::call_known(&mut call, u32::from(i.b)) {
             Some(resumed) => resume!(cx, resumed),
             None => return exit(ip),
@@ -359,7 +356,7 @@ lane_handler! {
     /// function of the running program and instance, entered as `lane_call_known` enters its
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
-        let mut call = LaneCall { cx, r, ip, i, memory: view.memory };
+        let mut call = LaneCall { cx, r, ip, i, memory: view.memory, offered: None };
         match activation::call_reference(&mut call) {
             Some(resumed) => resume!(cx, resumed),
             None => return exit(ip),

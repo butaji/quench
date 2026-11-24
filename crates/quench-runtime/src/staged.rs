@@ -153,6 +153,7 @@ pub mod protocol;
 pub mod call_keeping;
 pub mod call_environment;
 pub mod call_leaf;
+pub mod call_getter;
 pub mod call_construct;
 pub mod call_callback;
 pub mod call_body;

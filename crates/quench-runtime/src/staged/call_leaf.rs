@@ -162,6 +162,37 @@ pub fn complete_leaf<S: Stage>(stage: &mut S, leaf: S::Word, miss: S::Miss) -> O
     Some(LeafCaller { call, registers, base })
 }
 
+/// A tier's fill of a leaf call's window: the values the call passed, then `undefined` up to the
+/// callee's registers (`protocol::fill_window`'s contract), written however the tier stores
+/// best (the interpreter's admitted-room block stores).
+pub trait LeafWindow<S: Stage> {
+    fn fill(&mut self, stage: &mut S, window: S::Word);
+}
+
+/// The leaf call of `entry`: the callee's window at `window` filled (`LeafWindow`) and the
+/// call made the running leaf (`enter_leaf`). The one step of every leaf call: the lane's
+/// call records of a leaf target, a crossing leaf's, a getter's leaf and a cell body's leaf
+/// run it. The tier moves its registers and records to the callee's.
+#[inline(always)]
+pub fn step_leaf_call_of<S: Stage, F: LeafWindow<S>>(stage: &mut S, window_fill: &mut F, leaf: S::Word, window: S::Word,
+    entry: LeafEntry<S::Word>, context: LeafContext<S::Word>) {
+    window_fill.fill(stage, window);
+    enter_leaf(stage, leaf, window, entry, context);
+}
+
+/// The return of the running leaf with `value`: its caller (`complete_leaf`), with `value` in
+/// the call's result register, at the byte offset `result_at` gives for the caller's call record.
+/// The one step of every leaf return. Leaves at `miss` where no leaf runs, changing nothing.
+#[inline(always)]
+pub fn step_leaf_return_of<S: Stage>(stage: &mut S, leaf: S::Word, value: S::Word,
+    result_at: impl FnOnce(&mut S, S::Word) -> S::Word, miss: S::Miss) -> Option<LeafCaller<S::Word>> {
+    let caller = complete_leaf(stage, leaf, miss)?;
+    let offset = result_at(stage, caller.call);
+    let result = stage.add(caller.registers, offset);
+    stage.store_u64(Region::Frame.mutable(), result, 0, value);
+    Some(caller)
+}
+
 /// The context words a leaf of `form` left to its caller, written into its window at `window`
 /// (region `Frame`) when it becomes the activation its call would have pushed: `this`, the
 /// binding its call proved (`guard_receiver_binds`), at `frame::CONTEXT_THIS` where the form
