@@ -2089,7 +2089,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
         // computes no conversion of its own.
         let number = Float64::checked(value)?;
-        Int32::to_int32(stage, number, ())
+        Int32::truncating(stage, number, ())
     }
 
     #[inline(always)]

@@ -90,7 +90,7 @@ impl Float64<u64> {
 impl<W: Copy> Int32<W> {
     /// ToInt32 of a proved binary64 by the stage's own conversion (`NumericStage::to_int32`).
     #[inline(always)]
-    pub fn to_int32<S: super::NumericStage<Word = W>>(stage: &mut S, number: Float64<W>, miss: S::Miss) -> Option<Self> {
+    pub fn truncating<S: super::NumericStage<Word = W>>(stage: &mut S, number: Float64<W>, miss: S::Miss) -> Option<Self> {
         stage.to_int32(number.0, miss).map(Int32)
     }
 }
