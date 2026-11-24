@@ -10,7 +10,7 @@ mod distinct_heap;
 pub(crate) use distinct_heap::DistinctHeapPair;
 mod number_conversion;
 pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
-pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
+pub(crate) use number_conversion::{exact_uint32, EXACT_I64_TRUNCATION_LIMIT};
 use number_conversion::truncate_to_i32;
 pub use crate::vm::operations::WORD32_SHIFT_MASK;
 

@@ -140,7 +140,7 @@ impl Stage for Concrete {
     #[inline(always)]
     // `Value::number` without its call (`Value::number_inline`): an element or slot read boxes its Number in
     // place, as the row's other arms make their words.
-    fn box_number(&mut self, number: u64) -> u64 { crate::Value::number_inline(f64::from_bits(number)).to_bits() }
+    fn box_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::number_inline(f64::from_bits(number.word())).to_bits() }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]

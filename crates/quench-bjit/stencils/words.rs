@@ -227,12 +227,6 @@ pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {
     crate::value::exact_uint32(f).map(|uint32| uint32 as i32)
 }
 
-/// Whether both tagged words are int words (one test of their upper halves).
-#[inline(always)]
-pub(crate) fn both_int(x: u64, y: u64) -> bool {
-    ((x ^ INT_TAG) | (y ^ INT_TAG)) >> HIGH_SHIFT == 0
-}
-
 /// Whether the tagged word's upper half is the int tag (an int word).
 #[inline(always)]
 pub(crate) fn has_int_high(x: u64) -> bool {

@@ -21,10 +21,11 @@ pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &
         crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset));
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
     stage.guard(same, miss)?;
-    frame.prove_shape(stage, owner, shape, direct);
+    let shaped = super::super::Shaped::of_guard(at.record);
+    frame.prove_shape(stage, owner, (shape, shaped), direct);
     let payload = stage.load_u64(super::super::region::Region::Payload.mutable(), at.record, crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
     let layout = Layout { slots: super::super::object::Slots::Flat(super::super::object::arena_run(stage, payload)), storage_len };
-    frame.keep_layout(owner, shape, layout);
+    frame.keep_layout(owner, (shape, shaped.fact()), layout);
     Some(read_slot_value(stage, layout, slot, rep))
 }
 
@@ -37,7 +38,7 @@ pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         Some(layout) => layout,
         None => {
             let layout = ic::slot_layout(stage, at, form, storage_len, miss)?;
-            frame.keep_layout(owner, shape, layout);
+            frame.keep_layout(owner, (shape, at.shaped.expect("a slot read follows the guard of its shape").fact()), layout);
             layout
         }
     };
@@ -53,15 +54,15 @@ pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, word: u32, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     let shape = ic::layout_shape(word);
-    if frame.proven_shape(stage, owner) == Some(shape)
+    if frame.proven_shape(stage, owner).map(|(proven, _)| proven) == Some(shape)
         && let Some(layout) = frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
         return Some(read_slot_value(stage, layout, slot, rep));
     }
-    ic::guard_layout(stage, at, word, miss)?;
+    let shaped = ic::guard_layout(stage, at, word, miss)?;
     let bits = ic::layout_form(word);
-    frame.prove_shape(stage, owner, shape, direct);
-    let formed = Reached { formed: Some(bits), ..*at };
+    frame.prove_shape(stage, owner, (shape, shaped), direct);
+    let formed = Reached { formed: Some(bits), shaped: Some(shaped), ..*at };
     let layout = ic::slot_layout(stage, &formed, ic::form_of_layout(word), storage_len, miss)?;
-    frame.keep_layout(owner, shape, layout);
+    frame.keep_layout(owner, (shape, shaped.fact()), layout);
     Some(read_slot_value(stage, layout, slot, rep))
 }

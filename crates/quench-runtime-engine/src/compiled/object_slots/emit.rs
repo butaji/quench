@@ -249,7 +249,7 @@ impl Stage for Emit<'_, '_> {
     fn load_f64(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
         self.raw_load(Lane::F64, regions::flags(at), base, offset)
     }
-    fn box_number(&mut self, number: ir::Value) -> ir::Value {
+    fn box_number(&mut self, number: quench_runtime::staged::Float64<ir::Value>) -> ir::Value {
         super::super::emit_js_box_number(self.builder, number)
     }
     fn store_u8(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
@@ -385,6 +385,7 @@ impl Emit<'_, '_> {
 }
 
 impl NumericStage for Emit<'_, '_> {
+    const ORDERED_FIRST: bool = true;
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: ir::Value, right: ir::Value) -> ir::Value {
         numbers::number_relation(self, relation, left, right, domain)

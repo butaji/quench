@@ -166,7 +166,7 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
             let place = if k < PLACED_ARGUMENTS { unsafe { places.add(k).read() } } else { MEM };
             *word = match place {
                 PIN..=LAST_INT_PIN => value::int_word(&mut stage, s.p[usize::from(place - PIN)] as u32 as u64),
-                PINF..=LAST_DOUBLE_PIN => stage.box_number(s.f[usize::from(place - PINF)].to_bits()),
+                PINF..=LAST_DOUBLE_PIN => stage.box_number(crate::staged::Float64::by_fact(s.f[usize::from(place - PINF)].to_bits(), crate::staged::NumberFact::float64_home())),
                 _ => stage.load_u64(Region::Frame.mutable(), s.frame as u64, word_offset(window + k as u16)),
             };
         }

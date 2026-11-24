@@ -67,12 +67,12 @@ impl PropertyFrame<Concrete> for Probe {
 }
 
 impl NumericFrame<Concrete> for Probe {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no int operand") }
-    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!("no int operand") }
+    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> {
         let number = Value::from_bits(self.registers[usize::from(operand.register_index()?)]).as_number()?;
-        Some(unsafe { crate::staged::Int32::proven(u64::from(crate::value::number_to_u32(number))) })
+        Some(crate::staged::Int32::by_fact(u64::from(crate::value::number_to_u32(number)), crate::staged::IntFact::int32_home()))
     }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no Number operand") }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!("no Number operand") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn html_dda_possible(&self) -> bool { self.html_dda }
