@@ -159,6 +159,7 @@ pub mod call_callback;
 pub mod call_body;
 pub mod call_native;
 pub mod call_complete;
+pub mod call_return;
 pub mod call_iteration;
 #[allow(unused_imports)]
 pub use forms::{Arguments, CallFacts, CallForm, Callee, FunctionId, Invocation, Receiver, RegisterList};
