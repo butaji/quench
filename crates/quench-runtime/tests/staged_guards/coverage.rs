@@ -264,7 +264,8 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     }
     // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
     // no staged step of its opcode: it neither names `staged::` nor calls a family step
-    // (`step_of`, `step_local_of`, ...) or one of the staged Wasm operators of `STAGED_WASM_STEPS`.
+    // (`step_of`, `step_local_of`, ...), one of the staged Wasm operators of `STAGED_WASM_STEPS` or
+    // one of the regexp `Machine`'s rows of `STAGED_REGEXP_ROWS`.
     // A call of a staged accessor or helper alone (`object_record_at`, `string_length::..`) is a
     // hand-written row built from staged parts, and still counts. The stencils name rows by code
     // numbers, not opcodes, so the terms above cannot see them.
@@ -298,8 +299,19 @@ fn lane_handlers_run_their_step_directly_or_through_one_own_wrapper() {
 /// `wasm_float`, `wasm_memory`, `wasm_call`): the Wasm rows have no `step_*_of` family step.
 const STAGED_WASM_STEPS: &[&str] = &["integer_binary", "float_binary", "unary_operator", "load", "store", "call_entry"];
 
+/// The regexp `Machine`'s instruction rows (`quench_regexp::backtrack::machine`, mounted in the
+/// stencils as `m`) a regexp stencil row runs as its instruction's step: the regexp rows have no
+/// `step_*_of` family step. Named with the module path, so a function of the same name elsewhere
+/// is not one.
+const STAGED_REGEXP_ROWS: &[&str] = &[
+    "m::unit", "m::unit_back", "m::unit_repeat", "m::unit_repeat_back", "m::assertion", "m::split",
+    "m::guarded_split", "m::dispatch", "m::capture_open", "m::capture_close", "m::capture_close_back",
+    "m::reset_captures", "m::loop_init", "m::loop_head", "m::loop_iterate", "m::empty_check",
+    "m::loop_tail", "m::backreference", "m::class_widths", "m::resume",
+];
+
 /// Whether `body` calls a staged family step (`step_of`, `step_<family>_of`, with or without a
-/// turbofish) or one of `STAGED_WASM_STEPS`, at an identifier boundary.
+/// turbofish) or one of `STAGED_WASM_STEPS` or `STAGED_REGEXP_ROWS`, at an identifier boundary.
 fn runs_staged_step(body: &str) -> bool {
     let called = |at: usize, name: &str| {
         let rest = &body[at + name.len()..];
@@ -309,7 +321,7 @@ fn runs_staged_step(body: &str) -> bool {
         let name = ident_at(body, at);
         name.ends_with("_of") || name == "step_of"
     } && called(at, ident_at(body, at)));
-    family || STAGED_WASM_STEPS.iter().any(|name| body.match_indices(name).any(|(at, _)| called(at, name)))
+    family || STAGED_WASM_STEPS.iter().chain(STAGED_REGEXP_ROWS).any(|name| body.match_indices(name).any(|(at, _)| called(at, name)))
 }
 
 /// The bodies (from the opening brace to its match) of the functions `code` defines.
