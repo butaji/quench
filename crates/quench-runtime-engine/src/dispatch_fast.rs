@@ -2581,6 +2581,12 @@ macro_rules! lane_handler {
 /// `lane_handler!` for a handler only JavaScript views dispatch: the run's context comes
 /// from the carried view (`MemoryView::script`) rather than the thread-local load.
 macro_rules! script_handler {
+    // `script_handler!` for a handler whose records a non-script view also dispatches (a Wasm
+    // row): the prologue takes the view's bytes with no assertion, and the body asserts where
+    // its records are a JavaScript view's and reads the thread's where they are not.
+    (@unasserted $(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+        lane_handler!(@define bytes [{ bytes.cast::<LaneContext>() }] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
+    };
     ($(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         lane_handler!(@define bytes [{
             let cx: *mut LaneContext = bytes.cast();
