@@ -85,28 +85,51 @@ pub(crate) fn return_plain_in_lane(cx: *mut LaneContext, value: Value) -> Option
         return Some(returned);
     }
     // A plain activation whose call returns its callee's completion (`return f()`) completes with
-    // the same value: a run of such plain frames pops header by header
-    // (`call_complete::step_returning_pop_of`), and the frame past it returns as its own.
-    let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
-    let plain = (&raw const stack.plain).expose_provenance() as u64;
-    let mut popped = None;
-    loop {
-        let window = stack.plain.registers.get();
-        let Some(caller) = quench_runtime::staged::call_complete::step_returning_pop_of(&mut Concrete::new(std::ptr::null()), plain,
-            window.expose_provenance() as u64, plain_destination, ()) else { break };
-        popped = Some((window, caller));
-    }
-    if let Some((window, caller)) = popped {
+    // the same value: where a run of such plain frames ends in a call that keeps it, they pop
+    // header by header (`call_complete::step_returning_pop_of`) and the outermost returns into it.
+    if let Some(above) = returning_plain_run(cx, window) {
+        let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
+        let plain = (&raw const stack.plain).expose_provenance() as u64;
+        let mut released = window.0;
+        let mut caller = None;
+        for _ in 0..above {
+            released = stack.plain.registers.get();
+            caller = quench_runtime::staged::call_complete::step_returning_pop_of(&mut Concrete::new(std::ptr::null()), plain,
+                released.expose_provenance() as u64, plain_destination, ());
+            debug_assert!(caller.is_some(), "`returning_plain_run` proved this many returning plain frames");
+        }
+        let caller = caller?;
         stack.frames_changed();
         // SAFETY: plain windows are the lane stack's own, so the outermost one's release is the top's move.
-        unsafe { stack.values.set_top(window) };
+        unsafe { stack.values.set_top(released) };
         let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
         unsafe { ((*cx).registers, (*cx).base) = (registers, std::ptr::with_exposed_provenance(caller.base as usize)) };
-        if let Some(returned) = lane_return_header::<false>(cx, registers, value) {
-            return Some(returned);
-        }
+        return lane_return_header::<false>(cx, registers, value);
     }
     return_from_in_lane::<false, false, false, false>(cx, value)
+}
+
+/// How many plain activations, innermost first from the one on `window`, return their callee's
+/// completion before one whose header returns plainly into a call that keeps it; `None` where
+/// the run ends any other way. Reads headers only.
+#[inline(always)]
+fn returning_plain_run(cx: *mut LaneContext, mut window: Registers) -> Option<usize> {
+    let depth = unsafe { vm(cx) }.lane_stack.plain.depth.get() as usize;
+    let stage = &mut quench_runtime::staged::Concrete::new(std::ptr::null());
+    for above in 0..depth {
+        let packed = quench_runtime::staged::call_complete::frame_packed(stage, window.0.expose_provenance() as u64);
+        if !quench_runtime::staged::call_complete::completes_plainly(stage, packed) {
+            return None;
+        }
+        let (call, caller_registers, _) = window.plain_caller();
+        // SAFETY: the call record belongs to the caller's live view.
+        let destination = unsafe { (*call).a };
+        if !quench_runtime::staged::call_complete::returns_callee_completion(stage, u64::from(destination)) {
+            return (above != 0).then_some(above);
+        }
+        window = caller_registers;
+    }
+    None
 }
 
 /// The result word of the call record `call` a plain frame's header names, for the staged returns.
