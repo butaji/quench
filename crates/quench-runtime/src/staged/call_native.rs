@@ -170,27 +170,50 @@ fn math_call_of_one<S: NumericStage>(stage: &mut S, call: MathCall, only: S::Wor
         return absolute(stage, only, miss);
     }
     let number = number_word(stage, only, miss)?;
-    let result = match call {
-        MathCall::Unary(operation) => stage.float_unary(operation, number),
-        MathCall::Extreme(maximum) => {
+    if matches!(call, MathCall::Imul) {
+        // The missing argument is `undefined`, whose ToInt32 is 0: the product is 0, once the
+        // given argument is a Number.
+        let zero = stage.i32_constant(0);
+        return Some(int_value(stage, zero));
+    }
+    // ToUint32 and ToInt32 share their low 32 bits, which `Math.clz32` reads.
+    let operand = match math_operands(call) { Domain::Int32 => stage.to_int32(number, miss)?, _ => number };
+    math_value(stage, call, &[operand])
+}
+
+/// The domain a Math row reads its operands in: int32 words for `Math.imul` and `Math.clz32`
+/// (after ToInt32), binary64 words for the rest.
+#[inline(always)]
+pub const fn math_operands(call: MathCall) -> Domain {
+    match call { MathCall::Imul | MathCall::LeadingZeros => Domain::Int32, _ => Domain::Float64 }
+}
+
+/// The Math row `call` of `operands`, words of its domain (`math_operands`): its result word and
+/// the result's domain (an int32 for `Math.imul` and `Math.clz32`, else a binary64). The one
+/// definition of each row's operation, which the value-word step (`math_call`) and the u-jit's
+/// unboxed lowering both run. `None` for a call with no row, or another operand count.
+#[inline(always)]
+pub fn math_of_operands<S: NumericStage>(stage: &mut S, call: MathCall, operands: &[S::Word]) -> Option<(Domain, S::Word)> {
+    Some(match (call, operands) {
+        (MathCall::Imul, &[left, right]) => (Domain::Int32, super::math::multiply(stage, left, right)),
+        (MathCall::LeadingZeros, &[only]) => (Domain::Int32, super::math::count_leading_zeros(stage, only)),
+        (MathCall::Unary(operation), &[only]) => (Domain::Float64, super::math::unary(stage, operation, only)),
+        (MathCall::Extreme(maximum), &[left, right]) => (Domain::Float64, super::math::extreme(stage, maximum, left, right)),
+        (MathCall::Extreme(maximum), &[only]) => {
             let start = stage.f64_constant(MathCall::extreme_start(maximum));
-            stage.float_extreme(maximum, start, number)
+            (Domain::Float64, super::math::extreme(stage, maximum, start, only))
         }
-        MathCall::Imul => {
-            // The missing argument is `undefined`, whose ToInt32 is 0: the product is 0, once
-            // the given argument is a Number.
-            let zero = stage.i32_constant(0);
-            return Some(int_value(stage, zero));
-        }
-        MathCall::LeadingZeros => {
-            // ToUint32 and ToInt32 share their low 32 bits, which the count reads.
-            let word = stage.to_int32(number, miss)?;
-            let count = stage.int_leading_zeros(word);
-            return Some(int_value(stage, count));
-        }
-        MathCall::Libm(_) | MathCall::Binary(_) => return None,
-    };
-    Some(stage.box_number(result))
+        _ => return None,
+    })
+}
+
+/// `math_of_operands` as a value word: an int32 result tagged, a binary64 boxed.
+#[inline(always)]
+fn math_value<S: NumericStage>(stage: &mut S, call: MathCall, operands: &[S::Word]) -> Option<S::Word> {
+    match math_of_operands(stage, call, operands)? {
+        (Domain::Int32, word) => Some(int_value(stage, word)),
+        (_, word) => Some(stage.box_number(word)),
+    }
 }
 
 /// `Math.abs` of the value word `only`: an int32 other than `i32::MIN` by negation, whose result
@@ -230,8 +253,7 @@ fn extreme_pair<S: NumericStage>(stage: &mut S, maximum: bool, (left, right): (S
     }, #[inline(always)] |stage| {
         let x = number_word(stage, left, miss)?;
         let y = number_word(stage, right, miss)?;
-        let result = stage.float_extreme(maximum, x, y);
-        Some(stage.box_number(result))
+        math_value(stage, MathCall::Extreme(maximum), &[x, y])
     })
 }
 
@@ -250,8 +272,7 @@ fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), 
         let y = number_word(stage, right, miss)?;
         let x = stage.to_int32(x, miss)?;
         let y = stage.to_int32(y, miss)?;
-        let product = stage.int_multiply(x, y);
-        Some(int_value(stage, product))
+        math_value(stage, MathCall::Imul, &[x, y])
     })
 }
 

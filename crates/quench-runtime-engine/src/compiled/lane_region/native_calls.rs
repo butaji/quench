@@ -268,32 +268,17 @@ impl Lowering<'_, '_> {
     /// The Math call `call` of Numbers, its result an unboxed Number (an int32 for `Math.imul` and `Math.clz32`).
     fn math_call(&mut self, state: &mut State, instruction: WideInstruction, call: MathCall, exit: ir::Block) {
         let window = quench_runtime::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let numbers: Vec<ir::Value> = (window..window + call.arity()).map(|register| self.number(state, register, exit)).collect();
-        let result = instruction.result_register();
-        match call {
-            MathCall::Imul => {
-                let [left, right] = [numbers[0], numbers[1]].map(|number| self.number_to_int32(number, exit));
-                let mut stage = super::super::object_slots::emit(&mut self.builder);
-                let product = quench_runtime::staged::math::multiply(&mut stage, left, right);
-                self.set_int(state, result, product);
-            }
-            MathCall::LeadingZeros => {
-                let word = self.number_to_int32(numbers[0], exit);
-                let mut stage = super::super::object_slots::emit(&mut self.builder);
-                let count = quench_runtime::staged::math::count_leading_zeros(&mut stage, word);
-                self.set_int(state, result, count);
-            }
-            MathCall::Unary(operation) => {
-                let mut stage = super::super::object_slots::emit(&mut self.builder);
-                let number = quench_runtime::staged::math::unary(&mut stage, operation, numbers[0]);
-                self.set_number(state, result, number);
-            }
-            MathCall::Extreme(maximum) => {
-                let mut stage = super::super::object_slots::emit(&mut self.builder);
-                let number = quench_runtime::staged::math::extreme(&mut stage, maximum, numbers[0], numbers[1]);
-                self.set_number(state, result, number);
-            }
-            MathCall::Libm(_) | MathCall::Binary(_) => unreachable!("an inline Math call is a staged row"),
+        let int32 = quench_runtime::staged::call_native::math_operands(call) == quench_runtime::staged::numeric::Domain::Int32;
+        let operands: Vec<ir::Value> = (window..window + call.arity()).map(|register| {
+            let number = self.number(state, register, exit);
+            if int32 { self.number_to_int32(number, exit) } else { number }
+        }).collect();
+        // The row's one definition (`call_native::math_of_operands`), which the interpreters' value-word step runs.
+        let mut stage = super::super::object_slots::emit(&mut self.builder);
+        let (domain, word) = quench_runtime::staged::call_native::math_of_operands(&mut stage, call, &operands).expect("an inline Math call is a staged row");
+        match domain {
+            quench_runtime::staged::numeric::Domain::Int32 => self.set_int(state, instruction.result_register(), word),
+            _ => self.set_number(state, instruction.result_register(), word),
         }
     }
 }
