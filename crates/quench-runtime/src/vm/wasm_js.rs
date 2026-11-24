@@ -1637,9 +1637,9 @@ impl Vm {
         declarations: Option<&crate::WasmTypes>,
     ) -> Result<WasmValue, JsError> {
         Ok(match ty {
-            WasmType::I32 => {
+            WasmType::I32 | WasmType::F32 | WasmType::F64 => {
                 let number = self.to_number(p, value)?;
-                WasmValue::I32(Self::uint32_from_value(number) as i32)
+                crate::staged::wasm_activation::import_result(ty, number).expect("a scalar of a Number")
             }
             WasmType::I64 => {
                 let value = self.to_bigint(p, value)?;
@@ -1653,8 +1653,6 @@ impl Vm {
                 }
                 WasmValue::I64(i64::from_le_bytes(bytes))
             }
-            WasmType::F32 => WasmValue::F32((self.to_number(p, value)? as f32).to_bits()),
-            WasmType::F64 => WasmValue::F64(self.to_number(p, value)?.to_bits()),
             // A function reference is null or an exported Wasm function's closure, of the type.
             WasmType::Reference {
                 kind:

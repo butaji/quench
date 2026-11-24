@@ -14522,12 +14522,10 @@ fn lane_complete_to_wasm(cx: *mut LaneContext, ip: Ip, value: Value) -> Resumed 
     let vm = unsafe { vm(cx) };
     // What the import's activation restores, read from its side record where it is.
     let call = vm.lane_stack.top_frame().expect("the import's activation is the innermost").payload().to_wasm();
+    // A Number's ToWebAssemblyValue, by the rule the general loop's import return runs.
     let encoded = match call.result {
         None => Some(Value::UNDEFINED),
-        Some(quench_runtime::WasmType::I32) => value.as_number().map(|number| Value::integer(quench_runtime::value::number_to_i32(number))),
-        Some(quench_runtime::WasmType::F32) => value.as_number().map(|number| Value::integer((number as f32).to_bits() as i32)),
-        Some(quench_runtime::WasmType::F64) => value.as_number().map(|number| vm.encode_bits64(number.to_bits())),
-        Some(_) => None,
+        Some(ty) => value.as_number().and_then(|number| quench_runtime::staged::wasm_activation::import_result(ty, number)).map(|wasm| vm.encode_wasm_value(wasm)),
     };
     let Some(encoded) = encoded else {
         return Resumed::Exit(frame_return(vm, ip, value));
