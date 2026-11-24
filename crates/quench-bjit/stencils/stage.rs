@@ -232,10 +232,10 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
-    fn box_number(&mut self, number: u64) -> u64 {
+    fn box_number(&mut self, number: crate::staged::Float64<u64>) -> u64 {
         // `Value::number` (`words::canonical`): its truncation is the target's own instruction, where
         // a saturating `as` cast would load its bounds from a constant pool a stencil may not use.
-        crate::words::canonical(f64::from_bits(number))
+        crate::words::canonical(f64::from_bits(number.word()))
     }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }

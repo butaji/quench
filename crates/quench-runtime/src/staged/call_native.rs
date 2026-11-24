@@ -151,7 +151,7 @@ pub(crate) fn math_call<S: NumericStage>(stage: &mut S, call: MathCall, args: &[
         (MathCall::Extreme(maximum), &[left, right]) => extreme_pair(stage, maximum, (left, right), miss),
         (MathCall::Imul, &[left, right]) => imul_pair(stage, (left, right), miss),
         (MathCall::Extreme(maximum), &[]) => {
-            let start = stage.f64_constant(MathCall::extreme_start(maximum));
+            let start = super::Float64::constant(stage, MathCall::extreme_start(maximum));
             Some(stage.box_number(start))
         }
         (MathCall::Imul, &[]) => {
@@ -212,7 +212,7 @@ pub fn math_of_operands<S: NumericStage>(stage: &mut S, call: MathCall, operands
 fn math_value<S: NumericStage>(stage: &mut S, call: MathCall, operands: &[S::Word]) -> Option<S::Word> {
     match math_of_operands(stage, call, operands)? {
         (Domain::Int32, word) => Some(int_value(stage, word)),
-        (_, word) => Some(stage.box_number(word)),
+        (_, word) => Some(stage.box_number(super::Float64::of_row(word))),
     }
 }
 
@@ -233,7 +233,7 @@ fn absolute<S: NumericStage>(stage: &mut S, only: S::Word, miss: S::Miss) -> Opt
     }, #[inline(always)] |stage| {
         let number = number_word(stage, only, miss)?;
         let result = stage.float_unary(FloatUnary::Abs, number);
-        Some(stage.box_number(result))
+        Some(stage.box_number(super::Float64::of_row(result)))
     })
 }
 

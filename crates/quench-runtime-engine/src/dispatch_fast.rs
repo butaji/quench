@@ -903,13 +903,10 @@ impl Registers {
     /// (`cmp dword [..+4], imm; jne`) and the value half loaded as it is, where a whole-word
     /// read pays a copy, a shift and a compare for the tag (V8-v7 Crypto's integer records).
     #[inline(always)]
-    fn int(self, register: u16) -> Option<i32> {
+    fn int(self, register: u16) -> Option<quench_runtime::staged::Int32<u64>> {
         // SAFETY: as for `get`; a Value is two dwords, the tag in the high one (little endian).
         let halves = unsafe { self.0.add(usize::from(register)) }.cast::<u32>();
-        if unsafe { halves.add(1).read() } != quench_runtime::value::INT_TAG_HIGH {
-            return None;
-        }
-        Some(unsafe { halves.read() } as i32)
+        quench_runtime::staged::Int32::guard_halves(unsafe { halves.add(1).read() }, || unsafe { halves.read() })
     }
 
     #[inline(always)]
