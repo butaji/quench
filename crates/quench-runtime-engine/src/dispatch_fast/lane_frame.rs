@@ -2037,6 +2037,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
 }
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
+    const STEP_SHARD: u8 = ACC;
     /// A register's word, or the constant or local the record names.
     #[inline(always)]
     fn operand_word(&mut self, stage: &mut Concrete, operand: Operand) -> Option<u64> {
@@ -2728,8 +2729,7 @@ macro_rules! row_step {
         else if const { matches!(quench_runtime::staged::row_step($op), R::WasmMemory) } { quench_runtime::staged::step_wasm_access($stage, $frame, $operation) }
         else if const { matches!(quench_runtime::staged::row_step($op), R::WasmVector) } { quench_runtime::staged::step_wasm_vector($stage, $frame, $operation) }
         else if const { matches!(quench_runtime::staged::row_step($op), R::Entry) } { quench_runtime::staged::step_entry($stage, $frame, $operation) }
-        // An opcode with no family step runs the whole `step`, out of line: inlined, it put every arm of the
-        // interpreter into each of its row instances (1065 instances, half of the crate's code before optimization).
+        // An opcode with no family step runs the whole `step` out of line (inlined: 1065 instances, half the crate's code).
         else { quench_runtime::staged::step_out_of_line($stage, $frame, $operation) }
     }};
 }

@@ -4,9 +4,26 @@ use super::*;
 
 /// `step` out of line, for a generated row whose opcode has no family step (`RowStep::Full`): one instance per
 /// stage and frame type rather than the whole interpreter inlined into every such row's instance (`row_step!`).
-#[inline(never)]
+/// The instance sits in its frame type's shard module (`NumericFrame::STEP_SHARD`): all instances of one function
+/// share one codegen unit, and four lane frame instances of ~110 KB each in one unit were one thread for 74 s at
+/// the end of a hot numeric edit.
+#[inline(always)]
 pub fn step_out_of_line<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    step(stage, frame, operation)
+    let shard: fn(&mut S, &mut F, Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> =
+        const { match F::STEP_SHARD % 4 { 0 => out_of_line::s0::step, 1 => out_of_line::s1::step, 2 => out_of_line::s2::step, _ => out_of_line::s3::step } };
+    shard(stage, frame, operation)
+}
+
+mod out_of_line {
+    use super::*;
+    macro_rules! shards { ($($shard:ident)*) => { $(pub(super) mod $shard {
+        use super::*;
+        #[inline(never)]
+        pub(in super::super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+            super::super::step(stage, frame, operation)
+        }
+    })* }; }
+    shards!(s0 s1 s2 s3);
 }
 
 /// Run `operation` on `frame`; its word or where control goes.
