@@ -254,7 +254,10 @@ impl ShapeFact {
     /// The region's entry guarded the receiver's exact shape and flat form (`guard::shape` at
     /// `Form::Arena`, `base_region::proofs`), and a row inside the region reads under it.
     #[inline]
-    pub const fn entry_guard() -> Self { ShapeFact(()) }
+    /// Only a stencil row makes one (and the tests): the region's entry guard runs in another
+    /// compilation unit, so no runtime code can name the fact without its guard.
+    #[cfg(any(stencil_build, test))]
+    pub(crate) const fn entry_guard() -> Self { ShapeFact(()) }
 }
 
 /// The exact shapes a compiled unit holds under code dependencies (`StableFacts::shapes`), which
