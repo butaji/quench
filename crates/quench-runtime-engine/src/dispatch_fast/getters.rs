@@ -5,8 +5,9 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::AccessorForward;
 use quench_runtime::vm::accessor_cache::GetterEntryRead;
-use quench_runtime::staged::call_getter::{step_getter_call_of, GetterAnswer, GetterCall, GetterKind};
-use quench_runtime::staged::Concrete;
+use quench_runtime::staged::call_getter::{step_getter_call_of, step_getter_invoke_of, GetterAnswer, GetterCall, GetterKind};
+use quench_runtime::staged::{Concrete, Step};
+use super::lane_frame::LaneControl;
 
 /// The lane's primitives of a getter's answer without its call (`call_getter::step_getter_answer_of`),
 /// memoized at the field cache site `memo` names.
@@ -263,93 +264,57 @@ pub(crate) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &L
     }
 }
 
-/// The getter call `activate_kept_in_lane` makes for `target`, of the running program, with
-/// receiver `this` and no arguments, as the plain call it is (getters-as-calls.md): the
-/// header goes below the window straight from the read's words (`enter_plain_window`),
-/// with no `Activation` value, no `LaneStack::header_flags` test and no keeping-record words. Its
-/// completion is `Plain`: the return writes the read record's register (`write_call_result`
-/// of the call record's `a`, which a `GetField` names as its destination). `None`, which
-/// changes nothing, for any call that is not such a plain call: a returning read (whose
-/// admission the kept path tests), a `with` scope, an entry that does not activate its
-/// registers alone (keeping, environment, settling), another program's target, or no room
-/// by the plain compare; `activate_kept_in_lane` takes those. A leaf getter that binds its
-/// receiver runs as a leaf instead, with no header (`lane_run_leaf_getter`).
+/// A script getter's call through the one call row (`step_getter_invoke_of`, getters-as-calls.md) over
+/// the read's frame (`lane_frame::getter_frame`): `target` the read resolved, `base` bound as any call's
+/// receiver. `None`, which changes nothing, for a call that is not plain: the kept activation takes it.
 #[inline(always)]
-pub(crate) fn lane_push_getter(
-    cx: *mut LaneContext,
-    r: Registers,
-    ip: Ip,
-    target: &ScriptCallTarget,
-    this: Value,
-) -> Option<(Registers, Ip)> {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: `ip` is a record of the running view.
-    let returns = unsafe { (*ip).a } & quench_runtime::bytecode::RETURN_REGISTER != 0;
-    if returns
-        || vm.with_scope_entered
-        || !target.entry.activates()
-        || target.forwards()
-        || target.settles()
-        || target.program() != unsafe { (*cx).program }
-    {
-        return None;
+pub(crate) fn invoke_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, base: Value) -> Option<(Registers, Ip)> {
+    let function = u16::try_from(target.function).ok()?;
+    let mut frame = super::lane_frame::getter_frame(cx, r, ip, target, base, getter_activation);
+    // SAFETY: `ip` is the read record of the running view.
+    let result = unsafe { (*ip).a };
+    match step_getter_invoke_of(&mut Concrete::new(std::ptr::null()), &mut frame, (), function, result) {
+        Step::Control(LaneControl::Resumed(Resumed::At(registers, next, _))) => Some((registers, next)),
+        _ => None,
     }
-    // The plain depth the push writes past, loaded once; at depth 0 the room test refreshes
-    // the bound for the pushes above (`LaneStack::plain_room`).
-    let depth = vm.lane_stack.plain.depth.get();
-    debug_assert_eq!(vm.lane_stack.plain_room(depth, target.room), activation_room_in_lane(vm, target));
-    if !vm.lane_stack.plain_room(depth, target.room) {
-        return None;
-    }
-    // A leaf getter (`get isGP() { return this._type == GP }`) runs as the plain call of a leaf
-    // runs it: on a window at the stack's top with no header (`lane_run_leaf_getter`).
-    if leaf_binds_this(target.entry.leaf_form())
-        && let Some(entered) = unsafe { lane_run_leaf_getter(cx, r, ip, target, this) }
-    {
-        vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-        return Some(entered);
-    }
-    // No values passed: the fill leaves every parameter `undefined`, as `push_passed_in_lane`'s
-    // of an empty slice does (a dangling, aligned pointer, never read for a count of 0).
-    let none: &[Value] = &[];
-    let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
-    let entered = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
-    // `enter_window_of_in_lane`'s `COUNTED`: a getter's call is no proved call, so the tier's
-    // diagnostics still count its entry.
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    Some(entered)
 }
 
-/// `lane_push_getter`'s call of a leaf getter `target` that binds its receiver (`THIS_LEAF`,
-/// `CONTEXT_LEAF`), as `script_call_leaf_miss` makes a leaf call (`lane_run_leaf`) with no
-/// values: the window at the lane stack's top filled, the leaf record entered with the read
-/// record at `ip` as its call. The leaf's return (`lane_return_leaf_header`,
-/// `complete_leaf_in_lane` → `lane_resume_leaf_caller`) writes the call record's `a`, which a
-/// `GetField` names as its destination, and resumes at `following(ip)`: what the plain
-/// header's return does (`write_call_result`). A materialization (`materialize_leaf_in_lane`)
-/// pushes the activation `lane_push_getter`'s plain push would have: the read record as its
-/// call, `Completion::Plain`, no values. Only receiver-binding forms are taken: the others'
-/// materialization rebinds `this` from the call record's `c`, which a `GetField` holds its site
-/// in, not a register. `None`, which changes nothing, where the cache does not hold the
-/// target's entry in place (the leaf record names its cache entry, which must stay put while
-/// the leaf runs, so a resolved copy is not enough).
+/// The getter's hand-off past the frame's admission (`CallActivation`): a receiver-binding leaf runs as a
+/// leaf (`leaf_getter`), else the plain header is pushed at `depth` with no values. Its entry is counted.
 ///
 /// # Safety
-/// `cx` is the running lane's context, with no leaf running; `target` passed
-/// `lane_push_getter`'s plain tests (running program, no `with` scope, room by `plain_room`);
-/// `this` is its binding of the read's base (`call_this_in_lane`).
+/// As `plain_call_activation`, `record` the read record at `ip`.
 #[inline(always)]
-unsafe fn lane_run_leaf_getter(
-    cx: *mut LaneContext,
-    r: Registers,
-    ip: Ip,
-    target: &ScriptCallTarget,
-    this: Value,
-) -> Option<(Registers, Ip)> {
+unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *const LaneInstruction, target: *const ScriptCallTarget,
+    depth: usize, this: Value) -> (Registers, Ip) {
+    let cx = context.cast::<LaneContext>();
+    let (vm, target) = unsafe { (vm(cx), &*target) };
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    if leaf_binds_this(target.entry.leaf_form())
+        && let Some(entered) = unsafe { leaf_getter(cx, r, ip, target, this) }
+    {
+        return entered;
+    }
+    // No values: every parameter `undefined` (a dangling, aligned pointer, never read for a count of 0).
+    let none: &[Value] = &[];
+    let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
+    enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this)
+}
+
+/// A receiver-binding leaf getter `target` (`THIS_LEAF`, `CONTEXT_LEAF`) run as a leaf call with no
+/// values, the read record at `ip` its call: its return writes the record's `a` and resumes at
+/// `following(ip)`, as the plain return does (the other forms rebind `this` from the record's `c`, a
+/// `GetField`'s site). `None` where the cache does not hold the target's entry in place (the leaf names
+/// its cache entry, which must stay put while it runs).
+///
+/// # Safety
+/// `cx` is the running lane's context, with no leaf running; `target` passed the frame's plain
+/// admission (running program, no `with` scope, room by `plain_room`); `this` is its binding.
+#[inline(always)]
+unsafe fn leaf_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, this: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a getter's read materializes a running leaf first");
     let form = target.entry.leaf_form();
-    debug_assert!(leaf_binds_this(form));
     // SAFETY: as `Vm::script_call_entry`; read in place before anything touches the cache, and
     // nothing in the leaf resolves a target or collects.
     let entry = unsafe { &*vm.script_call_entry(target.callee)? };
@@ -358,7 +323,6 @@ unsafe fn lane_run_leaf_getter(
     }
     // SAFETY: as `lane_run_leaf`'s window: `plain_room` proved the admitted room, which the
     // stack's length covers only once the leaf is materialized; no collection runs before.
-    // `ip`, the read record, belongs to the caller's live view.
     unsafe {
         let window = Registers(vm.lane_stack.values.top());
         Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None))
