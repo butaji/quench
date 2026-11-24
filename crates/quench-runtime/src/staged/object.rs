@@ -389,16 +389,16 @@ pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: 
 /// neither the inline flag, the extras tag nor a narrow run is tested. `None` for a form with
 /// extras, whose run the payload's extras word holds, which the caller reads its own way.
 #[inline(always)]
-pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, record: S::Word, bits: u32, storage_len: usize)
+pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, shaped: super::Shaped<S::Word>, bits: u32, storage_len: usize)
     -> Option<Layout<S::Word, S::Cond>> {
     let slots = match bits {
-        bits if bits == OBJECT.inline_form => Slots::Packed(Packed::Record(record)),
+        bits if bits == OBJECT.inline_form => Slots::Packed(Packed::Record(shaped.record())),
         0 => {
-            let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+            let payload = stage.load_u64(Region::Payload.mutable(), shaped.record(), OBJECT.payload_offset as i32);
             Slots::Flat(arena_run(stage, payload))
         }
         bits if bits == OBJECT.narrow_form => {
-            let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+            let payload = stage.load_u64(Region::Payload.mutable(), shaped.record(), OBJECT.payload_offset as i32);
             Slots::Narrow(arena_run(stage, payload))
         }
         _ => return None,

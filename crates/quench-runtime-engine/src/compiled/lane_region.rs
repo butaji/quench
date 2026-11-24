@@ -1130,7 +1130,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
             let exit = self.guard_exit(state, target as u32);
             let header = self.object_header(state, Some(register), false, exit);
-            headers::prove_header_shape(&mut self.builder, state, Some(register), header.shape, shape, exit);
+            headers::prove_header_shape(&mut self.builder, state, Some(register), header, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }

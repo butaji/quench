@@ -4,6 +4,7 @@
 
 use super::Stage;
 use super::ic::Reached;
+use super::Shaped;
 use super::region::Region;
 use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, own_layout, proto_link, read_slot_value};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -45,7 +46,7 @@ pub(crate) fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u
     let watch = stage.site(watch);
     let holds = stage.assumption(watch);
     stage.guard(holds, miss)?;
-    let at = Reached::bare(record);
+    let at = Reached { shaped: Some(Shaped::of_guard(record)), ..Reached::bare(record) };
     load_slot(stage, &at, (slot, Representation::Tagged), Form::Either, usize::from(slot) + 1, miss)
 }
 
@@ -111,18 +112,20 @@ pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, va
 
 /// `IcOp::GuardShape`: continues where the reached record's exact shape is `shape`.
 #[inline(always)]
-pub(super) fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
+pub fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let exact = shape_word(stage, at);
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(exact, shape) };
-    stage.guard(same, miss)
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
 }
 
 /// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
 #[inline(always)]
-pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<()> {
+pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let loaded = at.word.unwrap_or_else(#[inline(always)] || layout_id(stage, at.record));
     let same = { let id = stage.site(u64::from(id)); stage.eq_imm(loaded, id) };
-    stage.guard(same, miss)
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
 }
 
 /// The record's layout id (`Object::layout_id`), the one header word it keeps.
@@ -177,11 +180,12 @@ pub(super) fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>,
 #[inline(always)]
 pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
     miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
-    if let Some(layout) = at.formed.and_then(|bits| super::object::proved_own_layout(stage, at.record, bits, storage_len)) {
+    let shaped = at.shaped.expect("a slot read follows the guard of its shape");
+    if let Some(layout) = at.formed.and_then(|bits| super::object::proved_own_layout(stage, shaped, bits, storage_len)) {
         return Some(layout);
     }
-    let inline = at.inline.unwrap_or_else(#[inline(always)] || inline_storage(stage, at.record));
-    own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)
+    let inline = at.inline.unwrap_or_else(#[inline(always)] || inline_storage(stage, shaped.record()));
+    own_layout(stage, shaped.record(), inline, form, storage_len, PackedAccess::Reload, miss)
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
@@ -209,7 +213,8 @@ pub(super) fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, valu
 
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.
 #[inline(always)]
-pub(super) fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub(super) fn prototype_slot<S: Stage>(stage: &mut S, holder: Shaped<S::Word>, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let record = holder.record();
     let inline = inline_storage(stage, record);
     let in_arena = stage.not(inline);
     stage.guard(in_arena, miss)?;
