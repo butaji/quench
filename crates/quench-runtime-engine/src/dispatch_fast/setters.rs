@@ -94,7 +94,10 @@ impl Vm {
             CallCompletion::Constructor(this) =>
                 Value::from_bits(quench_runtime::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), self.is_object_like(value))),
             CallCompletion::Assigned | CallCompletion::Trapped(TrapCheck { access: TrapAccess::Store | TrapAccess::StrictStore, .. }) => self.read(caller, destination),
+            #[cfg(feature = "wasm")]
             CallCompletion::WasmExport(result) => self.wasm_export_result(value, *result),
+            #[cfg(not(feature = "wasm"))]
+            CallCompletion::WasmExport(_) => value,
             _ => value,
         }
     }

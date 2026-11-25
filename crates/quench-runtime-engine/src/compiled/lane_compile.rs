@@ -357,9 +357,11 @@ pub(crate) enum LaneBodyOutcome {
     Declined,
 }
 
+#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_INSTS};
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
 use super::admission::{refuse, Refusal};
+#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
@@ -515,9 +517,26 @@ impl Vm {
     }
 
     /// Plans `function`'s lane body at `budget` and starts compiling its code on the code
-    /// generator's thread (`PendingLaneMethod`).
+    /// generator's thread (`PendingLaneMethod`). An execution-only build (no `jit`) starts no
+    /// run-time compile: the plan declines, and the function runs the image's body where one
+    /// published and the interpreter otherwise.
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &crate::dispatch_fast::LaneView,
+        arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
+        #[cfg(feature = "jit")]
+        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, (observed, looped), called, caller, arrays) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, observed, looped, called, caller, arrays);
+            Err(Unstarted::Declined)
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    #[allow(clippy::too_many_arguments)]
+    fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &crate::dispatch_fast::LaneView,
         arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {

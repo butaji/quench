@@ -173,8 +173,18 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
-fn compile(options: Options) -> Result<(), String> {
-    let entry = options
+/// The features a static image's support is built with: `native-execution`, plus the intl layer
+/// and the WebAssembly frontend only where the program reaches them. A dynamic-source support
+/// links the standard build's default features instead.
+fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport) -> String {
+    if support.allows_dynamic_source() { return "default".into(); }
+    let mut features = String::from("native-execution");
+    if graph.needs_intl() { features.push_str(",intl"); }
+    if graph.needs_wasm() { features.push_str(",wasm"); }
+    features
+}
+
+fn compile(options: Options) -> Result<(), String> {    let entry = options
         .entry
         .canonicalize()
         .map_err(|error| format!("{}: {error}", options.entry.display()))?;
@@ -227,6 +237,7 @@ fn compile(options: Options) -> Result<(), String> {
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
         "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
+        "support_features": support_features(&graph, support),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -298,7 +309,8 @@ fn compile(options: Options) -> Result<(), String> {
             let mut cargo = Command::new("cargo");
             cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
-                cargo.args(["--no-default-features", "--features", "native-execution"]);
+                let features = support_features(&graph, support);
+                cargo.args(["--no-default-features", "--features", &features]);
             }
             cargo.args(["--lib", "--message-format=json"]);
             String::from_utf8(quench_runtime::native_link::checked_output(

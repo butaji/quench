@@ -205,8 +205,7 @@ fn operation_table(graph: &DependencyGraph, kept: Option<&BTreeSet<u32>>) -> (St
 /// WebAssembly frontend the image links, named only for what its program can reach.
 fn capability_table(graph: &DependencyGraph, dynamic: bool, demands: &[String]) -> String {
     let pollers = poller_table(dynamic, demands);
-    let wasm = dynamic || graph.host_globals.contains("WebAssembly")
-        || graph.requirements.iter().any(|requirement| matches!(requirement, GraphRequirement::Wasm { .. }));
+    let wasm = dynamic || graph.needs_wasm();
     let wasm = if wasm { "Some(quench::host::wasm_frontend::FRONTEND)" } else { "None" };
     format!("static POLLERS: quench::host::HostPollers = quench::host::HostPollers {{ {pollers} }};\n\
         static CAPABILITIES: quench::host::HostCapabilities = quench::host::HostCapabilities {{ operations: &OPERATIONS, pollers: POLLERS, wasm: {wasm} }};\n")

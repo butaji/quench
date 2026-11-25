@@ -1416,6 +1416,7 @@ impl Vm {
                 self.construct_collection_native(p, native, args, new_target)
             }
             Native::ShadowRealm => self.construct_shadow_realm(p, new_target),
+            #[cfg(feature = "wasm")]
             native if super::wasm_js::is_wasm_js_constructor(native) => {
                 self.construct_wasm_js_native(p, native, args)
             }

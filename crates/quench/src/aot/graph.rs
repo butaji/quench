@@ -27,6 +27,15 @@ const HOST_ONLY_GLOBALS: &[&str] = &[
     "atob", "btoa", "navigator",
 ];
 
+/// The globals whose behaviour is the intl layer's (`needs_intl`).
+const INTL_GLOBALS: &[&str] = &["Intl", "Temporal"];
+
+/// The methods whose result depends on the intl layer's data (`needs_intl`).
+const INTL_METHODS: &[&str] = &[
+    "toLocaleString", "toLocaleDateString", "toLocaleTimeString",
+    "toLocaleLowerCase", "toLocaleUpperCase", "localeCompare",
+];
+
 #[derive(Debug)]
 pub enum GraphRequirement {
     DynamicRequire { from: PathBuf, offset: u32 },
@@ -82,9 +91,30 @@ pub struct DependencyGraph {
     pub dynamic_reflective_sites: Vec<(PathBuf, u32)>,
     /// `SourceDemands::requires_dynamic_source` of any module in the graph.
     pub requires_dynamic_source: bool,
+    /// Whether any module names an Intl or Temporal global or a locale-sensitive method
+    /// (`needs_intl`): a static image then links the intl layer and the time zone database.
+    pub requires_intl: bool,
 }
 
 impl DependencyGraph {
+    /// Whether the image must carry the intl layer and the time zone database: a module names
+    /// `Intl`, `Temporal`, a locale-sensitive method, a dynamic member key, or source that may
+    /// add code at run time (which could name any of them).
+    pub fn needs_intl(&self) -> bool {
+        self.requires_intl
+            || self.requires_dynamic_source
+            || !self.dynamic_eval_sites.is_empty()
+            || !self.dynamic_function_sites.is_empty()
+            || !self.dynamic_reflective_sites.is_empty()
+    }
+
+    /// Whether the image must carry the WebAssembly frontend: a module names `WebAssembly` or
+    /// attaches a `.wasm` module. The one fact `host_operations` reads.
+    pub fn needs_wasm(&self) -> bool {
+        self.host_globals.contains("WebAssembly")
+            || self.requirements.iter().any(|requirement| matches!(requirement, GraphRequirement::Wasm { .. }))
+    }
+
     /// The builtins the image's snapshot loads at compile time: every builtin the graph
     /// requires or imports, so a run finds them built instead of building them at startup.
     pub fn snapshot_builtins(&self) -> Vec<String> {
@@ -123,13 +153,15 @@ struct Requests<'s> {
     literal_imports: BTreeSet<String>,
     host_globals: BTreeSet<String>,
     host_only_globals: BTreeSet<String>,
+    /// Whether this module names an intl global or a locale-sensitive method (`needs_intl`).
+    intl: bool,
 }
 
 impl<'s> Requests<'s> {
     fn new(scoping: &'s oxc_semantic::Scoping, loaders: &'s LoaderBindings<'s>) -> Self {
         Self { scoping, loaders, specifiers: BTreeMap::new(), classified_requires: loaders.transfers(),
             dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
-            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new(), host_only_globals: BTreeSet::new() }
+            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new(), host_only_globals: BTreeSet::new(), intl: false }
     }
 
     fn request(&mut self, specifier: String, kind: RequestKind) {
@@ -187,6 +219,9 @@ impl<'a> Visit<'a> for Requests<'_> {
         let Some(reference) = self.runtime_reference(name) else { return };
         let global = reference.symbol_id().is_none();
         if global { self.record_host_global(name.name.as_str()); }
+        if global && (INTL_GLOBALS.contains(&name.name.as_str()) || INTL_METHODS.contains(&name.name.as_str())) {
+            self.intl = true;
+        }
         if self.loaders.is_require_reference(name) && !self.classified_requires.contains(&name.span.start) {
             self.dynamic_requires.insert(name.span.start);
         }
@@ -196,6 +231,7 @@ impl<'a> Visit<'a> for Requests<'_> {
         if self.is_global_object(&member.object) {
             self.record_host_global(member.property.name.as_str());
         }
+        if INTL_METHODS.contains(&member.property.name.as_str()) { self.intl = true; }
         walk::walk_static_member_expression(self, member);
     }
 
@@ -203,6 +239,11 @@ impl<'a> Visit<'a> for Requests<'_> {
         if let (true, Expression::StringLiteral(name)) =
             (self.is_global_object(&member.object), member.expression.get_inner_expression()) {
             self.record_host_global(name.value.as_str());
+        }
+        if let Expression::StringLiteral(name) = member.expression.get_inner_expression() {
+            if INTL_METHODS.contains(&name.value.as_str()) || INTL_GLOBALS.contains(&name.value.as_str()) {
+                self.intl = true;
+            }
         }
         walk::walk_computed_member_expression(self, member);
     }
@@ -307,6 +348,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
         graph.host_only_globals.extend(std::mem::take(&mut requests.host_only_globals));
+        graph.requires_intl |= requests.intl;
         for offset in requests.dynamic_requires {
             graph.requirements.push(GraphRequirement::DynamicRequire { from: name.clone().into(), offset: offset + base });
         }

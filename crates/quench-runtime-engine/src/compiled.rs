@@ -7615,8 +7615,14 @@ impl Vm {
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
     /// `unit` (`UnitKind::WasmEager`) says.
     pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
+        // An execution-only build (no `jit`) compiles no Wasm module at run time.
+        #[cfg(feature = "jit")]
+        {
+            let _ = unit;
+            self.programs.compile_wasm_modules_at_first_entry();
+        }
+        #[cfg(not(feature = "jit"))]
         let _ = unit;
-        self.programs.compile_wasm_modules_at_first_entry();
     }
 
     pub(crate) fn native_execution_rejections(&self) -> u64 {
@@ -7692,6 +7698,24 @@ impl Vm {
     /// else `None`, and the activation runs from its entry. `parameters` are the
     /// activation's parameter registers.
     pub(crate) fn js_tier_activation_entry(
+        &mut self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+        parameters: &[Value],
+    ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
+        #[cfg(feature = "jit")]
+        { self.js_tier_activation_entry_compiled(program, id, function, parameters) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, id, function, parameters);
+            None
+        }
+    }
+
+    /// An execution-only build (no `jit`) compiles no function at an activation's entry.
+    #[cfg(feature = "jit")]
+    fn js_tier_activation_entry_compiled(
         &mut self,
         program: &ResidualProgram,
         id: ProgramId,
@@ -7808,6 +7832,18 @@ impl Vm {
     /// of the `Return` that completes the frame; else `None`, the entry counted as an
     /// interpreter fallback, and the untouched frame runs from its entry.
     pub(crate) fn js_tier_frame_entry(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
+        #[cfg(feature = "jit")]
+        { self.js_tier_frame_entry_compiled(program, frame) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, frame);
+            None
+        }
+    }
+
+    /// An execution-only build (no `jit`) compiles no function at an entry.
+    #[cfg(feature = "jit")]
+    fn js_tier_frame_entry_compiled(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
@@ -8654,6 +8690,17 @@ impl Vm {
     /// after the tiers' entry counters and compiles this entry makes (`offer_compiled_in`).
     /// `None` where no tier runs it: the interpreter takes the call.
     pub(crate) fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
+        #[cfg(feature = "jit")]
+        { self.offer_compiled_compiled(caller, id) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (caller, id);
+            None
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn offer_compiled_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
         let (program, env) = {
             let frame = self.frames.get(caller)?;
             (frame.program, frame.env)
@@ -8664,6 +8711,23 @@ impl Vm {
     /// Runs the code `offer_compiled` offered for function `id`, with arguments from frame
     /// `caller`'s register `window`. `None` leaves the call to the interpreter.
     pub(crate) fn run_offered(
+        &mut self,
+        compiled: Rc<CompiledProgram>,
+        caller: usize,
+        id: u32,
+        window: quench_runtime::bytecode::RegisterWindow,
+    ) -> Option<Result<Value, JsError>> {
+        #[cfg(feature = "jit")]
+        { self.run_offered_compiled(compiled, caller, id, window) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (compiled, caller, id, window);
+            None
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn run_offered_compiled(
         &mut self,
         compiled: Rc<CompiledProgram>,
         caller: usize,
@@ -8688,7 +8752,13 @@ impl Vm {
         id: u32,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        self.run_offered_in(compiled, program, env, id, CompiledArgs::Values(args))
+        #[cfg(feature = "jit")]
+        { self.run_offered_in(compiled, program, env, id, CompiledArgs::Values(args)) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (compiled, program, env, id, args);
+            None
+        }
     }
 
     /// Run function `id` of `program` in instance `env` as native code, with
@@ -8701,7 +8771,13 @@ impl Vm {
         id: u32,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        self.run_compiled_inner(program, env, id, CompiledArgs::Values(args))
+        #[cfg(feature = "jit")]
+        { self.run_compiled_inner(program, env, id, CompiledArgs::Values(args)) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, env, id, args);
+            None
+        }
     }
 
     /// Convert an owned argument window or a public Wasm value slice into the
@@ -8912,8 +8988,16 @@ impl Vm {
     /// Makes the root compile of function `id` of Wasm module `program` and installs it; whether
     /// the tier keeps it.
     fn compile_wasm_root(&mut self, program: ProgramId, env: Value, id: u32) -> bool {
-        let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
-        tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
+        #[cfg(feature = "jit")]
+        {
+            let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
+            tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
+        }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, env, id);
+            false
+        }
     }
 
     /// Runs `compiled`, the code `offer_compiled_in` offered for function `id` of `program`, in

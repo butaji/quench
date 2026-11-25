@@ -6,8 +6,14 @@ use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::{AheadImages, LaneView, StableFacts};
 use quench_runtime::bytecode::Function;
 
+/// Ahead images are lowered by the compiler: an execution-only build (no `jit`) loads the images
+/// a compiler emitted and lowers none itself.
+#[cfg(feature = "jit")]
 #[unsafe(no_mangle)]
 fn quench_engine2_aheadimages_compile(program: &ResidualProgram) -> Result<AheadImages, String> { <AheadImages as AheadImagesLifted160>::compile(program) }
+#[cfg(not(feature = "jit"))]
+#[unsafe(no_mangle)]
+fn quench_engine2_aheadimages_compile(_program: &ResidualProgram) -> Result<AheadImages, String> { Err("ahead compilation requires the jit feature".into()) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_aheadimages_compile = quench_engine2_aheadimages_compile;
 #[unsafe(no_mangle)]
 fn quench_engine2_laneview_invalidate_shape_bindings(this: &LaneView) -> () { <LaneView as LaneViewLifted648>::invalidate_shape_bindings(this) }

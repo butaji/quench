@@ -5,7 +5,9 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::tier_policy::PERCENT;
-use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit};
+use crate::compiled::{LaneBodyOutcome, LaneExit};
+#[cfg(feature = "jit")]
+use crate::compiled::LaneBodyWork;
 
 pub(crate) use quench_runtime::vm::engine_types::LoopBody;
 
@@ -122,7 +124,20 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
 }
 
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
+/// An execution-only build (no `jit`) plans no run-time body: a loop runs the image's body
+/// where one published, and the interpreter otherwise.
 fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &LoopSite) {
+    #[cfg(feature = "jit")]
+    plan_loop_body_compiled(cx, r, own, site);
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = (cx, r, own);
+        *site.body.borrow_mut() = LoopBody::Declined;
+    }
+}
+
+#[cfg(feature = "jit")]
+fn plan_loop_body_compiled(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &LoopSite) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };

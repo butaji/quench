@@ -360,6 +360,7 @@ impl Vm {
         self.install_promise(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_before_webassembly");
+        #[cfg(feature = "wasm")]
         self.install_lazy_builtin_namespace(program, "WebAssembly", Native::WebAssemblyInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");

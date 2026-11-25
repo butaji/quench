@@ -13,12 +13,15 @@ name = "quench"
 path = "src/bin/quench.rs"
 
 [features]
-default = ["jit", "bundled-sources", "native-execution"]
+default = ["jit", "bundled-sources", "native-execution", "intl", "tzdb", "wasm"]
 # Test-only direct host-primitive measurements; contract/evidence: Linear TOD-123.
 bench-primitives = []
 jit = ["quench-runtime/jit", "quench-wasm/jit", "quench-layers/jit"]
 bundled-sources = []
 native-execution = ["quench-runtime/native-execution", "quench-layers/native-execution"]
+intl = ["quench-runtime/intl", "quench-layers/intl"]
+tzdb = ["quench-runtime/tzdb", "quench-layers/tzdb"]
+wasm = ["quench-runtime/wasm", "quench-layers/wasm"]
 # Compatibility alias: AOT code is always compiled.
 aot = ["bundled-sources", "native-execution"]
 profile-memory = ["quench-runtime/profile-memory", "quench-layers/profile-memory"]

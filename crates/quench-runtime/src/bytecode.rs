@@ -4516,10 +4516,17 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
+        // A Wasm module's function lowers from its bytes through the frontend, which a build
+        // without `jit` does not carry: its images archive every record.
+        #[cfg(feature = "jit")]
         if let Some(lazy) = &self.wasm_lazy {
             let function = lazy.lower(index, &self.constants);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
+        }
+        #[cfg(not(feature = "jit"))]
+        if self.wasm_lazy.is_some() {
+            panic!("native Wasm function {index} of {} was not lowered before linking", self.source_name);
         }
         let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
@@ -4541,14 +4548,19 @@ impl ResidualProgram {
                 function
             }
             None => {
-                if !crate::DYNAMIC_EXECUTION_ENABLED {
-                    panic!("native function {index} of {} has no archived record", self.source_name);
+                #[cfg(not(feature = "jit"))]
+                panic!("native function {index} of {} has no archived record and this build compiles no source", self.source_name);
+                #[cfg(feature = "jit")]
+                {
+                    if !crate::DYNAMIC_EXECUTION_ENABLED {
+                        panic!("native function {index} of {} has no archived record", self.source_name);
+                    }
+                    crate::compile::replay::recompile(self, index as u32)
+                    .unwrap_or_else(|error| {
+                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                    })
+                    .function
                 }
-                crate::compile::replay::recompile(self, index as u32)
-                .unwrap_or_else(|error| {
-                    panic!("function {index} of {} does not compile again: {error}", self.source_name)
-                })
-                .function
             },
         };
         // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.

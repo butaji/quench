@@ -730,7 +730,10 @@ impl Vm {
             NativeFamily::Finalization => self.call_finalization_registry_native(p, native, this, args),
             NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
             NativeFamily::Collection => self.call_collection_native(p, native, this, args),
+            #[cfg(feature = "wasm")]
             NativeFamily::WasmJs => self.call_wasm_js_native(p, native, this, args),
+            #[cfg(not(feature = "wasm"))]
+            NativeFamily::WasmJs => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
             NativeFamily::ShadowRealmCalled => {
                 Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()))
@@ -789,7 +792,10 @@ impl Vm {
         match native {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
+            #[cfg(feature = "wasm")]
             Native::WebAssemblyInitialize => self.install_webassembly(p).map(|()| Value::UNDEFINED),
+            #[cfg(not(feature = "wasm"))]
+            Native::WebAssemblyInitialize => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             Native::IntlInitialize => {
                 let (global, object_prototype) = (self.realm.globals, self.object_proto);
                 layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)
@@ -1131,7 +1137,10 @@ impl Vm {
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
+            #[cfg(feature = "wasm")]
             Native::WasmHost => self.call_wasm_host(args),
+            #[cfg(not(feature = "wasm"))]
+            Native::WasmHost => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => self.console_write(p, args, CapabilityId::WriteLine),
             Native::PrintError => self.console_write(p, args, CapabilityId::WriteErr),
@@ -2233,6 +2242,7 @@ fn native_family(native: Native) -> NativeFamily {
     if Self::is_collection_native(native) {
         return F::Collection;
     }
+    #[cfg(feature = "wasm")]
     if super::wasm_js::is_wasm_js_native(native) {
         return F::WasmJs;
     }

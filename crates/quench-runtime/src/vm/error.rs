@@ -1475,6 +1475,12 @@ impl Vm {
         #[cfg(not(feature = "native-execution"))]
         let native_program_id: Option<super::program_store::ProgramId> = None;
         let program_id = if let Some(id) = native_program_id { id } else {
+            #[cfg(not(feature = "jit"))]
+            {
+                return Err(self.type_error(program, "dynamic source compilation requires the jit feature".into()));
+            }
+            #[cfg(feature = "jit")]
+            {
             self.require_source_compilation(program)?;
             let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
             let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
@@ -1516,6 +1522,7 @@ impl Vm {
                 self.dynamic_functions_to_keep -= 1;
             }
             program_id
+            }
         };
         let origin = self.capture_eval_origin(program)?;
         self.programs.set_origin(

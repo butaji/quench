@@ -2492,10 +2492,13 @@ impl Vm {
                         }
                         if let CallCompletion::ToWasm(result) = pending.completion {
                             // SAFETY: as for `p` at the top of the loop.
+                            #[cfg(feature = "wasm")]
                             match self.wasm_import_result(unsafe { &*executing_residual }, value, result) {
                                 Ok(converted) => value = converted,
                                 Err(error) => settle_error = Some((pending.call_pc, error)),
                             }
+                            #[cfg(not(feature = "wasm"))]
+                            let _ = result;
                         }
                         if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);

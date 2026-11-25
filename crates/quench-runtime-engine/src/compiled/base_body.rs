@@ -13,6 +13,7 @@ use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
 use super::admission::{refuse, Refusal};
+#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use quench_runtime::code_dependencies::{InstanceofFact, Invalidation};
 use quench_runtime::vm::global_facts::GlobalTable;
 use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
@@ -196,6 +197,19 @@ impl Vm {
     /// `NotAmortized`), or indexing a typed parameter.
     pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+        // An execution-only build (no `jit`) runs no stencil tier.
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, function, parameters, caller);
+            return Err(LaneBodyOutcome::Declined);
+        }
+        #[cfg(feature = "jit")]
+        self.base_unit_or_outcome_compiled(program, function, parameters, caller)
+    }
+
+    #[cfg(feature = "jit")]
+    fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
         let code: Vec<_> = body.instructions().collect();
         let facts = super::admission::UnitFacts {
@@ -215,6 +229,19 @@ impl Vm {
 
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        // An execution-only build (no `jit`) stitches no stencil body.
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (unit, program, function, generic, parameters, caller, direct);
+            return LaneBodyOutcome::Declined;
+        }
+        #[cfg(feature = "jit")]
+        self.base_body_work_compiled(unit, program, function, generic, parameters, caller, direct)
+    }
+
+    #[cfg(feature = "jit")]
+    fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         let _ = unit;
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };

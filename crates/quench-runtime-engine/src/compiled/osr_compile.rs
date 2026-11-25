@@ -410,6 +410,32 @@ pub(crate) fn start_osr_region(
     helpers: LaneHelpers,
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
     (widened, stores): (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
+    calls: RegionCalls,
+    base: bool,
+    admitted: super::admission::CompiledUnit,
+    online: Option<OsrOnline<'_>>,
+) -> Option<PendingOsrRegion> {
+    #[cfg(feature = "jit")]
+    { start_osr_region_compiled(region, views, observation, tiers, program, function_id, helpers, global_reads, (widened, stores), calls, base, admitted, online) }
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = (region, views, observation, tiers, program, function_id, helpers, global_reads, widened, stores, calls, base, admitted, online);
+        None
+    }
+}
+
+/// An execution-only build (no `jit`) starts no run-time region compile.
+#[cfg(feature = "jit")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn start_osr_region_compiled(
+    region: &LoopRegion, views: super::ElementViews,
+    observation: &Observation<'_>,
+    tiers: &'static Tiers,
+    program: &ResidualProgram,
+    function_id: u32,
+    helpers: LaneHelpers,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
+    (widened, stores): (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
     mut calls: RegionCalls,
     base: bool,
     admitted: super::admission::CompiledUnit,

@@ -14401,7 +14401,12 @@ fn complete_activation_in_lane(cx: *mut LaneContext, ip: Ip, mut value: Value) -
                 set_script_calls_in_lane(cx, true);
                 (*cx).instance = Value::DELETED;
             }
-            value = vm.wasm_export_result(value, result);
+            #[cfg(feature = "wasm")]
+            {
+                value = vm.wasm_export_result(value, result);
+            }
+            #[cfg(not(feature = "wasm"))]
+            let _ = result;
         }
         // SAFETY: the call record belongs to the caller's live view.
         if unsafe { (*frame.call()).a } & quench_runtime::bytecode::RETURN_REGISTER == 0 {
@@ -14444,7 +14449,15 @@ impl quench_runtime::staged::wasm_activation::WasmReturn for LaneReturn {
         enter_program_in_lane(self.cx, popped.0.caller_program());
         unsafe { ((*self.cx).inline_calls, (*self.cx).instance) = (false, Value::DELETED); set_script_calls_in_lane(self.cx, true) };
     }
-    fn export_value(&mut self, value: Value, export: Self::Export) -> Value { unsafe { vm(self.cx) }.wasm_export_result(value, export) }
+    fn export_value(&mut self, value: Value, export: Self::Export) -> Value {
+        #[cfg(feature = "wasm")]
+        { unsafe { vm(self.cx) }.wasm_export_result(value, export) }
+        #[cfg(not(feature = "wasm"))]
+        {
+            let _ = export;
+            value
+        }
+    }
     #[inline(always)]
     fn import(&mut self) -> ToWasmCall {
         unsafe { vm(self.cx) }.lane_stack.top_frame().expect("the import's activation is the innermost").payload().to_wasm()
@@ -15940,6 +15953,7 @@ fn return_frame_in_lane(r: Registers, ip: Ip) -> Resumed {
         return Resumed::Exit(return_script_frame_in_lane(cx, ip, r.get(i.a), false));
     }
     let pending = unsafe { &mut *(*cx).pending };
+    #[cfg(feature = "wasm")]
     if unsafe { (*cx).inline_calls }
         && pending.last().is_some_and(|call| {
             matches!(call.completion, CallCompletion::WasmExport(_)) && call.caller + 2 == vm.frames.len()

@@ -484,7 +484,15 @@ impl Vm {
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
-                    map_case(receiver.units(), |text| quench_intl::locale_case(text, &locale, upper))
+                    #[cfg(feature = "intl")]
+                    let text = map_case(receiver.units(), |text| quench_intl::locale_case(text, &locale, upper));
+                    // Without Intl's locale tailoring, a locale case mapping is the default one.
+                    #[cfg(not(feature = "intl"))]
+                    let text = {
+                        let _ = &locale;
+                        map_case(receiver.units(), if upper { str::to_uppercase } else { str::to_lowercase })
+                    };
+                    text
                 } else {
                     map_case(receiver.units(), str::to_lowercase)
                 };
