@@ -33,22 +33,47 @@ struct Layout {
 }
 
 /// The addresses symbols resolve to that the image's own data fixes: each function's base body,
-/// the invalidation word and the call records.
+/// the invalidation word, the call records and the linked helpers (`LiveImage::helpers`).
 struct Places<'a> {
     bases: &'a [u64],
+    helpers: Option<&'a [usize]>,
     invalidation: usize,
     calls: &'a [UnsafeCell<CallRecord>],
 }
 
+/// Places the native searches of `image`'s RegExp literals (`AotImage::regexps`) and registers them on this
+/// thread, so each literal's matcher runs its code from its first search (`quench_regexp::backtrack::native::register_ahead`).
+/// An executable has no code memory to place them in without the `jit` feature: it links them (`linked_regexps`).
+#[cfg(not(feature = "jit"))]
+fn register_regexps(_: &AotImage) {}
+#[cfg(feature = "jit")]
+fn register_regexps(image: &AotImage) {
+    for regexp in &image.regexps {
+        if let Some((entry, keep)) = crate::regexp_native::place_ahead(&regexp.code) {
+            quench_regexp::backtrack::native::register_ahead(regexp.key.clone(), entry, keep);
+        }
+    }
+}
+
+/// Registers the searches the system linker placed for `image`'s RegExp literals (`object::regexp_data`), in image order.
+fn linked_regexps(image: &AotImage, table: &LinkedTable) {
+    for (regexp, &address) in image.regexps.iter().zip(table.regexps).filter(|(_, address)| **address != 0) {
+        // SAFETY: the linker bound the address to the literal's search, whose signature is `NativeFn` (`regexp_native::ahead_code`).
+        let entry = unsafe { std::mem::transmute::<usize, quench_regexp::backtrack::native::NativeFn>(address) };
+        quench_regexp::backtrack::native::register_ahead(regexp.key.clone(), entry, std::rc::Rc::new(()));
+    }
+}
+
 /// Links `image` into `vm`: its code placed, every symbol resolved.
 pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String> {
+    register_regexps(image);
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
     let code = CodeMemory::assemble(layout.length, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
-        let places = Places { bases: &bases, invalidation: invalidation.address(), calls: calls.records() };
+        let places = Places { bases: &bases, helpers: None, invalidation: invalidation.address(), calls: calls.records() };
         place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
     })?;
     let start = code.pointer().addr();
@@ -56,7 +81,7 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
     let lanes: Box<[Option<usize>]> = layout.lanes.iter().zip(&linked)
         .map(|(lane, linked)| lane.filter(|_| *linked).map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
-    Ok(LiveImage { _code: Some(code), invalidation, calls, entries, bases, lanes })
+    Ok(LiveImage { _code: Some(code), invalidation, calls, entries, bases, lanes, helpers: None })
 }
 
 pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
@@ -64,8 +89,8 @@ pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
 #[quench_macros::ext(LinkedTableOps1)]
 impl LinkedTable {
     /// The table at `table` of an image of `count` functions (`object::entry_table`): the ABI
-    /// header, `count` entries, `count` base bodies, then the file's address and length and the call
-    /// records' address.
+    /// header, `count` entries, `count` base bodies, then the file's address and length, the call
+    /// records' address, the linked helpers' address and count, and the RegExp searches' address and count.
     ///
     /// # Safety
     /// `table` is the aligned entry table symbol of an image of exactly `count` functions, emitted by
@@ -82,7 +107,9 @@ impl LinkedTable {
             let bases = std::slice::from_raw_parts(words.add(header + count), count);
             let tail = words.add(header + 2 * count);
             let file = std::slice::from_raw_parts(tail.read() as *const u8, tail.add(1).read());
-            Ok(Self { entries, bases, file, calls: tail.add(2).read() as *mut CallRecord })
+            let helpers = std::slice::from_raw_parts(tail.add(3).read() as *const usize, tail.add(4).read());
+            let regexps = std::slice::from_raw_parts(tail.add(5).read() as *const usize, tail.add(6).read());
+            Ok(Self { entries, bases, file, calls: tail.add(2).read() as *mut CallRecord, helpers, regexps })
         }
     }
 }
@@ -91,6 +118,7 @@ impl LinkedTable {
 /// placed or linked; a lane body a VM publishes is relinked from the image against the placed base
 /// bodies and records (`link_lane`).
 pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage, String> {
+    linked_regexps(image, table);
     let count = image.functions.len();
     if table.entries.len() != count || table.bases.len() != count {
         return Err("native image table does not match its image".into());
@@ -100,7 +128,7 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
     // The object places no lane body (`object::codes`): each is relinked from the image when a VM installs it.
     let lanes = vec![None; count].into_boxed_slice();
     Ok(LiveImage { _code: None, invalidation: Invalidation::default(), calls,
-        entries: table.entries.into(), bases: table.bases.into(), lanes })
+        entries: table.entries.into(), bases: table.bases.into(), lanes, helpers: Some(table.helpers) })
 }
 
 /// The lane body of `function` linked against `live`, at address 0 for a copy into a new body
@@ -111,7 +139,7 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
 pub(crate) fn link_lane(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, invalidation: live.invalidation.address(), calls: live.calls.records() };
+    let places = Places { bases: &bases, helpers: live.helpers, invalidation: live.invalidation.address(), calls: live.calls.records() };
     let mut roots = FoldedRoots::default();
     let code = lane.code.link(0, |namespace, key| {
         let word = resolve(image, vm, &places, namespace, key)?;
@@ -162,7 +190,13 @@ fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, re
 fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
     let symbol = SymbolTable::decode(image, namespace, key)?;
     match symbol {
-        Symbol::Helper(helper) => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
+        // The linked image's helpers are the ones its object names, so the linker keeps no other; an image placed in
+        // process takes the process's table, which only a build with the JIT holds (`quench compile`, a `.qimg`).
+        Symbol::Helper(helper) => match places.helpers {
+            Some(linked) => linked.get(helper as usize).copied().filter(|address| *address != 0).map(|address| address as u64),
+            None if cfg!(feature = "jit") => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
+            None => None,
+        },
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
         Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
         Symbol::Invalidation => Some(places.invalidation as u64),

@@ -733,10 +733,11 @@ pub(crate) fn native_call_handler(native: Native, i: &LaneInstruction, result_de
 /// the body reads as it reads a completed script call's, so the body stays native across
 /// `Math.imul`, a string method or a collection read. Any other native is called out
 /// (`body_native_out_in_lane`). A call that returns its result is a miss, which leaves the body at the call.
-pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
+/// And whether the native answered in place, which pushed no frame (`body_calls::body_call_status`).
+pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> (u64, bool) {
     use crate::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return (super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative), false) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.
@@ -744,14 +745,14 @@ pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_
     if quench_runtime::fallback::on() { crate::compiled::fallback_sites::opaque_native(cx, call, code, native); }
     let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args) else {
         // A returning call the native makes out of line is the lane's to complete.
-        if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
-        return body_native_out_in_lane(cx, call, native, (callee, receiver), &args);
+        if call.site.returns { return (super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning), false); }
+        return (body_native_out_in_lane(cx, call, native, (callee, receiver), &args), false);
     };
     // A returning call's value completes the body: it reads the call's register, as it does a
     // returning script call's (`Lowering::return_register`, `steps::completing`).
     note_allocation(vm);
     concrete_write_call_result(call.registers.0.expose_provenance() as u64, call.site.result, value);
-    LANE_CALL_COMPLETED
+    (LANE_CALL_COMPLETED, true)
 }
 
 script_handler! {

@@ -120,12 +120,43 @@ pub(crate) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
 /// the body at the call, before any effect.
 pub(crate) unsafe extern "C" fn body_call_helper(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     let cx = context as usize as *mut LaneContext;
+    // SAFETY: the caller's contract.
+    let bound = unsafe { vm(cx) }.lane_stack.plain_depth_limit.get();
+    // SAFETY: the caller's contract.
+    let (status, _) = unsafe { body_call_status(context, call_pc) };
+    crate::compiled::region_lend::rebind_after_call(cx, bound);
+    status
+}
+
+/// `body_call_helper`'s call and its bases refresh, and whether the call was a native's answered in place
+/// (`in_place_native_call`), which pushed no frame: a region's helper then leaves the stacks as they stand
+/// (`region_call_in_lane`).
+///
+/// # Safety
+/// As `body_call_helper`.
+pub(crate) unsafe fn body_call_status(context: u64, call_pc: u64) -> (u64, bool) {
+    let cx = context as usize as *mut LaneContext;
     if quench_runtime::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
-    let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
+    let vm = unsafe { vm(cx) };
+    // `in_innermost_frame`'s own steps: link the native frames, materialize a running leaf, and install the
+    // innermost native frame's caller state where one stands (any depth, not only the top).
+    vm.link_natives(cx);
+    super::leaf_calls::materialize_running_leaf_in_lane(cx);
+    let (status, in_place) = if vm.lane_stack.top_native().is_some() {
+        (native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) }), false)
+    } else {
+        // No native frame stands: `in_innermost_frame` would install none, and the call says whether a
+        // native answered it in place.
+        // SAFETY: the caller's contract.
+        match unsafe { BodyCall::at(cx, call_pc) } {
+            Some(call) => body_call(cx, &call),
+            None => (miss(vm, Miss::Form), false),
+        }
+    };
     // SAFETY: `context` is the running lane's.
     unsafe { refresh_body_bases(context) };
     note_call_status(cx, "call", call_pc, status);
-    status
+    (status, in_place)
 }
 
 /// With `body-leave` tracing, names a body helper's call that did not complete in place.
@@ -144,23 +175,25 @@ fn note_call_status(cx: *mut LaneContext, helper: &str, call_pc: u64, status: u6
 unsafe fn body_call_in_lane(cx: *mut LaneContext, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     match unsafe { BodyCall::at(cx, call_pc) } {
-        Some(call) => body_call(cx, &call),
+        Some(call) => body_call(cx, &call).0,
         None => miss(unsafe { vm(cx) }, Miss::Form),
     }
 }
 
-/// `body_call_helper` of the decoded `call`.
-fn body_call(cx: *mut LaneContext, call: &BodyCall) -> u64 {
+/// `body_call_helper` of the decoded `call`, and whether a native answered it in place (pushing no frame).
+fn body_call(cx: *mut LaneContext, call: &BodyCall) -> (u64, bool) {
     let vm = unsafe { vm(cx) };
-    let Some(receiver) = call.receiver(vm) else { return miss(vm, Miss::Receiver) };
-    let Some(callee) = call.callee(vm, receiver) else { return miss(vm, Miss::Callee) };
-    if let Err(refused) = call_admitted(cx, vm, call, callee) { return refused; }
+    let Some(receiver) = call.receiver(vm) else { return (miss(vm, Miss::Receiver), false) };
+    let Some(callee) = call.callee(vm, receiver) else { return (miss(vm, Miss::Callee), false) };
+    if let Err(refused) = call_admitted(cx, vm, call, callee) { return (refused, false); }
     let Some(target) = body_call_target_in_lane(cx, vm, callee, call.link()) else {
         return super::native_calls::body_native_call_in_lane(cx, call, callee, receiver);
     };
     super::proven_callees::rebind_body_call(cx, vm, call.argc(), target);
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-    body_script_call(cx, call, unsafe { &*target }, receiver)
+    unsafe { crate::compiled::direct_callee::rebind_region_call(cx, vm, call.ip, call.argc(), &*target) };
+    // SAFETY: as above.
+    (body_script_call(cx, call, unsafe { &*target }, receiver), false)
 }
 
 /// Whether the lane admits a body's call of `callee` at all: it may activate script calls, the
@@ -485,7 +518,9 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         return leave(start, Value::UNDEFINED);
     };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-    let captures = capture_reads(unsafe { (*cx).registers.capture() });
+    // The callee's capture word keeps its stores tag (`Vm::target_capture` took the barrier at the push): its body's
+    // capture stores run as rows (`capture_set_row`), not a general step per store. The run collects nothing.
+    let captures = unsafe { (*cx).registers.capture() };
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, body_this_in_lane(target, this), captures, cx.cast());
     // The common end: the body returned and left no native frame, so there is nothing to
     // resume, link or feed back (`body_left_in_lane` of a return), only the completion to count.
@@ -561,7 +596,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     }
     let receiver = entry_receiver_in_lane(cx, binds_this);
     // SAFETY: the activation just set the context to its own captures.
-    let captures = capture_reads(unsafe { (*cx).registers }.capture());
+    let captures = unsafe { (*cx).registers }.capture();
     // A frame entered while another body runs keeps that body's entry words (`run_nested_lane_method`).
     let left = if crate::compiled::body_running_in_lane() {
         vm.run_nested_lane_method(&method, program, code, r.0, receiver, captures, cx.cast())

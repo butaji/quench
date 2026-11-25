@@ -16,6 +16,7 @@ use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
 use quench_bjit::call_record::{CallRecord, LaneStatus};
+use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;
 use super::super::lane_body_abi::body_signature_in_lane;
 use quench_runtime::staged::call::admit_room;
@@ -166,6 +167,13 @@ impl EmitFrame<'_> {
         stage.load_u64(CALL_RECORD, record, field(offset))
     }
 
+    /// The word at `offset` of an owned callee's bound closure (`DirectCallee::bound`), which the site's helper call
+    /// rebinds: a mutable word, read again after each call out.
+    fn bound_word(&self, stage: &mut Emit<'_, '_>, owned: &DirectCallee, offset: usize) -> ir::Value {
+        let at = stage.constant(std::ptr::from_ref(&owned.bound).addr() as u64);
+        stage.load_u64(ENTRY_CELL, at, field(offset))
+    }
+
     /// A word of the dispatch: the addresses of the lane stack's tops and its ends.
     fn stack_word(&self, stage: &mut Emit<'_, '_>, offset: usize) -> ir::Value {
         stage.load_u64(DISPATCH, self.payload, field(offset))
@@ -262,7 +270,7 @@ impl EmitFrame<'_> {
                 address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64),
                 stage.constant(owned.call as u64),
                 stage.constant(owned.caller_base as u64),
-                stage.constant(owned.callee.to_bits()),
+                if self.rebinds.get() { self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee)) } else { stage.constant(owned.callee.to_bits()) },
             ),
             DirectSite::Proven(proven) => (
                 self.record_word(stage, proven, std::mem::offset_of!(CallRecord, descriptor)),
@@ -309,6 +317,7 @@ const fn context_at(index: usize) -> i32 { -((index * std::mem::size_of::<u64>()
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         self.proven_arguments.set(false);
+        self.rebinds.set(false);
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         self.proven_arguments.set(self.arguments_proven(site, callee));
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
@@ -320,6 +329,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
                 let proven = matches!(site.callee, quench_runtime::staged::forms::Callee::Register(register)
                     if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
                 let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
+                // A guarded call of a JIT plan reads the closure it calls and its captures from the bound words, which
+                // its helper call rebinds to another closure of the function (`DirectCallee::bound`).
+                self.rebinds.set(!proven && !self.helpers.links() && !site.constructs() && owned.forwarder.is_none());
+                if self.rebinds.get() { owned.bound.read.set(true); }
                 (identity, owned.sloppy.map(Value::to_bits))
             }
             // The identity and the global are the record's words (`call_identity`, `call_global`): the plan's
@@ -370,7 +383,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_identity(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
             DirectSite::Proven(proven) => Some(self.record_word(stage, proven, std::mem::offset_of!(CallRecord, callee))),
-            DirectSite::Owned(_) => None,
+            DirectSite::Owned(owned) => self.rebinds.get().then(|| self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
         }
     }
 
@@ -403,6 +416,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = match callee {
+            DirectSite::Owned(owned) if self.rebinds.get() => self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, captures)),
             DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
             DirectSite::Proven(proven) => self.record_word(stage, proven, std::mem::offset_of!(CallRecord, captures)),
         };

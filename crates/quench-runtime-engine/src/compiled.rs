@@ -1016,7 +1016,7 @@ macro_rules! lane_helper_inventory {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
-            const COUNT: usize = [$(stringify!($name)),+].len();
+            pub(crate) const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
             const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             /// The name of helper number `index` (`Symbol::Helper`), as an image's demand lists it.
@@ -1038,8 +1038,8 @@ macro_rules! lane_helper_inventory {
         /// jump to the helper, so a call through it is the helper's own (every register and the
         /// stack as the caller left them). These are the symbols an ahead image's object imports
         /// (`aot_image::object`, `lane_helper_symbol`). An executable's export macro instantiates
-        /// this once (`export_native_js_operations!`); the trampolines lie in their own section,
-        /// so the function itself runs nothing.
+        /// this once (`export_native_js_operations!`); each trampoline lies in a section of its own,
+        /// so the function itself runs nothing and the linker keeps only the ones an image names.
         #[doc(hidden)]
         #[inline(never)]
         // The labels are the exported symbols themselves, defined once: the one instantiation is
@@ -1050,9 +1050,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: the template only lays out code in another section; it runs no instruction here.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -1061,9 +1059,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: as above.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -3095,6 +3091,9 @@ impl CompiledOsrRegion {
         // (`dense`), so an entry refills it in place.
         let mut captures = self.dense.take();
         let parked = self.parked.take().filter(|_| self.crossing == Crossing::General);
+        // The region's calls, named to the lane's helpers for the run (`rebind_region_call`).
+        // SAFETY: `lane_context` is the running lane's.
+        let outer_calls = unsafe { std::mem::replace(&mut (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls, std::ptr::from_ref(&self.calls).addr()) };
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe {
             match parked {
@@ -3146,6 +3145,8 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
+        // SAFETY: as above.
+        unsafe { (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls = outer_calls };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome

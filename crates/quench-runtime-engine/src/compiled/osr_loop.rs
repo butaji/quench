@@ -449,10 +449,11 @@ fn tagged_registers_with_failure(
         // region calls in place); a register the loop also computes numbers into stays untagged.
         .chain(instructions.iter().filter(|instruction| quench_runtime::staged::calls_ordinary(instruction.op())).map(|instruction| instruction.register_b())
             .filter(|callee| loads_alone_define(instructions, *callee, is_receiver_load)))
-        // A field receiver the region's field or element reads give holds an object.
+        // A field receiver the region's field or element reads give, or one it never writes (its entry value), holds an object.
         .chain(instructions.iter().filter(|instruction| quench_runtime::staged::reads_named_field(instruction.op())).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            loads_alone_define(instructions, receiver, is_receiver_load).then_some(receiver)
+            (loads_alone_define(instructions, receiver, is_receiver_load) || !instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)))
+                .then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.

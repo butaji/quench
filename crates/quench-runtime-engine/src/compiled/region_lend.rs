@@ -18,6 +18,16 @@ pub(crate) fn bind_stacks(vm: &mut Vm, payload: &mut JsStepDispatch, direct_call
     vm.stack_words_in_lane(if direct_calls { SHADOW_FRAMES } else { 0 }).bind(payload);
 }
 
+/// After a Cranelift loop region's helper call (its lane context names its payload) whose frames voided the bound its
+/// direct calls admit native headers under (`LaneStack::frames_changed`; `bound` is the one before the call), binds its
+/// stacks again, so its next direct call enters its callee rather than missing to the helper for the rest of the run.
+pub(crate) fn rebind_after_call(cx: *mut quench_runtime::vm::engine_types::LaneContext, bound: usize) {
+    // SAFETY: the running lane's context, whose region payload lives for the region's run.
+    let (payload, vm) = unsafe { ((*cx).region_payload as *mut JsStepDispatch, &mut *(*cx).vm) };
+    if payload.is_null() || bound == 0 || vm.lane_stack.plain_depth_limit.get() != 0 || vm.lane_stack.has_plain_frames() { return; }
+    bind_stacks(vm, unsafe { &mut *payload }, crate::dispatch_fast::direct_calls_in_lane(cx));
+}
+
 /// Gives the lane frame's place to `payload`, a region's, with the room a lane body's direct calls
 /// have (`bind_stacks`); returns the lane frame's payload, which is now the region's, and which the
 /// region's rows and its callees' read.
