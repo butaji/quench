@@ -103,10 +103,10 @@ pub(crate) fn install(
 ) -> Result<(), RootedError> {
     let prototype = get(context, constructor, "prototype")?;
     for (name, operation) in [
-        ("_getpeername", "netSocketPeerName"),
-        ("_getsockname", "netSocketLocalName"),
+        ("_getpeername", crate::host::shared_vm::operation!("netSocketPeerName")),
+        ("_getsockname", crate::host::shared_vm::operation!("netSocketLocalName")),
     ] {
-        let native = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let native = context.host_function(operation)?;
         let method = super::net_internal_shared_vm::method(context, native, name)?;
         set(context, prototype, name, method)?;
     }

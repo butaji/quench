@@ -121,7 +121,7 @@ const OBSERVE_SINGLE: f64 = 0.0;
 const OBSERVE_MULTIPLE: f64 = 1.0;
 
 const ENTRY_GETTERS: [Getter; 4] =
-    [("name", "perfEntryName"), ("entryType", "perfEntryType"), ("startTime", "perfEntryStartTime"), ("duration", "perfEntryDuration")];
+    [("name", crate::host::shared_vm::marked_operation!("perfEntryName")), ("entryType", crate::host::shared_vm::marked_operation!("perfEntryType")), ("startTime", crate::host::shared_vm::marked_operation!("perfEntryStartTime")), ("duration", crate::host::shared_vm::marked_operation!("perfEntryDuration"))];
 /// `PerformanceResourceTiming.prototype`'s timing getters: (name, path in its timing info).
 const RESOURCE_TIMING: [(&str, &[&str]); 15] = [
     ("workerStart", &["finalServiceWorkerStartTime"]),
@@ -153,11 +153,11 @@ const CACHE_LOCAL: &str = "local";
 const CACHE_VALIDATED: &str = "validated";
 
 const OBSERVER_METHODS: [Method; 3] =
-    [("observe", "perfObserverObserve", 0.0), ("disconnect", "perfObserverDisconnect", 0.0), ("takeRecords", "perfObserverTakeRecords", 0.0)];
+    [("observe", crate::host::shared_vm::marked_operation!("perfObserverObserve"), 0.0), ("disconnect", crate::host::shared_vm::marked_operation!("perfObserverDisconnect"), 0.0), ("takeRecords", crate::host::shared_vm::marked_operation!("perfObserverTakeRecords"), 0.0)];
 const LIST_METHODS: [Method; 3] = [
-    ("getEntries", "perfListGetEntries", 0.0),
-    ("getEntriesByType", "perfListGetEntriesByType", 1.0),
-    ("getEntriesByName", "perfListGetEntriesByName", 1.0),
+    ("getEntries", crate::host::shared_vm::marked_operation!("perfListGetEntries"), 0.0),
+    ("getEntriesByType", crate::host::shared_vm::marked_operation!("perfListGetEntriesByType"), 1.0),
+    ("getEntriesByName", crate::host::shared_vm::marked_operation!("perfListGetEntriesByName"), 1.0),
 ];
 
 fn timeline<T>(c: &mut Context<'_>, f: impl FnOnce(&mut Timeline) -> T) -> T {
@@ -168,30 +168,30 @@ fn timeline<T>(c: &mut Context<'_>, f: impl FnOnce(&mut Timeline) -> T) -> T {
 
 /// The entry classes, in the module's export order.
 pub(super) fn build(c: &mut Context<'_>) -> Result<Vec<(&'static str, RootId)>, RootedError> {
-    let entry = class(c, "PerformanceEntry", "perfEntryConstructor", 0.0, None)?;
+    let entry = class(c, "PerformanceEntry", crate::host::shared_vm::marked_operation!("perfEntryConstructor"), 0.0, None)?;
     let entry_prototype = get(c, entry, "prototype")?;
     for (name, op) in ENTRY_GETTERS {
         let undefined = c.undefined();
         define_getter(c, entry_prototype, name, op, undefined, true)?;
     }
     json_method(c, entry_prototype, &ENTRY_JSON, true)?;
-    define_inspect(c, entry_prototype, "perfEntryInspect")?;
+    define_inspect(c, entry_prototype, crate::host::shared_vm::marked_operation!("perfEntryInspect"))?;
     share(c, api::ENTRY_PROTOTYPE, entry_prototype)?;
 
-    let node_entry = class(c, "PerformanceNodeEntry", "perfEntryConstructor", 0.0, Some(entry))?;
+    let node_entry = class(c, "PerformanceNodeEntry", crate::host::shared_vm::marked_operation!("perfEntryConstructor"), 0.0, Some(entry))?;
     let node_entry_prototype = get(c, node_entry, "prototype")?;
     detail_getter(c, node_entry_prototype, "NodePerformanceEntry")?;
     json_method(c, node_entry_prototype, &DETAILED_JSON, false)?;
     share(c, api::NODE_ENTRY_PROTOTYPE, node_entry_prototype)?;
 
-    let mark = class(c, "PerformanceMark", "perfMarkConstructor", 1.0, Some(entry))?;
+    let mark = class(c, "PerformanceMark", crate::host::shared_vm::marked_operation!("perfMarkConstructor"), 1.0, Some(entry))?;
     let mark_prototype = get(c, mark, "prototype")?;
     detail_getter(c, mark_prototype, "PerformanceMark")?;
     json_method(c, mark_prototype, &DETAILED_JSON, false)?;
     define_tag(c, mark_prototype, "PerformanceMark")?;
     share(c, api::MARK_PROTOTYPE, mark_prototype)?;
 
-    let measure = class(c, "PerformanceMeasure", "perfEntryConstructor", 0.0, Some(entry))?;
+    let measure = class(c, "PerformanceMeasure", crate::host::shared_vm::marked_operation!("perfEntryConstructor"), 0.0, Some(entry))?;
     let measure_prototype = get(c, measure, "prototype")?;
     detail_getter(c, measure_prototype, "PerformanceMeasure")?;
     json_method(c, measure_prototype, &DETAILED_JSON, false)?;
@@ -200,24 +200,24 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<Vec<(&'static str, RootId)>, 
 
     let resource = resource_class(c, entry)?;
 
-    let observer = class(c, "PerformanceObserver", "perfObserverConstructor", 1.0, None)?;
+    let observer = class(c, "PerformanceObserver", crate::host::shared_vm::marked_operation!("perfObserverConstructor"), 1.0, None)?;
     let observer_prototype = get(c, observer, "prototype")?;
     define_methods(c, observer_prototype, &OBSERVER_METHODS, true)?;
     define_tag(c, observer_prototype, "PerformanceObserver")?;
-    define_inspect(c, observer_prototype, "perfObserverInspect")?;
+    define_inspect(c, observer_prototype, crate::host::shared_vm::marked_operation!("perfObserverInspect"))?;
     let types = SUPPORTED_ENTRY_TYPES.map(|name| c.string_rooted(name));
     let types = c.array_rooted(&types)?;
     let freeze = api_member(c, api::OBJECT_FREEZE)?;
     let undefined = c.undefined();
     c.call_rooted(freeze, undefined, &[types])?;
     share(c, api::SUPPORTED_ENTRY_TYPES, types)?;
-    define_getter(c, observer, "supportedEntryTypes", "perfObserverSupportedTypes", undefined, false)?;
+    define_getter(c, observer, "supportedEntryTypes", crate::host::shared_vm::marked_operation!("perfObserverSupportedTypes"), undefined, false)?;
 
-    let list = class(c, "PerformanceObserverEntryList", "perfEntryConstructor", 0.0, None)?;
+    let list = class(c, "PerformanceObserverEntryList", crate::host::shared_vm::marked_operation!("perfEntryConstructor"), 0.0, None)?;
     let list_prototype = get(c, list, "prototype")?;
     define_methods(c, list_prototype, &LIST_METHODS, true)?;
     define_tag(c, list_prototype, "PerformanceObserverEntryList")?;
-    define_inspect(c, list_prototype, "perfListInspect")?;
+    define_inspect(c, list_prototype, crate::host::shared_vm::marked_operation!("perfListInspect"))?;
     share(c, api::LIST_PROTOTYPE, list_prototype)?;
 
     Ok(vec![
@@ -248,29 +248,29 @@ fn json_method(c: &mut Context<'_>, prototype: RootId, fields: &[&str], enumerab
 
 fn detail_getter(c: &mut Context<'_>, prototype: RootId, class: &str) -> Result<(), RootedError> {
     let class = c.string_rooted(class);
-    define_getter(c, prototype, "detail", "perfEntryDetail", class, true)
+    define_getter(c, prototype, "detail", crate::host::shared_vm::marked_operation!("perfEntryDetail"), class, true)
 }
 
 fn resource_class(c: &mut Context<'_>, entry: RootId) -> Outcome {
-    let resource = class(c, "PerformanceResourceTiming", "perfEntryConstructor", 0.0, Some(entry))?;
+    let resource = class(c, "PerformanceResourceTiming", crate::host::shared_vm::marked_operation!("perfEntryConstructor"), 0.0, Some(entry))?;
     let prototype = get(c, resource, "prototype")?;
     let undefined = c.undefined();
-    for (name, op) in [("name", "perfResourceName"), ("startTime", "perfResourceStartTime"), ("duration", "perfResourceDuration")] {
+    for (name, op) in [("name", crate::host::shared_vm::marked_operation!("perfResourceName")), ("startTime", crate::host::shared_vm::marked_operation!("perfResourceStartTime")), ("duration", crate::host::shared_vm::marked_operation!("perfResourceDuration"))] {
         define_getter(c, prototype, name, op, undefined, false)?;
     }
     let initiator = c.string_rooted("initiatorType");
-    define_getter(c, prototype, "initiatorType", "perfResourceField", initiator, true)?;
+    define_getter(c, prototype, "initiatorType", crate::host::shared_vm::marked_operation!("perfResourceField"), initiator, true)?;
     for (name, path) in RESOURCE_TIMING {
         let path = path.iter().map(|step| c.string_rooted(step)).collect::<Vec<_>>();
         let path = c.array_rooted(&path)?;
-        define_getter(c, prototype, name, "perfResourceTiming", path, true)?;
+        define_getter(c, prototype, name, crate::host::shared_vm::marked_operation!("perfResourceTiming"), path, true)?;
     }
-    define_getter(c, prototype, "transferSize", "perfResourceTransferSize", undefined, true)?;
+    define_getter(c, prototype, "transferSize", crate::host::shared_vm::marked_operation!("perfResourceTransferSize"), undefined, true)?;
     for name in ["deliveryType", "responseStatus"] {
         let field = c.string_rooted(name);
-        define_getter(c, prototype, name, "perfResourceField", field, true)?;
+        define_getter(c, prototype, name, crate::host::shared_vm::marked_operation!("perfResourceField"), field, true)?;
     }
-    define_methods(c, prototype, &[("toJSON", "perfResourceToJson", 0.0)], true)?;
+    define_methods(c, prototype, &[("toJSON", crate::host::shared_vm::marked_operation!("perfResourceToJson"), 0.0)], true)?;
     define_tag(c, prototype, "PerformanceResourceTiming")?;
     share(c, api::RESOURCE_PROTOTYPE, prototype)?;
     Ok(resource)

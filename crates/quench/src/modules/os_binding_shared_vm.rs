@@ -18,10 +18,10 @@ fn number(c: &mut Context<'_>, object: RootId, name: &str, value: f64) -> Result
 fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     args.get(index).copied().unwrap_or_else(|| c.undefined())
 }
-fn binding(c: &mut Context<'_>, functions: &[(&str, &str)]) -> Result<RootId, RootedError> {
+fn binding(c: &mut Context<'_>, functions: &[(&str, quench_runtime::HostFunctionId)]) -> Result<RootId, RootedError> {
     let result = c.object_rooted()?;
     for &(name, operation) in functions {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), "")?;
+        let function = c.host_function_named(operation, "")?;
         put(c, result, name, function)?;
     }
     Ok(result)
@@ -47,19 +47,19 @@ fn build_os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let result = binding(
         c,
         &[
-            ("getAvailableParallelism", "osAvailableParallelism"),
-            ("getCPUs", "osBindingCpus"),
-            ("getFreeMem", "osFreemem"),
-            ("getHomeDirectory", "osBindingHome"),
-            ("getHostname", "osBindingHostname"),
-            ("getInterfaceAddresses", "osBindingInterfaces"),
-            ("getLoadAvg", "osBindingLoadavg"),
-            ("getPriority", "osBindingGetPriority"),
-            ("getOSInformation", "osBindingInformation"),
-            ("getTotalMem", "osTotalmem"),
-            ("getUserInfo", "osBindingUserInfo"),
-            ("getUptime", "osBindingUptime"),
-            ("setPriority", "osBindingSetPriority"),
+            ("getAvailableParallelism", crate::host::shared_vm::operation!("osAvailableParallelism")),
+            ("getCPUs", crate::host::shared_vm::operation!("osBindingCpus")),
+            ("getFreeMem", crate::host::shared_vm::operation!("osFreemem")),
+            ("getHomeDirectory", crate::host::shared_vm::operation!("osBindingHome")),
+            ("getHostname", crate::host::shared_vm::operation!("osBindingHostname")),
+            ("getInterfaceAddresses", crate::host::shared_vm::operation!("osBindingInterfaces")),
+            ("getLoadAvg", crate::host::shared_vm::operation!("osBindingLoadavg")),
+            ("getPriority", crate::host::shared_vm::operation!("osBindingGetPriority")),
+            ("getOSInformation", crate::host::shared_vm::operation!("osBindingInformation")),
+            ("getTotalMem", crate::host::shared_vm::operation!("osTotalmem")),
+            ("getUserInfo", crate::host::shared_vm::operation!("osBindingUserInfo")),
+            ("getUptime", crate::host::shared_vm::operation!("osBindingUptime")),
+            ("setPriority", crate::host::shared_vm::operation!("osBindingSetPriority")),
         ],
     )?;
     let endian = c.boolean(cfg!(target_endian = "big"));
@@ -67,7 +67,7 @@ fn build_os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     Ok(result)
 }
 fn build_credentials_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let binding = binding(c, &[("getTempDir", "osBindingTempdir")])?;
+    let binding = binding(c, &[("getTempDir", crate::host::shared_vm::operation!("osBindingTempdir"))])?;
     let supported = c.boolean(cfg!(unix));
     put(c, binding, "implementsPosixCredentials", supported)?;
     Ok(binding)

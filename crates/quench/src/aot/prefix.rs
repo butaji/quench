@@ -55,7 +55,7 @@ const STATIC_OPERATIONS: &[&str] = &[
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Whether the entry's own code runs (`arm`): the host's start-up before it is the realm's.
 static ARMED: AtomicBool = AtomicBool::new(false);
-static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None });
+static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None, held: Vec::new() });
 
 struct State {
     effects: Vec<(i32, Vec<u8>)>,
@@ -66,6 +66,8 @@ struct State {
     choice: Option<Question>,
     /// The runtime as the run left it at its first wait for input (`reach_wait`).
     rest: Option<Vec<u8>>,
+    /// The host operations the saved runtime's host functions run (`reach_wait`).
+    held: Vec<u32>,
 }
 
 /// A yes-or-no dynamic input: a run per answer specializes it, and the image asks it as it
@@ -113,8 +115,9 @@ impl Question {
 /// assumed, which a run per answer specializes; or the first other dynamic input it read.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
-    /// The run's effects up to its first wait for input, and the runtime there as a snapshot.
-    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>),
+    /// The run's effects up to its first wait for input, the runtime there as a snapshot, and
+    /// the host operations its host functions run.
+    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>, Vec<u32>),
     Question(Question),
     Dynamic(String),
 }
@@ -253,7 +256,7 @@ pub(crate) fn finish() -> Residual {
     }
     let effects = std::mem::take(&mut state.effects);
     match state.rest.take() {
-        Some(rest) => Residual::Waiting(effects, rest),
+        Some(rest) => Residual::Waiting(effects, rest, std::mem::take(&mut state.held)),
         None => Residual::Effects(effects),
     }
 }
@@ -267,7 +270,9 @@ pub(crate) const REACHED_WAIT: &str = "build-time evaluation reached its first w
 pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>, program: &quench_runtime::ResidualProgram) -> String {
     match runtime.snapshot_at_rest(program, |host, writer| host.write_snapshot(writer, true)) {
         Ok(rest) => {
-            STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).rest = Some(rest);
+            let mut state = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.rest = Some(rest);
+            state.held = runtime.held_host_operations();
             REACHED_WAIT.to_owned()
         }
         Err(error) => {

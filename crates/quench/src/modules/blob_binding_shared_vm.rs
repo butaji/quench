@@ -4,6 +4,7 @@
 //! A handle holds its parts (buffers and the ranges they cover) under a private symbol,
 //! so slices share bytes and the collector owns their lifetime. Every part of a
 //! Quench Blob is memory-resident, so a reader answers each pull synchronously.
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 
@@ -35,13 +36,13 @@ mod state {
     pub(super) const END: &str = "2";
 }
 
-const NATIVES: &[(&str, &str)] = &[
-    ("createBlob", "blobBindingCreate"),
-    ("storeDataObject", "blobBindingStoreDataObject"),
-    ("getDataObject", "blobBindingGetDataObject"),
-    ("revokeObjectURL", "blobBindingRevokeObjectUrl"),
-    ("concat", "blobBindingConcat"),
-    ("createBlobFromFilePath", "blobBindingCreateFromFilePath"),
+const NATIVES: &[(&str, MarkedOperation)] = &[
+    ("createBlob", marked_operation!("blobBindingCreate")),
+    ("storeDataObject", marked_operation!("blobBindingStoreDataObject")),
+    ("getDataObject", marked_operation!("blobBindingGetDataObject")),
+    ("revokeObjectURL", marked_operation!("blobBindingRevokeObjectUrl")),
+    ("concat", marked_operation!("blobBindingConcat")),
+    ("createBlobFromFilePath", marked_operation!("blobBindingCreateFromFilePath")),
 ];
 
 use crate::modules::util_shared_vm::named_get as get;
@@ -52,10 +53,10 @@ use crate::modules::util_shared_vm::named_put as put;
 const DATA: &str = "\0binding:blob:data";
 
 /// A handle or reader prototype with `methods`.
-fn native_prototype(c: &mut Context<'_>, methods: &[(&str, &str)], data: RootId) -> Result<RootId, RootedError> {
+fn native_prototype(c: &mut Context<'_>, methods: &[(&str, MarkedOperation)], data: RootId) -> Result<RootId, RootedError> {
     let prototype = c.object_rooted()?;
     for &(method, operation) in methods {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), method, data)?;
+        let function = c.host_function_named_with_data(operation.id(), method, data)?;
         let key = c.string_rooted(method);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
@@ -66,9 +67,17 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:blob", |c| {
         c.with_startup_intrinsics(|c| {
             let data = c.array_rooted(&[])?;
-            let handle = native_prototype(c, &[("getReader", "blobHandleGetReader"), ("slice", "blobHandleSlice")], data)?;
+            let handle = native_prototype(
+                c,
+                &[("getReader", marked_operation!("blobHandleGetReader")), ("slice", marked_operation!("blobHandleSlice"))],
+                data,
+            )?;
             put(c, data, data::HANDLE_PROTOTYPE, handle)?;
-            let reader = native_prototype(c, &[("pull", "blobReaderPull"), ("setWakeup", "blobReaderSetWakeup")], data)?;
+            let reader = native_prototype(
+                c,
+                &[("pull", marked_operation!("blobReaderPull")), ("setWakeup", marked_operation!("blobReaderSetWakeup"))],
+                data,
+            )?;
             put(c, data, data::READER_PROTOTYPE, reader)?;
             let global = c.global_root()?;
             let map = get(c, global, "Map")?;
@@ -85,7 +94,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(DATA.to_owned(), retained);
             let binding = c.object_rooted()?;
             for &(name, operation) in NATIVES {
-                let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+                let function = c.host_function_named_with_data(operation.id(), name, data)?;
                 put(c, binding, name, function)?;
             }
             Ok(binding)

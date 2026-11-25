@@ -57,10 +57,9 @@ pub(crate) fn internal_hooks(c: &mut Context<'_>) -> Result<RootId, RootedError>
         let symbols = c.get_named_property_rooted(public, "symbols")?;
         let async_id_symbol = c.get_named_property_rooted(symbols, "async_id_symbol")?;
         for (name, operation, data) in [
-            ("getOrSetAsyncId", "asyncGetOrSetAsyncId", Some(async_id_symbol)),
-            ("useDomainTrampoline", "asyncUseDomainTrampoline", None),
+            ("getOrSetAsyncId", crate::host::shared_vm::operation!("asyncGetOrSetAsyncId"), Some(async_id_symbol)),
+            ("useDomainTrampoline", crate::host::shared_vm::operation!("asyncUseDomainTrampoline"), None),
         ] {
-            let operation = crate::host::shared_vm::operation(operation);
             let function = match data {
                 Some(data) => c.host_function_named_with_data(operation, name, data)?,
                 None => c.host_function_named(operation, name)?,

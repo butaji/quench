@@ -1,5 +1,6 @@
 //! EventEmitter inspection derives copies and counts from its listener store.
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 
@@ -62,7 +63,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
         .event_targets_api
         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
     for (name, operation, length) in PROTOTYPE_METHODS {
-        let method = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        let method = context.host_function_named_with_data(operation.id(), name, data)?;
         let _ = length;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(prototype, key, method, true, true, true)?;
@@ -753,18 +754,18 @@ fn symbol_for(context: &mut NativeContext<'_>, description: &str) -> Result<Root
 
 /// `EventEmitter.prototype`'s methods, as `(name, operation, length)`; each passes `this`
 /// and its arguments to its operation.
-const PROTOTYPE_METHODS: &[(&str, &str, u32)] = &[
-    ("eventNames", "emitterProtoEventNames", 0),
-    ("listeners", "emitterProtoListeners", 1),
-    ("rawListeners", "emitterProtoRawListeners", 1),
-    ("listenerCount", "emitterProtoListenerCount", 2),
-    ("addListener", "emitterProtoAddListener", 2),
-    ("prependListener", "emitterProtoPrependListener", 2),
-    ("once", "emitterProtoOnce", 2),
-    ("prependOnceListener", "emitterProtoPrependOnceListener", 2),
-    ("removeListener", "emitterProtoRemoveListener", 2),
-    ("removeAllListeners", "emitterProtoRemoveAllListeners", 1),
-    ("emit", "emitterProtoEmit", 1),
+const PROTOTYPE_METHODS: &[(&str, MarkedOperation, u32)] = &[
+    ("eventNames", marked_operation!("emitterProtoEventNames"), 0),
+    ("listeners", marked_operation!("emitterProtoListeners"), 1),
+    ("rawListeners", marked_operation!("emitterProtoRawListeners"), 1),
+    ("listenerCount", marked_operation!("emitterProtoListenerCount"), 2),
+    ("addListener", marked_operation!("emitterProtoAddListener"), 2),
+    ("prependListener", marked_operation!("emitterProtoPrependListener"), 2),
+    ("once", marked_operation!("emitterProtoOnce"), 2),
+    ("prependOnceListener", marked_operation!("emitterProtoPrependOnceListener"), 2),
+    ("removeListener", marked_operation!("emitterProtoRemoveListener"), 2),
+    ("removeAllListeners", marked_operation!("emitterProtoRemoveAllListeners"), 1),
+    ("emit", marked_operation!("emitterProtoEmit"), 1),
 ];
 
 fn argument(context: &mut NativeContext<'_>, args: &[RootId], index: usize) -> RootId {

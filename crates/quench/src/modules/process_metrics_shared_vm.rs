@@ -24,25 +24,25 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let module = c.object_rooted()?;
         put(c, module, "hrtimeBuffer", buffer)?;
         for (name, operation) in [
-            ("hrtime", "processMetricsHrtime"),
-            ("hrtimeBigInt", "processMetricsHrtimeBigInt"),
+            ("hrtime", crate::host::shared_vm::operation!("processMetricsHrtime")),
+            ("hrtimeBigInt", crate::host::shared_vm::operation!("processMetricsHrtimeBigInt")),
         ] {
             let function = c.host_function_named_with_data(
-                crate::host::shared_vm::operation(operation),
+                operation,
                 name,
                 buffer,
             )?;
             put(c, module, name, function)?;
         }
         for (name, operation) in [
-            ("cpuUsage", "processMetricsCpu"),
-            ("threadCpuUsage", "processMetricsThreadCpu"),
-            ("resourceUsage", "processMetricsResources"),
-            ("rss", "processMetricsRss"),
-            ("memoryUsage", "processMetricsMemoryUsage"),
+            ("cpuUsage", crate::host::shared_vm::operation!("processMetricsCpu")),
+            ("threadCpuUsage", crate::host::shared_vm::operation!("processMetricsThreadCpu")),
+            ("resourceUsage", crate::host::shared_vm::operation!("processMetricsResources")),
+            ("rss", crate::host::shared_vm::operation!("processMetricsRss")),
+            ("memoryUsage", crate::host::shared_vm::operation!("processMetricsMemoryUsage")),
         ] {
             let function =
-                c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+                c.host_function_named(operation, name)?;
             put(c, module, name, function)?;
         }
         #[cfg(unix)]
@@ -55,9 +55,9 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             "patchProcessObject",
         )?;
         put(c, module, "patchProcessObject", patch_process_object)?;
-        for (name, operation) in [("cwd", "processCwd"), ("umask", "processRawUmask")] {
+        for (name, operation) in [("cwd", crate::host::shared_vm::operation!("processCwd")), ("umask", crate::host::shared_vm::operation!("processRawUmask"))] {
             let function =
-                c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+                c.host_function_named(operation, name)?;
             put(c, module, name, function)?;
         }
         Ok(module)
@@ -435,7 +435,7 @@ pub(crate) fn public_execve(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 /// Defines Node's wrapped process methods on `process`.
 pub(crate) fn define_methods(c: &mut Context<'_>, process: RootId) -> Result<(), RootedError> {
     for (name, operation) in WRAPPED_METHODS {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, process, name, function)?;
     }
     let memory_usage = get(c, process, "memoryUsage")?;
@@ -444,10 +444,10 @@ pub(crate) fn define_methods(c: &mut Context<'_>, process: RootId) -> Result<(),
 }
 
 /// The process methods Node's `wrapProcessMethods` makes over the native binding.
-const WRAPPED_METHODS: [(&str, &str); 5] = [
-    ("cpuUsage", "processCpuUsage"),
-    ("threadCpuUsage", "processThreadCpuUsage"),
-    ("memoryUsage", "processMemoryUsage"),
-    ("resourceUsage", "processResourceUsage"),
-    ("execve", "processExecvePublic"),
+const WRAPPED_METHODS: [(&str, crate::host::shared_vm::MarkedOperation); 5] = [
+    ("cpuUsage", crate::host::shared_vm::marked_operation!("processCpuUsage")),
+    ("threadCpuUsage", crate::host::shared_vm::marked_operation!("processThreadCpuUsage")),
+    ("memoryUsage", crate::host::shared_vm::marked_operation!("processMemoryUsage")),
+    ("resourceUsage", crate::host::shared_vm::marked_operation!("processResourceUsage")),
+    ("execve", crate::host::shared_vm::marked_operation!("processExecvePublic")),
 ];

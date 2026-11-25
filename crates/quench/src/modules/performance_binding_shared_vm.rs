@@ -88,14 +88,14 @@ fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         state.performance_native.uv_metrics_bigint = Some(retained_uv_metrics_bigint);
     }
     for (name, operation) in [
-        ("uvMetricsInfo", "performanceUvMetricsInfo"),
-        ("now", "performanceNativeNow"),
-        ("loopIdleTime", "performanceLoopIdleTime"),
-        ("updateGarbageCollectionTracking", "performanceGcTracking"),
-        ("notify", "performanceNotify"),
-        ("markBootstrapComplete", "performanceBootstrapMark"),
+        ("uvMetricsInfo", crate::host::shared_vm::operation!("performanceUvMetricsInfo")),
+        ("now", crate::host::shared_vm::operation!("performanceNativeNow")),
+        ("loopIdleTime", crate::host::shared_vm::operation!("performanceLoopIdleTime")),
+        ("updateGarbageCollectionTracking", crate::host::shared_vm::operation!("performanceGcTracking")),
+        ("notify", crate::host::shared_vm::operation!("performanceNotify")),
+        ("markBootstrapComplete", crate::host::shared_vm::operation!("performanceBootstrapMark")),
     ] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation, name)?;
         put(c, module, name, function)?;
     }
     Ok(module)

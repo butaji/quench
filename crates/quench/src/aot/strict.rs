@@ -45,7 +45,7 @@ pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> 
     let report = match (completion, super::prefix::finish()) {
         (_, Residual::Dynamic(input)) => dynamic(input),
         (_, Residual::Question(question)) => json!({"status": "question", "key": question.key()}),
-        (_, Residual::Waiting(effects, rest)) => {
+        (_, Residual::Waiting(effects, rest, _)) => {
             let path = journal.with_extension("rest");
             fs::write(&path, &rest).map_err(|error| format!("{}: {error}", path.display()))?;
             json!({"status": "waiting", "effects": effects, "rest": path, "rest_bytes": rest.len()})

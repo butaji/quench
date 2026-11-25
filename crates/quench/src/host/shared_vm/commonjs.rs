@@ -665,13 +665,13 @@ pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
 fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     for (operation, names) in [
-        ("webStreamsInitialize", WEB_STREAM_GLOBALS),
-        ("webApisInitialize", WEB_API_GLOBALS),
-        ("webFetchInitialize", FETCH_API_GLOBALS),
-        ("webSocketInitialize", &["WebSocket"]),
+        (crate::host::shared_vm::marked_operation!("webStreamsInitialize"), WEB_STREAM_GLOBALS),
+        (crate::host::shared_vm::marked_operation!("webApisInitialize"), WEB_API_GLOBALS),
+        (crate::host::shared_vm::marked_operation!("webFetchInitialize"), FETCH_API_GLOBALS),
+        (crate::host::shared_vm::marked_operation!("webSocketInitialize"), &["WebSocket"]),
     ] {
         let names: Vec<&str> = names.iter().copied().filter(|name| web_global_enabled(context, name)).collect();
-        let initializer = context.host_function(super::operation(operation))?;
+        let initializer = context.host_function(operation.id())?;
         context.define_lazy_data_properties_rooted(global, &names, false, initializer)?;
         context.release_root(initializer);
     }

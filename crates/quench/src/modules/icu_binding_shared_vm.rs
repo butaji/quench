@@ -23,13 +23,13 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     let result = c.object_rooted()?;
     for (name, op) in [
-        ("getConverter", "icuGetConverter"),
-        ("decode", "icuDecode"),
-        ("getStringWidth", "icuStringWidth"),
-        ("transcode", "icuTranscode"),
-        ("icuErrName", "icuErrorName"),
+        ("getConverter", crate::host::shared_vm::operation!("icuGetConverter")),
+        ("decode", crate::host::shared_vm::operation!("icuDecode")),
+        ("getStringWidth", crate::host::shared_vm::operation!("icuStringWidth")),
+        ("transcode", crate::host::shared_vm::operation!("icuTranscode")),
+        ("icuErrName", crate::host::shared_vm::operation!("icuErrorName")),
     ] {
-        let f = c.host_function(crate::host::shared_vm::operation(op))?;
+        let f = c.host_function(op)?;
         let key = c.string_rooted("name");
         let value = c.string_rooted(name);
         c.define_data_property_rooted(f, key, value, false, false, true)?;

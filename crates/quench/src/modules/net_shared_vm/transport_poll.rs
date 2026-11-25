@@ -2,6 +2,7 @@
 //! ends and destroys the sockets queued, then delivers the transport's events to the public
 //! `net` objects and native stream handles that own them.
 
+use crate::host::shared_vm::marked_operation;
 use crate::host::{NodeHost, SharedNodeState};
 use crate::modules::buffer_codec::latin1_text;
 use crate::modules::net_shared_vm;
@@ -780,21 +781,21 @@ fn queue_net_method_completion(
         let operation = match completion {
             NetDelivery::Connection(socket) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));
-                "netDeliverConnection"
+                marked_operation!("netDeliverConnection")
             }
             NetDelivery::Connect(socket) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));
-                "netDeliverConnect"
+                marked_operation!("netDeliverConnect")
             }
             NetDelivery::Data(socket, length) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));
                 retained_args.push(runtime.root(Value::number(length as f64)));
-                "netDeliverData"
+                marked_operation!("netDeliverData")
             }
-            NetDelivery::Eof => "netDeliverEof",
+            NetDelivery::Eof => marked_operation!("netDeliverEof"),
         };
         callback = runtime
-            .host_function(crate::host::shared_vm::operation(operation))
+            .host_function(operation.id())
             .map_err(|error| error.to_string())?;
     }
     for arg in args {

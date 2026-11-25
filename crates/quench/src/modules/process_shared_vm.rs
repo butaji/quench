@@ -73,18 +73,17 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
     install(context, process, "_eventsCount", event_count)?;
     // Property, native operation and the function name Node reports.
     for (name, operation, function_name) in [
-        ("nextTick", "nextTick", "nextTick"),
-        ("cwd", "processCwd", "wrappedCwd"),
-        ("chdir", "processChdir", "wrappedChdir"),
-        ("getuid", "processGetuid", "getuid"),
-        ("geteuid", "processGeteuid", "geteuid"),
-        ("getgid", "processGetgid", "getgid"),
-        ("getegid", "processGetegid", "getegid"),
-        ("umask", "processUmask", "wrappedUmask"),
-        ("dlopen", "processDlopen", "dlopen"),
+        ("nextTick", crate::host::shared_vm::marked_operation!("nextTick"), "nextTick"),
+        ("cwd", crate::host::shared_vm::marked_operation!("processCwd"), "wrappedCwd"),
+        ("chdir", crate::host::shared_vm::marked_operation!("processChdir"), "wrappedChdir"),
+        ("getuid", crate::host::shared_vm::marked_operation!("processGetuid"), "getuid"),
+        ("geteuid", crate::host::shared_vm::marked_operation!("processGeteuid"), "geteuid"),
+        ("getgid", crate::host::shared_vm::marked_operation!("processGetgid"), "getgid"),
+        ("getegid", crate::host::shared_vm::marked_operation!("processGetegid"), "getegid"),
+        ("umask", crate::host::shared_vm::marked_operation!("processUmask"), "wrappedUmask"),
+        ("dlopen", crate::host::shared_vm::marked_operation!("processDlopen"), "dlopen"),
     ] {
-        let operation = crate::host::shared_vm::operation(operation);
-        let function = context.host_function_named(operation, function_name)?;
+        let function = context.host_function_named(operation.id(), function_name)?;
         install(context, process, name, function)?;
     }
     #[cfg(unix)]
@@ -98,14 +97,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
     }
     #[cfg(unix)]
     for (name, operation) in [
-        ("setuid", "processSetuid"),
-        ("seteuid", "processSeteuid"),
-        ("setgid", "processSetgid"),
-        ("setegid", "processSetegid"),
-        ("setgroups", "processSetgroups"),
-        ("initgroups", "processInitgroups"),
+        ("setuid", crate::host::shared_vm::marked_operation!("processSetuid")),
+        ("seteuid", crate::host::shared_vm::marked_operation!("processSeteuid")),
+        ("setgid", crate::host::shared_vm::marked_operation!("processSetgid")),
+        ("setegid", crate::host::shared_vm::marked_operation!("processSetegid")),
+        ("setgroups", crate::host::shared_vm::marked_operation!("processSetgroups")),
+        ("initgroups", crate::host::shared_vm::marked_operation!("processInitgroups")),
     ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let function = context.host_function(operation.id())?;
         install(context, process, name, function)?;
     }
     let kill = context.host_function(crate::host::shared_vm::operation!("processKillNative"))?;
@@ -126,22 +125,21 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
     let raw_debug = context.host_function(crate::host::shared_vm::operation!("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
     for (name, operation) in [
-        ("binding", "processBinding"),
+        ("binding", crate::host::shared_vm::marked_operation!("processBinding")),
         (
             "setUncaughtExceptionCaptureCallback",
-            "processSetUncaughtExceptionCaptureCallback",
+            crate::host::shared_vm::marked_operation!("processSetUncaughtExceptionCaptureCallback"),
         ),
         (
             "hasUncaughtExceptionCaptureCallback",
-            "processHasUncaughtExceptionCaptureCallback",
+            crate::host::shared_vm::marked_operation!("processHasUncaughtExceptionCaptureCallback"),
         ),
         (
             "addUncaughtExceptionCaptureCallback",
-            "processAddUncaughtExceptionCaptureCallback",
+            crate::host::shared_vm::marked_operation!("processAddUncaughtExceptionCaptureCallback"),
         ),
     ] {
-        let function =
-            context.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_constructor_named(operation.id(), name)?;
         install(context, process, name, function)?;
     }
     let active_handles =
@@ -3309,10 +3307,10 @@ fn drain_shared_jobs(
 pub(crate) fn deliver_each(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
-    operation: &'static str,
+    operation: quench_runtime::HostFunctionId,
 ) -> Result<bool, String> {
     let operation = runtime
-        .host_function(crate::host::shared_vm::operation(operation))
+        .host_function(operation)
         .map_err(|error| error.to_string())?;
     let receiver = runtime.root(quench_runtime::Value::UNDEFINED);
     let mut ran = false;
@@ -4444,11 +4442,11 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_>, _: RootId, _: &[Ro
     // in step, with Node's string conversion and descriptor rules.
     let handler = context.null_object_rooted()?;
     for (trap, operation) in [
-        ("set", "processEnvSet"),
-        ("defineProperty", "processEnvDefineProperty"),
-        ("deleteProperty", "processEnvDeleteProperty"),
+        ("set", crate::host::shared_vm::marked_operation!("processEnvSet")),
+        ("defineProperty", crate::host::shared_vm::marked_operation!("processEnvDefineProperty")),
+        ("deleteProperty", crate::host::shared_vm::marked_operation!("processEnvDeleteProperty")),
     ] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), trap)?;
+        let function = context.host_function_named(operation.id(), trap)?;
         context.assign_named_property_rooted(handler, trap, function)?;
     }
     let global = context.global_root()?;

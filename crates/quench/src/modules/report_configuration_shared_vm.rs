@@ -3,6 +3,7 @@
 //!
 //! A report is one document of plain objects (`document`): `getReport` returns it, and the
 //! binding's `getReport` and `writeReport` serialize it.
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a>;
 
@@ -143,8 +144,8 @@ pub(crate) fn report(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Resu
 
 fn build_report(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let report = context.object_rooted()?;
-    for (name, operation) in [("writeReport", "reportWrite"), ("getReport", "reportGet")] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for (name, operation) in [("writeReport", marked_operation!("reportWrite")), ("getReport", marked_operation!("reportGet"))] {
+        let function = context.host_function_named(operation.id(), name)?;
         put(context, report, name, function)?;
     }
     for (index, setting) in SETTINGS.iter().enumerate() {
@@ -169,14 +170,14 @@ pub(crate) fn binding(context: &mut Context<'_>) -> Result<RootId, RootedError> 
 }
 fn create_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    for (name, operation) in [("writeReport", "reportBindingWrite"), ("getReport", "reportBindingGet")] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for (name, operation) in [("writeReport", marked_operation!("reportBindingWrite")), ("getReport", marked_operation!("reportBindingGet"))] {
+        let function = context.host_function_named(operation.id(), name)?;
         put(context, module, name, function)?;
     }
     for (index, setting) in SETTINGS.iter().enumerate() {
         let data = context.number(index as f64);
-        for (name, operation) in [(setting.get, "reportConfigGet"), (setting.set, "reportConfigSet")] {
-            let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        for (name, operation) in [(setting.get, marked_operation!("reportConfigGet")), (setting.set, marked_operation!("reportConfigSet"))] {
+            let function = context.host_function_named_with_data(operation.id(), name, data)?;
             put(context, module, name, function)?;
         }
     }

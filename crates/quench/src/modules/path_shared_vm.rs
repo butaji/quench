@@ -1,5 +1,6 @@
 //! Shared-VM adapter for the canonical Node Path string algorithms.
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]
@@ -26,19 +27,19 @@ enum Method {
 
 /// Each method's property name and the host operation that implements it, in [`Method`]
 /// order.
-const METHODS: [(&str, &str); Method::ALL.len()] = [
-    ("join", "pathJoin"),
-    ("resolve", "pathResolve"),
-    ("relative", "pathRelative"),
-    ("basename", "pathBasename"),
-    ("dirname", "pathDirname"),
-    ("extname", "pathExtname"),
-    ("normalize", "pathNormalize"),
-    ("isAbsolute", "pathIsAbsolute"),
-    ("toNamespacedPath", "pathToNamespacedPath"),
-    ("parse", "pathParse"),
-    ("format", "pathFormat"),
-    ("matchesGlob", "pathMatchesGlob"),
+const METHODS: [(&str, MarkedOperation); Method::ALL.len()] = [
+    ("join", marked_operation!("pathJoin")),
+    ("resolve", marked_operation!("pathResolve")),
+    ("relative", marked_operation!("pathRelative")),
+    ("basename", marked_operation!("pathBasename")),
+    ("dirname", marked_operation!("pathDirname")),
+    ("extname", marked_operation!("pathExtname")),
+    ("normalize", marked_operation!("pathNormalize")),
+    ("isAbsolute", marked_operation!("pathIsAbsolute")),
+    ("toNamespacedPath", marked_operation!("pathToNamespacedPath")),
+    ("parse", marked_operation!("pathParse")),
+    ("format", marked_operation!("pathFormat")),
+    ("matchesGlob", marked_operation!("pathMatchesGlob")),
 ];
 
 impl Flavor {
@@ -86,7 +87,7 @@ impl Method {
         METHODS[self as usize].0
     }
 
-    fn operation_name(self) -> &'static str {
+    fn operation_name(self) -> MarkedOperation {
         METHODS[self as usize].1
     }
 
@@ -126,7 +127,7 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
         let namespace = context.object_rooted()?;
         for method in Method::ALL {
             let data = context.string_rooted(flavor.name());
-            let operation = crate::host::shared_vm::operation(method.operation_name());
+            let operation = method.operation_name().id();
             let function = context.host_function_with_data(operation, data)?;
             set(context, namespace, method.name(), function)?;
             if matches!(method, Method::ToNamespacedPath) {

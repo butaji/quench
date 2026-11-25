@@ -14,7 +14,7 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
 use operation_index::{bootstrap_abi, operation_abi, operation_beside_activations, operation_bits};
-pub(crate) use operation_index::{operation, static_operation};
+pub(crate) use operation_index::static_operation;
 
 // Operation identities must remain available without retaining callback addresses.
 // Both projections preserve declaration order and platform-specific entries.
@@ -23,6 +23,12 @@ pub(crate) use operation_index::{operation, static_operation};
 macro_rules! host_row {
     () => { None };
     ($kind:ident($($argument:expr),*)) => { Some(operation_index::host_rows::$kind($($argument),*)) };
+}
+
+/// Pushes a `global` operation's identity, by its mark; a `method` names no global.
+macro_rules! global_operation {
+    (global $name:literal, $globals:ident) => { $globals.push(marked_operation!($name).id()) };
+    (method $name:literal, $globals:ident) => {};
 }
 
 macro_rules! node_bindings {
@@ -51,14 +57,50 @@ macro_rules! node_bindings {
             $($(#[$attribute])* $scope $name ($length) => $callback),*
         ];
 
+        /// The operations the runtime installs as globals, each marked (`marked_operation!`).
+        fn global_operations() -> Vec<quench_runtime::HostFunctionId> {
+            let mut globals = Vec::new();
+            $($(#[$attribute])* global_operation!($scope $name, globals);)*
+            globals
+        }
+
         /// Each operation's callback path, by index: the module that implements it.
         pub const OPERATION_CALLBACK_PATHS: &[&str] = &[$($(#[$attribute])* stringify!($callback)),*];
     };
 }
 
+/// An operation marked as one the code that names it makes (`operation!`): a record in the
+/// `quench_operation_marks` section holding its index, which only that code refers to, so a
+/// linked image holds the mark exactly when it links the code (`aot::cli::operation_table`).
+#[derive(Clone, Copy)]
+pub(crate) struct MarkedOperation(pub(crate) &'static u32);
+
+impl MarkedOperation {
+    /// The operation, read through the mark: the reference is materialized, so the code
+    /// that names the operation refers to its mark.
+    #[inline(always)]
+    pub(crate) fn id(self) -> quench_runtime::HostFunctionId {
+        let mark: *const u32 = self.0;
+        // SAFETY: the empty template only receives the address.
+        unsafe { ::core::arch::asm!("/* {mark} */", mark = in(reg) mark, options(nomem, nostack, preserves_flags)) };
+        quench_runtime::HostFunctionId(*self.0)
+    }
+}
+
+/// The operation registered as `name`, as a mark (`MarkedOperation`), for a table.
+macro_rules! marked_operation {
+    ($name:literal $(,)?) => {{
+        #[unsafe(link_section = "quench_operation_marks")]
+        static MARK: u32 = $crate::host::shared_vm::static_operation($name).0;
+        $crate::host::shared_vm::MarkedOperation(&MARK)
+    }};
+}
+pub(crate) use marked_operation;
+
+/// The operation registered as `name`, marked as one the enclosing code makes.
 macro_rules! literal_operation {
     ($name:literal $(,)?) => {
-        const { $crate::host::shared_vm::static_operation($name) }
+        $crate::host::shared_vm::marked_operation!($name).id()
     };
 }
 pub(crate) use literal_operation as operation;
@@ -2738,6 +2780,10 @@ impl quench_runtime::Host for NodeHost {
         OPERATION_DESCRIPTORS.len()
     }
 
+    fn global_functions(&self) -> Vec<quench_runtime::HostFunctionId> {
+        global_operations()
+    }
+
     fn function_descriptor(&self, index: usize) -> Option<HostFunctionDescriptor> {
         OPERATION_DESCRIPTORS.get(index).copied()
     }
@@ -2808,6 +2854,17 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn resume(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+        Self::resume_at_rest(context)?;
+        if !context.host_as::<crate::host::NodeHost>().bootstrapped {
+            commonjs::finish_initialize(context)?;
+            context.host_as::<crate::host::NodeHost>().bootstrapped = true;
+        }
+        Ok(())
+    }
+
+    /// A run saved at its wait for input (`aot::prefix::reach_wait`) finished installing
+    /// before it was saved: only the process's own inputs are bound again.
+    fn resume_at_rest(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
         context.scoped(commonjs::refresh_module_paths)?;
@@ -2816,12 +2873,6 @@ impl quench_runtime::Host for NodeHost {
         context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_resume_time_origins");
-        // A run saved at its wait for input (`aot::prefix::reach_wait`) finished installing
-        // before it was saved: only the process's own inputs above are bound again.
-        if !context.host_as::<crate::host::NodeHost>().bootstrapped {
-            commonjs::finish_initialize(context)?;
-            context.host_as::<crate::host::NodeHost>().bootstrapped = true;
-        }
         Ok(())
     }
 }
@@ -2863,17 +2914,17 @@ fn install_event_emitter(context: &mut NativeContext<'_>) -> Result<(), RootedEr
     for (event, operation_name, name) in [
         (
             "newListener",
-            "processStartListeningSignal",
+            crate::host::shared_vm::operation!("processStartListeningSignal"),
             "startListeningIfSignal",
         ),
         (
             "removeListener",
-            "processStopListeningSignal",
+            crate::host::shared_vm::operation!("processStopListeningSignal"),
             "stopListeningIfSignal",
         ),
     ] {
         let event = context.string_rooted(event);
-        let function = context.host_constructor_named(operation(operation_name), name)?;
+        let function = context.host_constructor_named(operation_name, name)?;
         context.call_rooted(on, process, &[event, function])?;
     }
     Ok(())
@@ -3237,7 +3288,6 @@ mod tests {
             assert_eq!(quench_runtime::Host::function_descriptor(&host, index), Some(*binding));
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
             assert_eq!(super::static_operation(binding.name), quench_runtime::HostFunctionId(index as u32));
-            assert_eq!(super::operation(binding.name), super::static_operation(binding.name));
             assert_eq!(quench_runtime::Host::host_function_runs_beside_activations(&host, index),
                 super::operation_index::BESIDE_ACTIVATIONS.contains(&binding.name), "{}", binding.name);
         }
@@ -3246,7 +3296,7 @@ mod tests {
             assert!(quench_runtime::Host::function_callback(&host, index).is_none());
             assert!(!quench_runtime::Host::host_function_runs_beside_activations(&host, index));
         }
-        const FIRST: quench_runtime::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
+        const FIRST: quench_runtime::HostFunctionId = crate::host::shared_vm::static_operation("streamConstant");
         assert_eq!(FIRST, quench_runtime::HostFunctionId(0));
     }
 }

@@ -75,9 +75,13 @@ pub(crate) fn decode(c: &mut Context<'_>) -> Result<(Op, Flavor), RootedError> {
 
 /// The public function `name` (of `length` parameters) running `op` as `flavor` delivers it.
 pub(crate) fn function(c: &mut Context<'_>, op: Op, flavor: Flavor, name: &str, length: usize) -> Outcome {
-    let operation = if flavor == Flavor::Handle { "fsHandleCall" } else { "fsCall" };
+    let operation = if flavor == Flavor::Handle {
+        crate::host::shared_vm::operation!("fsHandleCall")
+    } else {
+        crate::host::shared_vm::operation!("fsCall")
+    };
     let data = c.number(encode(op, flavor));
-    let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+    let function = c.host_function_named_with_data(operation, name, data)?;
     let key = c.string_rooted("length");
     let length = c.number(length as f64);
     c.define_data_property_rooted(function, key, length, false, false, true)?;
@@ -149,7 +153,7 @@ fn guarded(c: &mut Context<'_>, deliver: RootId, signal: Option<RootId>, settles
         return Ok(deliver);
     };
     let settles = c.boolean(settles);
-    crate::modules::stream_shared_vm::closure(c, "fsAbortGuard", "", &[deliver, signal, settles])
+    crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsAbortGuard"), "", &[deliver, signal, settles])
 }
 
 /// The delivery `guarded` wraps.

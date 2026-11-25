@@ -8,6 +8,7 @@ use super::{
     arg, call_method, captures, closure, define_methods, get, get_slot, intrinsic, is_nullish, next_tick,
     number, on, put, put_bool, put_slot, Class, Context, Key, Outcome, Slot,
 };
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{RootId, RootedError};
 
 /// `new Duplex(options)`.
@@ -161,7 +162,7 @@ pub(crate) fn transform_final(c: &mut Context<'_>, this: RootId, args: &[RootId]
     let flush = get(c, this, "_flush")?;
     let destroyed = get(c, this, "destroyed")?;
     if c.is_callable_rooted(flush)? && !c.truthy_rooted(destroyed)? {
-        let done = closure(c, "streamTransformFlushed", "", &[this, callback])?;
+        let done = closure(c, crate::host::shared_vm::operation!("streamTransformFlushed"), "", &[this, callback])?;
         c.call_rooted(flush, this, &[done])?;
     } else {
         end_readable_half(c, this, callback)?;
@@ -208,7 +209,7 @@ pub(crate) fn transform_write(c: &mut Context<'_>, this: RootId, args: &[RootId]
     let (chunk, encoding, callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
     let readable = get(c, this, "_readableState")?;
     let length = get(c, readable, "length")?;
-    let done = closure(c, "streamTransformDone", "", &[this, callback, length])?;
+    let done = closure(c, crate::host::shared_vm::operation!("streamTransformDone"), "", &[this, callback, length])?;
     call_method(c, this, "_transform", &[chunk, encoding, done])?;
     Ok(c.undefined())
 }
@@ -265,10 +266,10 @@ pub(crate) fn build_transform(c: &mut Context<'_>, duplex: RootId) -> Outcome {
         c,
         prototype,
         &[
-            (Key::Name("_final"), "streamTransformFinal", "final"),
-            (Key::Name("_transform"), "streamTransformDefault", ""),
-            (Key::Name("_write"), "streamTransformWrite", ""),
-            (Key::Name("_read"), "streamTransformRead", ""),
+            (Key::Name("_final"), crate::host::shared_vm::marked_operation!("streamTransformFinal"), "final"),
+            (Key::Name("_transform"), crate::host::shared_vm::marked_operation!("streamTransformDefault"), ""),
+            (Key::Name("_write"), crate::host::shared_vm::marked_operation!("streamTransformWrite"), ""),
+            (Key::Name("_read"), crate::host::shared_vm::marked_operation!("streamTransformRead"), ""),
         ],
     )?;
     Ok(constructor)
@@ -299,7 +300,7 @@ pub(crate) fn build_pass_through(c: &mut Context<'_>, transform: RootId) -> Outc
     let transform_prototype = get(c, transform, "prototype")?;
     c.set_prototype_rooted(prototype, transform_prototype)?;
     c.set_prototype_rooted(constructor, transform)?;
-    define_methods(c, prototype, &[(Key::Name("_transform"), "streamPassThroughTransform", "")])?;
+    define_methods(c, prototype, &[(Key::Name("_transform"), crate::host::shared_vm::marked_operation!("streamPassThroughTransform"), "")])?;
     Ok(constructor)
 }
 
@@ -355,8 +356,8 @@ pub(crate) fn build_duplex_side(c: &mut Context<'_>, duplex: RootId) -> Outcome 
     let duplex_prototype = get(c, duplex, "prototype")?;
     c.set_prototype_rooted(prototype, duplex_prototype)?;
     c.set_prototype_rooted(constructor, duplex)?;
-    for (name, operation) in [("_read", "streamDuplexSideRead"), ("_write", "streamDuplexSideWrite"), ("_final", "streamDuplexSideFinal")] {
-        let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for (name, operation) in [("_read", marked_operation!("streamDuplexSideRead")), ("_write", marked_operation!("streamDuplexSideWrite")), ("_final", marked_operation!("streamDuplexSideFinal"))] {
+        let method = c.host_function_named(operation.id(), name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, method, true, false, true)?;
     }

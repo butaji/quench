@@ -685,21 +685,20 @@ const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
 fn build_key_binding(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
-        ("guessHandleType", "utilGuessHandleType"),
-        ("getConstructorName", "utilConstructorName"),
-        ("getCallSites", "utilGetCallSites"),
-        ("getCallerLocation", "utilGetCallerLocation"),
-        ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
-        ("getPromiseDetails", "utilPromiseDetails"),
-        ("getProxyDetails", "utilProxyDetails"),
-        ("previewEntries", "utilPreviewEntries"),
-        ("getExternalValue", "utilExternalValue"),
-        ("markPromiseAsHandled", "utilMarkPromiseHandled"),
-        ("defineLazyProperties", "utilDefineLazyProperties"),
-        ("isInsideNodeModules", "utilIsInsideNodeModules"),
+        ("guessHandleType", crate::host::shared_vm::marked_operation!("utilGuessHandleType")),
+        ("getConstructorName", crate::host::shared_vm::marked_operation!("utilConstructorName")),
+        ("getCallSites", crate::host::shared_vm::marked_operation!("utilGetCallSites")),
+        ("getCallerLocation", crate::host::shared_vm::marked_operation!("utilGetCallerLocation")),
+        ("getOwnNonIndexProperties", crate::host::shared_vm::marked_operation!("utilOwnNonIndexProperties")),
+        ("getPromiseDetails", crate::host::shared_vm::marked_operation!("utilPromiseDetails")),
+        ("getProxyDetails", crate::host::shared_vm::marked_operation!("utilProxyDetails")),
+        ("previewEntries", crate::host::shared_vm::marked_operation!("utilPreviewEntries")),
+        ("getExternalValue", crate::host::shared_vm::marked_operation!("utilExternalValue")),
+        ("markPromiseAsHandled", crate::host::shared_vm::marked_operation!("utilMarkPromiseHandled")),
+        ("defineLazyProperties", crate::host::shared_vm::marked_operation!("utilDefineLazyProperties")),
+        ("isInsideNodeModules", crate::host::shared_vm::marked_operation!("utilIsInsideNodeModules")),
     ] {
-        let operation = crate::host::shared_vm::operation(operation);
-        let function = context.host_function_named(operation, name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }

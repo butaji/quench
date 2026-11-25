@@ -18,10 +18,10 @@ const HISTOGRAM_FIELDS: [&str; 6] = ["state", "map", "recordable", "enabled", "t
 
 /// The statistics `Histogram.prototype` reads as getters, in Node's order.
 const STATISTICS: [&str; 10] = ["count", "countBigInt", "min", "minBigInt", "max", "maxBigInt", "mean", "exceeds", "exceedsBigInt", "stddev"];
-const PERCENTILE_METHODS: [Method; 2] = [("percentile", "perfHistogramPercentile", 1.0), ("percentileBigInt", "perfHistogramPercentileBigInt", 1.0)];
+const PERCENTILE_METHODS: [Method; 2] = [("percentile", crate::host::shared_vm::marked_operation!("perfHistogramPercentile"), 1.0), ("percentileBigInt", crate::host::shared_vm::marked_operation!("perfHistogramPercentileBigInt"), 1.0)];
 const RECORDABLE_METHODS: [Method; 3] =
-    [("record", "perfHistogramRecord", 1.0), ("recordDelta", "perfHistogramRecordDelta", 0.0), ("add", "perfHistogramAdd", 1.0)];
-const ELD_METHODS: [Method; 2] = [("enable", "perfEldEnable", 0.0), ("disable", "perfEldDisable", 0.0)];
+    [("record", crate::host::shared_vm::marked_operation!("perfHistogramRecord"), 1.0), ("recordDelta", crate::host::shared_vm::marked_operation!("perfHistogramRecordDelta"), 0.0), ("add", crate::host::shared_vm::marked_operation!("perfHistogramAdd"), 1.0)];
+const ELD_METHODS: [Method; 2] = [("enable", crate::host::shared_vm::marked_operation!("perfEldEnable"), 0.0), ("disable", crate::host::shared_vm::marked_operation!("perfEldDisable"), 0.0)];
 /// The fields `toJSON` and inspection report, in their orders.
 const JSON_FIELDS: [&str; 6] = ["count", "min", "max", "mean", "exceeds", "stddev"];
 const INSPECT_FIELDS: [&str; 6] = ["min", "max", "mean", "exceeds", "stddev", "count"];
@@ -45,28 +45,28 @@ const DECIMAL_BASE: u64 = 10;
 
 /// The histogram classes and the module's factories.
 pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let histogram = class(c, "Histogram", "perfHistogramConstructor", 0.0, None)?;
+    let histogram = class(c, "Histogram", crate::host::shared_vm::marked_operation!("perfHistogramConstructor"), 0.0, None)?;
     let prototype = get(c, histogram, "prototype")?;
-    define_inspect(c, prototype, "perfHistogramInspect")?;
+    define_inspect(c, prototype, crate::host::shared_vm::marked_operation!("perfHistogramInspect"))?;
     for name in STATISTICS {
         let statistic = c.string_rooted(name);
-        define_getter(c, prototype, name, "perfHistogramStatistic", statistic, false)?;
+        define_getter(c, prototype, name, crate::host::shared_vm::marked_operation!("perfHistogramStatistic"), statistic, false)?;
     }
     define_methods(c, prototype, &PERCENTILE_METHODS, false)?;
     for (name, big) in [("percentiles", false), ("percentilesBigInt", true)] {
         let big = c.boolean(big);
-        define_getter(c, prototype, name, "perfHistogramPercentiles", big, false)?;
+        define_getter(c, prototype, name, crate::host::shared_vm::marked_operation!("perfHistogramPercentiles"), big, false)?;
     }
-    define_methods(c, prototype, &[("reset", "perfHistogramReset", 0.0), ("toJSON", "perfHistogramToJson", 0.0)], false)?;
+    define_methods(c, prototype, &[("reset", crate::host::shared_vm::marked_operation!("perfHistogramReset"), 0.0), ("toJSON", crate::host::shared_vm::marked_operation!("perfHistogramToJson"), 0.0)], false)?;
 
-    let recordable = class(c, "RecordableHistogram", "perfHistogramConstructor", 0.0, Some(histogram))?;
+    let recordable = class(c, "RecordableHistogram", crate::host::shared_vm::marked_operation!("perfHistogramConstructor"), 0.0, Some(histogram))?;
     let recordable_prototype = get(c, recordable, "prototype")?;
     define_methods(c, recordable_prototype, &RECORDABLE_METHODS, false)?;
     let shared = super::perf_hooks::shared_api(c)?;
     put(c, shared, api::RECORDABLE_CLASS, recordable)?;
     put(c, shared, api::RECORDABLE_PROTOTYPE, recordable_prototype)?;
 
-    let eld = class(c, "ELDHistogram", "perfHistogramConstructor", 1.0, Some(histogram))?;
+    let eld = class(c, "ELDHistogram", crate::host::shared_vm::marked_operation!("perfHistogramConstructor"), 1.0, Some(histogram))?;
     let eld_prototype = get(c, eld, "prototype")?;
     define_methods(c, eld_prototype, &ELD_METHODS, false)?;
     put(c, shared, api::ELD_PROTOTYPE, eld_prototype)?;

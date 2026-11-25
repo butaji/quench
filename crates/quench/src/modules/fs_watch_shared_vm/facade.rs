@@ -5,10 +5,6 @@
 use crate::modules::stream_shared_vm::{arg, get, put, Context, Outcome};
 use quench_runtime::{RootId, RootedError};
 
-fn operation(name: &str) -> quench_runtime::HostFunctionId {
-    crate::host::shared_vm::operation(name)
-}
-
 /// The values a function's data array holds.
 fn data(c: &mut Context<'_>) -> Result<Vec<RootId>, RootedError> {
     let data = c.host_function_data()?;
@@ -63,8 +59,8 @@ pub(crate) fn make_iterator(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 }
 
 /// A method `key` on `prototype` running `native(this, ...bound, ...args)`.
-fn receiver_method(c: &mut Context<'_>, prototype: RootId, key: &str, native: &str, bound: &[RootId]) -> Result<(), RootedError> {
-    let native = c.host_function(operation(native))?;
+fn receiver_method(c: &mut Context<'_>, prototype: RootId, key: &str, native: quench_runtime::HostFunctionId, bound: &[RootId]) -> Result<(), RootedError> {
+    let native = c.host_function(native)?;
     let mut captured = vec![native];
     captured.extend_from_slice(bound);
     let environment = c.array_rooted(&captured)?;
@@ -73,10 +69,10 @@ fn receiver_method(c: &mut Context<'_>, prototype: RootId, key: &str, native: &s
 }
 
 /// A constructor whose instances are `EventEmitter`s, with its prototype.
-fn emitter_class(c: &mut Context<'_>, construct: &str, name: &str) -> Result<(RootId, RootId), RootedError> {
+fn emitter_class(c: &mut Context<'_>, construct: quench_runtime::HostFunctionId, name: &str) -> Result<(RootId, RootId), RootedError> {
     let global = c.global_root()?;
     let emitter = get(c, global, "__nodeEventEmitter")?;
-    let class = c.host_constructor_named(operation(construct), name)?;
+    let class = c.host_constructor_named(construct, name)?;
     let prototype = get(c, class, "prototype")?;
     let parent = get(c, emitter, "prototype")?;
     c.set_prototype_rooted(prototype, parent)?;
@@ -116,19 +112,19 @@ pub(crate) fn construct_stat_watcher(c: &mut Context<'_>, this: RootId, _: &[Roo
 /// The watch API the watchers read their classes and helpers from.
 pub(crate) fn watch_api(c: &mut Context<'_>) -> Outcome {
     let api = c.object_rooted()?;
-    let (watcher, prototype) = emitter_class(c, "fsWatcherConstruct", "FSWatcher")?;
+    let (watcher, prototype) = emitter_class(c, crate::host::shared_vm::operation!("fsWatcherConstruct"), "FSWatcher")?;
     let yes = c.boolean(true);
     let no = c.boolean(false);
-    receiver_method(c, prototype, "close", "fsWatchClose", &[])?;
-    receiver_method(c, prototype, "ref", "fsWatchRef", &[yes])?;
-    receiver_method(c, prototype, "unref", "fsWatchRef", &[no])?;
+    receiver_method(c, prototype, "close", crate::host::shared_vm::operation!("fsWatchClose"), &[])?;
+    receiver_method(c, prototype, "ref", crate::host::shared_vm::operation!("fsWatchRef"), &[yes])?;
+    receiver_method(c, prototype, "unref", crate::host::shared_vm::operation!("fsWatchRef"), &[no])?;
     put(c, api, "FSWatcher", watcher)?;
     let event = c.host_constructor_named(crate::host::shared_vm::operation!("fsEventConstruct"), "FSEvent")?;
     let prototype = get(c, event, "prototype")?;
-    receiver_method(c, prototype, "close", "fsWatchHandleClose", &[])?;
-    receiver_method(c, prototype, "ref", "fsWatchHandleRef", &[yes])?;
-    receiver_method(c, prototype, "unref", "fsWatchHandleRef", &[no])?;
-    receiver_method(c, prototype, "hasRef", "fsWatchHandleHasRef", &[])?;
+    receiver_method(c, prototype, "close", crate::host::shared_vm::operation!("fsWatchHandleClose"), &[])?;
+    receiver_method(c, prototype, "ref", crate::host::shared_vm::operation!("fsWatchHandleRef"), &[yes])?;
+    receiver_method(c, prototype, "unref", crate::host::shared_vm::operation!("fsWatchHandleRef"), &[no])?;
+    receiver_method(c, prototype, "hasRef", crate::host::shared_vm::operation!("fsWatchHandleHasRef"), &[])?;
     let native = c.host_function(crate::host::shared_vm::operation!("fsWatchHandleInitialized"))?;
     let environment = c.array_rooted(&[native])?;
     let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsWatchReceiverCall"), "get initialized", environment)?;
@@ -188,19 +184,19 @@ pub(crate) fn recursive_method(c: &mut Context<'_>, this: RootId, args: &[RootId
 
 fn recursive_api(c: &mut Context<'_>) -> Outcome {
     let api = c.object_rooted()?;
-    let (watcher, prototype) = emitter_class(c, "fsRecursiveWatcherConstruct", "FSWatcher")?;
+    let (watcher, prototype) = emitter_class(c, crate::host::shared_vm::operation!("fsRecursiveWatcherConstruct"), "FSWatcher")?;
     let start = c.symbol_rooted(Some("kFSWatchStart"));
     let iterator = crate::modules::fs_shared_vm::classes::well_known_symbol(c, "asyncIterator", "Symbol.asyncIterator")?;
     let yes = c.boolean(true);
     let no = c.boolean(false);
     for (key, native, with_receiver, bound) in [
-        (start, "fsRecursiveStart", yes, None),
-        (c.string_rooted("close"), "fsRecursiveClose", yes, None),
-        (c.string_rooted("ref"), "fsRecursiveRef", no, Some(yes)),
-        (c.string_rooted("unref"), "fsRecursiveRef", no, Some(no)),
-        (iterator, "fsRecursiveIterate", yes, None),
+        (start, crate::host::shared_vm::operation!("fsRecursiveStart"), yes, None),
+        (c.string_rooted("close"), crate::host::shared_vm::operation!("fsRecursiveClose"), yes, None),
+        (c.string_rooted("ref"), crate::host::shared_vm::operation!("fsRecursiveRef"), no, Some(yes)),
+        (c.string_rooted("unref"), crate::host::shared_vm::operation!("fsRecursiveRef"), no, Some(no)),
+        (iterator, crate::host::shared_vm::operation!("fsRecursiveIterate"), yes, None),
     ] {
-        let native = c.host_function(operation(native))?;
+        let native = c.host_function(native)?;
         let mut captured = vec![native, with_receiver];
         captured.extend(bound);
         let environment = c.array_rooted(&captured)?;
@@ -262,14 +258,14 @@ fn promise_api(c: &mut Context<'_>) -> Outcome {
 /// The stat-watcher API: `StatWatcher`, `watchFile` and `unwatchFile`.
 pub(crate) fn stat_watch_api(c: &mut Context<'_>) -> Outcome {
     let api = c.object_rooted()?;
-    let (watcher, prototype) = emitter_class(c, "fsStatWatcherConstruct", "StatWatcher")?;
+    let (watcher, prototype) = emitter_class(c, crate::host::shared_vm::operation!("fsStatWatcherConstruct"), "StatWatcher")?;
     let start = c.host_function_named(crate::host::shared_vm::operation!("fsWatchNoop"), "start")?;
     put(c, prototype, "start", start)?;
     let yes = c.boolean(true);
     let no = c.boolean(false);
-    receiver_method(c, prototype, "stop", "fsStatWatchStop", &[])?;
-    receiver_method(c, prototype, "ref", "fsStatWatchRef", &[yes])?;
-    receiver_method(c, prototype, "unref", "fsStatWatchRef", &[no])?;
+    receiver_method(c, prototype, "stop", crate::host::shared_vm::operation!("fsStatWatchStop"), &[])?;
+    receiver_method(c, prototype, "ref", crate::host::shared_vm::operation!("fsStatWatchRef"), &[yes])?;
+    receiver_method(c, prototype, "unref", crate::host::shared_vm::operation!("fsStatWatchRef"), &[no])?;
     put(c, api, "StatWatcher", watcher)?;
     let watch = c.host_function_named(crate::host::shared_vm::operation!("fsStatWatch"), "watchFile")?;
     put(c, api, "watchFile", watch)?;

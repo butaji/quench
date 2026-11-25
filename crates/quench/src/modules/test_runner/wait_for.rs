@@ -48,7 +48,7 @@ pub(crate) fn wait_for(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
     for (name, value) in [("condition", condition), ("interval", interval), ("promise", promise), ("poller", undefined)] {
         put(c, state, name, value)?;
     }
-    let expire = function(c, "nodeTestWaitTimeout", "", state)?;
+    let expire = function(c, crate::host::shared_vm::operation!("nodeTestWaitTimeout"), "", state)?;
     let timer = timer(c, "setTimeout", expire, timeout)?;
     put(c, state, "timer", timer)?;
     poll(c, state)?;
@@ -58,8 +58,8 @@ pub(crate) fn wait_for(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
 fn poll(c: &mut Context<'_>, state: RootId) -> Result<(), RootedError> {
     let condition = get(c, state, "condition")?;
     let undefined = c.undefined();
-    let fulfilled = function(c, "nodeTestWaitFulfilled", "", state)?;
-    let rejected = function(c, "nodeTestWaitRejected", "", state)?;
+    let fulfilled = function(c, crate::host::shared_vm::operation!("nodeTestWaitFulfilled"), "", state)?;
+    let rejected = function(c, crate::host::shared_vm::operation!("nodeTestWaitRejected"), "", state)?;
     match c.call_rooted(condition, undefined, &[]) {
         Ok(result) => {
             let then = if c.is_object_rooted(result)? { get(c, result, "then")? } else { undefined };
@@ -107,7 +107,7 @@ pub(crate) fn rejected(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
         let cause = args.first().copied().unwrap_or_else(|| c.undefined());
         put(c, state, "cause", cause)?;
         let interval = get(c, state, "interval")?;
-        let again = function(c, "nodeTestWaitPoll", "", state)?;
+        let again = function(c, crate::host::shared_vm::operation!("nodeTestWaitPoll"), "", state)?;
         let poller = timer(c, "setTimeout", again, interval)?;
         put(c, state, "poller", poller)?;
     }

@@ -133,7 +133,7 @@ pub fn resume_native_process_entry(
     for &(descriptor, bytes) in wait.effects {
         prefix::replay(descriptor, bytes);
     }
-    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), crate::shared_run::Teardown::ProcessExit);
+    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_at_rest(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
     runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     crate::host::resident_pages::phase_peak("saved wait runtime made");

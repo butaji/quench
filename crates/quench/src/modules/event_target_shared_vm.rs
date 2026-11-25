@@ -174,28 +174,27 @@ pub(super) fn to_dom_string(c: &mut Context<'_>, value: RootId) -> Result<RootId
 /// A class member the installer defines on a prototype or constructor.
 pub(super) enum Member {
     /// A method: name, operation, data index.
-    Method(&'static str, &'static str, f64),
+    Method(&'static str, crate::host::shared_vm::MarkedOperation, f64),
     /// An accessor: name, getter operation, optional setter operation, data index.
-    Accessor(&'static str, &'static str, Option<&'static str>, f64),
+    Accessor(&'static str, crate::host::shared_vm::MarkedOperation, Option<crate::host::shared_vm::MarkedOperation>, f64),
 }
 
 /// Defines `members` on `holder` as Node's classes define them: enumerable methods and
 /// accessors, each operation's function data its index (`Member`).
 pub(super) fn install_members(c: &mut Context<'_>, holder: RootId, members: &[Member], enumerable: bool) -> Result<(), RootedError> {
-    let operation = crate::host::shared_vm::operation;
     for member in members {
         match *member {
             Member::Method(name, op, index) => {
                 let data = c.number(index);
-                let function = c.host_function_named_with_data(operation(op), name, data)?;
+                let function = c.host_function_named_with_data(op.id(), name, data)?;
                 let key = c.string_rooted(name);
                 c.define_data_property_rooted(holder, key, function, true, enumerable, true)?;
             }
             Member::Accessor(name, getter, setter, index) => {
                 let data = c.number(index);
-                let get = c.host_function_named_with_data(operation(getter), &format!("get {name}"), data)?;
+                let get = c.host_function_named_with_data(getter.id(), &format!("get {name}"), data)?;
                 let set = match setter {
-                    Some(setter) => c.host_function_named_with_data(operation(setter), &format!("set {name}"), data)?,
+                    Some(setter) => c.host_function_named_with_data(setter.id(), &format!("set {name}"), data)?,
                     None => c.undefined(),
                 };
                 let key = c.string_rooted(name);
@@ -212,7 +211,7 @@ pub(super) fn install_members(c: &mut Context<'_>, holder: RootId, members: &[Me
 
 /// `Symbol.toStringTag` and `util.inspect.custom` on a class prototype, whose constructor's
 /// `prototype` then becomes read-only, as a class declaration's is.
-pub(super) fn install_tag_and_inspect(c: &mut Context<'_>, prototype: RootId, tag: &str, inspect_operation: Option<&str>) -> Result<(), RootedError> {
+pub(super) fn install_tag_and_inspect(c: &mut Context<'_>, prototype: RootId, tag: &str, inspect_operation: Option<crate::host::shared_vm::MarkedOperation>) -> Result<(), RootedError> {
     let constructor = get(c, prototype, "constructor")?;
     c.define_named_data_property_rooted(constructor, "prototype", prototype, false, false, false)?;
     let global = c.global_root()?;
@@ -221,7 +220,7 @@ pub(super) fn install_tag_and_inspect(c: &mut Context<'_>, prototype: RootId, ta
         let registry = get(c, symbol, "for")?;
         let description = c.string_rooted("nodejs.util.inspect.custom");
         let key = c.call_rooted(registry, symbol, &[description])?;
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), "[nodejs.util.inspect.custom]")?;
+        let function = c.host_function_named(operation.id(), "[nodejs.util.inspect.custom]")?;
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
     let key = get(c, symbol, "toStringTag")?;
@@ -291,7 +290,7 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
         key,
         DescriptorFields { get: Some(trusted), set: Some(undefined), enumerable: Some(true), configurable: Some(false), ..Default::default() },
     )?;
-    install_tag_and_inspect(c, prototype, "Event", Some("eventInspect"))?;
+    install_tag_and_inspect(c, prototype, "Event", Some(crate::host::shared_vm::marked_operation!("eventInspect")))?;
     put(c, data, "eventCtor", event)?;
 
     let custom = c.host_constructor_named(crate::host::shared_vm::operation!("customEventConstructor"), "CustomEvent")?;
@@ -299,14 +298,14 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
     c.set_prototype_rooted(custom, event)?;
     let custom_prototype = get(c, custom, "prototype")?;
     c.set_prototype_rooted(custom_prototype, prototype)?;
-    install_members(c, custom_prototype, &[Member::Accessor("detail", "customEventDetail", None, 0.0)], true)?;
+    install_members(c, custom_prototype, &[Member::Accessor("detail", crate::host::shared_vm::marked_operation!("customEventDetail"), None, 0.0)], true)?;
     install_tag_and_inspect(c, custom_prototype, "CustomEvent", None)?;
     put(c, data, "customEventCtor", custom)?;
 
     let target = c.host_constructor_named(crate::host::shared_vm::operation!("eventTargetConstructor"), "EventTarget")?;
     let target_prototype = get(c, target, "prototype")?;
     install_members(c, target_prototype, &TARGET_MEMBERS, true)?;
-    install_tag_and_inspect(c, target_prototype, "EventTarget", Some("eventTargetInspect"))?;
+    install_tag_and_inspect(c, target_prototype, "EventTarget", Some(crate::host::shared_vm::marked_operation!("eventTargetInspect")))?;
     let brand = get(c, data, "brandKey")?;
     let yes = c.boolean(true);
     c.define_data_property_rooted(target, brand, yes, true, true, true)?;
@@ -316,29 +315,29 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
 
 /// `Event.prototype`'s members in Node's order; accessor data indexes `EventView`.
 const EVENT_MEMBERS: [Member; 17] = [
-    Member::Method("initEvent", "eventInitEvent", 0.0),
-    Member::Method("stopImmediatePropagation", "eventStopImmediatePropagation", 0.0),
-    Member::Method("preventDefault", "eventPreventDefault", 0.0),
-    Member::Accessor("target", "eventGet", None, EventView::Target as u8 as f64),
-    Member::Accessor("currentTarget", "eventGet", None, EventView::CurrentTarget as u8 as f64),
-    Member::Accessor("srcElement", "eventGet", None, EventView::Target as u8 as f64),
-    Member::Accessor("type", "eventGet", None, EventView::Type as u8 as f64),
-    Member::Accessor("cancelable", "eventGet", None, EventView::Cancelable as u8 as f64),
-    Member::Accessor("defaultPrevented", "eventGet", None, EventView::DefaultPrevented as u8 as f64),
-    Member::Accessor("timeStamp", "eventGet", None, EventView::TimeStamp as u8 as f64),
-    Member::Method("composedPath", "eventComposedPath", 0.0),
-    Member::Accessor("returnValue", "eventGet", Some("eventSetReturnValue"), EventView::ReturnValue as u8 as f64),
-    Member::Accessor("bubbles", "eventGet", None, EventView::Bubbles as u8 as f64),
-    Member::Accessor("composed", "eventGet", None, EventView::Composed as u8 as f64),
-    Member::Accessor("eventPhase", "eventGet", None, EventView::EventPhase as u8 as f64),
-    Member::Accessor("cancelBubble", "eventGet", Some("eventSetCancelBubble"), EventView::CancelBubble as u8 as f64),
-    Member::Method("stopPropagation", "eventStopPropagation", 0.0),
+    Member::Method("initEvent", crate::host::shared_vm::marked_operation!("eventInitEvent"), 0.0),
+    Member::Method("stopImmediatePropagation", crate::host::shared_vm::marked_operation!("eventStopImmediatePropagation"), 0.0),
+    Member::Method("preventDefault", crate::host::shared_vm::marked_operation!("eventPreventDefault"), 0.0),
+    Member::Accessor("target", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::Target as u8 as f64),
+    Member::Accessor("currentTarget", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::CurrentTarget as u8 as f64),
+    Member::Accessor("srcElement", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::Target as u8 as f64),
+    Member::Accessor("type", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::Type as u8 as f64),
+    Member::Accessor("cancelable", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::Cancelable as u8 as f64),
+    Member::Accessor("defaultPrevented", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::DefaultPrevented as u8 as f64),
+    Member::Accessor("timeStamp", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::TimeStamp as u8 as f64),
+    Member::Method("composedPath", crate::host::shared_vm::marked_operation!("eventComposedPath"), 0.0),
+    Member::Accessor("returnValue", crate::host::shared_vm::marked_operation!("eventGet"), Some(crate::host::shared_vm::marked_operation!("eventSetReturnValue")), EventView::ReturnValue as u8 as f64),
+    Member::Accessor("bubbles", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::Bubbles as u8 as f64),
+    Member::Accessor("composed", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::Composed as u8 as f64),
+    Member::Accessor("eventPhase", crate::host::shared_vm::marked_operation!("eventGet"), None, EventView::EventPhase as u8 as f64),
+    Member::Accessor("cancelBubble", crate::host::shared_vm::marked_operation!("eventGet"), Some(crate::host::shared_vm::marked_operation!("eventSetCancelBubble")), EventView::CancelBubble as u8 as f64),
+    Member::Method("stopPropagation", crate::host::shared_vm::marked_operation!("eventStopPropagation"), 0.0),
 ];
 
 const TARGET_MEMBERS: [Member; 3] = [
-    Member::Method("addEventListener", "eventTargetAddEventListener", 0.0),
-    Member::Method("removeEventListener", "eventTargetRemoveEventListener", 0.0),
-    Member::Method("dispatchEvent", "eventTargetDispatchEvent", 0.0),
+    Member::Method("addEventListener", crate::host::shared_vm::marked_operation!("eventTargetAddEventListener"), 0.0),
+    Member::Method("removeEventListener", crate::host::shared_vm::marked_operation!("eventTargetRemoveEventListener"), 0.0),
+    Member::Method("dispatchEvent", crate::host::shared_vm::marked_operation!("eventTargetDispatchEvent"), 0.0),
 ];
 
 /// What an `Event.prototype` getter reads (its function data).
@@ -1112,17 +1111,17 @@ pub(crate) fn node_event_target(c: &mut Context<'_>) -> Result<RootId, RootedErr
 
 /// `NodeEventTarget.prototype`'s methods in Node's order; data is a `NodeMethod`.
 const NODE_TARGET_MEMBERS: [Member; 11] = [
-    Member::Method("setMaxListeners", "nodeEventTargetMethod", NodeMethod::SetMaxListeners as u8 as f64),
-    Member::Method("getMaxListeners", "nodeEventTargetMethod", NodeMethod::GetMaxListeners as u8 as f64),
-    Member::Method("eventNames", "nodeEventTargetMethod", NodeMethod::EventNames as u8 as f64),
-    Member::Method("listenerCount", "nodeEventTargetMethod", NodeMethod::ListenerCount as u8 as f64),
-    Member::Method("off", "nodeEventTargetMethod", NodeMethod::Off as u8 as f64),
-    Member::Method("removeListener", "nodeEventTargetMethod", NodeMethod::Off as u8 as f64),
-    Member::Method("on", "nodeEventTargetMethod", NodeMethod::On as u8 as f64),
-    Member::Method("addListener", "nodeEventTargetMethod", NodeMethod::On as u8 as f64),
-    Member::Method("emit", "nodeEventTargetMethod", NodeMethod::Emit as u8 as f64),
-    Member::Method("once", "nodeEventTargetMethod", NodeMethod::Once as u8 as f64),
-    Member::Method("removeAllListeners", "nodeEventTargetMethod", NodeMethod::RemoveAllListeners as u8 as f64),
+    Member::Method("setMaxListeners", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::SetMaxListeners as u8 as f64),
+    Member::Method("getMaxListeners", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::GetMaxListeners as u8 as f64),
+    Member::Method("eventNames", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::EventNames as u8 as f64),
+    Member::Method("listenerCount", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::ListenerCount as u8 as f64),
+    Member::Method("off", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::Off as u8 as f64),
+    Member::Method("removeListener", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::Off as u8 as f64),
+    Member::Method("on", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::On as u8 as f64),
+    Member::Method("addListener", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::On as u8 as f64),
+    Member::Method("emit", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::Emit as u8 as f64),
+    Member::Method("once", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::Once as u8 as f64),
+    Member::Method("removeAllListeners", crate::host::shared_vm::marked_operation!("nodeEventTargetMethod"), NodeMethod::RemoveAllListeners as u8 as f64),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]

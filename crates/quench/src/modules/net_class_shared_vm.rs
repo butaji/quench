@@ -3,6 +3,7 @@
 //! Server is an EventEmitter whose listener the transport owns. Every member reads the
 //! module's operation table (its function data) for the transport operations it projects.
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -176,17 +177,17 @@ fn coded(c: &mut Context<'_>, code: &'static str, message: &str) -> Outcome {
 }
 
 /// A method of `table`'s members: `(name, operation, function name)`.
-fn define_methods(c: &mut Context<'_>, target: RootId, table: RootId, members: &[(&str, &str)]) -> Result<(), RootedError> {
+fn define_methods(c: &mut Context<'_>, target: RootId, table: RootId, members: &[(&str, MarkedOperation)]) -> Result<(), RootedError> {
     for &(name, operation) in members {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, table)?;
+        let function = c.host_function_named_with_data(operation.id(), name, table)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(target, key, function, true, false, true)?;
     }
     Ok(())
 }
 
-fn define_getter(c: &mut Context<'_>, target: RootId, table: RootId, name: &str, operation: &str) -> Result<(), RootedError> {
-    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), &format!("get {name}"), table)?;
+fn define_getter(c: &mut Context<'_>, target: RootId, table: RootId, name: &str, operation: MarkedOperation) -> Result<(), RootedError> {
+    let getter = c.host_function_named_with_data(operation.id(), &format!("get {name}"), table)?;
     let key = c.string_rooted(name);
     let fields = DescriptorFields {
         get: Some(getter),
@@ -214,25 +215,25 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
     let key = c.string_rooted("Socket");
     c.define_data_property_rooted(table, key, socket, false, false, false)?;
     define_methods(c, prototype, table, &[
-        ("_write", "netSocketWriteChunk"),
-        ("_writev", "netSocketWriteChunks"),
-        ("_final", "netSocketFinal"),
-        ("_destroy", "netSocketDestroyHandle"),
-        ("emit", "netSocketEmit"),
-        ("setEncoding", "netSocketSetEncodingMethod"),
-        ("_unrefTimer", "netSocketUnrefTimer"),
-        ("address", "netSocketAddress"),
-        ("setTimeout", "netSocketSetTimeout"),
-        ("_quenchResetTimeout", "netSocketResetTimeout"),
-        ("write", "netSocketWriteMethod"),
-        ("end", "netSocketEndMethod"),
-        ("connect", "netSocketConnectMethod"),
-        ("ref", "netSocketRef"),
-        ("unref", "netSocketUnref"),
-        ("setTypeOfService", "netSocketSetTypeOfService"),
-        ("getTypeOfService", "netSocketGetTypeOfService"),
-        ("resetAndDestroy", "netSocketResetAndDestroy"),
-        ("_reset", "netSocketReset"),
+        ("_write", marked_operation!("netSocketWriteChunk")),
+        ("_writev", marked_operation!("netSocketWriteChunks")),
+        ("_final", marked_operation!("netSocketFinal")),
+        ("_destroy", marked_operation!("netSocketDestroyHandle")),
+        ("emit", marked_operation!("netSocketEmit")),
+        ("setEncoding", marked_operation!("netSocketSetEncodingMethod")),
+        ("_unrefTimer", marked_operation!("netSocketUnrefTimer")),
+        ("address", marked_operation!("netSocketAddress")),
+        ("setTimeout", marked_operation!("netSocketSetTimeout")),
+        ("_quenchResetTimeout", marked_operation!("netSocketResetTimeout")),
+        ("write", marked_operation!("netSocketWriteMethod")),
+        ("end", marked_operation!("netSocketEndMethod")),
+        ("connect", marked_operation!("netSocketConnectMethod")),
+        ("ref", marked_operation!("netSocketRef")),
+        ("unref", marked_operation!("netSocketUnref")),
+        ("setTypeOfService", marked_operation!("netSocketSetTypeOfService")),
+        ("getTypeOfService", marked_operation!("netSocketGetTypeOfService")),
+        ("resetAndDestroy", marked_operation!("netSocketResetAndDestroy")),
+        ("_reset", marked_operation!("netSocketReset")),
     ])?;
     for (name, function) in [
         ("_read", operations.read),
@@ -243,10 +244,10 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
     for (name, operation) in [
-        ("readyState", "netSocketReadyState"),
-        ("bufferSize", "netSocketBufferSize"),
-        ("writableLength", "netSocketWritableLength"),
-        ("pending", "netSocketPending"),
+        ("readyState", marked_operation!("netSocketReadyState")),
+        ("bufferSize", marked_operation!("netSocketBufferSize")),
+        ("writableLength", marked_operation!("netSocketWritableLength")),
+        ("pending", marked_operation!("netSocketPending")),
     ] {
         define_getter(c, prototype, table, name, operation)?;
     }
@@ -259,14 +260,14 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
     let key = c.string_rooted("Server");
     c.define_data_property_rooted(table, key, server, false, false, false)?;
     define_methods(c, prototype, table, &[
-        ("listen", "netServerListenMethod"),
-        ("getConnections", "netServerGetConnectionsMethod"),
-        ("address", "netServerAddressMethod"),
-        ("emit", "netServerEmit"),
-        ("close", "netServerCloseMethod"),
-        ("_emitCloseIfDrained", "netServerEmitCloseIfDrained"),
-        ("ref", "netServerRef"),
-        ("unref", "netServerUnref"),
+        ("listen", marked_operation!("netServerListenMethod")),
+        ("getConnections", marked_operation!("netServerGetConnectionsMethod")),
+        ("address", marked_operation!("netServerAddressMethod")),
+        ("emit", marked_operation!("netServerEmit")),
+        ("close", marked_operation!("netServerCloseMethod")),
+        ("_emitCloseIfDrained", marked_operation!("netServerEmitCloseIfDrained")),
+        ("ref", marked_operation!("netServerRef")),
+        ("unref", marked_operation!("netServerUnref")),
     ])?;
     let rejection = {
         let global = c.global_root()?;

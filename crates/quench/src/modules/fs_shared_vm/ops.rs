@@ -621,11 +621,11 @@ fn mkdtemp_disposable(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> C
     let path = encoding.project(c, created)?;
     let result = c.object_rooted()?;
     crate::modules::stream_shared_vm::put(c, result, "path", path)?;
-    let remove = crate::modules::stream_shared_vm::closure(c, "fsTemporaryRemove", "remove", &[absolute, settles])?;
+    let remove = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsTemporaryRemove"), "remove", &[absolute, settles])?;
     crate::modules::stream_shared_vm::put(c, result, "remove", remove)?;
     let (symbol, name) = if flavor == Flavor::Promise { ("asyncDispose", "[Symbol.asyncDispose]") } else { ("dispose", "[Symbol.dispose]") };
     let key = super::classes::well_known_symbol(c, symbol, &format!("nodejs.{symbol}"))?;
-    let dispose = crate::modules::stream_shared_vm::closure(c, "fsTemporaryRemove", name, &[absolute, settles])?;
+    let dispose = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsTemporaryRemove"), name, &[absolute, settles])?;
     c.define_data_property_rooted(result, key, dispose, true, true, true)?;
     Ok(Ok(Reply::Value(result)))
 }

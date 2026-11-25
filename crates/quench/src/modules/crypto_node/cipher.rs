@@ -472,24 +472,24 @@ pub(crate) fn flush(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outco
 }
 
 /// The methods both classes share, and each one's own.
-const SHARED_METHODS: [(&str, &str); 5] = [
-    ("_transform", "cryptoCipherTransform"),
-    ("_flush", "cryptoCipherFlush"),
-    ("update", "cryptoCipherUpdate"),
-    ("final", "cryptoCipherFinal"),
-    ("setAutoPadding", "cryptoCipherSetAutoPadding"),
+const SHARED_METHODS: [(&str, crate::host::shared_vm::MarkedOperation); 5] = [
+    ("_transform", crate::host::shared_vm::marked_operation!("cryptoCipherTransform")),
+    ("_flush", crate::host::shared_vm::marked_operation!("cryptoCipherFlush")),
+    ("update", crate::host::shared_vm::marked_operation!("cryptoCipherUpdate")),
+    ("final", crate::host::shared_vm::marked_operation!("cryptoCipherFinal")),
+    ("setAutoPadding", crate::host::shared_vm::marked_operation!("cryptoCipherSetAutoPadding")),
 ];
 
 pub(crate) fn build(c: &mut Context<'_>, lazy: RootId) -> Result<Vec<(Class, RootId)>, RootedError> {
     let mut classes = Vec::new();
     for (class, operation, name, own) in [
-        (Class::Cipheriv, "cryptoCipheriv", "Cipheriv", ("getAuthTag", "cryptoCipherGetAuthTag")),
-        (Class::Decipheriv, "cryptoDecipheriv", "Decipheriv", ("setAuthTag", "cryptoCipherSetAuthTag")),
+        (Class::Cipheriv, crate::host::shared_vm::marked_operation!("cryptoCipheriv"), "Cipheriv", ("getAuthTag", crate::host::shared_vm::marked_operation!("cryptoCipherGetAuthTag"))),
+        (Class::Decipheriv, crate::host::shared_vm::marked_operation!("cryptoDecipheriv"), "Decipheriv", ("setAuthTag", crate::host::shared_vm::marked_operation!("cryptoCipherSetAuthTag"))),
     ] {
         let constructor = super::subclass(c, operation, name, lazy)?;
         let prototype = get(c, constructor, "prototype")?;
         define_methods(c, prototype, &SHARED_METHODS, Members::Assigned)?;
-        define_methods(c, prototype, &[own, ("setAAD", "cryptoCipherSetAad")], Members::Assigned)?;
+        define_methods(c, prototype, &[own, ("setAAD", crate::host::shared_vm::marked_operation!("cryptoCipherSetAad"))], Members::Assigned)?;
         classes.push((class, constructor));
     }
     Ok(classes)
