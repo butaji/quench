@@ -1874,6 +1874,7 @@ pub(crate) fn lower(
             frames: unit.frames.clone(), markers: unit.markers.clone(), caller_registers: unit.caller_registers,
             registers: unit.registers, end: unit.end });
     let unit = residual.as_ref().unwrap_or(unit);
+    let naming = super::NamingSymbols::enter(helpers);
     crate::dispatch_fast::lane_body_stats::lowering_function(function_id);
     let function = program.function_get(function_id as usize)?;
     let numeric = completion.numeric();
@@ -2362,6 +2363,7 @@ pub(crate) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if let Some(owner) = interrupt_owner { specialize_closed_polls(&mut native, &reentries, &mut polls, owner); }
+    if naming.folded() { declined("a slow path no helper names", usize::MAX); return None; }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types, exits })
 }
 

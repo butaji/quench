@@ -1171,6 +1171,42 @@ lane_helper_inventory! {
     Decide => crate::dispatch_fast::decide_comparison,
     /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::handler_edge`).
     HandlerEdge => crate::dispatch_fast::handler_edge,
+    /// The runtime's Number remainder leaf (`RuntimeSlowPath::NumberRemainder`), which a body naming
+    /// its helpers by symbol calls by this one (`slow_path_symbol`).
+    NumberRemainder => quench_runtime::vm::operations::number_remainder,
+}
+
+thread_local! {
+    /// While a body names its helpers by symbol (`LaneHelpers::names_symbols`): whether it folded a slow
+    /// path no helper names, an address of this process its code must not hold.
+    static NAMING_SYMBOLS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// A lowering whose code names its helpers by symbol: the slow paths it calls become helper symbols
+/// (`slow_path_symbol`), and one that has no helper fails it (`folded`).
+pub(crate) struct NamingSymbols(Option<bool>);
+
+impl NamingSymbols {
+    pub(crate) fn enter(helpers: LaneHelpers) -> Self {
+        Self(NAMING_SYMBOLS.with(|naming| naming.replace(helpers.names_symbols().then_some(false))))
+    }
+    /// Whether the lowering folded a slow path's process address.
+    pub(crate) fn folded(&self) -> bool { NAMING_SYMBOLS.with(|naming| naming.get() == Some(true)) }
+}
+
+impl Drop for NamingSymbols {
+    fn drop(&mut self) { NAMING_SYMBOLS.with(|naming| naming.set(self.0)); }
+}
+
+/// The helper symbol a body naming its helpers by symbol calls slow path `address` by, or `None` where it
+/// takes the address itself (a live body, or a slow path no helper names, which fails the lowering).
+pub(crate) fn slow_path_symbol(func: &mut ir::Function, address: usize) -> Option<ir::GlobalValue> {
+    NAMING_SYMBOLS.with(|naming| {
+        naming.get()?;
+        let helper = LaneHelper::addresses().iter().position(|helper| *helper as usize == address);
+        if helper.is_none() { naming.set(Some(true)); }
+        Some(quench_runtime::vm::jit_backend::declare_symbol(func, RelocKind::Helper as u32, helper? as u32))
+    })
 }
 
 unsafe extern "C" fn interrupt_owner_in_lane(context: u64) -> u64 {
