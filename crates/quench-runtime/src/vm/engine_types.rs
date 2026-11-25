@@ -2840,6 +2840,9 @@ pub struct LiveImage {
     pub bases: Box<[usize]>,
     /// Each function's lane body, where it has one.
     pub lanes: Box<[Option<usize>]>,
+    /// Each lane helper's address by number, as the system linker bound the helpers the image names
+    /// (0 for the rest); `None` for an image placed in process, whose helpers are the process's table.
+    pub helpers: Option<&'static [usize]>,
 }
 
 /// One function of the image.
@@ -3236,6 +3239,8 @@ pub struct LinkedTable {
     pub bases: &'static [usize],
     pub file: &'static [u8],
     pub calls: *mut CallRecord,
+    /// The lane helpers the image names, by number (`LiveImage::helpers`).
+    pub helpers: &'static [usize],
 }
 
 /// Every body starts on a cache line, which also satisfies each target's function alignment.

@@ -7083,7 +7083,7 @@ fn loop_run_in_lane(
     if exit.entered_nothing() {
         // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
         site.tier.borrow_mut().missed_entry(site.tiers);
-        return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
+        return crate::compiled::fallback_sites::entry_refused(cx, site, if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
     if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
     crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));

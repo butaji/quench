@@ -263,6 +263,9 @@ pub(crate) fn loop_compile_in_lane(
     typed_captures: &[u16],
     int_captures: &[u16],
 ) {
+    if !cfg!(feature = "jit") {
+        return; // no run-time compile without the JIT: the loop stays on its image body or the lane
+    }
     count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
