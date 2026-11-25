@@ -183,19 +183,26 @@ fn element_address<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, kin
     stage.add(values, offset)
 }
 
-/// What `access` makes of the element the kind word `kind` names, one arm per kind of `kinds`
-/// from the first; a kind no arm names leaves at `miss`.
-fn by_word<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): (NativeKind, &[NativeKind]),
-    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
-    let named = stage.eq_imm(kind, first.kind as u64);
-    match rest.split_first() {
-        None => {
-            stage.guard(named, miss)?;
-            access(stage, first)
-        }
-        Some((next, rest)) => stage.choose_leaving(named, #[inline(always)] |stage| access(stage, first),
-            #[inline(always)] |stage| by_word(stage, kind, (*next, rest), access, miss)),
+/// What `access` makes of the element the kind word `kind` names, one arm per kind of `ELEMENTS`
+/// in order; a kind no arm names leaves at `miss`. Unrolled (no recursion, no kind table), so a
+/// stencil instantiates every arm with its kind fixed and holds no data but its holes.
+#[inline(always)]
+fn by_word<S: Stage>(stage: &mut S, kind: S::Word, access: &impl Fn(&mut S, NativeKind) -> Option<S::Word>,
+    miss: S::Miss) -> Option<S::Word> {
+    macro_rules! arms {
+        ($stage:ident; $last:literal) => {{
+            let named = $stage.eq_imm(kind, ELEMENTS[$last].kind as u64);
+            $stage.guard(named, miss)?;
+            access($stage, ELEMENTS[$last])
+        }};
+        ($stage:ident; $first:literal $(, $rest:literal)+) => {{
+            let named = $stage.eq_imm(kind, ELEMENTS[$first].kind as u64);
+            $stage.choose_leaving(named, #[inline(always)] |stage| access(stage, ELEMENTS[$first]),
+                #[inline(always)] |stage| arms!(stage; $($rest),+))
+        }};
     }
+    const { assert!(ELEMENTS.len() == 9, "one arm per native kind") };
+    arms!(stage; 0, 1, 2, 3, 4, 5, 6, 7, 8)
 }
 
 /// The Number at element `index` of `values` for `native`.
@@ -246,8 +253,8 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
     bounded(stage, view, index, miss)?;
     match view.kind {
         ViewKind::Static(native) => read_element(stage, view.values, index, native),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
-            &|stage, native| read_element(stage, view.values, index, native), miss),
+        ViewKind::Dynamic(word) => by_word(stage, word,
+            &#[inline(always)] |stage, native| read_element(stage, view.values, index, native), miss),
     }
 }
 
@@ -260,8 +267,8 @@ pub(crate) fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S
     bounded(stage, view, index, miss)?;
     match view.kind {
         ViewKind::Static(native) => read_element_value(stage, view.values, index, native),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
-            &|stage, native| read_element_value(stage, view.values, index, native), miss),
+        ViewKind::Dynamic(word) => by_word(stage, word,
+            &#[inline(always)] |stage, native| read_element_value(stage, view.values, index, native), miss),
     }
 }
 
@@ -287,8 +294,8 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
     let access = (view.values, index, number);
     match view.kind {
         ViewKind::Static(native) => write_element(stage, access, native, miss),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
-            &|stage, native| write_element(stage, access, native, miss), miss),
+        ViewKind::Dynamic(word) => by_word(stage, word,
+            &#[inline(always)] |stage, native| write_element(stage, access, native, miss), miss),
     }
     .map(|_| ())
 }
