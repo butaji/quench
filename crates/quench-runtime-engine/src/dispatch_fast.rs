@@ -78,6 +78,29 @@ macro_rules! by_leaf {
     }};
 }
 
+/// Return `value` from the running function at the record `ip`, as `Return` would (the returning
+/// misses, `returning_row`, a returning field site): the common return as one op, no call (`lane_return_one_op`): a running
+/// leaf of the caller's program, or a plain activation's header, whose window is the innermost
+/// plain one (as `return_from_in_lane` reads it); else the activation's completion, else the
+/// frame's return.
+macro_rules! lane_return_value {
+    ($cx:expr, $ip:expr, $value:expr) => {
+        lane_return_value!($cx, $ip, $value, NOT_LEAF)
+    };
+    ($cx:expr, $ip:expr, $value:expr, $leaf:expr) => {{
+        let (cx, ip, value): (*mut LaneContext, Ip, Value) = ($cx, $ip, $value);
+        let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
+        if let Some((registers, next)) = by_leaf!($leaf, |L| crate::dispatch_fast::lane_return_one_op::<L>(cx, window, value)) {
+            let carried = Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+            next!(cx, registers, next, carried)
+        }
+        if let Some(resumed) = by_leaf!($leaf, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) {
+            resume!(cx, resumed)
+        }
+        resume!(cx, crate::dispatch_fast::return_value_general_in_lane(cx, ip, value));
+    }};
+}
+
 /// The protocol row of a return record of opcode `$op` whose RETURN parameter code is `$code`
 /// (`protocol_misses::returning_code`): the record runs its staged row, then its miss body.
 macro_rules! return_row {
@@ -3433,31 +3456,6 @@ fn relation_outcome(operator: u32, left: Value, right: Value) -> Option<bool> {
         return Some(holds);
     }
     relation_other(operator, left, right)
-}
-
-/// Return `value` from the running function at the record `ip`, as `Return` would: the
-/// innermost activation completes (`lane_complete_activation`); a script frame the lane
-/// pushed returns in place (`lane_return_script_frame`); any other VM frame returns the value
-/// from this record (`frame_return`).
-macro_rules! lane_return_value {
-    ($cx:expr, $ip:expr, $value:expr) => {
-        lane_return_value!($cx, $ip, $value, NOT_LEAF)
-    };
-    ($cx:expr, $ip:expr, $value:expr, $leaf:expr) => {{
-        let (cx, ip, value): (*mut LaneContext, Ip, Value) = ($cx, $ip, $value);
-        // The common return as one op, no call (`lane_return_one_op`): a running leaf of the
-        // caller's program, or a plain activation's header, whose window is the innermost
-        // plain one (as `return_from_in_lane` reads it).
-        let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
-        if let Some((registers, next)) = lane_return_one_op::<{ $leaf }>(cx, window, value) {
-            let carried = Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
-            next!(cx, registers, next, carried)
-        }
-        if let Some(resumed) = complete_plain_activation_in_lane::<{ $leaf }>(cx, value) {
-            resume!(cx, resumed)
-        }
-        resume!(cx, return_value_general_in_lane(cx, ip, value));
-    }};
 }
 
 /// `lane_return_value!` past the common return (`complete_plain_activation_in_lane`): any
