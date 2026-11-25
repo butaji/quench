@@ -165,6 +165,27 @@ const METRICS: &[Metric] = &[
         sources: &[Source::File("crates/quench-runtime-engine/src/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
         extract: Extract::Text(extract::text_lines),
     },
+    // The duplication guards' allowances (SSOT 2, TOD-2232), each shrink-only in its own test: the
+    // hand copies of a JS meaning (`semantics_duplication.rs`), the opcode and family names of the
+    // derivation debt (`coverage.rs`), and the fixpoint drivers beside `dataflow::solve` (`fixpoint_drivers.rs`).
+    Metric {
+        name: "semantics_debt_lines",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/staged/semantics_debt.txt")],
+        extract: Extract::Text(extract::text_lines),
+    },
+    Metric {
+        name: "opcode_name_debt",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/staged/derivation_debt.txt")],
+        extract: Extract::Text(extract::opcode_name_debt),
+    },
+    Metric {
+        name: "fixpoint_drivers",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/staged/fixpoint_debt.txt")],
+        extract: Extract::Text(extract::debt_total),
+    },
 ];
 
 /// One metric's total and its per-file counts (files that count zero are left out).
