@@ -15,6 +15,6 @@ wall_clock_reads 36
 stable_epoch_reads 4
 tier_runtime_internals 193
 lane_dispatch_lines 38684
-semantics_debt_lines 56
+semantics_debt_lines 54
 opcode_name_debt 0
 fixpoint_drivers 3
