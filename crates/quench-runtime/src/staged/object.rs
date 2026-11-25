@@ -388,8 +388,9 @@ pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: 
 
 /// The layout of the record at `record` whose whole auxiliary word a guard proved equal to a
 /// word with storage-form bits `bits` (`Object::hint_shape`): the form is a static input, so
-/// neither the inline flag, the extras tag nor a narrow run is tested. `None` for a form with
-/// extras, whose run the payload's extras word holds, which the caller reads its own way.
+/// neither the inline flag, the extras tag nor a narrow run is tested. Values behind extras (a
+/// watched prototype's, a global object's) are the extras' wide inline values or the run whose
+/// start the extras hold, as `extras_slots` reads them. `None` for any other bits.
 #[inline(always)]
 pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, shaped: super::Shaped<S::Word>, bits: u32, storage_len: usize)
     -> Option<Layout<S::Word, S::Cond>> {
@@ -402,6 +403,16 @@ pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, shaped: super::Shaped<S
         bits if bits == OBJECT.narrow_form => {
             let payload = stage.load_u64(Region::Payload.mutable(), shaped.record(), OBJECT.payload_offset as i32);
             Slots::Narrow(arena_run(stage, payload))
+        }
+        bits if bits == OBJECT.extras_form || bits == OBJECT.extras_form | OBJECT.inline_form => {
+            let payload = stage.load_u64(Region::Payload.mutable(), shaped.record(), OBJECT.payload_offset as i32);
+            let pointer = extras_pointer(stage, payload);
+            if bits == OBJECT.extras_form {
+                let start = stage.load_u32(Region::Payload.mutable(), pointer, OBJECT.extras_arena_start_offset as i32);
+                Slots::Flat(arena_run(stage, start))
+            } else {
+                Slots::Flat(stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64))
+            }
         }
         _ => return None,
     };
