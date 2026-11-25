@@ -11,6 +11,7 @@
 
 mod aot;
 mod build;
+mod c_bound;
 mod census;
 mod config;
 mod conformance;

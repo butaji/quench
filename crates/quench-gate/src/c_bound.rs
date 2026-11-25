@@ -1,0 +1,322 @@
+//! Section `c-bound` of the ir-budget step (S1.17, TOD-2193): the compiled cost of every staged row is within
+//! three times its C twin plus six instructions (user rule: default Ir/iter <= 3 * C + 6). The join is
+//! row -> its C twin (`c_twin_rows.txt`, generated from the code and held to it by quench-runtime's
+//! `tests/c_twin.rs`) -> the kernel's C count (`ir_budget.txt`, column C) and the default-mode count of the
+//! benchmark op of the same name (an `ops.c` kernel is named as its `ops.js` op). A row with no kernel, or
+//! whose kernel has no C count or was not measured by this run, is listed as unmeasured: no static
+//! predictor of a row's cost exists to stand in for a benchmark.
+//!
+//! `c_bound_allowance.txt` holds the rows over the bound today (`row measured bound`) and only shrinks:
+//! a row over the bound that it does not list fails, as does a listed row whose count grew past its
+//! allowance. A listed row that got cheaper, or came within the bound, prints `shrink <row>`;
+//! `QUENCH_DEBT_WRITE=1` on a run of every op lowers or removes its line (and seeds an empty list).
+
+use std::{collections::BTreeMap, fs};
+
+use crate::{config::Config, ir_budget::{SAME_COUNT, tolerance}};
+
+/// Every staged row and its twin, generated from the code.
+pub const ROWS: &str = "crates/quench-tier-corpus/c_twin_rows.txt";
+/// The rows over the bound today, each at the count it may not exceed.
+pub const ALLOWANCE: &str = "crates/quench-tier-corpus/c_bound_allowance.txt";
+
+/// The bound's factor on the C twin's count (user rule, S1.17: 3C + 6).
+const C_FACTOR: f64 = 3.0;
+/// The bound's fixed allowance in instructions (user rule, S1.17: 3C + 6).
+const FIXED: f64 = 6.0;
+
+/// The most a row may cost in the default mode, its C twin costing `c`.
+pub fn bound(c: f64) -> f64 {
+    C_FACTOR * c + FIXED
+}
+
+/// A row's twin as the rows file states it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Twin {
+    /// The `ops.c` kernel (and `ops.js` op) the row is measured by.
+    Kernel(String),
+    /// Why no kernel isolates the row.
+    None(String),
+}
+
+/// The rows file: `row kernel` or `row - reason`, `#` lines a header.
+pub fn parse_rows(text: &str) -> Vec<(String, Twin)> {
+    text.lines().filter(|line| !line.starts_with('#')).filter_map(|line| {
+        let (row, twin) = line.split_once(' ')?;
+        let twin = match twin.split_once(' ') {
+            Some(("-", reason)) => Twin::None(reason.to_owned()),
+            _ => Twin::Kernel(twin.to_owned()),
+        };
+        Some((row.to_owned(), twin))
+    }).collect()
+}
+
+/// The allowance file: each row's allowed count (`row measured bound`; the bound is informational).
+pub fn parse_allowance(text: &str) -> BTreeMap<String, f64> {
+    text.lines().filter(|line| !line.starts_with('#')).filter_map(|line| {
+        let mut fields = line.split_whitespace();
+        Some((fields.next()?.to_owned(), fields.next()?.parse().ok()?))
+    }).collect()
+}
+
+/// One row the bound judged: its kernel, the kernel's C, the bound and the default-mode count.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Checked {
+    pub row: String,
+    pub kernel: String,
+    pub c: f64,
+    pub bound: f64,
+    pub measured: f64,
+}
+
+impl Checked {
+    fn over(&self) -> bool {
+        self.measured > self.bound + SAME_COUNT
+    }
+}
+
+/// What holding the rows to the bound comes to.
+#[derive(Debug, Default, PartialEq)]
+pub struct Judgement {
+    /// Rows the allowance does not hold: new violations, grown rows, unknown entries.
+    pub failures: Vec<String>,
+    /// Listed rows that got cheaper or came within the bound.
+    pub shrinks: Vec<String>,
+    /// Every row with a measured kernel.
+    pub checked: Vec<Checked>,
+    /// Rows the bound could not judge, with why.
+    pub unmeasured: Vec<(String, String)>,
+    /// The allowance after the run: the listed lines, lowered or removed with `write`.
+    pub kept: BTreeMap<String, (f64, f64)>,
+}
+
+/// Holds `rows` to the bound: `c` is each kernel's C count, `measured` each op's default-mode count in this
+/// run, `allowed` the allowance file's counts. With `write`, a shrink lowers or removes its line and an empty
+/// allowance is seeded with the rows over the bound; nothing is ever added to an allowance with lines.
+pub fn judge(rows: &[(String, Twin)], c: &BTreeMap<String, f64>, measured: &BTreeMap<String, f64>, allowed: &BTreeMap<String, f64>, write: bool) -> Judgement {
+    let mut judgement = Judgement::default();
+    let seed = write && allowed.is_empty();
+    for (row, twin) in rows {
+        match checked(row, twin, c, measured) {
+            Ok(checked) => {
+                judgement.hold(&checked, allowed.get(row).copied(), write, seed);
+                judgement.checked.push(checked);
+            }
+            Err((why, bound)) => {
+                // A row this run could not measure keeps its line unjudged.
+                if let (Some(&allowance), Some(bound)) = (allowed.get(row), bound) { judgement.kept.insert(row.clone(), (allowance, bound)); }
+                judgement.unmeasured.push((row.clone(), why));
+            }
+        }
+    }
+    let known: std::collections::BTreeSet<&str> = rows.iter().map(|(row, _)| row.as_str()).collect();
+    for (row, &allowance) in allowed.iter().filter(|(row, _)| !write && !known.contains(row.as_str())) {
+        judgement.failures.push(format!("{row}: not a staged row ({ROWS}); remove it from {ALLOWANCE}"));
+        judgement.kept.insert(row.clone(), (allowance, f64::NAN));
+    }
+    judgement
+}
+
+/// The row joined to its kernel's C and default-mode counts, or why it cannot be (with its bound where C is known).
+fn checked(row: &str, twin: &Twin, c: &BTreeMap<String, f64>, measured: &BTreeMap<String, f64>) -> Result<Checked, (String, Option<f64>)> {
+    let kernel = match twin {
+        Twin::None(reason) => return Err((format!("no kernel: {reason}"), None)),
+        Twin::Kernel(kernel) => kernel,
+    };
+    let &c = c.get(kernel).ok_or_else(|| (format!("{kernel} has no C count"), None))?;
+    let &count = measured.get(kernel).filter(|count| count.is_finite()).ok_or_else(|| (format!("{kernel} not measured"), Some(bound(c))))?;
+    Ok(Checked { row: row.to_owned(), kernel: kernel.clone(), c, bound: bound(c), measured: count })
+}
+
+impl Judgement {
+    /// Holds one measured row to its allowance (`None`: not listed).
+    fn hold(&mut self, checked: &Checked, allowance: Option<f64>, write: bool, seed: bool) {
+        let Checked { row, kernel, c, bound, measured: count } = checked;
+        let mut keep = |allowance: f64| { self.kept.insert(row.clone(), (allowance, *bound)); };
+        match allowance {
+            None if checked.over() && seed => keep(*count),
+            None if checked.over() => self.failures.push(format!("{row}: {count:.1} Ir/iter default, over 3C+6 = {bound:.1} ({kernel}, C {c}); not in {ALLOWANCE}")),
+            None => {}
+            Some(allowance) if !checked.over() => {
+                if !write { keep(allowance) }
+                self.shrinks.push(format!("shrink {row}: {count:.1} Ir/iter, within 3C+6 = {bound:.1}; remove it from {ALLOWANCE}"));
+            }
+            Some(allowance) if *count > allowance + tolerance(allowance) => {
+                keep(allowance);
+                self.failures.push(format!("{row}: {count:.1} Ir/iter default, past its allowance {allowance:.1} (3C+6 = {bound:.1}, {kernel})"));
+            }
+            Some(allowance) if *count < allowance - tolerance(allowance) => {
+                keep(if write { *count } else { allowance });
+                self.shrinks.push(format!("shrink {row}: {count:.1} Ir/iter, allowance {allowance:.1}"));
+            }
+            Some(allowance) => keep(allowance),
+        }
+    }
+}
+
+/// The section's report: the counts, the rows over the bound worst first, the shrinks and the unmeasured rows.
+pub fn report(judgement: &Judgement) -> String {
+    let mut over: Vec<&Checked> = judgement.checked.iter().filter(|checked| checked.over()).collect();
+    over.sort_by(|a, b| (b.measured / b.bound).total_cmp(&(a.measured / a.bound)));
+    let mut lines = vec![format!(
+        "c-bound: {} rows checked, {} over 3C+6 (default Ir/iter), {} unmeasured",
+        judgement.checked.len(), over.len(), judgement.unmeasured.len()
+    )];
+    lines.push(format!("{:<44}{:<20}{:>7}{:>9}{:>10}{:>7}", "row", "kernel", "C", "3C+6", "default", "x"));
+    lines.extend(over.iter().map(|checked| format!(
+        "{:<44}{:<20}{:>7.1}{:>9.1}{:>10.1}{:>6.1}x",
+        checked.row, checked.kernel, checked.c, checked.bound, checked.measured, checked.measured / checked.bound
+    )));
+    lines.extend(judgement.shrinks.iter().cloned());
+    lines.extend(judgement.unmeasured.iter().map(|(row, why)| format!("unmeasured {row}: {why}")));
+    lines.join("\n")
+}
+
+/// The allowance file's text: `header`, then `row measured bound` per kept line.
+pub fn render(header: &str, kept: &BTreeMap<String, (f64, f64)>) -> String {
+    let body: String = kept.iter().map(|(row, (measured, bound))| format!("{row} {measured:.1} {bound:.1}\n")).collect();
+    format!("{header}{body}")
+}
+
+/// The section over this run's default-mode counts: the failures and the report. With `write` the
+/// allowance is rewritten when it changes.
+pub fn hold(config: &Config, c: &BTreeMap<String, f64>, measured: &BTreeMap<String, f64>, write: bool) -> Result<(Vec<String>, String), String> {
+    let read = |path: &str| fs::read_to_string(config.root.join(path)).map_err(|error| format!("{path}: {error}"));
+    let rows = parse_rows(&read(ROWS)?);
+    let before = read(ALLOWANCE)?;
+    let judgement = judge(&rows, c, measured, &parse_allowance(&before), write);
+    let header: String = before.lines().take_while(|line| line.starts_with('#')).map(|line| format!("{line}\n")).collect();
+    let after = render(&header, &judgement.kept);
+    if write && after != before {
+        fs::write(config.root.join(ALLOWANCE), &after).map_err(|error| format!("{ALLOWANCE}: {error}"))?;
+    }
+    Ok((judgement.failures.clone(), report(&judgement)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows() -> Vec<(String, Twin)> {
+        parse_rows("# header\nOperation::GetField field_read\nheap::add_row int_add\nOperation::Move - register copy: none\nOperation::Call call_direct\nnumber::Odd no_c\n")
+    }
+
+    fn map(entries: &[(&str, f64)]) -> BTreeMap<String, f64> {
+        entries.iter().map(|(name, value)| ((*name).to_owned(), *value)).collect()
+    }
+
+    fn c() -> BTreeMap<String, f64> {
+        map(&[("field_read", 3.0), ("int_add", 4.0), ("call_direct", 8.0)])
+    }
+
+    #[test]
+    fn rows_parse_kernels_and_reasons() {
+        let rows = rows();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0], ("Operation::GetField".to_owned(), Twin::Kernel("field_read".to_owned())));
+        assert_eq!(rows[2], ("Operation::Move".to_owned(), Twin::None("register copy: none".to_owned())));
+    }
+
+    #[test]
+    fn the_bound_is_three_c_plus_six() {
+        assert_eq!(bound(3.0), 15.0);
+        assert_eq!(bound(0.0), 6.0);
+    }
+
+    #[test]
+    fn rows_within_the_bound_pass_and_unmeasured_rows_are_listed() {
+        let judgement = judge(&rows(), &c(), &map(&[("field_read", 15.0), ("int_add", 18.4)]), &BTreeMap::new(), false);
+        assert!(judgement.failures.is_empty(), "{:?}", judgement.failures);
+        assert_eq!(judgement.checked.len(), 2);
+        let unmeasured: Vec<&str> = judgement.unmeasured.iter().map(|(row, _)| row.as_str()).collect();
+        assert_eq!(unmeasured, ["Operation::Move", "Operation::Call", "number::Odd"]);
+        assert!(judgement.unmeasured[1].1.contains("not measured") && judgement.unmeasured[2].1.contains("no C count"));
+    }
+
+    #[test]
+    fn a_new_violation_fails() {
+        let judgement = judge(&rows(), &c(), &map(&[("field_read", 30.0), ("int_add", 9.0)]), &BTreeMap::new(), false);
+        assert_eq!(judgement.failures.len(), 1);
+        assert!(judgement.failures[0].starts_with("Operation::GetField: 30.0"), "{:?}", judgement.failures);
+    }
+
+    #[test]
+    fn a_held_row_passes_at_its_allowance_and_fails_past_it() {
+        let allowed = map(&[("Operation::GetField", 30.0)]);
+        let held = judge(&rows(), &c(), &map(&[("field_read", 30.2)]), &allowed, false);
+        assert!(held.failures.is_empty() && held.shrinks.is_empty(), "{held:?}");
+        let grown = judge(&rows(), &c(), &map(&[("field_read", 31.0)]), &allowed, false);
+        assert_eq!(grown.failures.len(), 1);
+        assert!(grown.failures[0].contains("past its allowance 30.0"));
+        assert_eq!(grown.kept[&"Operation::GetField".to_owned()].0, 30.0);
+    }
+
+    #[test]
+    fn an_improved_row_prints_shrink_and_write_lowers_it() {
+        let allowed = map(&[("Operation::GetField", 30.0), ("heap::add_row", 40.0)]);
+        let measured = map(&[("field_read", 20.0), ("int_add", 10.0)]);
+        let plain = judge(&rows(), &c(), &measured, &allowed, false);
+        assert!(plain.failures.is_empty());
+        assert_eq!(plain.shrinks.len(), 2);
+        assert!(plain.shrinks.iter().all(|line| line.starts_with("shrink ")));
+        // Without write the allowance stays as listed.
+        assert_eq!(plain.kept[&"Operation::GetField".to_owned()], (30.0, 15.0));
+        assert_eq!(plain.kept[&"heap::add_row".to_owned()], (40.0, 18.0));
+        let written = judge(&rows(), &c(), &measured, &allowed, true);
+        // GetField is still over its bound (15) and lowered to 20; add_row is within its bound and removed.
+        assert_eq!(written.kept.len(), 1);
+        assert_eq!(written.kept[&"Operation::GetField".to_owned()], (20.0, 15.0));
+    }
+
+    #[test]
+    fn write_seeds_an_empty_allowance_only() {
+        let measured = map(&[("field_read", 30.0), ("int_add", 30.0)]);
+        let seeded = judge(&rows(), &c(), &measured, &BTreeMap::new(), true);
+        assert!(seeded.failures.is_empty());
+        assert_eq!(seeded.kept.len(), 2);
+        let not_added = judge(&rows(), &c(), &measured, &map(&[("Operation::GetField", 30.0)]), true);
+        assert_eq!(not_added.failures.len(), 1);
+        assert!(not_added.failures[0].starts_with("heap::add_row"));
+    }
+
+    #[test]
+    fn an_unknown_entry_fails_and_an_unmeasured_entry_is_kept() {
+        let allowed = map(&[("Operation::Gone", 50.0), ("Operation::Call", 99.0)]);
+        let judgement = judge(&rows(), &c(), &map(&[("field_read", 1.0)]), &allowed, false);
+        assert_eq!(judgement.failures.len(), 1);
+        assert!(judgement.failures[0].starts_with("Operation::Gone: not a staged row"));
+        assert_eq!(judgement.kept[&"Operation::Call".to_owned()].0, 99.0);
+    }
+
+    #[test]
+    fn the_allowance_round_trips() {
+        let kept: BTreeMap<String, (f64, f64)> = [("Operation::GetField".to_owned(), (30.0, 15.0))].into_iter().collect();
+        let text = render("# h\n", &kept);
+        assert_eq!(text, "# h\nOperation::GetField 30.0 15.0\n");
+        assert_eq!(parse_allowance(&text), map(&[("Operation::GetField", 30.0)]));
+    }
+
+    #[test]
+    fn the_report_ranks_rows_over_the_bound() {
+        let measured = map(&[("field_read", 150.0), ("int_add", 36.0)]);
+        let judgement = judge(&rows(), &c(), &measured, &BTreeMap::new(), false);
+        let report = report(&judgement);
+        assert!(report.starts_with("c-bound: 2 rows checked, 2 over 3C+6 (default Ir/iter), 3 unmeasured"), "{report}");
+        let get_field = report.find("Operation::GetField").unwrap();
+        let add_row = report.find("heap::add_row").unwrap();
+        assert!(get_field < add_row, "worst first:\n{report}");
+        assert!(report.contains("unmeasured Operation::Move: no kernel: register copy: none"));
+    }
+
+    /// The checked-in files parse and every allowance line names a staged row with a kernel.
+    #[test]
+    fn the_checked_in_files_agree() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let rows = parse_rows(&fs::read_to_string(format!("{root}/{ROWS}")).unwrap());
+        assert!(rows.len() > 100, "{ROWS}: {} rows", rows.len());
+        let allowed = parse_allowance(&fs::read_to_string(format!("{root}/{ALLOWANCE}")).unwrap());
+        for row in allowed.keys() {
+            assert!(rows.iter().any(|(name, twin)| name == row && matches!(twin, Twin::Kernel(_))), "{ALLOWANCE}: {row} is not a row with a kernel");
+        }
+    }
+}

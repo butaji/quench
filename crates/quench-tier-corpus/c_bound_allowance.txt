@@ -1,0 +1,48 @@
+# Rows over the S1.17 bound (TOD-2193): default-mode Ir/iter > 3 * C + 6, C the row's C twin (c_twin_rows.txt, ir_budget.txt).
+# row measured bound: measured is the default count the row may not exceed; bound is 3C+6, for reading only.
+# Shrink-only (quench-gate ir-budget, section c-bound): an unlisted row over the bound fails, a listed row past its
+# measured count fails; a cheaper row prints "shrink <row>" and QUENCH_DEBT_WRITE=1 on a run of every op lowers or removes it.
+NumberOperation::IntCase 229.4 35.4
+Operation::ArgumentsLength 764.0 30.0
+Operation::ArrayAppend 234.0 30.0
+Operation::Binary 368.0 18.0
+Operation::Equality(loose) 231.0 21.0
+Operation::ForInNext 562.8 30.6
+Operation::InstanceOf 244.8 62.7
+Operation::LoadCapture 1579.3 39.0
+Operation::Protocol 738.0 18.9
+Operation::SetField 30.0 15.0
+Operation::SpreadCall 1212.0 36.0
+Operation::StoreField 30.0 15.0
+Operation::StringCaseIndex 303.0 33.0
+Operation::SuperCall 1191.0 51.0
+Operation::Throw 2837.3 189.0
+Operation::TypeofIndex 25.0 18.0
+Operation::TypeofString 25.0 18.0
+Operation::TypeofTest 25.0 18.0
+heap::APPEND_ROW 234.0 30.0
+heap::CALLEE_CAPTURE_ROW 1579.3 39.0
+heap::CAPTURE_ROW 1579.3 39.0
+heap::CHAR_CODE_AT_ROW 303.0 33.0
+heap::FOR_IN_ROW 562.8 30.6
+heap::IC_KNOWN_SET_ADMITTED_ROW 30.0 15.0
+heap::IC_KNOWN_SET_FLAT_ADMITTED_ROW 30.0 15.0
+heap::IC_KNOWN_SET_FLAT_ROW 30.0 15.0
+heap::IC_KNOWN_SET_INT_ADMITTED_ROW 30.0 15.0
+heap::IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW 30.0 15.0
+heap::IC_KNOWN_SET_INT_FLAT_ROW 30.0 15.0
+heap::IC_KNOWN_SET_INT_ROW 30.0 15.0
+heap::IC_KNOWN_SET_ROW 30.0 15.0
+heap::IC_SET_INT_ROW 30.0 15.0
+heap::IC_SET_ROW 30.0 15.0
+heap::INSTANCEOF_ROW 244.8 62.7
+heap::PARSE_INT_ROW 648.0 594.0
+heap::STAGED_LOOSE_EQ 231.0 21.0
+heap::STAGED_LOOSE_NE 231.0 21.0
+heap::TYPEOF_INDEX_ROW 25.0 18.0
+heap::TYPEOF_ISNOT_ROW 25.0 18.0
+heap::TYPEOF_IS_ROW 25.0 18.0
+heap::TYPEOF_STRING_ROW 25.0 18.0
+number::INT_CASE 229.4 35.4
+number::NULLISH_EQ 231.0 21.0
+number::NULLISH_NE 231.0 21.0
