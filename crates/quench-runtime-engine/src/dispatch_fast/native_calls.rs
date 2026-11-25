@@ -743,7 +743,9 @@ pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_
     // running function, which the native reads before anything can move them.
     let (code, args) = unsafe { (&*(*cx).code, call.values()) };
     if quench_runtime::fallback::on() { crate::compiled::fallback_sites::opaque_native(cx, call, code, native); }
-    let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args) else {
+    // A RegExp method's steady call, as the interpreter's call row makes it (`steady_regexp_in_lane`); its error is the native's to raise.
+    let steady = || super::steady_regexp_in_lane(cx, unsafe { &*call.ip }, native, receiver, &args).and_then(Result::ok);
+    let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args).or_else(steady) else {
         // A returning call the native makes out of line is the lane's to complete.
         if call.site.returns { return (super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning), false); }
         return (body_native_out_in_lane(cx, call, native, (callee, receiver), &args), false);

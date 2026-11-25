@@ -10967,6 +10967,21 @@ fn regexp_call_in_lane(
     receiver: Value,
     args: &[Value],
 ) -> Option<Value> {
+    let Some(result) = steady_regexp_in_lane(cx, i, native, receiver, args) else {
+        return string_or_native_call_in_lane(cx, ip, native, callee, receiver, args);
+    };
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            unsafe { vm(cx) }.lane_completion.raise(error);
+            None
+        }
+    }
+}
+
+/// The steady call of `regexp_call_in_lane` at the call record `i` (`Vm::steady_regexp_call`, `Vm::steady_string_replace`,
+/// `Vm::steady_string_match`), which a compiled body's native call makes too (`body_native_call_in_lane`); `None` for any other.
+pub(crate) fn steady_regexp_in_lane(cx: *mut LaneContext, i: &LaneInstruction, native: Native, receiver: Value, args: &[Value]) -> Option<Result<Value, JsError>> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -10976,20 +10991,11 @@ fn regexp_call_in_lane(
         (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
         (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
         _ => None,
-    };
-    let Some(result) = steady else {
-        return string_or_native_call_in_lane(cx, ip, native, callee, receiver, args);
-    };
-    let result = vm.regexp_search_outcome(result);
+    }?;
+    let result = vm.regexp_search_outcome(steady);
     // The call's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            vm.lane_completion.raise(error);
-            None
-        }
-    }
+    Some(result)
 }
 
 /// A lane native call that `native_call_miss` does not make inline: a pure string method or
