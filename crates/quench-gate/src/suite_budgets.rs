@@ -1,15 +1,18 @@
-//! Step: the JetStream 3 budgets. It reads the outputs of a finished sweep (`sweep3.sh`) and of
-//! the comparator runs (`baseline.sh`, one `<engine> <test> <score|FAIL> <peak_rss_kb>` line each)
-//! and judges every bench in every mode against its peers. The step never runs a benchmark.
+//! Steps: the suite budgets, one judge for every benchmark suite held to the user's target
+//! (`Suite`): JetStream 3 (`js3-budgets`) and the data-structure suite (`ds-budgets`, TOD-2275,
+//! quench-bench/data-structures). Each reads the outputs of a finished sweep and of the comparator
+//! runs (one `<engine> <test> <score|FAIL> <peak_rss_kb>` line each) and judges every bench in every
+//! mode against its peers. The step never runs a benchmark.
 //!
 //! Targets, one rule for every bench:
-//! - score: Quench >= 1.5 x the best peer (no-jit: node-jitless and bun-nojit; b-jit and the
-//!   default: node and bun). A peer that FAILed is skipped.
+//! - score: Quench >= 1.5 x the best peer (JetStream no-jit: node-jitless and bun-nojit; every
+//!   other suite and mode: node and bun). A peer that FAILed is skipped.
 //! - RSS: Quench <= 0.5 x the lowest peer RSS, the same peers.
 //! - any Quench FAIL, or a Quench run with no RSS, is a failure and is never listed.
 //! - Ir (no-jit callgrind): no growth past the recorded ceiling.
 //!
-//! `crates/quench-tier-corpus/js3_budgets.txt` is the shrink-only debt list: one line per
+//! The suite's debt file (`crates/quench-tier-corpus/js3_budgets.txt`, `ds_budgets.txt`) is the
+//! shrink-only debt list: one line per
 //! `<bench> <mode> <score|rss> <value>` that misses its target, with the value recorded when it
 //! missed, and one `ir <bench> <ceiling>` line per bench. A miss the list does not hold fails the
 //! step, including every miss while the list is header-only (an empty list allows nothing); a
@@ -24,8 +27,10 @@
 //! seeded from the inputs. A new miss is never added to a non-empty list. The rewritten list is
 //! then judged, so the write exits nonzero if it still fails.
 //!
-//! Inputs: `QUENCH_JS3_SWEEP` (a sweep directory holding `score.txt` and `ir.txt`, each ending in
-//! `DONE`) and `QUENCH_JS3_COMPARATORS` (the comparator file). Unset, the step fails: a full run
+//! Inputs: the suite's sweep variable (`QUENCH_JS3_SWEEP`, `QUENCH_DS_SWEEP`: a sweep directory
+//! holding `score.txt` and `ir.txt`, each ending in `DONE`) and its comparators variable
+//! (`QUENCH_JS3_COMPARATORS`, `QUENCH_DS_COMPARATORS`). quench-bench/data-structures/run.py and
+//! ir.py write the data-structure suite's files with `--gate DIR`. Unset, the step fails: a full run
 //! must judge a finished sweep. To leave it out, run with `--quick` or `--only <other step>`.
 
 use std::{
@@ -38,17 +43,52 @@ use std::{
 
 use crate::{config::Config, step::Verdict};
 
-const DEBT: &str = "crates/quench-tier-corpus/js3_budgets.txt";
-const SWEEP_VARIABLE: &str = "QUENCH_JS3_SWEEP";
-const COMPARATORS_VARIABLE: &str = "QUENCH_JS3_COMPARATORS";
+/// One suite the step judges: where its debt list lives, the variables naming its inputs, and
+/// whether its no-jit rows are held against the peers' jitless runs.
+pub struct Suite {
+    step: &'static str,
+    debt: &'static str,
+    sweep_variable: &'static str,
+    comparators_variable: &'static str,
+    title: &'static str,
+    /// JetStream holds no-jit against node-jitless and bun-nojit; the data-structure suite holds
+    /// every mode against node and bun (user, 2026-11-25: "C/Node/Bun you target for").
+    jitless_peers: bool,
+}
+
+pub const JS3: Suite = Suite {
+    step: "js3-budgets",
+    debt: "crates/quench-tier-corpus/js3_budgets.txt",
+    sweep_variable: "QUENCH_JS3_SWEEP",
+    comparators_variable: "QUENCH_JS3_COMPARATORS",
+    title: "JetStream 3 budgets",
+    jitless_peers: true,
+};
+
+pub const DS: Suite = Suite {
+    step: "ds-budgets",
+    debt: "crates/quench-tier-corpus/ds_budgets.txt",
+    sweep_variable: "QUENCH_DS_SWEEP",
+    comparators_variable: "QUENCH_DS_COMPARATORS",
+    title: "Data-structure suite budgets (TOD-2275)",
+    jitless_peers: false,
+};
+
 /// `1` rewrites the debt list shrink-only (seeds it when it is header-only) instead of judging.
 const DEBT_WRITE: &str = "QUENCH_DEBT_WRITE";
-const DEFAULT_HEADER: &str = "# JetStream 3 budgets (quench-gate step `js3-budgets`; reads QUENCH_JS3_SWEEP and QUENCH_JS3_COMPARATORS).\n\
+
+impl Suite {
+    /// The header a seeded debt list starts with.
+    fn default_header(&self) -> String {
+        format!("# {} (quench-gate step `{}`; reads {} and {}).\n\
 # `<bench> <mode> <score|rss> <value>`: a bench and mode that misses its target, with the value recorded when it missed.\n\
 # `ir <bench> <ceiling>`: the no-jit instruction ceiling of a bench.\n\
 # Shrink-only: an unlisted miss fails the step, a listed entry that meets its target fails it too (\"remove it\"),\n\
 # and a listed value that got worse fails as a regression (3% for score and RSS, 1% for Ir).\n\
-# Seeded by `QUENCH_DEBT_WRITE=1 quench-gate --only js3-budgets` on a finished sweep. Never add a line by hand.\n";
+# Seeded by `QUENCH_DEBT_WRITE=1 quench-gate --only {}` on a finished sweep. Never add a line by hand.\n",
+            self.title, self.step, self.sweep_variable, self.comparators_variable, self.step)
+    }
+}
 const DONE: &str = "DONE";
 const FAIL: &str = "FAIL";
 /// The RSS a run prints when it printed none.
@@ -233,29 +273,30 @@ fn parse_comparators(text: &str) -> Result<Comparators, String> {
     Ok(runs)
 }
 
-fn parse_debt(text: &str) -> Result<Debt, String> {
+fn parse_debt(suite: &Suite, text: &str) -> Result<Debt, String> {
+    let debt_file = suite.debt;
     let mut debt = Debt::default();
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')) {
         match fields(line)[..] {
             ["ir", bench, ceiling] => {
-                let value: f64 = ceiling.parse().map_err(|_| format!("{DEBT}: `{line}`: the ceiling is not a number"))?;
+                let value: f64 = ceiling.parse().map_err(|_| format!("{debt_file}: `{line}`: the ceiling is not a number"))?;
                 if debt.ceilings.insert(bench.to_owned(), value).is_some() {
-                    return Err(format!("{DEBT}: `ir {bench}` is listed twice"));
+                    return Err(format!("{debt_file}: `ir {bench}` is listed twice"));
                 }
             }
             [bench, mode, metric, value] => {
                 let Some(metric) = Metric::parse(metric) else {
-                    return Err(format!("{DEBT}: `{line}`: the metric is not score or rss"));
+                    return Err(format!("{debt_file}: `{line}`: the metric is not score or rss"));
                 };
                 if !MODES.contains(&mode) {
-                    return Err(format!("{DEBT}: `{line}`: unknown mode `{mode}`"));
+                    return Err(format!("{debt_file}: `{line}`: unknown mode `{mode}`"));
                 }
-                let value: f64 = value.parse().map_err(|_| format!("{DEBT}: `{line}`: the value is not a number"))?;
+                let value: f64 = value.parse().map_err(|_| format!("{debt_file}: `{line}`: the value is not a number"))?;
                 if debt.misses.insert((bench.to_owned(), mode.to_owned(), metric), value).is_some() {
-                    return Err(format!("{DEBT}: `{bench} {mode} {}` is listed twice", metric.name()));
+                    return Err(format!("{debt_file}: `{bench} {mode} {}` is listed twice", metric.name()));
                 }
             }
-            _ => return Err(format!("{DEBT}: `{line}` is not `<bench> <mode> <score|rss> <value>` or `ir <bench> <ceiling>`")),
+            _ => return Err(format!("{debt_file}: `{line}` is not `<bench> <mode> <score|rss> <value>` or `ir <bench> <ceiling>`")),
         }
     }
     Ok(debt)
@@ -273,9 +314,9 @@ fn header(text: &str) -> String {
 
 /// The peers a mode is held against: the interpreter modes against the jitless engines, the JIT
 /// modes against the engines with their JIT.
-fn peers(mode: &str) -> [&'static str; 2] {
+fn peers(suite: &Suite, mode: &str) -> [&'static str; 2] {
     match mode {
-        "no-jit" => ["node-jitless", "bun-nojit"],
+        "no-jit" if suite.jitless_peers => ["node-jitless", "bun-nojit"],
         _ => ["node", "bun"],
     }
 }
@@ -301,24 +342,24 @@ fn listed(debt: &Debt, bench: &str, mode: &str, metric: Metric) -> Option<f64> {
 }
 
 /// One metric against its peers. `missed` is `None` when there is no peer to judge it against.
-fn judge_metric(bench: &str, mode: &str, metric: Metric, current: f64, missed: Option<bool>, listed: Option<f64>) -> Reading {
+fn judge_metric(debt_file: &str, bench: &str, mode: &str, metric: Metric, current: f64, missed: Option<bool>, listed: Option<f64>) -> Reading {
     let name = format!("{bench} {mode} {}", metric.name());
     match (missed, listed) {
         (None, _) => Reading { failure: None, word: "no peer", rank: 2, miss: None, met: false },
         (Some(false), None) => Reading { failure: None, word: "ok", rank: 3, miss: None, met: false },
-        (Some(false), Some(_)) => Reading { failure: Some(format!("{name}: {current} meets its target; remove it from {DEBT}")), word: "remove it", rank: 0, miss: None, met: true },
-        (Some(true), None) => Reading { failure: Some(format!("{name}: {current} misses its target and is not listed in {DEBT}")), word: "NEW MISS", rank: 0, miss: Some(current), met: false },
+        (Some(false), Some(_)) => Reading { failure: Some(format!("{name}: {current} meets its target; remove it from {debt_file}")), word: "remove it", rank: 0, miss: None, met: true },
+        (Some(true), None) => Reading { failure: Some(format!("{name}: {current} misses its target and is not listed in {debt_file}")), word: "NEW MISS", rank: 0, miss: Some(current), met: false },
         (Some(true), Some(recorded)) if worse(metric, current, recorded) => Reading { failure: Some(format!("{name}: {current} is worse than the recorded {recorded}")), word: "REGRESSED", rank: 0, miss: Some(current), met: false },
         (Some(true), Some(_)) => Reading { failure: None, word: "debt", rank: 1, miss: Some(current), met: false },
     }
 }
 
 /// The Ir count of a bench against its ceiling.
-fn judge_ir(bench: &str, measured: Option<f64>, ceiling: Option<f64>) -> Reading {
+fn judge_ir(debt_file: &str, bench: &str, measured: Option<f64>, ceiling: Option<f64>) -> Reading {
     let name = format!("{bench} ir");
     match (measured, ceiling) {
         (None, _) => Reading::hard(format!("{name}: no instruction count in the sweep"), "no Ir"),
-        (Some(_), None) => Reading::hard(format!("{name}: no ceiling recorded; seed {DEBT} with {DEBT_WRITE}=1"), "unrecorded"),
+        (Some(_), None) => Reading::hard(format!("{name}: no ceiling recorded; seed {debt_file} with {DEBT_WRITE}=1"), "unrecorded"),
         (Some(ir), Some(ceiling)) if ir > ceiling * (1.0 + IR_TOLERANCE) => Reading { failure: Some(format!("{name}: {ir} is past its ceiling {ceiling}")), word: "REGRESSED", rank: 0, miss: None, met: false },
         (Some(_), Some(_)) => Reading { failure: None, word: "ok", rank: 3, miss: None, met: false },
     }
@@ -369,14 +410,15 @@ fn shrink(before: &Debt, judged: &Judgement, ir: &IrCounts) -> Debt {
     Debt { misses, ceilings }
 }
 
-fn judge(scores: &Scores, ir: &IrCounts, comparators: &Comparators, debt: &Debt) -> Judgement {
+fn judge(suite: &Suite, scores: &Scores, ir: &IrCounts, comparators: &Comparators, debt: &Debt) -> Judgement {
+    let debt_file = suite.debt;
     let mut rows = Vec::new();
     let mut failures = Vec::new();
     let mut misses = BTreeMap::new();
     let mut met = BTreeSet::new();
     for ((mode, bench), quench) in scores {
         // A comparator that FAILed is skipped, for both its score and its RSS.
-        let runs: Vec<(&'static str, Run)> = peers(mode)
+        let runs: Vec<(&'static str, Run)> = peers(suite, mode)
             .into_iter()
             .filter_map(|engine| comparators.get(&(engine.to_owned(), bench.clone())).map(|run| (engine, *run)))
             .filter(|(_, run)| run.score.is_some())
@@ -388,16 +430,16 @@ fn judge(scores: &Scores, ir: &IrCounts, comparators: &Comparators, debt: &Debt)
 
         let score = match quench.score {
             None => Reading::hard(format!("{bench} {mode}: Quench FAILed"), "FAIL"),
-            Some(value) => judge_metric(bench, mode, Metric::Score, value, score_ratio.map(|ratio| missed(Metric::Score, ratio)), listed(debt, bench, mode, Metric::Score)),
+            Some(value) => judge_metric(debt_file, bench, mode, Metric::Score, value, score_ratio.map(|ratio| missed(Metric::Score, ratio)), listed(debt, bench, mode, Metric::Score)),
         };
         let rss = match quench.rss {
             None => Reading::hard(format!("{bench} {mode}: no peak RSS printed"), "no RSS"),
-            Some(value) => judge_metric(bench, mode, Metric::Rss, value, rss_ratio.map(|ratio| missed(Metric::Rss, ratio)), listed(debt, bench, mode, Metric::Rss)),
+            Some(value) => judge_metric(debt_file, bench, mode, Metric::Rss, value, rss_ratio.map(|ratio| missed(Metric::Rss, ratio)), listed(debt, bench, mode, Metric::Rss)),
         };
         let mut readings = vec![("score", score), ("rss", rss)];
         let ir_count = if mode == "no-jit" { ir.get(bench).copied().flatten() } else { None };
         if mode == "no-jit" {
-            readings.push(("ir", judge_ir(bench, ir_count, debt.ceilings.get(bench).copied())));
+            readings.push(("ir", judge_ir(debt_file, bench, ir_count, debt.ceilings.get(bench).copied())));
         }
         let key = |metric| (bench.clone(), mode.clone(), metric);
         for (metric, (_, reading)) in [Metric::Score, Metric::Rss].into_iter().zip(&readings) {
@@ -424,12 +466,12 @@ fn judge(scores: &Scores, ir: &IrCounts, comparators: &Comparators, debt: &Debt)
     // Shrink-only: a listed entry for a bench or mode this sweep did not measure is stale.
     for (bench, mode, metric) in debt.misses.keys() {
         if !scores.contains_key(&(mode.clone(), bench.clone())) {
-            failures.push(format!("{bench} {mode} {}: not measured in this sweep; remove it from {DEBT}", metric.name()));
+            failures.push(format!("{bench} {mode} {}: not measured in this sweep; remove it from {debt_file}", metric.name()));
         }
     }
     for bench in debt.ceilings.keys() {
         if !ir.contains_key(bench) {
-            failures.push(format!("ir {bench}: not measured in this sweep; remove it from {DEBT}"));
+            failures.push(format!("ir {bench}: not measured in this sweep; remove it from {debt_file}"));
         }
     }
     // Worst first: failures, then listed misses, then rows without a peer, then ok; within a rank,
@@ -459,51 +501,61 @@ fn read(path: &Path) -> Result<String, String> {
 }
 
 /// The sweep and comparator paths from their variables; both must be set.
-fn inputs(sweep: Option<OsString>, comparators: Option<OsString>) -> Result<(PathBuf, PathBuf), String> {
+fn inputs(suite: &Suite, sweep: Option<OsString>, comparators: Option<OsString>) -> Result<(PathBuf, PathBuf), String> {
     match (sweep, comparators) {
         (Some(sweep), Some(comparators)) => Ok((PathBuf::from(sweep), PathBuf::from(comparators))),
-        _ => Err(format!("js3-budgets needs a finished sweep: set {SWEEP_VARIABLE} and {COMPARATORS_VARIABLE}\nto leave the step out, run with --quick or --only <other step>")),
+        _ => Err(format!("{} needs a finished sweep: set {} and {}\nto leave the step out, run with --quick or --only <other step>", suite.step, suite.sweep_variable, suite.comparators_variable)),
     }
 }
 
 /// The verdict of a judgement: its failures first, then the summary and the table.
-fn verdict_of(judgement: &Judgement, table: &str, note: &str) -> Verdict {
-    let summary = format!("{note}: {} rows, {} failures (debt list {DEBT})", judgement.rows.len(), judgement.failures.len());
+fn verdict_of(suite: &Suite, judgement: &Judgement, table: &str, note: &str) -> Verdict {
+    let summary = format!("{note}: {} rows, {} failures (debt list {})", judgement.rows.len(), judgement.failures.len(), suite.debt);
     if judgement.failures.is_empty() {
         return Ok(format!("{summary}\n{table}"));
     }
     Err(format!("{}\n\n{summary}\n{table}", judgement.failures.join("\n")))
 }
 
-pub fn run(config: &Config) -> Verdict {
-    let (sweep, comparators) = inputs(env::var_os(SWEEP_VARIABLE), env::var_os(COMPARATORS_VARIABLE))?;
+/// The `js3-budgets` step.
+pub fn run_js3(config: &Config) -> Verdict {
+    run(config, &JS3)
+}
+
+/// The `ds-budgets` step.
+pub fn run_ds(config: &Config) -> Verdict {
+    run(config, &DS)
+}
+
+fn run(config: &Config, suite: &Suite) -> Verdict {
+    let (sweep, comparators) = inputs(suite, env::var_os(suite.sweep_variable), env::var_os(suite.comparators_variable))?;
     let scores = parse_sweep_scores(&read(&sweep.join("score.txt"))?)?;
     let ir = parse_ir(&read(&sweep.join("ir.txt"))?)?;
     let comparators = parse_comparators(&read(&comparators)?)?;
 
-    let debt_path = config.root.join(DEBT);
+    let debt_path = config.root.join(suite.debt);
     let write = env::var(DEBT_WRITE).as_deref() == Ok("1");
     let before = match read(&debt_path) {
         Ok(text) => text,
         Err(_) if write => String::new(),
         Err(error) => return Err(format!("{error}; seed it with {DEBT_WRITE}=1 on a finished sweep")),
     };
-    let recorded = parse_debt(&before)?;
-    let judgement = judge(&scores, &ir, &comparators, &recorded);
+    let recorded = parse_debt(suite, &before)?;
+    let judgement = judge(suite, &scores, &ir, &comparators, &recorded);
     if !write {
-        return verdict_of(&judgement, &table(&judgement.rows), "js3 budgets");
+        return verdict_of(suite, &judgement, &table(&judgement.rows), suite.title);
     }
 
     let next = shrink(&recorded, &judgement, &ir);
-    let head = if before.is_empty() { DEFAULT_HEADER.to_owned() } else { header(&before) };
+    let head = if before.is_empty() { suite.default_header() } else { header(&before) };
     let text = render_debt(&head, &next);
     if text != before {
         fs::write(&debt_path, &text).map_err(|error| format!("{}: {error}", debt_path.display()))?;
     }
     // The written list is judged too: a miss it still does not hold fails the write.
-    let rewritten = judge(&scores, &ir, &comparators, &next);
-    let note = format!("wrote {DEBT} (shrink-only): {} misses, {} ceilings", next.misses.len(), next.ceilings.len());
-    verdict_of(&rewritten, &table(&rewritten.rows), &note)
+    let rewritten = judge(suite, &scores, &ir, &comparators, &next);
+    let note = format!("wrote {} (shrink-only): {} misses, {} ceilings", suite.debt, next.misses.len(), next.ceilings.len());
+    verdict_of(suite, &rewritten, &table(&rewritten.rows), &note)
 }
 
 #[cfg(test)]
@@ -539,9 +591,21 @@ mod tests {
     }
 
     #[test]
+    fn the_data_structure_suite_holds_no_jit_against_the_jit_peers() {
+        // No-jit Quench at 20 against node 30 and node-jitless 10: DS judges it against node (a miss),
+        // JetStream against node-jitless (met).
+        let scores = BTreeMap::from([(pair("no-jit", "b"), run_of(Some(20.0), Some(10.0)))]);
+        let ir = BTreeMap::from([("b".to_owned(), Some(100.0))]);
+        let comparators = BTreeMap::from([(pair("node", "b"), run_of(Some(30.0), Some(50.0))), (pair("node-jitless", "b"), run_of(Some(10.0), Some(50.0)))]);
+        let ceilings = debt(&[], &[("b", 100.0)]);
+        assert!(judge(&DS, &scores, &ir, &comparators, &ceilings).failures.iter().any(|failure| failure.contains("not listed in crates/quench-tier-corpus/ds_budgets.txt")));
+        assert!(judge(&JS3, &scores, &ir, &comparators, &ceilings).failures.is_empty());
+    }
+
+    #[test]
     fn meeting_every_target_passes() {
         let (scores, ir, comparators) = passing();
-        let judged = judge(&scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
         assert!(judged.failures.is_empty(), "{:?}", judged.failures);
         assert!(judged.misses.is_empty());
         assert_eq!(judged.rows[0].verdict, "score ok, rss ok, ir ok");
@@ -551,7 +615,7 @@ mod tests {
     fn a_failed_peer_is_skipped() {
         // bun-nojit FAILed with a lower RSS (10); it must not set the RSS target, so 20 against 50 is 0.4x.
         let (scores, ir, comparators) = one_bench(run_of(Some(20.0), Some(20.0)), run_of(Some(10.0), Some(50.0)), run_of(None, Some(10.0)));
-        let judged = judge(&scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
         assert!(judged.failures.is_empty(), "{:?}", judged.failures);
         assert_eq!(judged.rows[0].rss_ratio, Some(0.4));
     }
@@ -559,7 +623,7 @@ mod tests {
     #[test]
     fn an_unlisted_score_miss_fails_and_is_recorded() {
         let (scores, ir, comparators) = one_bench(run_of(Some(12.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
-        let judged = judge(&scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
         assert_eq!(judged.failures.len(), 1, "{:?}", judged.failures);
         assert!(judged.failures[0].contains("not listed"));
         assert_eq!(judged.misses.get(&("b".to_owned(), "no-jit".to_owned(), Metric::Score)), Some(&12.0));
@@ -567,19 +631,19 @@ mod tests {
 
     #[test]
     fn unset_inputs_fail_instead_of_skipping() {
-        let error = inputs(None, None).unwrap_err();
+        let error = inputs(&JS3, None, None).unwrap_err();
         assert!(error.starts_with("js3-budgets needs a finished sweep: set QUENCH_JS3_SWEEP and QUENCH_JS3_COMPARATORS"), "{error}");
-        assert!(inputs(Some("sweep".into()), None).is_err());
-        assert!(inputs(None, Some("comparators".into())).is_err());
-        assert!(inputs(Some("sweep".into()), Some("comparators".into())).is_ok());
+        assert!(inputs(&JS3, Some("sweep".into()), None).is_err());
+        assert!(inputs(&JS3, None, Some("comparators".into())).is_err());
+        assert!(inputs(&JS3, Some("sweep".into()), Some("comparators".into())).is_ok());
     }
 
     #[test]
     fn a_header_only_debt_list_allows_no_miss() {
         let (scores, ir, comparators) = one_bench(run_of(Some(12.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
-        let header_only = parse_debt(DEFAULT_HEADER).unwrap();
+        let header_only = parse_debt(&JS3, &JS3.default_header()).unwrap();
         assert_eq!(header_only, Debt::default());
-        let judged = judge(&scores, &ir, &comparators, &header_only);
+        let judged = judge(&JS3, &scores, &ir, &comparators, &header_only);
         assert!(judged.failures.iter().any(|failure| failure.contains("b no-jit score") && failure.contains("not listed")), "{:?}", judged.failures);
     }
 
@@ -587,21 +651,21 @@ mod tests {
     fn a_new_miss_is_not_added_to_a_non_empty_list() {
         let (scores, ir, comparators) = one_bench(run_of(Some(12.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
         let recorded = debt(&[("c", "no-jit", Metric::Score, 3.0)], &[("b", 100.0)]);
-        let judged = judge(&scores, &ir, &comparators, &recorded);
+        let judged = judge(&JS3, &scores, &ir, &comparators, &recorded);
         let next = shrink(&recorded, &judged, &ir);
         assert!(!next.misses.contains_key(&("b".to_owned(), "no-jit".to_owned(), Metric::Score)));
         assert_eq!(next.misses.get(&("c".to_owned(), "no-jit".to_owned(), Metric::Score)), Some(&3.0), "unmeasured entries are kept");
         assert_eq!(next.ceilings, recorded.ceilings);
-        assert!(judge(&scores, &ir, &comparators, &next).failures.iter().any(|failure| failure.contains("not listed")));
+        assert!(judge(&JS3, &scores, &ir, &comparators, &next).failures.iter().any(|failure| failure.contains("not listed")));
     }
 
     #[test]
     fn a_header_only_list_is_seeded_with_its_misses() {
         let (scores, ir, comparators) = one_bench(run_of(Some(12.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
-        let judged = judge(&scores, &ir, &comparators, &Debt::default());
+        let judged = judge(&JS3, &scores, &ir, &comparators, &Debt::default());
         let seeded = shrink(&Debt::default(), &judged, &ir);
         assert_eq!(seeded, debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
-        assert!(judge(&scores, &ir, &comparators, &seeded).failures.is_empty());
+        assert!(judge(&JS3, &scores, &ir, &comparators, &seeded).failures.is_empty());
     }
 
     #[test]
@@ -609,12 +673,12 @@ mod tests {
         // Score 13 against a recorded 12: still a miss (1.3x), but closer to the target.
         let (scores, ir, comparators) = one_bench(run_of(Some(13.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
         let recorded = debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]);
-        let next = shrink(&recorded, &judge(&scores, &ir, &comparators, &recorded), &ir);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &ir, &comparators, &recorded), &ir);
         assert_eq!(next.misses.get(&("b".to_owned(), "no-jit".to_owned(), Metric::Score)), Some(&13.0));
         // RSS 28 against a recorded 30 (lowest peer 50, so 0.56x): tightened down to 28.
         let (scores, ir, comparators) = one_bench(run_of(Some(20.0), Some(28.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(70.0)));
         let recorded = debt(&[("b", "no-jit", Metric::Rss, 30.0)], &[("b", 100.0)]);
-        let next = shrink(&recorded, &judge(&scores, &ir, &comparators, &recorded), &ir);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &ir, &comparators, &recorded), &ir);
         assert_eq!(next.misses.get(&("b".to_owned(), "no-jit".to_owned(), Metric::Rss)), Some(&28.0));
     }
 
@@ -622,17 +686,17 @@ mod tests {
     fn a_worse_listed_miss_keeps_its_recorded_value() {
         let (scores, ir, comparators) = one_bench(run_of(Some(11.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
         let recorded = debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]);
-        let judged = judge(&scores, &ir, &comparators, &recorded);
+        let judged = judge(&JS3, &scores, &ir, &comparators, &recorded);
         let next = shrink(&recorded, &judged, &ir);
         assert_eq!(next.misses.get(&("b".to_owned(), "no-jit".to_owned(), Metric::Score)), Some(&12.0));
-        assert!(judge(&scores, &ir, &comparators, &next).failures.iter().any(|failure| failure.contains("worse than the recorded")));
+        assert!(judge(&JS3, &scores, &ir, &comparators, &next).failures.iter().any(|failure| failure.contains("worse than the recorded")));
     }
 
     #[test]
     fn a_listed_entry_that_meets_its_target_is_removed() {
         let (scores, ir, comparators) = passing();
         let recorded = debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]);
-        let next = shrink(&recorded, &judge(&scores, &ir, &comparators, &recorded), &ir);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &ir, &comparators, &recorded), &ir);
         assert!(next.misses.is_empty(), "{:?}", next.misses);
         assert_eq!(next.ceilings, recorded.ceilings);
     }
@@ -641,7 +705,7 @@ mod tests {
     fn a_listed_miss_with_no_peer_is_kept() {
         let (scores, ir, comparators) = one_bench(run_of(Some(1.0), Some(10.0)), run_of(None, None), run_of(None, None));
         let recorded = debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]);
-        let next = shrink(&recorded, &judge(&scores, &ir, &comparators, &recorded), &ir);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &ir, &comparators, &recorded), &ir);
         assert_eq!(next.misses, recorded.misses);
     }
 
@@ -650,7 +714,7 @@ mod tests {
         let (scores, _, comparators) = passing();
         let lower = BTreeMap::from([("b".to_owned(), Some(90.0))]);
         let recorded = debt(&[], &[("b", 100.0)]);
-        let next = shrink(&recorded, &judge(&scores, &lower, &comparators, &recorded), &lower);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &lower, &comparators, &recorded), &lower);
         assert_eq!(next.ceilings.get("b"), Some(&90.0));
     }
 
@@ -659,10 +723,10 @@ mod tests {
         let (scores, _, comparators) = passing();
         let higher = BTreeMap::from([("b".to_owned(), Some(105.0))]);
         let recorded = debt(&[], &[("b", 100.0)]);
-        let next = shrink(&recorded, &judge(&scores, &higher, &comparators, &recorded), &higher);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &higher, &comparators, &recorded), &higher);
         assert_eq!(next.ceilings.get("b"), Some(&100.0));
         let missing = BTreeMap::from([("b".to_owned(), None)]);
-        let next = shrink(&recorded, &judge(&scores, &missing, &comparators, &recorded), &missing);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &missing, &comparators, &recorded), &missing);
         assert_eq!(next.ceilings.get("b"), Some(&100.0));
     }
 
@@ -671,21 +735,21 @@ mod tests {
         let (scores, ir, comparators) = passing();
         // A non-empty list (an unmeasured entry for `c`) with no ceiling for `b`.
         let recorded = debt(&[("c", "no-jit", Metric::Score, 3.0)], &[]);
-        let judged = judge(&scores, &ir, &comparators, &recorded);
+        let judged = judge(&JS3, &scores, &ir, &comparators, &recorded);
         assert!(judged.failures.iter().any(|failure| failure.contains("b ir")), "{:?}", judged.failures);
         let next = shrink(&recorded, &judged, &ir);
         assert_eq!(next.ceilings.get("b"), Some(&100.0));
-        assert!(!judge(&scores, &ir, &comparators, &next).failures.iter().any(|failure| failure.contains("b ir")));
+        assert!(!judge(&JS3, &scores, &ir, &comparators, &next).failures.iter().any(|failure| failure.contains("b ir")));
     }
 
     #[test]
     fn a_no_peer_bench_still_passes_with_a_new_ceiling() {
         let (scores, ir, comparators) = one_bench(run_of(Some(1.0), Some(10.0)), run_of(None, None), run_of(None, None));
         let recorded = debt(&[("c", "no-jit", Metric::Score, 3.0)], &[]);
-        let next = shrink(&recorded, &judge(&scores, &ir, &comparators, &recorded), &ir);
+        let next = shrink(&recorded, &judge(&JS3, &scores, &ir, &comparators, &recorded), &ir);
         assert_eq!(next.ceilings.get("b"), Some(&100.0));
         assert!(!next.misses.contains_key(&("b".to_owned(), "no-jit".to_owned(), Metric::Score)));
-        let judged = judge(&scores, &ir, &comparators, &next);
+        let judged = judge(&JS3, &scores, &ir, &comparators, &next);
         assert!(!judged.failures.iter().any(|failure| failure.contains("b no-jit") || failure.contains("b ir")), "{:?}", judged.failures);
         assert_eq!(judged.rows[0].verdict, "score no peer, rss no peer, ir ok");
     }
@@ -693,7 +757,7 @@ mod tests {
     #[test]
     fn a_listed_miss_within_tolerance_is_debt() {
         let (scores, ir, comparators) = one_bench(run_of(Some(11.7), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
-        let judged = judge(&scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
         assert!(judged.failures.is_empty(), "{:?}", judged.failures);
         assert_eq!(judged.rows[0].verdict, "score debt, rss ok, ir ok");
     }
@@ -701,7 +765,7 @@ mod tests {
     #[test]
     fn a_listed_score_miss_past_tolerance_is_a_regression() {
         let (scores, ir, comparators) = one_bench(run_of(Some(11.0), Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
-        let judged = judge(&scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
         assert_eq!(judged.failures.len(), 1, "{:?}", judged.failures);
         assert!(judged.failures[0].contains("worse than the recorded 12"));
     }
@@ -709,7 +773,7 @@ mod tests {
     #[test]
     fn a_listed_entry_that_meets_its_target_says_remove_it() {
         let (scores, ir, comparators) = passing();
-        let judged = judge(&scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 12.0)], &[("b", 100.0)]));
         assert_eq!(judged.failures.len(), 1, "{:?}", judged.failures);
         assert!(judged.failures[0].contains("remove it"));
     }
@@ -718,10 +782,10 @@ mod tests {
     fn an_rss_miss_is_judged_against_the_lowest_peer() {
         // 30 KB against a lowest peer of 50 KB is 0.6x: a miss. Recorded 30, 30.5 is within 3%.
         let (scores, ir, comparators) = one_bench(run_of(Some(20.0), Some(30.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(70.0)));
-        let unlisted = judge(&scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
+        let unlisted = judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
         assert!(unlisted.failures[0].contains("rss"), "{:?}", unlisted.failures);
         let (scores, ir, comparators) = one_bench(run_of(Some(20.0), Some(30.5)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(70.0)));
-        let listed = judge(&scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Rss, 30.0)], &[("b", 100.0)]));
+        let listed = judge(&JS3, &scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Rss, 30.0)], &[("b", 100.0)]));
         assert!(listed.failures.is_empty(), "{:?}", listed.failures);
         assert_eq!(listed.rows[0].verdict, "score ok, rss debt, ir ok");
     }
@@ -729,7 +793,7 @@ mod tests {
     #[test]
     fn a_quench_fail_is_a_failure_and_never_debt() {
         let (scores, ir, comparators) = one_bench(run_of(None, Some(10.0)), run_of(Some(10.0), Some(50.0)), run_of(Some(5.0), Some(40.0)));
-        let judged = judge(&scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 1.0)], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[("b", "no-jit", Metric::Score, 1.0)], &[("b", 100.0)]));
         assert!(judged.failures.iter().any(|failure| failure.contains("FAILed")), "{:?}", judged.failures);
         assert!(judged.misses.is_empty());
     }
@@ -737,7 +801,7 @@ mod tests {
     #[test]
     fn no_peer_is_not_judged() {
         let (scores, ir, comparators) = one_bench(run_of(Some(1.0), Some(10.0)), run_of(None, None), run_of(None, None));
-        let judged = judge(&scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[("b", 100.0)]));
         assert!(judged.failures.is_empty(), "{:?}", judged.failures);
         assert_eq!(judged.rows[0].verdict, "score no peer, rss no peer, ir ok");
     }
@@ -746,23 +810,23 @@ mod tests {
     fn ir_growth_past_the_ceiling_fails() {
         let (scores, _, comparators) = passing();
         let grown = BTreeMap::from([("b".to_owned(), Some(102.0))]);
-        assert_eq!(judge(&scores, &grown, &comparators, &debt(&[], &[("b", 100.0)])).failures.len(), 1);
+        assert_eq!(judge(&JS3, &scores, &grown, &comparators, &debt(&[], &[("b", 100.0)])).failures.len(), 1);
         let within = BTreeMap::from([("b".to_owned(), Some(100.9))]);
-        assert!(judge(&scores, &within, &comparators, &debt(&[], &[("b", 100.0)])).failures.is_empty());
+        assert!(judge(&JS3, &scores, &within, &comparators, &debt(&[], &[("b", 100.0)])).failures.is_empty());
     }
 
     #[test]
     fn ir_without_a_ceiling_or_a_count_fails() {
         let (scores, ir, comparators) = passing();
-        assert_eq!(judge(&scores, &ir, &comparators, &debt(&[], &[])).failures.len(), 1);
+        assert_eq!(judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[])).failures.len(), 1);
         let missing = BTreeMap::from([("b".to_owned(), None)]);
-        assert_eq!(judge(&scores, &missing, &comparators, &debt(&[], &[("b", 100.0)])).failures.len(), 1);
+        assert_eq!(judge(&JS3, &scores, &missing, &comparators, &debt(&[], &[("b", 100.0)])).failures.len(), 1);
     }
 
     #[test]
     fn stale_entries_for_unmeasured_benches_fail() {
         let (scores, ir, comparators) = passing();
-        let judged = judge(&scores, &ir, &comparators, &debt(&[("gone", "no-jit", Metric::Score, 3.0)], &[("b", 100.0), ("gone", 5.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[("gone", "no-jit", Metric::Score, 3.0)], &[("b", 100.0), ("gone", 5.0)]));
         assert_eq!(judged.failures.len(), 2, "{:?}", judged.failures);
     }
 
@@ -794,11 +858,11 @@ mod tests {
     #[test]
     fn the_debt_list_round_trips_and_rejects_duplicates() {
         let text = "# header\nb no-jit score 12.5\nc default rss 300\nir b 100\n";
-        let parsed = parse_debt(text).unwrap();
+        let parsed = parse_debt(&JS3, text).unwrap();
         assert_eq!(parsed, debt(&[("b", "no-jit", Metric::Score, 12.5), ("c", "default", Metric::Rss, 300.0)], &[("b", 100.0)]));
         assert_eq!(render_debt("# header\n", &parsed), text);
-        assert!(parse_debt("b no-jit score 1\nb no-jit score 2\n").is_err());
-        assert!(parse_debt("b xx score 1\n").is_err());
+        assert!(parse_debt(&JS3, "b no-jit score 1\nb no-jit score 2\n").is_err());
+        assert!(parse_debt(&JS3, "b xx score 1\n").is_err());
     }
 
     #[test]
@@ -809,7 +873,7 @@ mod tests {
             (pair("node-jitless", "good"), run_of(Some(10.0), Some(50.0))),
             (pair("node-jitless", "bad"), run_of(Some(10.0), Some(50.0))),
         ]);
-        let judged = judge(&scores, &ir, &comparators, &debt(&[], &[("good", 1.0), ("bad", 1.0)]));
+        let judged = judge(&JS3, &scores, &ir, &comparators, &debt(&[], &[("good", 1.0), ("bad", 1.0)]));
         assert_eq!(judged.rows[0].bench, "bad");
         assert!(table(&judged.rows).lines().nth(1).unwrap().starts_with("bad"));
     }

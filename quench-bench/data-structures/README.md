@@ -12,6 +12,13 @@ Quench runs the Node solution, the same source Node runs. Linear: TOD-2275.
     ./run.py --scale 0.1 --quench ../../target/experiment/quench   # wall time + peak RSS
     ./ir.py --ds unionfind --cases chain --n 20000                 # Ir per op, timed region
     ./cgself.py /tmp/cg.out.2 ...                                  # self Ir per function
+    ./gate.py OUT --runs results/A.jsonl --ir results/B.ir.jsonl     # inputs of the gate step
+
+Gate: quench-gate step `ds-budgets` (crates/quench-gate/src/suite_budgets.rs, the same judge as
+`js3-budgets`) holds every structure in every mode to the target below, with the shrink-only
+debt list crates/quench-tier-corpus/ds_budgets.txt (seed: QUENCH_DEBT_WRITE=1):
+
+    QUENCH_DS_SWEEP=OUT QUENCH_DS_COMPARATORS=OUT/comparators.txt quench-gate --only ds-budgets
 
 `run.py`: one process per (structure, case) like upstream, median of the timed reps, geometric
 mean of the 10 cases per structure, peak RSS through `rss_exec` (wait4), checksum and verify
