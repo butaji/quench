@@ -87,7 +87,6 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
     let mut image = assemble(program, functions, symbols.finish(), &sites)?;
     image.regexps = regexps(program);
     if quench_runtime::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: {} step records: {}", program.source_name, demand::step_records(&image, program));
         eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
     }
     Ok(image)
@@ -163,7 +162,6 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
     let mut image = assemble(program, functions, symbols.finish(), &std::collections::BTreeMap::new())?;
     image.wasm = wasm;
     if quench_runtime::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: {} step records: {}", program.source_name, demand::step_records(&image, program));
         eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
     }
     Ok(image)
