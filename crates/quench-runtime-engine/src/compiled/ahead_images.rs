@@ -288,8 +288,11 @@ impl Vm {
 
     /// `function`'s lane body from `images`, linked at the address it will run.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
-        let linked_live: &LiveImage = images.linked.as_ref()?;
-        let lane = images.image.functions.get(function as usize)?.lane.as_ref()?;
+        let Some(linked_live) = images.linked.as_ref() else { refuse_lane(function, "the image did not link"); return None; };
+        let Some(lane) = images.image.functions.get(function as usize).and_then(|function| function.lane.as_ref()) else {
+            refuse_lane(function, "the image holds no lane body for it");
+            return None;
+        };
         let fault_poll = lane.fault_poll;
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
             refuse_lane(function, "no unit"); return None;
@@ -367,7 +370,13 @@ impl Vm {
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
-        images.linked = live::install(&images.image, self).ok();
+        let linked = live::install(&images.image, self);
+        if let Err(why) = &linked
+            && quench_runtime::trace::Channel::AotLanes.on()
+        {
+            eprintln!("aot-lanes: image did not link: {why}");
+        }
+        images.linked = linked.ok();
         let installed = images.linked.is_some();
         self.programs.add_ahead_images(images);
         if installed { self.programs.enable_ahead_lane_bodies(); }
