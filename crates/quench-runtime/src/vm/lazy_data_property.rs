@@ -376,8 +376,17 @@ impl Vm {
         atoms.dedup();
         for atom in atoms {
             let key = PropertyKey::string(atom);
-            if self.is_pending_lazy_data_property(globals, key) {
-                self.materialize_lazy_data_property(p, globals, key)?;
+            // A group whose initializer the host keeps from a run saved at rest stays pending.
+            while let Some(group) = self.lazy_data_group(globals, key) {
+                let initializer = self.heap.environment_slot(group, GroupSlot::Initializer as usize).unwrap_or(Value::UNDEFINED);
+                let settles = self.heap.function(initializer)
+                    .filter(|function| matches!(function.kind, FunctionKind::Native(Native::HostFunction)))
+                    .and_then(|function| self.host_operation_index(function.env))
+                    .is_none_or(|index| self.host.settles_at_rest(index as usize));
+                if self.lazy_group_state(group) != GroupState::Pending || !settles {
+                    break;
+                }
+                self.materialize_lazy_group(p, group)?;
             }
         }
         Ok(())
