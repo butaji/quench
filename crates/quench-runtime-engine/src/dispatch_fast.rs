@@ -827,6 +827,11 @@ fn requicken(ip: Ip, handler: Handler) {
         if loop_kernel::requicken_kernel(ip, handler) {
             return;
         }
+        // A record whose result carries flags got the general step at its edge (`derive_lane_view`), which
+        // decodes them; it keeps it, as the generated rows read `a` as a plain register.
+        if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
+            return;
+        }
         (*ip.cast_mut()).handler = handler as *const ();
     }
 }
