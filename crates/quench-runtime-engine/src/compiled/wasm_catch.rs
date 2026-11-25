@@ -87,7 +87,7 @@ fn catches(error: &JsError) -> bool {
 /// The catch of a raised `status`: where a handler catches the error the call left raised, the error
 /// leaves the context and its thrown value goes to `out`, and the status is 0. Otherwise `status`
 /// returns unchanged and the error stays raised for the activation to leave with.
-unsafe extern "C" fn exception_catch_callout(context: *mut CallContext, status: i64, out: *mut u64) -> i64 {
+pub(super) unsafe extern "C" fn exception_catch_callout(context: *mut CallContext, status: i64, out: *mut u64) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
     let context = unsafe { &mut *context };
     let vm = unsafe { &mut *context.vm.cast::<Vm>() };
@@ -128,7 +128,7 @@ impl Emitter<'_, '_> {
         ));
         let context = self.body.core.context;
         let out = self.slot_address(slot, 0);
-        let target = exception_catch_callout as *const () as usize;
+        let target = crate::compiled::slow_paths::EngineSlowPath::ExceptionCatch;
         let caught = self.call_leaf(target, &[context, status, out]);
         let uncaught = self.body.core.builder.create_block();
         let handled = self.body.core.builder.create_block();

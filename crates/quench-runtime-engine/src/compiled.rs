@@ -83,6 +83,7 @@ pub(crate) fn performed(instruction: impl std::borrow::Borrow<quench_runtime::by
 /// What an instruction means to the compiled tiers, classified from the shared decode (`staged/meaning_compiled.rs`).
 #[path = "compiled/meaning_compiled.rs"]
 pub(crate) mod meaning_compiled;
+#[path = "compiled/slow_paths.rs"] pub(crate) mod slow_paths;
 
 /// The Number unary operation a record denotes with its operator (`NumberUnary::from_js_instruction`
 /// asked of the record's opcode), so a tier passes the record and names no opcode.

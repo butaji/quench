@@ -341,7 +341,7 @@ impl Emitter<'_, '_> {
         ));
         let out = self.slot_address(slot, 0);
         let request = self.constant(Width::I64, request as i64);
-        let target = table_op_callout as *const () as usize;
+        let target = crate::compiled::slow_paths::EngineSlowPath::TableOp;
         // The callout runs the table's operation, which may run JS (a grow's or fill's
         // conversions), so the frame's references are held across it.
         let roots = self.root();
