@@ -28,6 +28,7 @@ pub(crate) fn of(native: Native) -> Option<BuiltinRow> {
         Native::NumberIsInteger => return Some(BuiltinRow::IsInteger),
         Native::ArrayPush => return Some(BuiltinRow::Push),
         Native::ArrayPop => return Some(BuiltinRow::Pop),
+        Native::ArrayIsArray => return Some(BuiltinRow::IsArray),
         _ => {}
     }
     match math_call(native)? {

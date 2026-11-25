@@ -53,13 +53,15 @@ pub enum BuiltinRow {
     Push,
     /// `Array.prototype.pop` of a dense array (`staged::builtins::array_pop`).
     Pop,
+    /// `Array.isArray` of an ordinary array (`staged::builtins::is_plain_array`).
+    IsArray,
 }
 
 impl BuiltinRow {
     /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 6] = [
+    pub const ALL: [BuiltinRow; 7] = [
         BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Imul,
-        BuiltinRow::Push, BuiltinRow::Pop,
+        BuiltinRow::Push, BuiltinRow::Pop, BuiltinRow::IsArray,
     ];
 
     /// The row's name in the stencil object, after `builtin_`.
@@ -71,6 +73,7 @@ impl BuiltinRow {
             BuiltinRow::Imul => "imul",
             BuiltinRow::Push => "push",
             BuiltinRow::Pop => "pop",
+            BuiltinRow::IsArray => "is_array",
         }
     }
 

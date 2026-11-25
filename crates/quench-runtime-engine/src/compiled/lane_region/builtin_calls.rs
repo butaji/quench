@@ -132,18 +132,10 @@ impl Lowering<'_, '_> {
     /// brand is one), so such a record is no arguments object and `Array.isArray` holds of it. Any other value leaves
     /// at `exit`.
     fn plain_array_argument(&mut self, state: &mut State, register: Register, exit: ir::Block) {
-        use quench_runtime::tier_surface::NATIVE_ARRAY_LAYOUT as ARRAY;
         let base = self.tagged(state, register);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
-        let direct = quench_runtime::staged::value::is_direct_array(&mut stage, base);
-        continues(stage.guard(direct, exit));
-        let present = stage.ne_imm(records, 0u32);
-        continues(stage.guard(present, exit));
-        let record = elements::array_record(&mut stage, records, base);
-        let payload = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-        let plain = quench_runtime::staged::object::plain_payload(&mut stage, payload);
-        continues(stage.guard(plain, exit));
+        continues(quench_runtime::staged::builtins::is_plain_array(&mut stage, records, base, exit));
     }
 
     /// The word of the dispatch payload at `offset`.
