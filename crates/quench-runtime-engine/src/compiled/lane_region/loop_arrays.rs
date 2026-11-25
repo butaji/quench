@@ -88,10 +88,7 @@ pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
                 _ if super::native_calls::searches(intrinsics, pc) => (Some(instruction.register_c()), false),
                 _ => continue,
             };
-            // A held field's array is hoisted where the region's arrays are typed arrays: a string or
-            // record array read through a field keeps its rows.
-            let held = |at| matches!(views, ElementViews::Typed(Some(_))) && held(at);
-            let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, (|at| captured(header, at), held),
+            let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, (|at| captured(header, at), &held),
                 |slot| typed_captures.contains(&slot), pc, base)) else { continue };
             // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
             // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
@@ -167,5 +164,24 @@ impl Lowering<'_, '_> {
             TypedAccess::Store => matches!(array.views, ElementViews::Typed(_) | ElementViews::Double) && array.writable,
         };
         typed.then_some(access)
+    }
+}
+
+impl Lowering<'_, '_> {
+    /// Whether the read at `pc` is a field read the loop's entry record answers (`field_read`'s held read), where the
+    /// region's arrays are typed arrays: a string or record array read through a field keeps its rows.
+    pub(crate) fn held_field(&self, pc: usize) -> bool {
+        matches!(self.views, ElementViews::Typed(Some(_))) && self.entry_fields.get(pc).copied().flatten().is_some()
+            && matches!(crate::compiled::performed(self.unit.instructions[pc]), Some(quench_runtime::staged::Operation::GetField { .. }))
+    }
+
+    /// The payload's typed view records (`JsStepHead::typed_view_directory`), which a view proof reads.
+    pub(crate) fn typed_records(&mut self) -> quench_runtime::staged::typed_view::TypedRecords<ir::Value> {
+        let mut word = |offset| emit_js_payload_word(&mut self.builder, self.payload, offset);
+        quench_runtime::staged::typed_view::TypedRecords {
+            directory: word(std::mem::offset_of!(JsStepDispatch, head.typed_view_directory)),
+            pages: word(std::mem::offset_of!(JsStepDispatch, head.typed_view_pages)),
+            relocations: word(std::mem::offset_of!(JsStepDispatch, head.buffer_relocations)),
+        }
     }
 }

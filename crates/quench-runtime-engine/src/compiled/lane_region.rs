@@ -25,7 +25,7 @@ use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Re
 use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
-use quench_runtime::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
+use quench_runtime::staged::typed_view::{prove_typed_view, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
@@ -4455,11 +4455,7 @@ impl Lowering<'_, '_> {
     /// The proof of the typed array `bits` for `access`, leaving at `miss`, whose view the
     /// array's variables then hold.
     fn prove_typed_view_into(&mut self, variables: ArrayVariables, bits: ir::Value, access: ViewAccess, miss: ir::Block) {
-        let records = TypedRecords {
-            directory: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_directory)),
-            pages: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_pages)),
-            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
-        };
+        let records = self.typed_records();
         let view = prove_typed_view(&mut super::object_slots::emit(&mut self.builder), records, bits, access, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(variables.values, view.values);
@@ -4796,12 +4792,6 @@ impl Lowering<'_, '_> {
     /// than leave, as this unit's other reads would leave one recompile at a time.
     fn left_a_field_read(&self) -> bool {
         self.generic.iter().any(|pc| self.unit.instructions.get(*pc).is_some_and(|instruction| matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))))
-    }
-
-    /// Whether the read at `pc` is a field read the loop's entry record answers (`field_read`'s held read).
-    pub(crate) fn held_field(&self, pc: usize) -> bool {
-        self.entry_fields.get(pc).copied().flatten().is_some()
-            && matches!(crate::compiled::performed(self.unit.instructions[pc]), Some(quench_runtime::staged::Operation::GetField { .. }))
     }
 
     /// Word `word` of the loop's entry record (`frame_fields::entry_record_word`).

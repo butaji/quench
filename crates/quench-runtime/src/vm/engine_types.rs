@@ -2406,13 +2406,6 @@ pub struct JsStepDispatch {
     /// Whether the host makes a strict function's terminal calls proper tail calls
     /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
     pub proper_tail_calls: u64,
-    /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
-    /// refreshed with the other record bases, and the address of the process's buffer-relocation count
-    /// (`buffer_relocations_address`): what a typed array's view proof reads
-    /// (`staged::typed_view::TypedRecords`).
-    pub typed_view_directory: usize,
-    pub typed_view_pages: usize,
-    pub buffer_relocations: usize,
     pub outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]

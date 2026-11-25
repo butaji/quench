@@ -56,8 +56,8 @@ impl NativeKind {
         }
     }
 
-    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one).
-    pub fn is_int32(self) -> bool { self.element_type().is_int32() }
+    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one): every integer kind but Uint32.
+    #[inline] pub const fn is_int32(self) -> bool { matches!(self.element, Element::Integer(integer) if !matches!(integer, Integer::Unsigned32)) }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.
