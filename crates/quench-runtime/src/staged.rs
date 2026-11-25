@@ -136,6 +136,9 @@ pub(crate) mod slot_store;
 pub mod strings;
 pub mod string_length;
 pub(crate) mod code_units;
+/// The rows host operations declare (`Host::function_row`).
+#[cfg(not(stencil_build))]
+pub mod host_rows;
 pub(crate) mod parse_int;
 /// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
 pub(crate) mod string_text;

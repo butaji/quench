@@ -295,6 +295,18 @@ impl Vm {
             .active_native_env()
             .and_then(|environment| self.host_operation_index(environment))
             .ok_or_else(|| JsError("invalid host function environment".into()))?;
+        if let Some(plain) = crate::staged::host_rows::concrete_plain(self.host.function_row(index as usize), args) {
+            // The declared operation answers `false` for a call it leaves to the operation's own steps.
+            let written = self.invoke_host_operation(plain, receiver, args)?;
+            if written != Value::FALSE {
+                return Ok(Value::UNDEFINED);
+            }
+        }
+        self.invoke_host_operation(index, receiver, args)
+    }
+
+    /// Runs host operation `index`'s callback for the active host function's call.
+    fn invoke_host_operation(&mut self, index: u32, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let callback = self
             .host
             .function_callback(index as usize)

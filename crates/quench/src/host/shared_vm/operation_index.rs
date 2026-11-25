@@ -210,3 +210,15 @@ mod tests {
         assert_eq!(sorted_indices::<1>(&DESCRIPTORS[..1]), [0]);
     }
 }
+
+/// The rows an operation declares in the binding table (`[row KIND(...)]`, `host_row!`), one
+/// constructor per `HostRow` kind, naming operations by their literal names.
+pub(super) mod host_rows {
+    use quench_runtime::staged::host_rows::HostRow;
+
+    /// `HostRow::PlainText`: past the first `bound` arguments, strings alone are first written
+    /// by operation `plain`.
+    pub(in crate::host::shared_vm) const fn plain_text(bound: u8, plain: &str) -> HostRow {
+        HostRow::PlainText { bound, plain: super::static_operation(plain).0 }
+    }
+}

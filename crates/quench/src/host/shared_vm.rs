@@ -18,8 +18,19 @@ pub(crate) use operation_index::{operation, static_operation};
 
 // Operation identities must remain available without retaining callback addresses.
 // Both projections preserve declaration order and platform-specific entries.
+/// An operation's declared row (`[row KIND(ARGUMENTS)]` after its callback): the staged row its
+/// calls run first (`Host::function_row`), built by `operation_index::host_rows::KIND`.
+macro_rules! host_row {
+    () => { None };
+    ($kind:ident($($argument:expr),*)) => { Some(operation_index::host_rows::$kind($($argument),*)) };
+}
+
 macro_rules! node_bindings {
-    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path $([row $kind:ident($($argument:expr),*)])? ),* $(,)?) => {
+        /// Each operation's declared row, by index (`host_row!`).
+        const OPERATION_ROWS: &[Option<quench_runtime::staged::host_rows::HostRow>] = &[
+            $($(#[$attribute])* host_row!($($kind($($argument),*))?)),*
+        ];
         const OPERATION_DESCRIPTORS: &[HostFunctionDescriptor] = quench_runtime::host_functions![@descriptors;
             $($(#[$attribute])* $scope $name ($length) => $callback),*
         ];
@@ -697,7 +708,8 @@ node_bindings! {
         method "errorSetSourceMapsEnabled" (1) => crate::modules::node_errors_shared_vm::set_source_maps_enabled,
         method "errorTriggerUncaughtException" (2) => crate::modules::node_errors_shared_vm::trigger_uncaught_exception,
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
-        method "consoleWrite" (0) => crate::modules::console_shared_vm::write,
+        method "consoleWrite" (0) => crate::modules::console_shared_vm::write [row plain_text(1, "consoleWritePlain")],
+        method "consoleWritePlain" (0) => crate::modules::console_shared_vm::write_plain,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
         method "consoleMethod" (0) => crate::modules::console_class_shared_vm::invoke,
         method "consoleConstructor" (1) => crate::modules::console_class_shared_vm::constructor,
@@ -2740,6 +2752,10 @@ impl quench_runtime::Host for NodeHost {
             }
         }
         self.operations.get(index).copied()
+    }
+
+    fn function_row(&self, index: usize) -> Option<quench_runtime::staged::host_rows::HostRow> {
+        OPERATION_ROWS.get(index).copied().flatten()
     }
 
     /// The host operations a lane calls beside its frameless activations: each reads no
