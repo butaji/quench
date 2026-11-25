@@ -50,7 +50,7 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
 
 /// A loop's array source at `pc`: a register the loop does not redefine, or a hoisted capture
 /// read (`captured`) of a typed array when compiled (`typed_capture`).
-fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, written: &BTreeSet<Register>,
+fn array_source(unit: &super::super::lane_unit::Unit, leaders: &quench_runtime::dataflow::BitSet, written: &BTreeSet<Register>,
     captured: impl Fn(usize) -> bool, typed_capture: impl Fn(u16) -> bool, pc: usize, base: Register) -> Option<ArraySource> {
     // The loop's sole entering edge proves the view of any base its body does not
     // redefine, an inlined frame's argument as well as the caller's own register.
@@ -68,7 +68,7 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// The receiver of an append (`push`) is a writable view too, where the region's arrays are dense:
 /// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
 /// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
-pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
+pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &quench_runtime::dataflow::BitSet,
     captured: impl Fn(usize, usize) -> bool, views: ElementViews,
     typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)], typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {

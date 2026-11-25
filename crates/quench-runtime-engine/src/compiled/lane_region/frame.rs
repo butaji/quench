@@ -42,7 +42,7 @@ pub(crate) struct Sites<'a> {
 /// `State` keeps, with the stage's builder emitting each operation's IR.
 pub(crate) struct EmitFrame<'a> {
     pub(crate) registers: &'a mut Registers,
-    pub(crate) written: &'a mut CompoundBitSet,
+    pub(crate) written: &'a mut quench_runtime::dataflow::BitSet,
     pub(crate) state: &'a mut State,
     pub(crate) edges: Edges,
     pub(crate) constants: &'a [quench_runtime::bytecode::Constant],
@@ -391,7 +391,7 @@ pub(crate) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut R
 /// Define `register` with `value` and `fact`, retiring the proofs it carried.
 #[inline(always)]
 pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    written: &mut CompoundBitSet, state: &mut State, register: Register, value: ir::Value,
+    written: &mut quench_runtime::dataflow::BitSet, state: &mut State, register: Register, value: ir::Value,
     mut fact: RegisterFact) {
     let index = usize::from(register);
     written.insert(index);
@@ -435,7 +435,7 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
 /// `source`'s value into `destination`, with every fact proved of it.
 #[inline(always)]
 pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    written: &mut CompoundBitSet, state: &mut State, destination: Register, source: Register) -> ir::Value {
+    written: &mut quench_runtime::dataflow::BitSet, state: &mut State, destination: Register, source: Register) -> ir::Value {
     let source_index = usize::from(source);
     let fact = state.values[source_index];
     let value = register_read(builder, registers, state, source);

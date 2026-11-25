@@ -17,10 +17,10 @@
 use crate::ext_traits::*;
 use super::repr::{variant_of, Variant};
 use super::*;
-use cranelift_codegen::bitset::CompoundBitSet;
+use quench_runtime::dataflow::BitSet;
 
 /// The frame slots (original registers) that hold a Number on every path into a row.
-type Held = CompoundBitSet;
+type Held = BitSet;
 
 /// The numeric kinds whose stencil leaves on any operand that is no Number. `Concat`, the one other variant
 /// of `Kind::Add`, is excluded where it is selected (`variant_of`).
