@@ -7517,6 +7517,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;
+        self.lane_tiers_run = None;
         #[cfg(feature = "jit")]
         crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
         self.set_narrow_runs(mode == ExecutionMode::Interpreted);
@@ -7565,6 +7566,16 @@ impl Vm {
     /// resume the protected-page fault back into the interpreter.
     pub(crate) fn compiled_poll_page(&self) -> Option<(usize, usize)> {
         native_poll_page(&self.execution_interrupt)
+    }
+
+    /// Whether any compiled tier may run (`tier_may_run` of every tier), decided once per execution
+    /// mode and memory policy rather than at every lane entry.
+    #[inline]
+    pub(crate) fn lane_tiers_run(&mut self) -> bool {
+        match self.lane_tiers_run {
+            Some(run) => run,
+            None => *self.lane_tiers_run.insert(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
+        }
     }
 
     /// Whether any of `tiers` runs: compiled execution under a memory policy

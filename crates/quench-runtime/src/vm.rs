@@ -2174,6 +2174,9 @@ pub struct Vm {
     pub spare_lane_stacks: Vec<Box<crate::vm::engine_types::LaneStack>>,
     /// Whether Wasm functions with a compiled denotation run as native code.
     pub execution_mode: ExecutionMode,
+    /// Whether any compiled tier may run under this execution mode and memory policy, decided at
+    /// the first lane run after either changes (`Vm::lane_tiers_run`): none until then.
+    pub lane_tiers_run: Option<bool>,
     pub native_execution_rejections: u64,
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
     pub js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<crate::vm::engine_types::NumericImage>>>,
