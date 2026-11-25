@@ -237,6 +237,79 @@ pub(crate) fn from_char_code_unit(number: f64) -> u16 {
     crate::value::number_to_u32(number) as u16
 }
 
+/// Whether the code unit `unit` is ECMAScript WhiteSpace or LineTerminator (what `trim` strips):
+/// U+0009..U+000D, U+0020, U+00A0, and, of a wide string, U+1680, U+2000..U+200A, U+2028, U+2029,
+/// U+202F, U+205F, U+3000 and U+FEFF. A narrow unit is at most U+00FF, so it tests the first three.
+#[inline(always)]
+pub fn is_trim_space<S: Stage>(stage: &mut S, width: UnitWidth, unit: S::Word) -> S::Cond {
+    let in_range = |stage: &mut S, first: u64, count: u64| {
+        let offset = stage.add_imm(unit, first.wrapping_neg());
+        let bound = stage.constant(count);
+        stage.ult(offset, bound)
+    };
+    let controls = in_range(stage, 0x09, 5);
+    let space = stage.eq_imm(unit, 0x20u64);
+    let no_break = stage.eq_imm(unit, 0xA0u64);
+    let narrow = stage.any(controls, space);
+    let narrow = stage.any(narrow, no_break);
+    if width == UnitWidth::Narrow {
+        return narrow;
+    }
+    let mut found = narrow;
+    let spaces = in_range(stage, 0x2000, 11);
+    found = stage.any(found, spaces);
+    let separators = in_range(stage, 0x2028, 2);
+    found = stage.any(found, separators);
+    for single in [0x1680u64, 0x202F, 0x205F, 0x3000, 0xFEFF] {
+        let same = stage.eq_imm(unit, single);
+        found = stage.any(found, same);
+    }
+    found
+}
+
+/// The units `trim` keeps of the flat string of `width` at `units`, `length` long: the start and end
+/// left once the whitespace (`is_trim_space`) at the chosen ends is stripped. `trimStart` keeps the
+/// end, `trimEnd` the start. The one body of `trim`, `trimStart` and `trimEnd` for every tier.
+#[inline(always)]
+pub fn trim_bounds<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, length: S::Word,
+    (from_start, from_end): (bool, bool)) -> (S::Word, S::Word) {
+    let zero = stage.constant(0);
+    let start = if from_start {
+        let [start] = stage.loop_words([zero], #[inline(always)] |stage, [index]| {
+            let inside = stage.ult(index, length);
+            let space = stage.choose(inside, #[inline(always)] |stage| {
+                let unit = super::code_units::code_unit(stage, width == UnitWidth::Wide, units, index);
+                let space = is_trim_space(stage, width, unit);
+                let (one, none) = (stage.constant(1), stage.constant(0));
+                stage.select(space, one, none)
+            }, #[inline(always)] |stage| stage.constant(0));
+            let more = stage.ne_imm(space, 0u64);
+            (more, [stage.add(index, space)])
+        });
+        start
+    } else {
+        zero
+    };
+    let end = if from_end {
+        let [end] = stage.loop_words([length], #[inline(always)] |stage, [end]| {
+            let inside = stage.ult(start, end);
+            let space = stage.choose(inside, #[inline(always)] |stage| {
+                let last = stage.add_imm(end, u64::MAX);
+                let unit = super::code_units::code_unit(stage, width == UnitWidth::Wide, units, last);
+                let space = is_trim_space(stage, width, unit);
+                let (one, none) = (stage.constant(1), stage.constant(0));
+                stage.select(space, one, none)
+            }, #[inline(always)] |stage| stage.constant(0));
+            let more = stage.ne_imm(space, 0u64);
+            (more, [stage.sub(end, space)])
+        });
+        end
+    } else {
+        length
+    };
+    (start, end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +398,38 @@ mod tests {
         assert_eq!(concrete_char_at(ConcreteString::Units(wide), table, Value::number(1.5)), None);
         let no_table: *const Value = std::ptr::null();
         assert_eq!(concrete_char_at(ConcreteString::Units(wide), no_table, Value::integer(2)), None, "no table yet");
+    }
+
+    /// The ECMAScript WhiteSpace and LineTerminator units, as the specification lists them.
+    fn spec_space(unit: u16) -> bool {
+        matches!(unit, 0x09..=0x0D | 0x20 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF)
+    }
+
+    #[test]
+    fn trim_space_is_the_specification_set_for_every_unit() {
+        for unit in 0..=u16::MAX {
+            assert_eq!(is_trim_space(&mut stage(), UnitWidth::Wide, u64::from(unit)), spec_space(unit), "{unit:#x}");
+        }
+        for unit in 0..=u8::MAX {
+            assert_eq!(is_trim_space(&mut stage(), UnitWidth::Narrow, u64::from(unit)), spec_space(u16::from(unit)), "{unit:#x}");
+        }
+    }
+
+    #[test]
+    fn trim_bounds_strip_the_chosen_ends() {
+        let narrow = |text: &[u8], ends| {
+            let (start, end) = trim_bounds(&mut stage(), UnitWidth::Narrow, text.as_ptr() as u64, text.len() as u64, ends);
+            (start, end)
+        };
+        assert_eq!(narrow(b"", (true, true)), (0, 0));
+        assert_eq!(narrow(b"   ", (true, true)), (3, 3));
+        assert_eq!(narrow(b"   ", (false, true)), (0, 0));
+        assert_eq!(narrow(b" \t a b \n", (true, true)), (3, 6));
+        assert_eq!(narrow(b" \t a b \n", (true, false)), (3, 9));
+        assert_eq!(narrow(b" \t a b \n", (false, true)), (0, 6));
+        assert_eq!(narrow(b"\xa0x\xa0", (true, true)), (1, 2));
+        let wide: Vec<u16> = [0xFEFF, 0x3000, 0x41, 0x2028, 0x42, 0x205F].to_vec();
+        let (start, end) = trim_bounds(&mut stage(), UnitWidth::Wide, wide.as_ptr() as u64, wide.len() as u64, (true, true));
+        assert_eq!((start, end), (2, 5));
     }
 }

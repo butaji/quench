@@ -1,47 +1,28 @@
 //! ASCII text builtins (trim, case, pad, repeat): one body per builtin, over flat unit slices.
 //! The general natives (`vm::primitives`, `vm::wtf16::conversions::case`) and the in-place ASCII
-//! paths (`vm::inplace::ascii_text`) both call these, so each rule is written once. They are plain
-//! functions rather than `Stage`-generic: each is a loop over text units that the `Stage` trait
-//! does not express yet, and the caller makes the one allocation of the result.
+//! paths (`vm::inplace::ascii_text`) both call these, so each rule is written once. Trim is the
+//! staged row (`strings::trim_bounds`) run on `Concrete`; case, pad and repeat are still plain
+//! loops over units. The caller makes the one allocation of the result.
 
 use std::ops::Range;
 
 /// The filler of `padStart` and `padEnd` when none is given.
 pub(crate) const PAD_FILL: &[u8] = b" ";
 
-/// The ECMAScript WhiteSpace and LineTerminator code units that `trim` strips.
+/// The ECMAScript WhiteSpace and LineTerminator code units that `trim` strips: the staged test
+/// (`strings::is_trim_space`) on `Concrete`.
 pub(crate) fn is_ecma_whitespace(unit: u16) -> bool {
-    matches!(
-        unit,
-        0x0009..=0x000D
-            | 0x0020
-            | 0x00A0
-            | 0x1680
-            | 0x2000..=0x200A
-            | 0x2028..=0x2029
-            | 0x202F
-            | 0x205F
-            | 0x3000
-            | 0xFEFF
-    )
+    let mut stage = super::Concrete::new(std::ptr::null());
+    super::strings::is_trim_space(&mut stage, super::builtins::UnitWidth::Wide, u64::from(unit))
 }
 
-/// The units that `trim`, `trimStart` or `trimEnd` keeps of `units`: the range left once the
-/// whitespace at the chosen ends (`from_start`, `from_end`) is stripped. Derives from the
-/// general `trim` of `primitives::call_primitive_native`; a Latin-1 or ASCII unit widens to its code.
+/// The units that `trim`, `trimStart` or `trimEnd` keeps of `units` (bytes of an ASCII or Latin-1
+/// string, or wide units): the staged row (`strings::trim_bounds`) on `Concrete`, over the units in place.
 pub(crate) fn trim_range<T: Copy + Into<u16>>(units: &[T], from_start: bool, from_end: bool) -> Range<usize> {
-    let is_space = |unit: &T| is_ecma_whitespace((*unit).into());
-    let start = if from_start {
-        units.iter().position(|unit| !is_space(unit)).unwrap_or(units.len())
-    } else {
-        0
-    };
-    let end = if from_end {
-        units.iter().rposition(|unit| !is_space(unit)).map_or(start, |last| last + 1)
-    } else {
-        units.len()
-    };
-    start..end
+    let width = if size_of::<T>() == 2 { super::builtins::UnitWidth::Wide } else { super::builtins::UnitWidth::Narrow };
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let (start, end) = super::strings::trim_bounds(&mut stage, width, units.as_ptr() as u64, units.len() as u64, (from_start, from_end));
+    start as usize..end as usize
 }
 
 /// The ASCII case mapping of `byte`, upper or lower; any other byte maps to itself.
