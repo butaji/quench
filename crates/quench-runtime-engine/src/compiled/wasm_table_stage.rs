@@ -10,7 +10,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use cranelift_codegen::ir::InstBuilder;
 use super::wasm_stage::infallible;
 use super::wasm_call_stage::is_tail_call;
 use super::{
@@ -20,7 +19,7 @@ use super::{
 };
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::tier_surface::{TableTarget, TableWords};
-use quench_runtime::staged::machine::{MachineAccess, MachineFlow, MachineStage};
+use quench_runtime::staged::machine::{MachineAccess, MachineFlow, MachineStage, MachineTail};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
 use quench_runtime::staged::wasm_call::{WasmTable, indirect_target};
@@ -403,7 +402,7 @@ impl Emitter<'_, '_> {
         let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
         let callee = self.body.core.builder.import_signature(callee);
         self.interrupt_safepoint();
-        self.body.core.builder.ins().return_call_indirect(callee, body, &arguments);
+        self.tail_call_indirect(callee, body, &arguments);
     }
 }
 

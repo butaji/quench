@@ -149,7 +149,7 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
 ///   receiver's, `PLAIN`) as the plan's bound `this`, a sloppy callee's through `bind_this` with the
 ///   realm's global object, any other the receiver as it is;
 /// - `call_room`: the one `plain_room` compare, at the plain depth it loads once;
-/// - `call_activate`: the window filled and the plain header pushed (`enter_plain_window`,
+/// - `call_hand_over`: the window filled and the plain header pushed (`enter_plain_window`,
 ///   `protocol::push_plain_at`) or the leaf entered (`lane_run_leaf`), handed back as
 ///   `LaneControl::Resumed`.
 ///
@@ -293,7 +293,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
     }
 
     #[inline(always)]
-    fn call_activate(&mut self, _stage: &mut Concrete, this: u64, _room: quench_runtime::staged::Room<u64>) -> Option<LaneControl> {
+    fn call_hand_over(&mut self, _stage: &mut Concrete, this: u64, _room: quench_runtime::staged::Room<u64>) -> Option<LaneControl> {
         let call = self.call.as_ref()?;
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before

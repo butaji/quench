@@ -182,7 +182,7 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     /// where the frame enters the callee through its cell and takes its completion here
     /// (`call_enter`, `call_settle`). The lane's frame activates (`LaneControl::Resumed`).
     #[inline(always)]
-    fn call_activate(&mut self, _stage: &mut S, _this: S::Word, _room: Room<S::Word>) -> Option<Self::Control> {
+    fn call_hand_over(&mut self, _stage: &mut S, _this: S::Word, _room: Room<S::Word>) -> Option<Self::Control> {
         None
     }
 
@@ -390,7 +390,7 @@ pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F
 }
 
 /// How a direct call ended its step: the callee returned the word, or the frame handed the call to
-/// the callee's activation (`CallFrame::call_activate`), whose control the step ends in.
+/// the callee's activation (`CallFrame::call_hand_over`), whose control the step ends in.
 enum Direct<W, C> {
     Returned(W),
     Activated(C),
@@ -406,7 +406,7 @@ fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fra
     let file = frame.call_registers(stage)?;
     let this = callee_this(stage, frame, file, miss, (site, &plan))?;
     let room = frame.call_room(stage, miss)?;
-    if let Some(control) = frame.call_activate(stage, this, room) {
+    if let Some(control) = frame.call_hand_over(stage, this, room) {
         return Some(Direct::Activated(control));
     }
     fill_arguments(stage, frame, file, room.top, (site, &plan, frame.call_fill().unwrap_or(plan.registers)))?;
