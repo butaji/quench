@@ -9,6 +9,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_bjit::regexp::{self as codes, RegexpCode, RegexpProgram};
+use crate::compiled::stitcher::{self, Behind};
 use quench_bjit::{HOLES, Row, Stencil, padded_holes};
 use quench_regexp::backtrack::matcher::Admission;
 use quench_regexp::backtrack::native::{NativeCode, NativeFn, NativePlan, NativeRestarts, NATIVE_FRAME_WORDS};
@@ -18,7 +19,7 @@ use quench_regexp::backtrack::{Assertion, Inst, UnitTest};
 struct Tables {
     pcs: Box<[usize]>,
     resumes: Box<[usize]>,
-    masks: Box<[[u64; 2]]>,
+    sets: Box<[[u8; 256]]>,
     lists: Box<[u32]>,
     guards: Box<[[u64; 3]]>,
     intervals: Box<[[u32; 4]]>,
@@ -71,8 +72,10 @@ fn assertion_code(assertion: Assertion) -> u8 {
     }
 }
 
-fn stencil(name: &str) -> Option<Stencil> {
-    quench_bjit::rustc::stencil(name)
+
+/// Whether this target's library has the regexp rows (x86-64 builds them; `regexp_entry.rs`).
+pub(crate) fn available() -> bool {
+    stitcher::routine("entry_regexp").is_ok()
 }
 
 /// One placed row: a library row by its codes or a routine, its operand holes (2 to 4) and the
@@ -220,7 +223,7 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
     let mut tables = Tables {
         pcs: vec![0; count].into_boxed_slice(),
         resumes: vec![0; codes::RESUME_KINDS * count].into_boxed_slice(),
-        masks: plan.masks.clone(),
+        sets: plan.masks.iter().map(set_table).collect(),
         lists: plan.lists.clone(),
         guards: plan.guards.iter().map(|guard| admission_words(*guard)).collect(),
         intervals: Box::default(),
@@ -242,7 +245,7 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
     let program = Box::new(RegexpProgram {
         pcs: tables.pcs.as_ptr(),
         resumes: tables.resumes.as_ptr(),
-        masks: tables.masks.as_ptr(),
+        sets: tables.sets.as_ptr(),
         lists: tables.lists.as_ptr(),
         guards: tables.guards.as_ptr(),
         intervals: tables.intervals.as_ptr(),
@@ -262,7 +265,7 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
     });
     let address = &*program as *const RegexpProgram as u64;
     let holes: Vec<[u64; HOLES]> = planned.iter().map(|row| padded_holes([address, u64::from(row.pc), row.holes[0], row.holes[1], row.holes[2]])).collect();
-    let stencils: Vec<Stencil> = planned.iter().map(|row| stencil(&row.name)).collect::<Option<_>>()?;
+    let stencils: Vec<Stencil> = planned.iter().map(|row| stitcher::library(&row.name)).collect::<Option<_>>()?;
     let index_of = |target: Target| match target {
         Target::Pc(pc) => 1 + pc as usize,
         Target::Backtrack => backtrack,
@@ -272,19 +275,10 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
         .map(|((planned, stencil), hole)| Row { stencil, hole, taken: planned.taken.map(index_of), cold: false })
         .collect();
 
-    let entry = stencil("entry_regexp")?;
-    let rows_at = entry.code.len();
-    let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
-    patch_entry(&entry, &mut code[..rows_at], frame_bytes(looks.len()), rows_at)?;
-    // The layout is the rows' alone: a first copy finds the backtrack row's place, which every
-    // row's exit 0 (a failed step) goes to.
-    // SAFETY: `code` holds every row's full length past `rows_at`, which bounds both copies.
-    let near = code.as_ptr() as usize;
-    let (_, offsets) = unsafe { quench_bjit::copy_patch(&placed, code.as_mut_ptr().add(rows_at), |_, _| near) };
-    let backtrack_at = code.as_ptr() as usize + rows_at + offsets[backtrack];
-    let (length, offsets) = unsafe { quench_bjit::copy_patch(&placed, code.as_mut_ptr().add(rows_at), |_, _| backtrack_at) };
-    code.truncate(rows_at + length);
-    let at = |row: usize| rows_at + offsets[row];
+    let entry = stitcher::routine("entry_regexp").ok()?;
+    // Every row's exit 0 (a failed step) is the backtrack row.
+    let (code, _, offsets) = stitcher::stitch_behind((entry, &padded_holes([frame_bytes(looks.len())])), &[], &placed, Behind::Row(backtrack)).ok()?;
+    let at = |row: usize| offsets[row];
     let mut resume_offsets = vec![None; codes::RESUME_KINDS * count];
     for (index, id) in ids.iter().enumerate() {
         resume_offsets[*id] = Some(at(first_resume + index));
@@ -298,22 +292,6 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
         resume_offsets,
         leaves: [match_row.map_or(at(fail), at), at(fail), at(overflow)],
     })
-}
-
-/// Copies the entry routine into `code`: its frame's bytes in hole 0, its call the first row
-/// at `rows_at`.
-fn patch_entry(routine: &Stencil, code: &mut [u8], frame: u64, rows_at: usize) -> Option<()> {
-    code.copy_from_slice(&routine.code);
-    let holes = padded_holes([frame]);
-    for reloc in &routine.relocs {
-        let at = reloc.offset as usize;
-        if quench_bjit::class::is_successor(reloc.class) {
-            quench_bjit::patch_successor(code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).ok()?;
-        } else {
-            quench_bjit::patch_value(code, at, reloc.class, holes[reloc.index as usize]);
-        }
-    }
-    Some(())
 }
 
 impl Stitched {
@@ -338,4 +316,12 @@ impl Stitched {
         let entry = unsafe { std::mem::transmute::<*mut u8, NativeFn>(memory.pointer()) };
         Some(NativeCode { entry, keep: Box::new((memory, program, tables)) })
     }
+}
+
+/// A set's table: a byte per byte unit, nonzero for an ASCII unit its mask has, so a run's scan
+/// tests a unit with one load.
+fn set_table(&[low, high]: &[u64; 2]) -> [u8; 256] {
+    const ASCII: usize = 128;
+    const WORD_BITS: usize = 64;
+    std::array::from_fn(|unit| u8::from(unit < ASCII && (if unit < WORD_BITS { low } else { high }) >> (unit % WORD_BITS) & 1 != 0))
 }

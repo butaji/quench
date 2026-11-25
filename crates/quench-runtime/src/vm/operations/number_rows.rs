@@ -377,7 +377,7 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
 /// emitter: no VM state, allocation, collection, guest effects, or integer traps.
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.
 #[inline]
-pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+pub extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
     // Integral operands inside i64 (the common `(a * k) % m` past int32) take the integer
     // remainder, which is exact: a double remainder is always representable and has the
     // dividend's sign, as `%` on i64 does. `fmod` costs ~170 instructions; this ~15. A zero

@@ -236,17 +236,13 @@ fn unbox_int_row(mut frame: Places) -> Out {
     Out::Next(frame.s)
 }
 
-/// Whether an interrupt was requested. The process-wide attention byte (hole 3, an absolute word the planner
-/// patches with `execution_interrupt::attention_address`) is read first: zero means none is requested, one
-/// means the run's own byte (the context's pointer at hole 0) decides. The frame's `safepoint` answers it for
+/// Whether an interrupt was requested: the staged `gated_poll` row over the process-wide attention
+/// byte (hole 3, an absolute word the planner patches with `execution_interrupt::attention_address`)
+/// and the run's own byte (the context's pointer at hole 0). The frame's `safepoint` answers it for
 /// the staged `Operation::Safepoint`.
 #[inline(always)]
 pub(crate) fn interrupted(s: &S) -> bool {
-    // SAFETY: hole 3 is the address of the attention byte, which lives for the process; hole 0's pointer is the run's flag.
-    unsafe {
-        ((hole64::<HOLE_FOURTH>() as usize as *const u8).read()) != 0
-            && *(((s.ctx + hole::<0>()) as *const *const u8).read()) != 0
-    }
+    crate::staged::poll::gated_poll(&mut Concrete::from_hole(0), hole64::<HOLE_FOURTH>(), (s.ctx + hole::<0>()) as u64, ()).is_none()
 }
 
 /// The staged `Operation::Safepoint` over the row's places: whether the row may continue.

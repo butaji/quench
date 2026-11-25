@@ -1,0 +1,249 @@
+# Every staged row and its C twin (S1.17, TOD-2193): `row kernel`, or `row - reason` where no ops.c kernel isolates it.
+# Generated from the code: QUENCH_C_TWIN_WRITE=1 cargo test -p quench-runtime --test c_twin. Read by quench-gate's
+# ir-budget step (section c-bound: default Ir/iter <= 3 * C + 6, held by c_bound_allowance.txt). Never edit by hand.
+Operation::Move - register copy: no benchmark op isolates it
+Operation::LoadConst - constant load: no benchmark op isolates it
+Operation::LoadLocalPlain - local read inside the loop step: no benchmark op isolates it
+Operation::StoreLocalPlain - local write: no benchmark op isolates it
+Operation::LoadLocalChecked - dead-zone checked local read: no benchmark op isolates it
+Operation::StoreLocalChecked - dead-zone checked local write: no benchmark op isolates it
+Operation::InitializeLocal - dead-zone initialization: no benchmark op isolates it
+Operation::Jump - the jump is the empty loop step's
+Operation::JumpIf - conditional jump: no benchmark op isolates it
+Operation::LoadThis - receiver read: no benchmark op isolates it
+Operation::LoadCallee - callee read: no benchmark op isolates it
+NumberOperation::Arithmetic int_add
+NumberOperation::Relation cmp_int
+NumberOperation::RelationValue cmp_dbl
+NumberOperation::Bitwise bitwise
+NumberOperation::Remainder int_mod
+NumberOperation::IncDec inc_local
+NumberOperation::Unary neg_op
+NumberOperation::BitwiseNot - int32 ~: no benchmark op isolates it
+NumberOperation::ToNumeric - ToNumeric of a Number: no benchmark op isolates it
+NumberOperation::Math math_sqrt
+NumberOperation::Extreme math_minmax
+NumberOperation::Imul math_imul
+NumberOperation::IntCase c_switch_dense
+Operation::RequireObjectCoercible - RequireObjectCoercible: no benchmark op isolates it
+Operation::RequireIteratorResult - iterator result check: no benchmark op isolates it
+Operation::LogicalNot not_op
+Operation::TypeofIndex typeof_op
+Operation::TypeofTest typeof_op
+Operation::TypeofString typeof_op
+Operation::IndexWrite arr_store_int
+Operation::AddSite - stencil row only: no opcode decodes to it
+Operation::NamingSite - stencil row only: no opcode decodes to it
+Operation::InstanceOf v_instanceof
+Operation::DirectArray - stencil guard: its cost is the guarded operation's
+Operation::ArrayLength arr_length
+Operation::TypedLength - typed array length: no benchmark op isolates it
+Operation::ArrayAppend arr_push
+Operation::Allocate alloc_literal
+Operation::SuperConstArrayObject2 - superinstruction: its parts' twins measure it
+Operation::DefineElement - literal element definition: no benchmark op isolates it
+Operation::Safepoint empty
+Operation::GuardIdentity - stencil guard: its cost is the guarded operation's
+Operation::GuardLive - stencil guard: its cost is the guarded operation's
+Operation::GuardRealm - stencil guard: its cost is the guarded operation's
+Operation::GuardDeclared - stencil guard: its cost is the guarded operation's
+Operation::GuardPrototype - stencil guard: its cost is the guarded operation's
+Operation::GuardShape - stencil guard: its cost is the guarded operation's
+Operation::GuardStores - stencil guard: its cost is the guarded operation's
+Operation::BackEdge empty
+Operation::IndexSetHelper - helper store: no benchmark op isolates it
+Operation::LoadName - lane_load_name_resolve runs inside the math_* ops, not as a twin
+Operation::Void - void: no benchmark op isolates it
+Operation::Unary - VM callout: no benchmark op isolates it
+Operation::PropertyKey - ToPropertyKey: no benchmark op isolates it
+Operation::Equality(strict) eq_int
+Operation::Equality(loose) eq_undef_null
+Operation::Binary str_compare
+Operation::LoadEnvLocal - environment slot read: no benchmark op isolates it
+Operation::StoreEnvLocal - environment slot write: no benchmark op isolates it
+Operation::ArgumentsLength v_arguments_length
+Operation::ArgumentGet - arguments element read: no benchmark op isolates it
+Operation::CloneEnv - environment clone: no benchmark op isolates it
+Operation::GlobalTypeof - global typeof: no benchmark op isolates it
+Operation::SetFunctionName - function naming: no benchmark op isolates it
+Operation::GlobalWrite - global write: no benchmark op isolates it
+Operation::GlobalLexicalLoad - global lexical read: no benchmark op isolates it
+Operation::GlobalLexicalStore - global lexical write: no benchmark op isolates it
+Operation::Protocol v_for_of_array
+Operation::ForInNext v_for_in
+Operation::EnumeratedGet - enumerated property read: no benchmark op isolates it
+Operation::FieldStoreMiss - miss edge: no benchmark op isolates it
+Operation::IteratorCleanupPush - iterator cleanup: no benchmark op isolates it
+Operation::IteratorCleanupPop - iterator cleanup: no benchmark op isolates it
+Operation::StringCaseIndex str_charcodeat
+Operation::Suspend - generator suspension: no benchmark op isolates it
+Operation::Nop empty
+Operation::GetField field_read
+Operation::SetField field_store
+Operation::StoreField field_store
+Operation::FieldGetHost - host helper: no benchmark op isolates it
+Operation::FieldAdd - property add helper: no benchmark op isolates it
+Operation::Delete - delete: no benchmark op isolates it
+Operation::IndexGetHost - host helper: no benchmark op isolates it
+Operation::Call call_direct
+Operation::SpreadCall call_spread
+Operation::SuperCall v_super_call
+Operation::Return - call return: its cost is in the call_* ops
+Operation::Throw v_throw_catch
+Operation::ElementRead arr_load_int
+Operation::ElementReadOperand arr_load_int
+Operation::IncDecLocal inc_local
+Operation::ElementWrite arr_store_int
+Operation::LoadCapture c_closure_read
+Operation::StoreCapture - capture write: no benchmark op isolates it
+Operation::CompareJump cmp_int
+Operation::WasmFloat - no wasm ops in ops.js
+Operation::WasmInt - no wasm ops in ops.js
+Operation::WasmJump - no wasm ops in ops.js
+Operation::BranchTable - no wasm ops in ops.js
+Operation::WasmState - no wasm ops in ops.js
+Operation::WasmAccess - no wasm ops in ops.js
+Operation::WasmVector - no wasm ops in ops.js
+Operation::Prologue empty
+Operation::BodyEntry - specialized body entry: no benchmark op isolates it
+heap::CAPTURE_ROW c_closure_read
+heap::INDEX_ROW arr_load_int
+heap::STORE_ROW arr_store_int
+heap::FIELD_ROW - frame field read; no kernel isolates it
+heap::ARRAY_ROW - direct-array test; no kernel isolates it
+heap::SITE_ROW - field-site read through its chain; no kernel isolates it
+heap::THIS_ROW - receiver read; no kernel isolates it
+heap::LOAD_LOCAL_ROW - local read inside the loop step; no kernel isolates it
+heap::STORE_LOCAL_ROW - local write; no kernel isolates it
+heap::IDENTITY_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::LENGTH_ROW arr_length
+heap::CAPTURE_SET_ROW - capture write; no kernel isolates it
+heap::SITE_STORE_ROW - field-site store; no kernel isolates it
+heap::THIS_SITE_ROW - receiver field-site read; no kernel isolates it
+heap::THIS_STORE_ROW - receiver field store; no kernel isolates it
+heap::HELD_ROW - folded prototype-held field; no kernel isolates it
+heap::LIVE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::OBJECT_ROW - iterator-result fast arm; no kernel isolates it
+heap::KEY_ROW - property-key fast arm; no kernel isolates it
+heap::TYPEOF_INDEX_ROW typeof_op
+heap::TYPEOF_IS_ROW typeof_op
+heap::TYPEOF_ISNOT_ROW typeof_op
+heap::LOAD_CHECKED_ROW - dead-zone checked local read; no kernel isolates it
+heap::STORE_CHECKED_ROW - dead-zone checked local write; no kernel isolates it
+heap::TYPEOF_STRING_ROW typeof_op
+heap::CALLEE_CAPTURE_ROW c_closure_read
+heap::INSTANCEOF_ROW v_instanceof
+heap::REALM_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::GLOBAL_READ_ROW - global object slot read; no kernel isolates it
+heap::GLOBAL_STORE_ROW - global object slot write; no kernel isolates it
+heap::CONSTANT_ROW - constant load; no kernel isolates it
+heap::APPEND_ROW arr_push
+heap::ADD_PACKED_ROW - property add; no kernel isolates it
+heap::ADD_ARENA_ROW - property add; no kernel isolates it
+heap::ADD_EITHER_ROW - property add; no kernel isolates it
+heap::THIS_ADD_PACKED_ROW - property add; no kernel isolates it
+heap::THIS_ADD_ARENA_ROW - property add; no kernel isolates it
+heap::THIS_ADD_EITHER_ROW - property add; no kernel isolates it
+heap::FOR_IN_ROW v_for_in
+heap::NAME_EITHER_ROW - function naming; no kernel isolates it
+heap::NAME_ARENA_ROW - function naming; no kernel isolates it
+heap::IC_GET_ROW field_read
+heap::IC_GET_HOLDER_ROW - prototype-held read; no kernel isolates it
+heap::IC_SET_ROW field_store
+heap::IC_SET_INT_ROW field_store
+heap::ENV_ROW - environment slot read; no kernel isolates it
+heap::ENV_SET_ROW - environment slot write; no kernel isolates it
+heap::ENV_DEFINE_ROW - environment slot definition; no kernel isolates it
+heap::LEXICAL_READ_ROW - global lexical read; no kernel isolates it
+heap::LEXICAL_WRITE_ROW - global lexical write; no kernel isolates it
+heap::TYPED_INDEX_ROW typed_load
+heap::TYPED_STORE_ROW typed_store_f64
+heap::TYPED_LENGTH_ROW - typed array length; no kernel isolates it
+heap::IC_PROOF_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::IC_KNOWN_GET_ROW field_read
+heap::IC_KNOWN_SET_ROW field_store
+heap::IC_KNOWN_SET_INT_ROW field_store
+heap::IC_KNOWN_SET_ADMITTED_ROW field_store
+heap::IC_KNOWN_SET_INT_ADMITTED_ROW field_store
+heap::IC_KNOWN_GET_FLAT_ROW field_read
+heap::IC_KNOWN_SET_FLAT_ROW field_store
+heap::IC_KNOWN_SET_INT_FLAT_ROW field_store
+heap::IC_KNOWN_SET_FLAT_ADMITTED_ROW field_store
+heap::IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW field_store
+heap::DECLARED_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::CAPTURE_IDENTITY_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::PROTOTYPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::SHAPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::SHAPE_FLAT_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::STORES_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::CHAR_CODE_AT_ROW str_charcodeat
+heap::PARSE_INT_ROW parse_int
+heap::STAGED_REMAINDER int_mod
+heap::STAGED_RELVAL_LT cmp_dbl
+heap::STAGED_RELVAL_LE cmp_dbl
+heap::STAGED_RELVAL_GT cmp_dbl
+heap::STAGED_RELVAL_GE cmp_dbl
+heap::STAGED_RELVAL_EQ cmp_dbl
+heap::STAGED_RELVAL_NE cmp_dbl
+heap::STAGED_BITWISE_NOT - int32 ~; no kernel isolates it
+heap::STAGED_INIT_LOCAL - dead-zone initialization; no kernel isolates it
+heap::STAGED_COERCIBLE - RequireObjectCoercible; no kernel isolates it
+heap::STAGED_VOID - void; no kernel isolates it
+heap::STAGED_LOOSE_EQ eq_undef_null
+heap::STAGED_LOOSE_NE eq_undef_null
+heap::STAGED_STRICT_EQ eq_int
+heap::STAGED_STRICT_NE eq_int
+heap::EMPTY_OBJECT_ROW - empty object bump; alloc_literal fills its literal
+heap::EMPTY_ARRAY_ROW - empty array bump; alloc_literal fills its literal
+number::MOVE - register copy; no kernel isolates it
+number::COPY - register copy; no kernel isolates it
+number::ADD int_add
+number::SUB int_sub
+number::MUL int_mul
+number::DIV dbl_div
+number::AND bitwise
+number::OR bitwise
+number::XOR bitwise
+number::SHL shl_shr
+number::SHR shl_shr
+number::USHR ushr
+number::LT cmp_int
+number::LE cmp_int
+number::GT cmp_int
+number::GE cmp_int
+number::EQ eq_int
+number::NE eq_int
+number::JUMP - the jump of the empty loop step; no kernel isolates it
+number::JUMP_POLL empty
+number::GUARD - entry tag guard; no kernel isolates it
+number::UNBOX - proven-argument unbox; no kernel isolates it
+number::UNBOX_INT - proven-argument unbox; no kernel isolates it
+number::TAG_INIT - register tag initialization; no kernel isolates it
+number::SPILL - register spill; no kernel isolates it
+number::JUMP_WATCH - watched jump; no kernel isolates it
+number::POLL empty
+number::JUMP_TRUE truthy_int
+number::JUMP_FALSE truthy_int
+number::NOT not_op
+number::NEG neg_op
+number::REM int_mod
+number::SQRT math_sqrt
+number::FLOOR math_floor
+number::CEIL - no Math.ceil kernel in ops.c
+number::TRUNC - no Math.trunc kernel in ops.c
+number::ABS math_abs
+number::ROUND math_round
+number::FROUND - no Math.fround kernel in ops.c
+number::SIGN - no Math.sign kernel in ops.c
+number::MIN math_minmax
+number::MAX math_minmax
+number::IMUL math_imul
+number::CLZ32 - no Math.clz32 kernel in ops.c
+number::INT_CASE c_switch_dense
+number::ADD_NO_OVERFLOW int_add_noor
+number::SUB_NO_OVERFLOW - no exact int32 subtraction kernel; int_add_noor is the add
+number::BIT_TEST c_bit_test
+number::NULLISH_EQ eq_undef_null
+number::NULLISH_NE eq_undef_null
+number::BOOL_TRUE - boolean identity jump; no kernel isolates it
+number::BOOL_FALSE - boolean identity jump; no kernel isolates it

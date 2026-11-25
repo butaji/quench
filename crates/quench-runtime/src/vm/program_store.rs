@@ -842,7 +842,7 @@ pub struct ProgramStore {
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     js_entry_specializations_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
@@ -891,7 +891,7 @@ impl Default for ProgramStore {
             },
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_lane_methods_enabled: tiers.stress,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
@@ -910,7 +910,7 @@ impl ProgramStore {
         let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {
                 Rc::clone(&self.no_entry_facts)
@@ -952,7 +952,7 @@ impl ProgramStore {
         Some(id)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn live_count(&self) -> usize {
         self.programs.iter().flatten().count()
     }
@@ -1275,11 +1275,12 @@ impl ProgramStore {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.insert_shared(Rc::new(program))
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn find_shared(&self, program: &Rc<ResidualProgram>) -> Option<ProgramId> {
         if let Some(&id) = self.shared_ids.get(&(Rc::as_ptr(program) as usize)) {
             return Some(id);
@@ -1824,13 +1825,13 @@ impl ProgramStore {
 
     /// Keep every Wasm module to its hot roots (`WasmModuleCompile::NEVER`): tests of root
     /// promotion.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn keep_wasm_modules_selective(&mut self) {
         self.wasm_module_compile = WasmModuleCompile::NEVER;
     }
 
     /// Compile a Wasm module whole at `work`, never by time: a deterministic test policy.
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn compile_wasm_modules_after_work(&mut self, work: u32) {
         self.wasm_module_compile = WasmModuleCompile { work, after: std::time::Duration::MAX };
     }
@@ -1971,7 +1972,7 @@ impl ProgramStore {
         true
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn wasm_tier_state(&self, id: ProgramId, function: u32) -> Option<WasmTierState> {
         self.entry(id).and_then(|entry| entry.jit_tiers.wasm(function)).cloned()
     }
@@ -1988,13 +1989,15 @@ impl ProgramStore {
         self.js_jit_lane_methods_enabled = true;
     }
 
+    #[quench_macros::test_visible]
     /// Set before loading a test program; general/OSR coverage then owns entry.
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn disable_js_entry_specializations(&mut self) {
         self.js_entry_specializations_enabled = false;
     }
 
-    #[cfg(test)]
+    #[quench_macros::test_visible]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn js_entry_specializations_enabled(&self) -> bool {
         self.js_entry_specializations_enabled
     }
@@ -2006,7 +2009,7 @@ impl ProgramStore {
     #[inline]
     pub fn tiers(&self) -> &'static Tiers { self.tiers }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
 
     #[inline]
@@ -2019,13 +2022,14 @@ impl ProgramStore {
         self.js_jit_diagnostics.is_some()
     }
 
+    #[quench_macros::test_visible]
     /// Records the counters `QUENCH_TRACE=js-jit` enables, for a test to read.
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn enable_js_jit_diagnostics(&mut self) {
         self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
     }
 
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn js_jit_field_cache_probes(&self, id: ProgramId, function: u32) -> Option<u64> {
         self.js_jit_diagnostics
             .as_ref()?
@@ -2476,7 +2480,7 @@ impl ProgramStore {
         attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn js_jit_call_site_counts(
         &self,
         id: ProgramId,
@@ -2573,17 +2577,17 @@ impl ProgramStore {
             .is_some_and(|tier| matches!(tier, JsTierState::Compiled(_)))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn js_jit_tracked_function_count(&self) -> usize {
         self.js_jit_tracked_functions
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn js_jit_tracking_exhaustion_count(&self) -> u64 {
         self.js_jit_tracking_exhaustions
     }
 
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
         self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
@@ -2616,6 +2620,7 @@ impl ProgramStore {
         Some((&entry.residual, entry.views_in_lane.of(&entry.residual), &entry.constants[..]))
     }
 
+    #[quench_macros::test_visible]
     /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
     /// the IDs held by field hints and native own-field descriptors.
     pub(super) fn invalidate_shape_bindings(&self) {
@@ -2859,7 +2864,7 @@ impl ProgramStore {
         true
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn regexp_literal_record_count(&self, id: ProgramId) -> usize {
         self.entry(id).map_or(0, |entry| {
             entry

@@ -1630,6 +1630,7 @@ impl Vm {
         Ok(realm)
     }
 
+    #[quench_macros::test_visible]
     /// Creates a realm's global object with its intrinsics, without host APIs.
     pub(super) fn create_realm_global(
         &mut self,

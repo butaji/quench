@@ -270,14 +270,17 @@ pub fn emit_native_module_for(
 
 #[cfg(test)]
 mod tests {
-    use crate::engine_prelude::*;
-    use cranelift_codegen::ir::{AbiParam, InstBuilder, types};
+    use crate::native_object::{
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction,
+        NativeFunctionAddress, emit_native_module, emit_native_object,
+    };
+    use cranelift_codegen::ir::{self, AbiParam, InstBuilder, types};
     use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 
     const PROGRAM_EXIT_STATUS: i64 = 42;
 
     fn signature() -> ir::Signature {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.returns.push(AbiParam::new(types::I32));
         signature
@@ -313,7 +316,7 @@ mod tests {
             builder.ins().iconst(types::I32, PROGRAM_EXIT_STATUS)
         };
         builder.ins().return_(&[result]);
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         builder.finalize(isa.frontend_config());
         NativeFunction::Definition {
             name: name.into(),
@@ -346,7 +349,7 @@ mod tests {
 
     #[test]
     fn object_links_and_loads_relocated_program_data() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut main = ir::Function::with_name_signature(
             ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, 0),
             signature(),

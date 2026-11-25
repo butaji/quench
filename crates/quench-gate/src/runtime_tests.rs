@@ -1,4 +1,4 @@
-//! Running a filtered selection of the `quench-runtime` library tests, which must have matched
+//! Running a filtered selection of a package's library tests (`quench-runtime`'s unless named), which must have matched
 //! at least one test: a filter that selects nothing proves nothing.
 
 use crate::{config::Config, process};
@@ -29,18 +29,23 @@ fn named(output: &str, outcome: &str) -> Vec<String> {
         .collect()
 }
 
-/// Runs the library tests whose names contain any of `filters`. A run that matched no test, or
-/// that ended without its summary (a failed build, a crashed test binary), is an error; test failures are the caller's to judge.
+/// Runs the `quench-runtime` library tests whose names contain any of `filters` (`package_tally`).
 pub fn tally(config: &Config, profile: &str, filters: &[String]) -> Result<Tally, String> {
+    package_tally(config, PACKAGE, profile, filters)
+}
+
+/// Runs `package`'s library tests whose names contain any of `filters`. A run that matched no test, or
+/// that ended without its summary (a failed build, a crashed test binary), is an error; test failures are the caller's to judge.
+pub fn package_tally(config: &Config, package: &str, profile: &str, filters: &[String]) -> Result<Tally, String> {
     let mut command = config.cargo_in("test", profile);
-    command.args(["-p", PACKAGE, "--lib", "--"]).args(filters);
+    command.args(["-p", package, "--lib", "--"]).args(filters);
     let finished = process::run(&mut command)?;
     let (passed, failed) = (named(&finished.stdout, PASSED), named(&finished.stdout, FAILED));
     if !finished.stdout.lines().any(|line| line.starts_with(SUMMARY)) {
-        return Err(format!("the {PACKAGE} test run ended without its summary:\n{}", finished.excerpt()));
+        return Err(format!("the {package} test run ended without its summary:\n{}", finished.excerpt()));
     }
     if passed.is_empty() && failed.is_empty() {
-        return Err(format!("no {PACKAGE} test matched {filters:?}"));
+        return Err(format!("no {package} test matched {filters:?}"));
     }
     Ok(Tally { passed, failed, excerpt: finished.excerpt() })
 }

@@ -24,8 +24,7 @@ pub use quench_runtime::vm::engine_types::NativeJsProgram;
 impl NativeJsProgram {
     /// Compile every function before execution as one AOT image. No hotness or fallback tier.
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        let unit = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Aot, facts: Default::default() })
-            .compiled().ok_or_else(|| "eager publication was declined".to_string())?;
+        let unit = crate::compiled::admission::ahead_unit(0).ok_or_else(|| "eager publication was declined".to_string())?;
         crate::compiled::compile_eager_native(program, unit)
     }
 
@@ -81,7 +80,7 @@ impl NativeJsProgram {
     /// Whether a replayed assumption retired the image's stable facts.
     #[cfg(test)]
     pub(crate) fn frozen_invalidated(&self) -> bool {
-        self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
+        self.frozen.as_ref().is_some_and(|frozen| quench_runtime::test_support::invalidation_is_set(&frozen.invalidation))
     }
     fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
         if !quench_runtime::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {

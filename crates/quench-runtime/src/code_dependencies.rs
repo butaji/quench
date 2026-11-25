@@ -20,7 +20,8 @@ pub struct Invalidation(Rc<std::cell::Cell<u64>>);
 impl Invalidation {
     /// The word's address, which lives as long as any holder of this invalidation.
     pub fn address(&self) -> usize { self.0.as_ptr() as usize }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
+    #[quench_macros::test_visible]
     pub(crate) fn is_set(&self) -> bool { self.0.get() != 0 }
     fn set(&self) { self.0.set(1); }
 }

@@ -253,6 +253,7 @@ impl Reservation {
     }
 }
 
+#[quench_macros::test_visible]
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ValueVec {
@@ -493,10 +494,10 @@ impl ValueArena {
 
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
-    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer, runs: impl IntoIterator<Item = (usize, u32, usize)>) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _, owner_epoch: _ } = self;
-        writer.values(values);
+        let Self { values: _, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _, owner_epoch: _ } = self;
+        writer.values(&self.tagged_values(runs));
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));
         }
@@ -514,6 +515,20 @@ impl ValueArena {
         }
         writer.u32s(free_dictionaries);
         writer.u32(*next_dictionary);
+    }
+
+    /// The arena's words with every word of `runs` (the tracked runs of live objects) in the
+    /// encoding of tagged values: a snapshot keeps no owner types, so its restoring runtime reads
+    /// every word as tagged until it joins the owners anew and recodes (`Heap::recode_all_slots`).
+    fn tagged_values(&self, runs: impl IntoIterator<Item = (usize, u32, usize)>) -> std::borrow::Cow<'_, [Value]> {
+        if !self.float { return std::borrow::Cow::Borrowed(&self.values); }
+        let mut values = self.values.to_vec();
+        for (start, shape, len) in runs {
+            for slot in 0..len {
+                values[start + slot] = decode_slot(self.word_type(shape, slot), values[start + slot]);
+            }
+        }
+        std::borrow::Cow::Owned(values)
     }
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {

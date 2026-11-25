@@ -230,6 +230,7 @@ impl Vm {
         );
     }
 
+    #[quench_macros::test_visible]
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
         self.method_cache_atoms.name(cache.atom);
         if let Some(index) = self.method_caches.megamorphic_index(site) {

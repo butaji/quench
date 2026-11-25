@@ -128,6 +128,11 @@ crate::compiled::emit_machine::for_each_builder!(MachineAccess {
         builder.inst_results(call).to_vec()
     }
 
+    /// A slow path's helper symbol where the body names its helpers by symbol (`slow_path_symbol`).
+    fn slow_path_symbol(&mut self, address: usize) -> Option<ir::GlobalValue> {
+        crate::compiled::slow_path_symbol(self.function_builder().func, address)
+    }
+
     fn symbol_address(&mut self, symbol: ir::GlobalValue) -> ir::Value {
         self.function_builder().ins().symbol_value(types::I64, symbol)
     }

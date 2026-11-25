@@ -47,8 +47,10 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
     let mut hash = mix(FNV_OFFSET, &(super::LaneHelper::COUNT as u32).to_le_bytes());
     hash = mix(hash, program.source_text().unwrap_or_default().as_bytes());
+    // Each function as the image lowered it (`lowered_function`): a tier-0 record and its promoted
+    // record differ in opcodes, so a program fingerprinted before and after a promotion would not match.
     for index in 0..program.function_count() {
-        let function = program.function(index);
+        let function = program.lowered_function(index);
         hash = mix(hash, &function.registers.to_le_bytes());
         hash = function.instructions().fold(hash, |hash, instruction| mix(hash, &(instruction.op() as u16).to_le_bytes()));
     }
@@ -82,12 +84,11 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads))
     -> Result<(RelocatableCode, bool), &'static str> {
-    // An image has no feedback and no later tier: every record lowers as one a previous body left
-    // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
-    let generic: Vec<usize> = (0..unit.instructions.len()).collect();
-    let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Aot, facts: Default::default() }).compiled().ok_or("the image lowering is declined")?;
+    // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
+    // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
+    let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
+        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
@@ -106,8 +107,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 /// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them. A
 /// construction the closed world proves keeps its receiver as its fields (`constructions`). A call
 /// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
-/// `None` where it gives no native record, or polls for faults: the lowering does not report
-/// the poll's offset, so the base body runs such a function.
+/// `None` where it gives no native record.
 pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
@@ -121,9 +121,19 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
+    let crosses = crosses_bodies(&unit);
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    if fault_poll { return Err("polls for faults"); }
-    Ok(LaneImage { code, fault_poll: None })
+    // A lane body that polls and calls enters its callee's body through the VM's call helper, where
+    // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
+    // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
+    if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
+    Ok(LaneImage { code, fault_poll })
+}
+
+/// Whether `unit` may enter another body: a call of any form or a construction.
+fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -240,7 +250,7 @@ impl Vm {
         };
         let lanes_allowed = super::admission::within_trace_range(quench_runtime::trace::Dev::AotLanes, function);
         let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
-        let (mut method, kind) = match lane {
+        let (method, kind) = match lane {
             Some(method) => (method, "lane"),
             None => match Self::ahead_base_method(program, &images, function) {
                 Some(method) => (method, "base"),
@@ -256,7 +266,6 @@ impl Vm {
                 .and_then(|atom| program.atoms.get(atom as usize)).map_or("", |name| &name[..]);
             eprintln!("aot-lanes: install function {function} ({name}): {kind} body");
         }
-        method.ahead = true;
         let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); }
@@ -265,9 +274,12 @@ impl Vm {
 
     /// `function`'s lane body from `images`, linked to this VM.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
-        let linked_live: &LiveImage = images.linked.as_ref()?;
-        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
         let refused = |why: &str| if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
+        let Some(linked_live) = images.linked.as_ref() else { refused("the image did not link"); return None };
+        let Some(lane) = images.image.functions.get(function as usize).and_then(|function| function.lane.as_ref()) else {
+            refused("the image holds no lane body for it"); return None;
+        };
+        let fault_poll = lane.fault_poll;
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;
         };
@@ -339,7 +351,9 @@ impl Vm {
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
-        images.linked = live::install(&images.image, self).ok();
+        let linked = live::install(&images.image, self);
+        if let Err(why) = &linked && quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: image did not link: {why}"); }
+        images.linked = linked.ok();
         self.programs.add_ahead_images(images);
     }
 

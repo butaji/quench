@@ -180,13 +180,13 @@ mod tests {
         let program = quench_runtime::Engine::specialize(source, "resume-differential.js").unwrap();
         let output = |compiled: bool| {
             let lines = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-            let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(lines.clone()));
+            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(lines.clone()));
             if compiled {
                 vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
                 vm.programs.enable_js_lane_methods();
                 vm.programs.disable_js_entry_specializations();
             }
-            vm.execute(&program).unwrap();
+            quench_runtime::test_support::execute(&mut vm, &program).unwrap();
             let lines = lines.borrow().clone();
             lines
         };

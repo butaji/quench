@@ -257,7 +257,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let prototypes = sites.known.classes.to_vec();
     // The loop-invariant receivers whose entry shape is checked (`Known::shapes`, already limited to those the loop never writes).
     let shapes = sites.known.shapes.to_vec();
-    let stitched =stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
+    let mut stitched =stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
+    let heads = kernel_heads(ending, function, spec.known.constants, spec.known.program.register_root_masks(spec.function), &mut stitched.entries);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
@@ -265,9 +266,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) && helpers != LaneHelpers::Ahead {
         return Err("first instruction leaves".to_string());
     }
-    let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
-        .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
-        .collect();
+    let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate().map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row }).collect();
     super::exact::promote(function, &spec.known.program.constants, &stitched.origins, &mut rows);
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let seen = super::declared::seen(function, ending, spec.seen);
@@ -313,7 +312,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
-    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
+    let mut singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
+    kernel_entries(&layout, &heads, &decoded, &reached, &mut singles, helpers)?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     // An image body names the process statics its rows take by symbol: their addresses are this process's.
     if helpers == LaneHelpers::Ahead {
@@ -321,7 +321,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     }
     let linked = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
-    let generic = generic_records(&layout, &decoded, &reached, helpers);
+    let generic = generic_records(&layout, &decoded, &reached);
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;

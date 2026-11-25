@@ -144,8 +144,13 @@ pub trait MachineAccess: MachineScalar {
     fn call_lanes(&mut self, target: CallTarget<Self::Word>, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word;
     /// The entry of the slow path `leaf` as a call target.
     fn slow_path_target(&mut self, leaf: impl SlowPath) -> CallTarget<Self::Word> {
-        CallTarget(self.raw_const(Lane::I64, leaf.address() as i64))
+        match self.slow_path_symbol(leaf.address()) {
+            Some(symbol) => CallTarget(self.symbol_address(symbol)),
+            None => CallTarget(self.raw_const(Lane::I64, leaf.address() as i64)),
+        }
     }
+    /// The linked symbol code that holds no process address calls the slow path at `address` by.
+    fn slow_path_symbol(&mut self, _address: usize) -> Option<Self::Symbol> { None }
     /// The call target `source` declares, the word `offset` bytes from `base`. With `slow_path_target`
     /// and `symbol_target`, the only ways to a target: the machine makes the read, so no other word is one.
     fn entry_target(&mut self, _source: impl EntrySource, flags: Self::Flags, base: Self::Word, offset: i32) -> CallTarget<Self::Word> {
@@ -237,8 +242,9 @@ pub trait MachineVariables: Machine {
 }
 
 /// A machine that continues in the code it calls, so the call is the end of the function: a tail
-/// call of `target`, or of the code at an address under a `signature`, on `arguments`.
-#[cfg(all(feature = "jit", not(stencil_build)))]
+/// call of `target`, or of the code at an address under a `signature`, on `arguments`. Wasm
+/// tail calls lower through it in every build that emits code, AOT support included.
+#[cfg(not(stencil_build))]
 pub trait MachineTail: MachineAccess + MachineFlow {
     fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
     fn tail_call_indirect(&mut self, signature: Self::Signature, target: CallTarget<Self::Word>, arguments: &[Self::Word]);

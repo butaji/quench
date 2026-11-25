@@ -5,6 +5,7 @@ use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 mod number_operators;
 mod primitive_comparison;
 pub use number_operators::static_number_binary;
+#[quench_macros::test_visible]
 pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 mod number_rows;
@@ -86,11 +87,11 @@ impl NumberArithmetic {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 /// Whether swapping two already-evaluated operands preserves the canonical Number
 /// result. This is not a law for evaluating/coercing guest operands or string addition.
 #[inline(always)]
-pub(super) fn number_result_is_commutative(operator: u32) -> bool {
+pub fn number_result_is_commutative(operator: u32) -> bool {
     matches!(NumberArithmetic::from_operator(operator), Some(NumberArithmetic::Add | NumberArithmetic::Multiply))
 }
 
@@ -469,6 +470,7 @@ pub fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option
     number_operator::<OP>(left, right).map(Value::number)
 }
 
+#[quench_macros::test_visible]
 /// Operator `OP` on two Number values, as `number_value_operator` computes it after reading
 /// its operands' doubles; `None` for an operator that is not numeric.
 #[inline(always)]

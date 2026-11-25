@@ -262,7 +262,11 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     #[inline(always)]
     fn field_get_host(&mut self, stage: &mut Concrete, object: u64, _atom: u32, _site: u16, miss: ()) -> Option<u64> {
         let Callout::SiteRead { chained } = self.callout else { return None };
-        let tables = field_tables(&self.places.s);
+        let (entries, records) = field_tables(&self.places.s);
+        // No function record table (`entry::readable_record`): a read of a function's own field misses, so
+        // the call that follows runs the interpreter's builtin row (265 Ir) and not a body's native call
+        // (`region_call_in_lane`, 1,250 Ir); it takes the table once a body's native call costs no more.
+        let tables = (entries, records, 0);
         if chained {
             let offsets = hole64::<HOLE_B>();
             entry::site_chain(stage, tables, object, (offsets & u64::from(u32::MAX), offsets >> CHAIN_SECOND_AT), miss)

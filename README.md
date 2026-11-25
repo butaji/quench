@@ -42,6 +42,7 @@ $ ./app
 - **Fast without a JIT.** On V8-v7 the interpreter alone scores 1.49x to 2.57x the best of `node --jitless` and Bun with its JIT off.
 - **One semantics.** The interpreter, b-jit, u-jit and AOT derive each opcode's meaning from one shared definition, so the tiers agree about what a program means. The few hand-written exceptions left are tracked in a list that may only shrink.
 - **TypeScript types are kept.** Types are not erased before execution. They feed the specializer, so typed code can start out specialized.
+- **Tiny native executables.** `quench compile --strict-aot` runs the program at build time up to its first run-time input and keeps only what is left. Hello world is a 4,896-byte executable that starts in 0.96 ms with 1.3 MB peak memory, level with C. Inputs it cannot fold are refused by name, never baked in. [How it works](https://quench.run/blog/hello-world-in-4896-bytes/).
 - **Node-compatible.** `node:` APIs are implemented in Rust and checked against a local Node oracle, and the source is parsed by [OXC](https://github.com/oxc-project/oxc).
 
 ## Built for agent Code Mode

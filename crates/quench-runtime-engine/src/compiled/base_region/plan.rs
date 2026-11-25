@@ -145,6 +145,19 @@ impl Planned {
         self
     }
 
+    /// The run with `next`'s parts laid out after its own at the same PC: `next`'s own parts (`Branch::Part`) shift past them.
+    pub(crate) fn then_run(&mut self, mut next: Planned) {
+        let shift = self.pre.len() + 1 + self.post.len();
+        let (pre, post) = (std::mem::take(&mut next.pre), std::mem::take(&mut next.post));
+        self.owned.append(&mut next.owned);
+        self.post.extend(pre.into_iter().chain(std::iter::once(next)).chain(post).map(|mut part| {
+            if let Some(Branch::Part(index)) = &mut part.branch {
+                *index += shift;
+            }
+            part
+        }));
+    }
+
     pub(crate) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
         Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS }
     }
@@ -357,8 +370,7 @@ pub(crate) fn method_read(receiver: Register, cache: u16, scratch: Register) -> 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
 /// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
 pub(crate) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
-    // An image body makes a miss by the step helper and continues (`steps::stepped_misses`).
-    steps::stepped_misses(planned_row(decoded, layout, pc, (general, variant), helpers)?, decoded, layout, pc, helpers)
+    planned_row(decoded, layout, pc, (general, variant), helpers)
 }
 
 /// `plan` before an image body's misses are taken to the step helper.

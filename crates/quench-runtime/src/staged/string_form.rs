@@ -35,13 +35,18 @@ pub(crate) type ShortFormWords = ShortFormHead<ShortAsciiHead<u8>>;
 
 /// Bytes a string record occupies: the largest form, a tag word, then a pointer and a length.
 pub const RECORD_SIZE: usize = size_of::<SharedFormWords>();
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Where a `Short` record keeps its unit count, and its units.
 pub(crate) const SHORT_LENGTH_OFFSET: i32 = (offset_of!(ShortFormWords, text) + offset_of!(ShortAsciiHead<u8>, length)) as i32;
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 pub(crate) const SHORT_UNITS_OFFSET: u64 = (offset_of!(ShortFormWords, text) + offset_of!(ShortAsciiHead<u8>, bytes)) as u64;
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Where an `Ascii` or `Wide` record keeps the address of its shared allocation and its unit
 /// count (the pointer of a `Rc<str>` or `Rc<[u16]>`, then its length).
 pub(crate) const SHARED_POINTER_OFFSET: i32 = offset_of!(SharedFormWords, storage) as i32;
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 pub(crate) const SHARED_LENGTH_OFFSET: i32 = SHARED_POINTER_OFFSET + size_of::<usize>() as i32;
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// How far into that allocation the units start: `Rc`'s allocation is `#[repr(C)] RcInner { strong,
 /// weak, value }`, so units of an alignment no larger than a word start two words in. A test probes
 /// the compiler's own `Rc` against it (`vm::wtf16::native_string`).
@@ -62,13 +67,16 @@ pub(crate) struct PrefixFormHead<Buffer> {
 /// The prefix form with the stencil's words: the handle as a pointer.
 pub(crate) type PrefixFormWords = PrefixFormHead<usize>;
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Where an `AsciiPrefix` record keeps the address of its buffer's `Rc` allocation (where a shared
 /// form keeps its storage's), and its unit count.
 pub(crate) const PREFIX_BUFFER_OFFSET: i32 = offset_of!(PrefixFormWords, buffer) as i32;
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 pub(crate) const PREFIX_LENGTH_OFFSET: i32 = offset_of!(PrefixFormWords, length) as i32;
 const _: () = assert!(PREFIX_BUFFER_OFFSET == SHARED_POINTER_OFFSET);
 const _: () = assert!(size_of::<PrefixFormWords>() <= RECORD_SIZE);
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Where an append buffer (`#[repr(C)] AppendBuffer`, the value of the prefix's `Rc`) keeps the
 /// address of its first unit: its first word.
 pub(crate) const APPEND_UNITS_OFFSET: i32 = 0;

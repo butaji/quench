@@ -72,8 +72,9 @@ impl Lowering<'_, '_> {
     /// callee with such a plan (`OnlineFacts::construct_plans`).
     pub(crate) fn virtual_construct_plan(&self, pc: usize, instruction: WideInstruction) -> Option<ScalarConstructPlan> {
         if self.completion.numeric() || instruction.result_flags() != 0 || !self.completion.status_and_pc() { return None; }
+        if !self.is_construction(instruction) { return None; }
         let quench_runtime::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        if window.count > MAX_ARGUMENTS || !self.is_construction(instruction) { return None; }
+        if window.count > MAX_ARGUMENTS { return None; }
         let plans = self.vm.construct_plans?;
         let (function, at) = match self.unit.origins.get(pc).copied()? {
             super::super::lane_unit::Origin::Caller(record) => (self.function_id, record),

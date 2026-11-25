@@ -26,8 +26,8 @@ pub struct Tiers {
 }
 
 /// The priors the model tests pin their arithmetic to.
-#[cfg(test)]
-pub(crate) const TEST_PRIORS: Priors = Priors {
+#[cfg(any(test, feature = "test-support"))]
+pub const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
     region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
@@ -260,20 +260,20 @@ pub const SPECULATION: Speculation =
 /// outweighs one outside it, and that nesting orders deeper sites first.
 pub const ASSUMED_LOOP_TRIP: u64 = 8;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 /// Makes the VMs this thread makes next admit every eligible compile (`ADMITTING`), as the floor
 /// row does: for tests of what compiled code does, on fixtures too small to repay a compile.
-#[cfg(test)]
-pub(crate) fn force_admission() { FORCED_ADMISSION.set(true); }
+#[cfg(any(test, feature = "test-support"))]
+pub fn force_admission() { FORCED_ADMISSION.set(true); }
 
 /// The rows a VM's tier controllers read, held by the VM from its construction: the measured
 /// thresholds a process runs by, or the floor row, which makes every eligible site compile on
 /// its first chance, so a Test262 run and the tier differential check each tier against the
 /// interpreter. Code compiled under a row takes it as a Static fact (`VmFacts::tiers`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TierRows { Measured, Floor }
+pub enum TierRows { Measured, Floor }
 
 impl TierRows {
     /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
@@ -282,19 +282,21 @@ impl TierRows {
     /// The rows a VM made now holds: `PROCESS`, or the floor rows under `QUENCH_DEV=floor-rows`,
     /// admitting every compile where a test forced it.
     pub(crate) fn made() -> &'static Tiers {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if FORCED_ADMISSION.get() { return &ADMITTING; }
         if crate::trace::Dev::FloorRows.on() { return &FLOOR; }
         Self::PROCESS.table()
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn table(self) -> &'static Tiers {
         match self { Self::Measured => &MEASURED, Self::Floor => &FLOOR }
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl crate::vm::Vm {
+    #[quench_macros::test_visible]
     /// A VM whose tier controllers read `rows`: a stress run needs no build of its own.
     pub(crate) fn with_tier_rows<T: crate::Host>(host: T, rows: TierRows) -> Self {
         let mut vm = Self::new(host);
@@ -330,6 +332,15 @@ impl LaneBody {
 }
 
 impl Tiers {
+    /// The searches a regexp program runs interpreted before the stencil tier stitches it
+    /// (`regexp_native::stitch`), where the mode runs that tier below Cranelift: the Cranelift
+    /// threshold over what a stitch saves against a compile. Stitching costs about a fiftieth of
+    /// a Cranelift compile (V8-v7-shaped patterns, 2026-11-24: 175K instructions against 9.4M),
+    /// so it pays after a fiftieth of the searches; a thirty-second leaves room.
+    pub fn regexp_stitch_runs(&self) -> u32 {
+        (self.regexp_native_runs / 32).max(1)
+    }
+
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
     /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
@@ -410,7 +421,7 @@ pub const STATIC_ROWS: &Tiers = &MEASURED;
 
 /// The measured rows admitting every eligible compile: for tests of what compiled code does, on
 /// fixtures too small to repay one (`force_admission`).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 const ADMITTING: Tiers = Tiers { admits_all: true, ..MEASURED };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

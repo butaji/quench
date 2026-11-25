@@ -148,9 +148,8 @@ pub(crate) enum UnitKind {
     Body,
     /// A loop region, under its memory policy's loop tier.
     Region(quench_runtime::MemoryPolicy),
-    /// An eager (AOT) publication: no JIT mode or memory policy gates it.
-    Aot,
-    /// An ahead image's body of this function, under the `AotBodies` trace range.
+    /// An ahead image's body of this function, lowered at build time or installed at run time: the one
+    /// AOT kind. No JIT mode or memory policy gates it, only the `AotBodies` trace range.
     Ahead(u32),
     /// A b-jit (stencil) body: its facts decide it (`specialize`).
     Base,
@@ -184,7 +183,8 @@ pub(crate) enum UnitKind {
 /// request so proven facts can flow through the same path.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitFacts {
-    /// The body's rows cover the stencil tier (`base_region::covers`).
+    /// The body's rows cover the stencil tier (`base_region::covers`). A loop with an interpreter
+    /// kernel runs the kernel on its entry edge (`base_region::kernel_entries`).
     pub(crate) covers: bool,
     /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
     pub(crate) amortizes: bool,
@@ -229,7 +229,6 @@ fn may_compile(kind: UnitKind) -> bool {
     match kind {
         UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
-        UnitKind::Aot => true,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
         UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
         UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
@@ -302,10 +301,10 @@ fn code_ceiling(kind: UnitKind) -> usize {
     }
 }
 
-/// A unit minted for a test, through `specialize` (an AOT unit, which no mode gates).
+/// A unit minted for a test, through `specialize` (an AOT unit of the root, which no mode gates).
 #[cfg(test)]
 pub(crate) fn test_unit() -> CompiledUnit {
-    specialize(UnitRequest { kind: UnitKind::Aot, facts: UnitFacts::default() }).compiled().expect("an AOT unit always compiles")
+    ahead_unit(0).expect("an AOT unit always compiles")
 }
 
 /// The one specializer entry: whether the request's unit may compile, under the process's JIT
@@ -343,7 +342,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if facts.entry_none && !facts.called_by_regions && facts.observed_none && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
             true
         }
-        UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
+        UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
     if cleared && bisected_out() { return Decision::Declined; }
     if cleared { Decision::Compile(CompiledUnit { ceiling: code_ceiling(kind) }) } else { Decision::Declined }
@@ -379,24 +378,33 @@ pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
 #[inline]
 pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
 
-/// Whether the interpreter is the only tier (`--no-jit`).
-#[inline]
-pub(crate) fn interpreter_only() -> bool { quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp }
-
 /// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
 /// interpreter's own projection of the function, decided here as every compiled unit is.
 #[derive(Clone, Copy)]
 pub(crate) struct RecordPlan {
     /// Loop records keep tier sites (`install_loop_sites`) and their jumps stay visible to them.
     pub(crate) loop_sites: bool,
-    /// The int32 kinds may speculate: only where the interpreter alone runs, since it retires a
-    /// speculation whose `IncDec` overflows and a compiled tier's overflowing update does not.
+    /// The int32 kinds may speculate: the interpreter retires a speculation whose `IncDec`
+    /// overflows, and the lane retires them once native code, whose updates retire nothing,
+    /// hands it an activation (`retire_after_native`).
     pub(crate) speculates: bool,
 }
 
 /// The record plan of a function whose tiers may run (`tiers_run`: `Vm::tier_may_run`, any tier).
 pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
-    RecordPlan { loop_sites: tiers_run, speculates: interpreter_only() && crate::dispatch_fast::int_kinds::speculation_allowed() }
+    RecordPlan { loop_sites: tiers_run, speculates: crate::dispatch_fast::int_kinds::speculation_allowed() }
+}
+
+/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code ran an activation
+/// the lane goes on in (`exit` names a record of it or a callee it made, or `frames_left` native frames
+/// it left): a native tier steps a register as a double without the interpreter's retirement (a widened
+/// stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
+/// A run that completed its activation and left no native frame hands back nothing.
+#[inline(always)]
+pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, exit: crate::compiled::LaneExit, frames_left: impl FnOnce() -> bool) {
+    if crate::dispatch_fast::int_kinds::speculation_allowed() && (!matches!(exit, crate::compiled::LaneExit::Returned { .. }) || frames_left()) {
+        vm.retire_int_speculation();
+    }
 }
 
 /// Where a function's lane body comes from (`route_for_lane`).

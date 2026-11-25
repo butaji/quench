@@ -310,6 +310,7 @@ fn rebuild_shape(
 }
 
 impl Vm {
+    #[quench_macros::test_visible]
     pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
         self.heap.set_memory_policy(policy);
     }
@@ -318,6 +319,7 @@ impl Vm {
         self.heap.memory_policy()
     }
 
+    #[quench_macros::test_visible]
     /// Run a named collection safepoint even when the allocation threshold has
     /// not been reached. Hosts and focused conformance tests use this boundary
     /// to validate root ownership and weak/finalization ordering without

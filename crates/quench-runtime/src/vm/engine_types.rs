@@ -472,7 +472,7 @@ pub struct CompiledJsFunction {
     pub result: NativeNumberResult,
     pub params: usize,
     pub mapped_bytes: usize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub native_entries: std::cell::Cell<u64>,
 }
 
@@ -785,9 +785,9 @@ pub struct CompiledFunction {
     pub entry: WasmEntry,
     pub params: Vec<crate::WasmType>,
     pub result: Option<crate::WasmType>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub native_entries: std::cell::Cell<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub direct_reference_entries: std::cell::Cell<u64>,
 }
 
@@ -962,9 +962,6 @@ pub struct LaneMethod {
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
     /// types no call, so its summary is not read.
     pub withdrawn: std::cell::Cell<bool>,
-    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
-    /// retires it (`LaneView::note_lane_body_end`).
-    pub ahead: bool,
 }
 
 /// The lane-body tier's per-function state (`LaneView::tier`).
@@ -1525,13 +1522,16 @@ pub struct DirectCallee {
     pub forwarder: Option<SkippedForwarder>,
 }
 
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per
-/// compile and kept by the body it publishes, so its tables hold no capacity past their length.
+pub use super::fact_edge::{Fact, FactMissing};
+/// A unit's leaves, each place once, ordered by leave word, over its interned sigs, and per site its crossings
+/// (`FactMissing`). Built once per compile and kept by the body it publishes; its tables hold no spare capacity.
 #[derive(Default)]
 pub struct ExitTable {
     pub sigs: Vec<ExitSig>,
     pub sites: Vec<ExitSite>,
+    pub crossings: Box<[std::cell::Cell<u32>]>,
 }
+
 
 /// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
 /// then one per lean row.
@@ -2116,16 +2116,12 @@ pub struct ExitSig {
     pub live: Box<[LiveValue]>,
 }
 
-/// One leave of a unit: its sig, its place, its dense site id, and the first unit PC that
-/// leaves there.
+/// One leave of a unit: its sig, its place, its dense site id, the first unit PC that leaves there, and its missing fact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExitSite {
-    /// The leave's word (`LaneExit::word`), which `LaneExit::decode` reads back; the table's key.
-    /// Kept as a word, not a `LaneExit`, which holds a `Value` and is three words wide.
+    /// The leave's word (`LaneExit::word`, read back by `decode`), the table's key; not a `LaneExit`, three words wide.
     pub word: u64,
-    pub sig: u32,
-    pub id: u32,
-    pub unit_pc: u32,
+    pub sig: u32, pub id: u32, pub unit_pc: u32, pub fact: Fact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2776,8 +2772,6 @@ pub struct AotImage {
     pub atoms: Vec<Box<str>>,
     /// The `(function, pc)` labels of `Symbol::BasePc` keys.
     pub labels: Vec<(u32, u32)>,
-    /// The operand records the generic rows pass their semantic entries, by `Symbol::Operands` key.
-    pub operands: Vec<OperandRecord>,
     /// The calls the closed world proves that bodies make by their callee's entry, by `Symbol::CallRecord` key.
     pub calls: Vec<CallSite>,
 }
@@ -2791,8 +2785,6 @@ pub struct LiveImage {
     /// as long as the code, and every lane body published from the image retires through it
     /// (`Vm::install_ahead_body`), so a broken fact of any one stops every fold.
     pub invalidation: Invalidation,
-    /// The operand records the generic rows pass their semantic entries; they live as long as the code.
-    pub operands: std::borrow::Cow<'static, [[u64; 2]]>,
     /// The records the direct rows of proven calls read in place, and their bindings; they live as
     /// long as the code.
     pub calls: BoundCalls,
@@ -2841,14 +2833,6 @@ pub enum HeapValueRecipe {
     ClosureOf(u32),
 }
 
-/// The operand record of record `pc` of `function` (`NativeJsOperands`), as its words.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OperandRecord {
-    pub function: u32,
-    pub pc: u32,
-    pub words: [u64; 2],
-}
-
 /// How the loader builds a shape the code folded: the prototype it has and its own fields in
 /// insertion order, each by image atom key and attribute bits, interned in the VM's shape tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -2893,8 +2877,9 @@ pub struct Held {
 /// A lane body compiled ahead: its code, and what its lowering proved about the entry ABI.
 pub struct LaneImage {
     pub code: RelocatableCode,
-    /// The fault-poll offset the lowering reported (`LaneRegion::fault_poll`).
-    pub fault_poll: Option<u32>,
+    /// Whether its back edges poll by fault (`LoweredRegion::fault_poll`): the runner maps the poll page
+    /// for it, as for a JIT lane body, and a fault lands at the entry's termination.
+    pub fault_poll: bool,
 }
 
 /// Where the records live: in the loader's own allocation (`aot_image::live::install`), or in the
@@ -3197,14 +3182,13 @@ pub struct InheritedConstant {
 }
 
 /// What the system linker placed of an image in this executable (`object::emit`): each function's
-/// entry and base body, and the image's file, operand records and call records, as its entry table
+/// entry and base body, and the image's file and call records, as its entry table
 /// lists them.
 #[derive(Clone, Copy)]
 pub struct LinkedTable {
     pub entries: &'static [usize],
     pub bases: &'static [usize],
     pub file: &'static [u8],
-    pub operands: *const [u64; 2],
     pub calls: *mut CallRecord,
 }
 
@@ -4077,7 +4061,13 @@ impl AheadImages {
     #[inline]
     pub fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
-        let Ok(images) = Self::compile(program) else { return };
+        let images = match Self::compile(program) {
+            Ok(images) => images,
+            Err(why) => {
+                if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} records no image: {why}", program.source_name); }
+                return;
+            }
+        };
         if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
     }
 }
@@ -4427,6 +4417,13 @@ impl LaneStack {
 }
 
 impl LaneView {
+
+    /// Admits every record as a lane entry: a body compiled ahead (`AheadImages`) leaves at any record it does not
+    /// make, and the lane takes the record on there (`ExecutionMode::NativeOnly` has nothing else to run it with). The
+    /// derived set keeps only the records a straight-line run from a jump target repays, which an image body need not be.
+    pub fn admit_every_record(&mut self) {
+        self.entries.fill(u64::MAX);
+    }
 
     /// Its lane-body tier state, made on first use.
     #[inline]

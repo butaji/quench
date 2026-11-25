@@ -39,10 +39,12 @@ impl RegisterFile {
         file
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)] pub(in crate::vm) fn clear(&mut self) { self.words.truncate(FRAME_CONTEXT); }
     #[inline(always)] pub(in crate::vm) fn reserve(&mut self, additional: usize) { self.words.reserve(additional); }
     #[inline(always)] pub fn capacity(&self) -> usize { self.words.capacity() - FRAME_CONTEXT }
     #[inline(always)] pub(in crate::vm) fn shrink_to(&mut self, capacity: usize) { self.words.shrink_to(FRAME_CONTEXT + capacity); }
+    #[quench_macros::test_visible]
     #[inline(always)] pub(in crate::vm) fn resize(&mut self, len: usize, value: Value) { self.words.resize(FRAME_CONTEXT + len, value); }
     #[inline(always)] pub(in crate::vm) fn extend_from_slice(&mut self, values: &[Value]) { self.words.extend_from_slice(values); }
 

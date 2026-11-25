@@ -518,6 +518,7 @@ impl ResidualProgram {
         self.validate()
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn validate(&self) -> Result<(), String> {
         if let Some(source) = &self.source { source.validate_call_sites()?; }
         // The compiled-source bytes a position may name: those of the kept text, after its

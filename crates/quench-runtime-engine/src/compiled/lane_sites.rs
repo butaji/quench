@@ -199,6 +199,7 @@ impl Vm {
         if let Some(GlobalRead::NativeMember { value, native, holder, .. }) = self.method_native(&code[member]) {
             return Some((value, native, holder));
         }
+        if code[member].op().immediate_role() != quench_runtime::bytecode::ImmediateRole::FieldLookup { return None; }
         let quench_runtime::bytecode::FieldLookup::Atom { atom, base, .. } = code[member].field_lookup()? else { return None };
         let read = member.checked_sub(1)?;
         if entered.contains(member) || base.register_index()? != code[read].result_register() { return None; }

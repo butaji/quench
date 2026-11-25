@@ -71,6 +71,7 @@ pub fn static_number_binary(op: u32, left: f64, right: f64) -> Option<Constant> 
     Some(Constant::Number(numeric_number_result(numeric_binary_operator(op)?, left, right)))
 }
 
+#[quench_macros::test_visible]
 /// Both operands' ToNumeric where each is a Number or an immediate primitive (`undefined`,
 /// `null`, a Boolean), whose ToPrimitive is itself, so no guest code runs: the operands a
 /// numeric operator computes as Numbers. The deleted marker is no value but a hole whose

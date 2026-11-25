@@ -1,6 +1,5 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::*;
 use quench_runtime::Engine;
 use quench_runtime::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
@@ -16,9 +15,9 @@ function rep(f, n = 3000) { let r; for (let i = 0; i < n; i++) r = f(i); return 
 /// What `source`, after the prelude, prints.
 pub(crate) fn printed(source: &str, file: &str) -> Vec<String> {
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     let program = Engine::specialize(&format!("{PRELUDE}{source}"), file).unwrap();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     output.take()
 }
 
@@ -226,7 +225,7 @@ print(out.join(" | "));
 #[test]
 fn chain_constructions_cross_programs() {
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     let sources = [
         "globalThis.P = class P { constructor(x) { this.x = x; } }; globalThis.Q = class Q extends P { constructor(x, y) { super(x); this.y = y; } };",
         "globalThis.R = class R { constructor(a) { this.a = a; this.b = a + 1; } };",
@@ -236,7 +235,7 @@ fn chain_constructions_cross_programs() {
         "let t = ''; for (let i = 0; i < 3000; i++) t = new D1().n; print(t);",
     ];
     let first = Engine::specialize(sources[0], "cross-0.js").unwrap();
-    vm.execute(&first).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &first).unwrap();
     for (index, source) in sources.iter().enumerate().skip(1) {
         vm.eval_script_source(&first, source, &format!("cross-{index}.js")).unwrap();
     }

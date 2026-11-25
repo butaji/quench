@@ -1,8 +1,8 @@
 //! Two indexed Number additions below dispatch. Register roles are distinct;
 //! production admission/alias analysis is deliberately not implemented here.
 use super::*;
-use super::super::operations::{ADDITION, immediate_number_pair, number_operator, number_value_operator};
-use crate::heap::{ArrayObject, ArrayStorageProofs, Heap, LaneProofScope, Object};
+use crate::engine_prelude::operations::{ADDITION, immediate_number_pair, number_operator, number_value_operator};
+use quench_runtime::heap::{ArrayObject, ArrayStorageProofs, Heap, LaneProofScope, Object};
 
 #[derive(Clone, Copy)]
 #[repr(u16)]

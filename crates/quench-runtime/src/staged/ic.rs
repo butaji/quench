@@ -93,6 +93,7 @@ impl<W, C> Reached<W, C> {
     }
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The value `ops` read from `start`, prototypes found in the record table at `records`, or
 /// `miss` where a guard fails. `None` where the stage leaves at `miss`, or the list ends
 /// before a load.
@@ -210,6 +211,30 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
     }, |stage| own_field_miss(stage, record, word, expected, slot, miss))
 }
 
+/// `concrete_own_field_hit` of the global object, whose values the native tiers' planning moves behind
+/// extras (`global_values_table`): the exact word's flat run on one compare, as there, and the extras'
+/// run on a second (`proved_own_layout`) instead of the formed walk of `own_field_miss`, which
+/// any other word still takes.
+/// # Safety
+/// As for `concrete_own_field_hit`.
+#[inline(always)]
+pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+    shape: u32, slot: u16) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    let record = object as *const crate::heap::Object as u64;
+    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    // Each arm's form is a constant, so its layout tests no bit.
+    let layout = if word == u64::from(shape) {
+        super::object::proved_own_layout(&mut stage, super::Shaped::of_guard(record), 0, usize::from(slot) + 1)
+    } else if word == u64::from(shape | OBJECT.extras_form) {
+        super::object::proved_own_layout(&mut stage, super::Shaped::of_guard(record), OBJECT.extras_form, usize::from(slot) + 1)
+    } else {
+        // Any other form takes the general hit's formed walk.
+        return unsafe { concrete_own_field_hit(object, property_values, shape, slot) };
+    }?;
+    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Representation::Tagged)))
+}
+
 /// The own field of a record whose shape is `expected` but whose storage form is not the exact-shape word's, read through its formed layout.
 #[cfg_attr(not(stencil_build), cold, inline(never))]
 #[cfg_attr(stencil_build, inline(always))]
@@ -291,7 +316,7 @@ pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entr
 #[cfg(test)]
 pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
-    super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
+    super::entry::site_read(&mut stage, (entries, records, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// The value `object.first.second` reads through the field cache entries `first` and `second`

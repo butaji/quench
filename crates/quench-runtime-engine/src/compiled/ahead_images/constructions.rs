@@ -62,7 +62,7 @@ mod tests {
     use super::*;
 
     fn named(program: &ResidualProgram, name: &str) -> u32 {
-        let is = |id: usize| program.with_record(id, |function| function.name.is_some_and(|atom| &program.atoms[atom as usize] == name));
+        let is = |id: usize| quench_runtime::test_support::with_record(program, id, |function| function.name.is_some_and(|atom| &program.atoms[atom as usize] == name));
         (0..program.function_count()).find(|&id| is(id)).expect("a function with that name") as u32
     }
 

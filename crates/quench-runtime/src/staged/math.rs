@@ -162,6 +162,7 @@ const ROUNDING_BIAS: f64 = 4_503_599_627_370_496.0;
 /// `(0, u8::MAX)`, `number + 2^52` is `2^52` plus that integer, so the integer is the low byte of the sum's bits.
 /// The constants are immediates (`machine::constant`), so the stencil build holds no constant pool.
 #[inline(always)]
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 pub(crate) fn clamp_u8(number: f64) -> u8 {
     if !(number > machine::constant(0.0)) {
         return 0;

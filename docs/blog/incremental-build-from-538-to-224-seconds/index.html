@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>From 538 to 224 seconds: rebuilding a JavaScript engine faster · Quench blog</title>
+<meta name="description" content="A one-line change in the arithmetic of Quench&#x27;s interpreter took 538 seconds to rebuild. Two days of profiling LLVM, sharding generated code and refusing any change that cost a single instruction at run time brought it to 224 seconds. What worked and what we rejected." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/blog/incremental-build-from-538-to-224-seconds/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="application/atom+xml" title="Quench blog" href="https://quench.run/blog/feed.xml" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/blog/incremental-build-from-538-to-224-seconds/" />
+<meta property="og:title" content="From 538 to 224 seconds: rebuilding a JavaScript engine faster · Quench blog" />
+<meta property="og:description" content="A one-line change in the arithmetic of Quench&#x27;s interpreter took 538 seconds to rebuild. Two days of profiling LLVM, sharding generated code and refusing any change that cost a single instruction at run time brought it to 224 seconds. What worked and what we rejected." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-11-25" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "From 538 to 224 seconds: rebuilding a JavaScript engine faster", "description": "A one-line change in the arithmetic of Quench's interpreter took 538 seconds to rebuild. Two days of profiling LLVM, sharding generated code and refusing any change that cost a single instruction at run time brought it to 224 seconds. What worked and what we rejected.", "datePublished": "2026-11-25", "dateModified": "2026-11-25", "url": "https://quench.run/blog/incremental-build-from-538-to-224-seconds/", "image": "https://quench.run/og.png", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "publisher": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "mainEntityOfPage": "https://quench.run/blog/incremental-build-from-538-to-224-seconds/", "keywords": "Rust compile time, Rust incremental build, LLVM codegen units, generated code compile time, cargo build performance, JavaScript engine in Rust"}</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/blog/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z"/></svg>Blog</a>
+<a class="badge" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>BUILD</span><span>TIME</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/blog/">blog</a> / <time datetime="2026-11-25">25 November 2026</time> · 5 min read · build</p>
+<h1>From 538 to 224 seconds: rebuilding a JavaScript engine faster</h1>
+<p class="lead">A one-line change in the arithmetic of Quench&#x27;s interpreter took 538 seconds to rebuild. Two days of profiling LLVM, sharding generated code and refusing any change that cost a single instruction at run time brought it to 224 seconds. What worked and what we rejected.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p>Quench generates a lot of code. Each JavaScript operation is written once as a staged row, and the build expands those rows into the interpreter's handlers, thousands of copy-and-patch JIT stencils and the pieces the optimizing JIT and AOT reuse. That is how one definition feeds four outputs. It is also why touching the definition of <code>+</code> is expensive.</p>
+<p>Our worst case is a one-line edit to <code>arithmetic</code> in <code>staged/numeric.rs</code>, rebuilt incrementally with the experiment profile on a 4-core machine. On 23 November 2026 it took <b>538 seconds</b>. The project's rule is that an incremental build over five minutes is a bug, so this was a bug.</p>
+<div class="stats"><div class="stat hot"><div class="stat-num">224 s</div><div class="stat-label">worst incremental build</div><p class="stat-note">was 538 s on 23 November</p></div><div class="stat"><div class="stat-num">0</div><div class="stat-label">Ir cells worse</div><p class="stat-note">on the instruction-count gate</p></div><div class="stat"><div class="stat-num">8 / 8</div><div class="stat-label">V8-v7 rows</div><p class="stat-note">pass on all three tiers</p></div></div>
+<h2 id="the-rule-that-made-it-hard">The rule that made it hard</h2>
+<p>Making a build faster is easy if run-time speed can drop: inline less, split more, let LLVM see less. Quench does not allow that trade. Every change runs through an instruction-count gate on hundreds of small operations in three tiers, and the build work is held to the same rule as any other change: nothing may get slower. Several of the most effective build-time ideas below were rejected for that reason.</p>
+<h2 id="where-the-time-went">Where the time went</h2>
+<p>The first profile settled one question: the build was CPU-bound. It spent about 1,850 CPU-seconds, so even perfect scheduling on 4 cores could not go below about 460 seconds. Tweaking job order was pointless. The code volume had to go down.</p>
+<p>Most of that CPU was LLVM optimizing code it would soon throw away. Rows are built from <code>#[inline(always)]</code> pieces. A piece that dispatches over, say, 16 register placements gets copied into every row with all 16 arms, and only after inlining does LLVM discover that the row uses one of them. One family of 66 fused loop-test rows took about 7 seconds of LLVM each. In the stencils, the placement arms were 95% of a row's IR before optimization.</p>
+<h2 id="what-moved-the-number">What moved the number</h2>
+<div class="table-scroll"><table><thead><tr><th>Change</th><th>Worst incremental build</th></tr></thead><tbody><tr><td>Starting point, 23 November</td><td class="n">538 s</td></tr><tr><td>Fused loop tests without a fixed comparison dispatch their record's own row instead of inlining every comparison</td><td class="n">481 s</td></tr><tr><td>Stencil placement helpers fold to the row's place before they inline</td><td class="n">424 s</td></tr><tr><td>Loop tests shared as one row per comparison; dead Wasm forms removed</td><td class="n">327 s</td></tr><tr><td>Stencil table stored as binary files; shared build cache read only on a fresh target</td><td class="n">293 s on its base, 320 s after upstream growth</td></tr><tr><td>Stencil frame reads: pick the place, then one 24-arm dispatch instead of 48</td><td class="n">295 s</td></tr><tr><td>Numeric rows in their own codegen modules; index and store rows re-weighted across shards</td><td class="n">224 s</td></tr></tbody></table></div>
+<p>The line is not monotonic, and that is honest: the engine kept growing while the build work went on, and upstream changes added about 140 CPU-seconds between two of the steps. Each step was measured against its own base.</p>
+<p>The last step shows the shape of most of the wins. About 75 numeric rows had been spread by hash across all 16 generated-row modules and all 8 shards of each sharded handler family. An edit to arithmetic therefore recompiled every one of them. Giving numeric rows their own modules meant the same edit recompiles only those, and the engine's share fell from 597 to 338 CPU-seconds.</p>
+<h2 id="what-we-rejected">What we rejected</h2>
+<p>The gate turned down more ideas than it accepted:</p>
+<ul><li><b>Re-hashing every row into new modules.</b> Faster to build, but 12 no-JIT cells got 17 to 84 instructions slower because closures moved out of line. Only numeric rows moved in the end, and everything else stayed in place.</li><li><b>Always inlining runtime placement code in stencils.</b> 27% less stencil CPU, but LLVM merged compare branches differently and one cell cost 25 more instructions.</li><li><b>Passing the stencil hole as a run-time value.</b> 18% faster to build, and a register allocation change cost another cell 6 instructions.</li><li><b>Moving the Wasm GC call-out out of JavaScript rows.</b> 302 KB less code, and 1 to 5 more instructions on 49 cells because LLVM spent the freed inline budget elsewhere.</li><li><b>Re-landing a codegen unit split.</b> 535 cells got worse. Moving generic instances into other units costs inlining in many places at once.</li></ul>
+<aside class="note">LLVM's inline budget is a shared resource. Freeing it in one place spends it in another, which is why every build-time change runs through the same run-time gate.</aside>
+<h2 id="what-is-next">What is next</h2>
+<p>224 seconds meets the five-minute rule with room to spare, and the remaining levers are already listed: the four out-of-line copies of the full Number step (about 74 CPU-seconds) and the arithmetic stencil shards (about 250). The broader lesson is about generated code in Rust. Compile time follows what LLVM sees before it optimizes, not what is left after, so the cheapest code to compile is the code that never gets inlined in the first place.</p>
+</div></div>
+</article>
+<nav class="frame cols-2" aria-label="More posts"><a class="tile navt" href="/blog/where-quench-stands/"><span class="mono">← earlier · 17 November 2026</span><b>Where Quench stands: JetStream 3 with the JIT off</b></a><a class="tile navt right" href="/blog/chasing-a-sub-megabyte-readline-binary/"><span class="mono">later · 25 November 2026 →</span><b>Chasing a sub-megabyte readline binary</b></a></nav>
+<section class="frame cols-3 cta-frame" aria-label="Get involved">
+<div class="tile orange"><h2>Try it</h2><p>Quench builds from source with Cargo and runs TypeScript, JavaScript and WebAssembly.</p><a class="btn" href="/#start">Build and run</a></div>
+<div class="tile"><h2>Work on it</h2><p>Interpreter, JIT, AOT, GC, Node APIs. Every claim on this blog has a measurement you can rerun.</p><a class="btn" href="/#contribute">Where to start</a></div>
+<div class="tile"><h2>Follow it</h2><p>New posts land here as the engine moves. Star the repository or subscribe to the feed.</p><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Feed</a></div>
+</section>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/blog/">blog</a> · <a href="/blog/feed.xml">feed</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

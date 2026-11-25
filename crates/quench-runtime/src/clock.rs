@@ -21,6 +21,41 @@ const VIRTUAL_RANDOM_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 static VIRTUAL_NS: AtomicU64 = AtomicU64::new(0);
 
+/// Whether a build-time evaluation watches the program's inputs from its environment
+/// (`watch_inputs`): strict AOT runs an entry at build time, and a run that read the clock
+/// (`CapabilityId::ClockMillis`), the local time zone or `Math.random` computed values a later
+/// run would not. The host's own clock reads (its event loop's) are no input of the program.
+static INPUTS_WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The first input a watched run read (`note_input`).
+static FIRST_INPUT: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+
+/// Starts watching the process's environment inputs (`note_input`), for the rest of the process.
+pub fn watch_inputs() {
+    INPUTS_WATCHED.store(true, Ordering::Relaxed);
+}
+
+/// Notes a read of an input from the environment, `what`, while inputs are watched: one
+/// relaxed load otherwise.
+#[inline]
+pub fn note_input(what: &'static str) {
+    if INPUTS_WATCHED.load(Ordering::Relaxed) {
+        note_watched_input(what);
+    }
+}
+
+/// The watched half of `note_input`, out of line so a run that watches nothing (every run but a
+/// strict AOT build) pays the one load and branch, not the lock's code in its clock read.
+#[cold]
+#[inline(never)]
+fn note_watched_input(what: &'static str) {
+    FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(what);
+}
+
+/// The first environment input a watched run read, if any.
+pub fn first_input() -> Option<&'static str> {
+    *FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Whether the JavaScript-visible clocks are virtual (`QUENCH_DEV=virtual-clock`), read once.
 pub fn is_virtual() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

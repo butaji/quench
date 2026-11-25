@@ -591,6 +591,7 @@ impl Heap {
         Some((object, properties))
     }
 
+    #[quench_macros::test_visible]
     /// Changes a published object's shape, retiring target-shape readers first.
     pub(crate) fn set_object_shape(&mut self, value: Value, shape: u32) {
         let (object, arena) = self.object_and_arena_mut(value).expect("shape owner is an object");
@@ -906,13 +907,15 @@ impl Heap {
         unsafe { self.object_records.get_live(record_id) }
     }
 
-    #[cfg(test)]
+    #[quench_macros::test_visible]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         let record_id = value.direct_object_index()?;
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
         Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) })
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn is_live(&self, value: Value) -> bool {
         match value.heap_reference() {
             Some(HeapReference::LegacySlot(_)) => self.get(value).is_some(),

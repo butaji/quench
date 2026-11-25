@@ -624,6 +624,7 @@ macro_rules! layout_accessors {
                 self.imm()
             }
 
+            #[quench_macros::test_visible]
             #[allow(dead_code)] #[inline]
             pub(crate) fn property_definition_mode(self) -> Option<super::PropertyDefinitionMode> {
                 debug_assert_eq!(
@@ -708,6 +709,7 @@ macro_rules! layout_accessors {
                 self.set_imm(target);
             }
 
+            #[quench_macros::test_visible]
             #[allow(dead_code)] #[inline]
             pub(crate) fn closure_function_index(self) -> u32 {
                 debug_assert_eq!(
@@ -884,6 +886,7 @@ impl Instr {
         ))
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn wide(index: usize) -> Option<Self> {
         let index = u64::try_from(index).ok()?;
         let payload_bits = u64::BITS - Self::OP_BITS;

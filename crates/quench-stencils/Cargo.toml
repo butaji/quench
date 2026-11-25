@@ -12,6 +12,10 @@ build = "../quench-bjit/build.rs"
 [lib]
 doctest = false
 
+[features]
+# Never enabled: see quench-bjit's feature of the same name.
+test-support = []
+
 [dependencies]
 quench-bjit = { path = "../quench-bjit" }
 

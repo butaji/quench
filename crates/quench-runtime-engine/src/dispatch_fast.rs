@@ -439,8 +439,7 @@ use quench_runtime::vm::engine_types::EnvironmentWindow;
 pub(crate) use quench_runtime::vm::engine_types::WINDOW_ENVIRONMENT;
 pub(crate) use quench_runtime::vm::engine_types::WINDOW_SLOTS;
 pub(crate) const WINDOW_CAPTURED: u16 = 2;
-pub(crate) use quench_runtime::vm::engine_types::WINDOW_STORAGE;
-pub(crate) use quench_runtime::vm::engine_types::WINDOW_LOCALS;
+pub(crate) use quench_runtime::vm::engine_types::{WINDOW_LOCALS, WINDOW_STORAGE};
 
 use quench_runtime::vm::engine_types::TargetBody;
 
@@ -475,23 +474,23 @@ use unary_values::{unary_value, unary_values};
 use list_calls::{apply_activation_in_lane, list_activation_in_lane, spread_native_call_in_lane};
 
 #[cfg(all(test, feature = "bench-primitives"))]
-#[path = "../../quench-runtime/src/vm/primitive_bench/windows.rs"]
+#[path = "dispatch_fast/primitive_bench/windows.rs"]
 pub(crate) mod window_primitives;
 
 #[cfg(test)]
-#[path = "../../quench-runtime/src/vm/primitive_bench/activations.rs"]
+#[path = "dispatch_fast/primitive_bench/activations.rs"]
 pub(crate) mod activation_primitives;
 
 #[cfg(test)]
-#[path = "../../quench-runtime/src/vm/primitive_bench/commutative_reads.rs"]
+#[path = "dispatch_fast/primitive_bench/commutative_reads.rs"]
 pub(crate) mod commutative_read_primitives;
 
 #[cfg(test)]
-#[path = "../../quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs"]
+#[path = "dispatch_fast/primitive_bench/indexed_forwarding.rs"]
 pub(crate) mod indexed_forwarding_primitives;
 
 #[cfg(all(test, feature = "bench-primitives"))]
-#[path = "../../quench-runtime/src/vm/primitive_bench/indexed_compositions.rs"]
+#[path = "dispatch_fast/primitive_bench/indexed_compositions.rs"]
 pub(crate) mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
@@ -721,7 +720,7 @@ impl LaneView {
 
     /// Whether its body left too often and specializes again at its next entry.
     #[inline]
-    fn respecializes(&self) -> bool {
+    pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
@@ -2869,13 +2868,8 @@ fn plain_local_operand(cx: *mut LaneContext, slot: u16) -> Option<Value> {
 /// integer that does not overflow; `None` for any other value.
 #[inline(always)]
 pub(crate) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
-    // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
-    let offset = value.int_key_offset();
-    let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
-    if stepped < (1 << 31) - usize::from(DECREMENT) {
-        return Some(stepped as i32);
-    }
+    // `Value::int_key_offset` is crate-private to quench-runtime; `as_int` is the public
+    // int32 view and gives the same result for every value.
     let integer = value.as_int()?;
     if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
 }
@@ -6818,15 +6812,16 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
-    // A function of a program with a loaded AOT image takes the image's body and no other
-    // (`install_ahead_lane_body`): no warm-up, no runtime tier.
-    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead
-    // image, the stencil tier at once, a wait for callees still compiling, or the lane body tier.
+    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
+    // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
+    // tier at once, a wait for callees still compiling, or the lane body tier.
     let base_only = crate::compiled::admission::stencil_only();
-    let ahead_image = vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    let ahead_image = !own.respecializes() && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
+        // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
+        if let Some(body) = code.function_get(function as usize) && unsafe { (*own.prologue.get()).handler }.is_null() { own.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow); }
         let published = own.entry_published();
         let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
@@ -7077,9 +7072,8 @@ fn loop_run_in_lane(
         site.tier.borrow_mut().missed_entry(site.tiers);
         return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
-    if matches!(exit, LaneExit::Terminated) {
-        return LoopContinuation::Safepoint;
-    }
+    if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count());
     if nested {
@@ -7729,20 +7723,10 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
-            let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
+            // The same derivation as every entry's (`derived_view`): an image's view takes on every record.
+            let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                derive_lane_view(
-                    function,
-                    code,
-                    constants,
-                    vm.heap_reads(),
-                    kind,
-                    live,
-                    sites,
-                    crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                    diagnostics,
-                    tiers,
-                )
+                vm.derived_view(function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
@@ -8361,7 +8345,7 @@ impl Vm {
         let code: &ResidualProgram = if cross {
             // SAFETY: as above; no program is installed or retired while a call resolves.
             let callee_code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
-            if !self.admits_in_lane(callee_code) { return None; }
+            if !self.admits_in_lane(program, callee_code) { return None; }
             callee_code
         } else { code };
         // The JavaScript tier enters a frameless activation at its prologue as it enters a
@@ -8617,8 +8601,18 @@ impl Vm {
         program.kind == quench_runtime::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
     }
 
-    pub(crate) fn admits_in_lane(&self, program: &ResidualProgram) -> bool {
-        self.execution_mode.allows_dynamic_execution() && self.specialized_operations_enabled(program)
+    /// Whether the lane may run program `id`: every program in a dynamic build, else one with a loaded AOT image.
+    pub(crate) fn may_run_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
+        self.execution_mode.allows_dynamic_execution() || self.programs.ahead_images(id, code).is_some()
+    }
+
+    /// Whether an AOT image's bodies run where the lane enters them: with lane bodies, or as the only code.
+    pub(crate) fn images_run_in_lane(&self) -> bool {
+        self.programs.js_jit_lane_methods_enabled() || !self.execution_mode.allows_dynamic_execution()
+    }
+
+    pub(crate) fn admits_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
+        self.may_run_in_lane(id, code) && self.specialized_operations_enabled(code)
     }
 
     /// The words a lane run's direct calls push onto (`compiled::DirectCallee`): the addresses
@@ -8673,22 +8667,11 @@ impl Vm {
 
     /// The lane view of `function`, derived on first use.
     pub(crate) fn view_any_in_lane(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
-        if !self.runs_lane || !self.execution_mode.allows_dynamic_execution() { return None; }
-        let diagnostics = self.programs.reports_on_drop();
-        let tiers = self.programs.tiers();
+        let code = self.programs.residual(program)?;
+        if !self.runs_lane || !self.may_run_in_lane(program, code) { return None; }
+        let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view(
-                function,
-                code,
-                constants,
-                self.heap_reads(),
-                kind,
-                live,
-                sites,
-                crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                diagnostics,
-                tiers,
-            )
+            self.derived_view(function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -8698,7 +8681,7 @@ impl Vm {
     /// Prints every loaded function's lane view, derived afresh from its bytecode (no loop
     /// tier), when `QUENCH_TRACE=bytecode=lanes` is set: per record `LANEPLAN program function pc
     /// width handler settled | instruction`, handlers as run-time addresses (symbolized against
-    /// the symbol table by `quench-gate --only ir-predict`, less the anchor's bias), `settled`
+    /// the binary's symbol table, less the anchor's bias), `settled`
     /// the handler the stored view holds after the run (`-` where no run derived one).
     pub(crate) fn report_lane_plan(&mut self) {
         if quench_runtime::trace::Channel::Bytecode.value() != Some(quench_runtime::vm::inspection::LANE_PLAN) {
@@ -12408,6 +12391,12 @@ fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Carried, func
     let base = unsafe { (*cx).base };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
+    // A function of a program with a loaded AOT image enters the image's body at its first entry.
+    // SAFETY: the prologue is this record, written when the tier claimed the function (`claim_for_tier`).
+    if let Some(own) = own && vm.images_run_in_lane() && vm.programs.ahead_images(unsafe { (*cx).program }, unsafe { &*(*cx).code }).is_some() {
+        let prologue = own.prologue.get().cast_const();
+        return body_calls::enter_published_body(cx, prologue, r, view, function, unsafe { (*prologue).b } != 0);
+    }
     // SAFETY: the activation's registers hold its parameters from its first.
     let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
     let entered = own
@@ -12419,49 +12408,6 @@ fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Carried, func
         return Resumed::At(r, unsafe { base.add(pc) }, Carried::script_in(cx, view));
     }
     Resumed::At(r, base, Carried::script_in(cx, view))
-}
-
-/// Where the lane continues after a specialized body's prologue record (`body_entry_in_lane`) at `ip`: the body
-/// runs on the activation's registers and leaves where its run ends (`body_concluded_in_lane`), or the
-/// activation continues at its first record where the body is not entered. Shared by the prologue's staged row
-/// (`EntryHost`) and its hand body.
-#[inline(always)]
-fn body_entry_resumed(cx: *mut LaneContext, ip: Ip, r: Registers, view: Carried, function: u32, binds_this: bool) -> Resumed {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the activation just set the context to its own function's.
-    let (program, base) = unsafe { ((*cx).program, (*cx).base) };
-    // SAFETY: the program's views outlive the lane run; this record is the view's.
-    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
-        .expect("a lane body entry runs in its view");
-    // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
-    // The activation just pushed is this entry's: its caller runs this function's records
-    // where it is a recursive call.
-    if own.audit_entry(true, || vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base)) {
-        return Resumed::At(r, base, Carried::script_in(cx, view));
-    }
-    // A body a lifecycle edge retired gives its prologue back and warms again.
-    let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else {
-        own.settle_retired_body();
-        return Resumed::At(r, base, Carried::script_in(cx, view));
-    };
-    // A body whose rows write past the frame's registers (its scratch, its inlined windows, past the
-    // environment window) runs where the frame's storage reaches them; a lane activation's room is the stack's.
-    let reaches = frame_reaches_in_lane(cx, method.caller_registers(), method.frame_reach());
-    if !reaches || !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) {
-        if reaches && body_prepare_recovery_in_lane(cx, &method) { return Resumed::Exit(exit(base)); }
-        drop(method);
-        body_refused_in_lane(vm, own);
-        return Resumed::At(r, base, Carried::script_in(cx, view));
-    }
-    let receiver = entry_receiver_in_lane(cx, binds_this);
-    // SAFETY: the activation just set the context to its own captures.
-    let captures = capture_reads(unsafe { (*cx).registers }.capture());
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let left = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
-    let resumed = body_concluded_in_lane(cx, r, ip, own, &method, left, function);
-    drop(method);
-    resumed
 }
 
 /// The protocol row of a frameless activation's tier prologue record (`TierPrologue`): the staged prologue
@@ -12502,7 +12448,7 @@ script_handler! {
     #[inline(never)]
     fn body_entry_in_lane<>(cx, r, ip, i, view) {
         // The staged row answers the same continuation (`EntryHost::body`); this is its miss body.
-        let resumed = body_entry_resumed(cx, ip, r, view, i.imm(), i.b != 0);
+        let resumed = body_calls::enter_published_body(cx, ip, r, view, i.imm(), i.b != 0);
         resume!(cx, resumed)
     }
 }
@@ -12617,9 +12563,8 @@ fn tier_enter_in_lane(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        // A function of a program with a loaded AOT image takes its body at its first entry, no warm-up.
-        let ahead = vm.programs.ahead_images(program, code).is_some();
-        if !specialize_in_lane(cx, own, function, ahead, parameters, None) {
+        // A program with a loaded AOT image entered its body already (`tier_prologue_resumed`).
+        if !specialize_in_lane(cx, own, function, false, parameters, None) {
             own.release_from_tier();
         }
         return None;
@@ -12998,7 +12943,7 @@ fn carried_at_in_lane(cx: *mut LaneContext, view: *const LaneView, registers: Re
 /// keeping activation kept, else the count an unmaterialized binding answers. `DELETED` where
 /// the lane's own handler must read the materialized object, which the body's leave reaches.
 pub(crate) unsafe extern "C" fn body_arguments_length_in_lane(_vm: u64, _residual: u64, context: u64, slot: u64) -> u64 {
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
+    if context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext;
     let value = match unsafe { keeping_activation_in_lane(cx) } {
         Some((argc, _)) => Value::integer(i32::from(argc)),
@@ -13013,7 +12958,7 @@ pub(crate) unsafe extern "C" fn body_arguments_length_in_lane(_vm: u64, _residua
 /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
 /// unmaterialized binding holds; any other key leaves at the record.
 pub(crate) unsafe extern "C" fn body_argument_get_in_lane(_vm: u64, _residual: u64, context: u64, slot: u64, index: Value) -> u64 {
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
+    if context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext;
     if let Some((argc, function)) = unsafe { keeping_activation_in_lane(cx) }
         && let Some(index) = index.as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
@@ -13036,9 +12981,7 @@ pub(crate) unsafe extern "C" fn body_argument_get_in_lane(_vm: u64, _residual: u
 }
 
 pub(crate) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
-    // As `body_call_helper`: static regions recover captures through their semantic operation,
-    // and an ahead body has no lane context to read them from.
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
+    if context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext;
     let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
     let value = match native_frames::innermost_callee_env(cx) {
@@ -13063,7 +13006,7 @@ pub(crate) unsafe extern "C" fn body_capture_in_lane(_vm: u64, _residual: u64, c
 /// # Safety
 /// As `body_capture_in_lane`.
 pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: u64, context: u64, packed: u64, value: Value) -> u64 {
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED || context == 0 { return 0; }
+    if context == 0 { return 0; }
     let cx = context as usize as *mut LaneContext;
     let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, value);
     let stored = match native_frames::innermost_callee_env(cx) {
@@ -13112,13 +13055,13 @@ enum LaneBodyLeft {
 
 
 
-/// Records that a run of `own`'s body ended at `exit`, in the diagnostics report's leave table;
-/// nothing the lane does next reads it.
+/// Counts a run of `own`'s body that ended at `exit` on its typed edge (`ExitTable::cross`), and in the diagnostics leave table.
 #[inline(always)]
 fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
     if !matches!(exit, crate::compiled::LaneExit::Returned { .. }) && quench_runtime::trace::Channel::BodyLeave.on() {
         eprintln!("QUENCH_BODY_LEAVE function={} exit={exit:?}", running_function_in_lane(cx));
     }
+    method.exits.cross(exit);
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());
     }
@@ -13156,6 +13099,7 @@ fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }
@@ -15690,7 +15634,7 @@ fn push_frame_call_in_lane(
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
     // A callee of another program runs in the lane only where the lane admits its program.
     if target.0 != unsafe { (*cx).program }
-        && !vm.programs.residual(target.0).is_some_and(|callee_code| vm.admits_in_lane(callee_code))
+        && !vm.programs.residual(target.0).is_some_and(|callee_code| vm.admits_in_lane(target.0, callee_code))
     {
         return Resumed::Exit(exit(ip));
     }
@@ -15842,7 +15786,7 @@ fn frame_construct_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneI
                     code.function_get(*id as usize).is_some_and(admits)
                 } else {
                     vm.programs.residual(*program).is_some_and(|callee_code| {
-                        vm.admits_in_lane(callee_code)
+                        vm.admits_in_lane(*program, callee_code)
                             && callee_code
                                 .function_get(*id as usize)
                                 .is_some_and(admits)
@@ -17228,11 +17172,9 @@ fn install_loop_sites<'live>(
         })
         .collect();
     let mut sites = sites;
-    // The tiers run a loop the interpreter's kernel takes slower than the kernel does: in every
-    // mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
-    {
-        sites.retain(|(pc, site)| !loop_kernel::LoopKernel::accepts(decoded, constants, function, site.header as usize, *pc));
-    }
+    // The tiers run a loop the interpreter's kernel takes slower than the kernel does (`Recurrence::beats_rows`): in
+    // every mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
+    sites.retain(|(pc, site)| !loop_kernel::LoopKernel::beats_rows(decoded, constants, function, (site.header as usize, *pc), live().map(|masks| &**masks)));
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
         // The header names its site by the distance to the site's jump (`header_site_in_lane`).
@@ -18145,28 +18087,29 @@ impl Vm {
     /// The lane view a general-loop entry of `function` runs with, or null when it runs
     /// without one (`ProgramStore::entry_lane_view`).
     pub(crate) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
-        if !self.runs_lane || !self.execution_mode.allows_dynamic_execution() { return std::ptr::null(); }
-        let diagnostics = self.programs.reports_on_drop();
-        let tiers = self.programs.tiers();
-        // A Wasm function that may loop gets its view at entry; a JavaScript one derives it
-        // once a loop turns hot (`Vm::note_back_edge`).
-        let wasm = self.programs.residual(program).is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
+        let Some(code) = self.programs.residual(program) else { return std::ptr::null() };
+        if !self.runs_lane || !self.may_run_in_lane(program, code) { return std::ptr::null(); }
+        // A Wasm function that may loop, or one of a program with an AOT image, gets its view at entry; any
+        // other derives it once a loop turns hot (`Vm::note_back_edge`).
+        let wasm = code.kind == quench_runtime::bytecode::ProgramKind::Wasm;
+        let image = self.programs.ahead_images(program, code).is_some();
         self.programs
-            .entry_lane_view(program, function, |code| wasm && may_loop(code), |code, constants, kind, live, sites| {
-                derive_lane_view(
-                    function,
-                    code,
-                    constants,
-                    self.heap_reads(),
-                    kind,
-                    live,
-                    sites,
-                    crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                    diagnostics,
-                    tiers,
-                )
+            .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
+                self.derived_view(function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
+    }
+
+    /// `function`'s view of `code`, derived with this VM's facts.
+    #[allow(clippy::too_many_arguments)]
+    fn derived_view<'a>(&self, function: u32, code: &quench_runtime::bytecode::Function, constants: &[Value], kind: quench_runtime::bytecode::ProgramKind,
+        live: &dyn Fn() -> Option<&'a std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>, sites: &[quench_runtime::bytecode::FieldSite], image: bool) -> LaneView {
+        let mut view = derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites,
+            crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
+            self.programs.reports_on_drop(), self.programs.tiers());
+        // Where an image's bodies are the only code, the lane takes on every record they leave at.
+        if image && !self.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
+        view
     }
 
     /// Whether a lane run of `program` credits its functions' loop work: a Wasm program in
@@ -18183,8 +18126,7 @@ impl Vm {
     #[inline(always)]
     pub(crate) fn runs_in_lane(view: *const LaneView, pc: usize) -> bool {
         // SAFETY: a non-null view has an entry for every validated PC.
-        quench_runtime::DYNAMIC_EXECUTION_ENABLED
-            && !view.is_null()
+        !view.is_null()
             && unsafe {
                 let entries: &[u64] = &(*view).entries;
                 *entries.get_unchecked(pc / u64::BITS as usize)
@@ -18197,7 +18139,7 @@ impl Vm {
     #[inline(always)]
     pub(crate) fn runs_call_in_lane(view: *const LaneView) -> bool {
         // SAFETY: a non-null view lives with its program.
-        Self::runs_in_lane(view, 0) || quench_runtime::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { (*view).returns_from_entry }
+        Self::runs_in_lane(view, 0) || !view.is_null() && unsafe { (*view).returns_from_entry }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
@@ -18244,9 +18186,12 @@ impl Vm {
             floor: entered.cell,
         };
         let mut context = self.context_for_start(start);
+        let function = self.frames[*frame].function;
         let ip = self.drive_lane(&mut context, entered, |cx| {
-            // SAFETY: `cx` is the only access path to the context during the run.
+            // SAFETY: `cx` is the only access path to the context during the run. A frame at its first
+            // instruction enters its published body as an activation does.
             unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };
+            if pc == 0 && let Some(start) = body_calls::enter_frame_body(cx, function) { return start; }
             // SAFETY: the view has one record per instruction, and residual
             // validation establishes every reachable PC.
             unsafe { base.add(pc) }

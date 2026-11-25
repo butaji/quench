@@ -236,6 +236,7 @@ pub(crate) struct ShortAscii {
     bytes: [u8; SHORT_ASCII_CAPACITY],
 }
 
+#[quench_macros::test_visible]
 /// `FlatUnits` is three words: a shared variant's tag word, then its pointer and length.
 /// `Short` fills them, less its own tag and `ShortAscii::length`.
 pub(crate) const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
@@ -1021,6 +1022,7 @@ impl JsString {
         }
     }
 
+    #[quench_macros::test_visible]
     /// The units `range` of this string (`String.prototype.slice` and its kin). A long ASCII
     /// result shares this string's storage; any other result is copied.
     pub(crate) fn substring(&self, range: Range<usize>) -> Self {

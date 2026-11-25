@@ -2,12 +2,12 @@
 //! must end alike (printed lines, completion or exception, the `answer` global). The tier's own
 //! `TierEvents` must also show that it engaged: a tier that never ran agrees with anything.
 
-use crate::vm::tier_policy::TierRows;
-use super::compiled::forced_miss;
-use super::tier_events::{Event, TierEvents};
-use super::Vm;
-use crate::test_host::TestHost;
-use crate::{Engine, ExecutionMode, JitMode, Value};
+use quench_runtime::vm::tier_policy::TierRows;
+use crate::compiled::forced_miss;
+use quench_runtime::vm::tier_events::{Event, TierEvents};
+use quench_runtime::vm::Vm;
+use quench_runtime::test_host::TestHost;
+use quench_runtime::{Engine, ExecutionMode, JitMode, Value};
 use std::{cell::RefCell, rc::Rc};
 
 /// The tier a run is held to.
@@ -80,13 +80,13 @@ pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, j
     let program = Engine::specialize(source, "oracle.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::with_tier_rows(TestHost::writing_to(output.clone()), TierRows::Floor);
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.set_execution_mode(mode);
+    vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, mode);
     vm.programs.enable_js_lane_methods();
-    let completion = crate::jit_mode::with_mode(jit, || if scripts.is_empty() {
-        vm.execute(&program).map(drop)
+    let completion = quench_runtime::jit_mode::with_mode(jit, || if scripts.is_empty() {
+        quench_runtime::test_support::execute(&mut vm, &program).map(drop)
     } else {
-        vm.execute_after_scripts(scripts, &program).map(drop)
+        quench_runtime::test_support::execute_after_scripts(&mut vm, scripts, &program).map(drop)
     }).map_err(|error| format!("{error:?}"));
     let atom = vm.intern_atom("answer");
     let answer = vm.own_property(vm.realm.globals, atom).map(Value::to_bits);

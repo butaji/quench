@@ -347,7 +347,6 @@ pub(crate) fn seed_declared_feedback(function: &quench_runtime::bytecode::Functi
 mod tests {
     use super::*;
     use quench_runtime::Engine;
-    use quench_runtime::test_host::TestHost;
 
     /// The kinds each arithmetic or comparison site of `run` recorded after `source` ran.
     fn recorded(source: &str) -> Vec<OperandKinds> {
@@ -355,9 +354,9 @@ mod tests {
         let function = program.functions.iter()
             .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
             .unwrap();
-        let mut vm = Vm::new(TestHost::writing_to(Default::default()));
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
         vm.set_execution_mode(quench_runtime::ExecutionMode::Interpreted);
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let sites: Vec<usize> = program.function(function).instructions().enumerate()
             .filter(|(_, instruction)| has_operand_feedback(instruction.op()))
             .map(|(pc, _)| pc)

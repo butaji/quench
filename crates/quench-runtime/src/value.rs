@@ -10,7 +10,9 @@ mod distinct_heap;
 pub(crate) use distinct_heap::DistinctHeapPair;
 mod number_conversion;
 pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
-pub(crate) use number_conversion::{exact_uint32, EXACT_I64_TRUNCATION_LIMIT};
+pub(crate) use number_conversion::exact_uint32;
+#[quench_macros::test_visible]
+pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
 pub use crate::vm::operations::WORD32_SHIFT_MASK;
 
@@ -32,6 +34,7 @@ impl NarrowLayout {
 }
 
 impl Value {
+    #[quench_macros::test_visible]
     /// This value as a narrow value, when it has one.
     #[inline(always)] pub(crate) fn to_narrow(self) -> Option<u32> {
         let upper = self.0 & !LOWER_WORD;
@@ -79,6 +82,7 @@ impl Value {
             && (narrow >> NARROW_CODE_SHIFT) & ((1 << NARROW_CODE_BITS) - 1) < NARROW_HEAP_FAMILIES as u32
     }
 
+    #[quench_macros::test_visible]
     /// The value `narrow` packs (`to_narrow`).
     #[inline(always)] pub(crate) fn from_narrow(narrow: u32) -> Self {
         if narrow & NARROW_INTEGER_FLAG != 0 {
@@ -391,6 +395,7 @@ impl Value {
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
     }
 
+    #[quench_macros::test_visible]
     #[inline]
     pub(crate) fn heap(index: u32) -> Self {
         Self(TAG_HEAP | u64::from(index))
@@ -416,6 +421,7 @@ impl Value {
         Self(TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS | u64::from(index))
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)] pub(crate) fn direct_string(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_STRING_HANDLE_BITS | u64::from(index))
     }
@@ -469,6 +475,7 @@ impl Value {
         (int || !self.is_tagged(), int, f64::from_bits(self.0))
     }
 
+    #[quench_macros::test_visible]
     /// Both operands as Numbers.
     #[inline(always)] pub(crate) fn number_pair(left: Self, right: Self) -> Option<(f64, f64)> {
         Some((left.as_number()?, right.as_number()?))

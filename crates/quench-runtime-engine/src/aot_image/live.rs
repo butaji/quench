@@ -33,11 +33,10 @@ struct Layout {
 }
 
 /// The addresses symbols resolve to that the image's own data fixes: each function's base body,
-/// the invalidation word, the operand table and the call records.
+/// the invalidation word and the call records.
 struct Places<'a> {
     bases: &'a [u64],
     invalidation: usize,
-    operands: &'a [[u64; 2]],
     calls: &'a [UnsafeCell<CallRecord>],
 }
 
@@ -45,12 +44,11 @@ struct Places<'a> {
 pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String> {
     let layout = layout(image);
     let invalidation = Invalidation::default();
-    let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
     let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
     let code = CodeMemory::assemble(layout.length, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
-        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records() };
+        let places = Places { bases: &bases, invalidation: invalidation.address(), calls: calls.records() };
         place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
     })?;
     let start = code.pointer().addr();
@@ -58,7 +56,7 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
     let lanes: Box<[Option<usize>]> = layout.lanes.iter().zip(&linked)
         .map(|(lane, linked)| lane.filter(|_| *linked).map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
-    Ok(LiveImage { _code: Some(code), invalidation, operands: operands.into_vec().into(), calls, entries, bases, lanes })
+    Ok(LiveImage { _code: Some(code), invalidation, calls, entries, bases, lanes })
 }
 
 pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
@@ -66,8 +64,8 @@ pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
 #[quench_macros::ext(LinkedTableOps1)]
 impl LinkedTable {
     /// The table at `table` of an image of `count` functions (`object::entry_table`): the ABI
-    /// header, `count` entries, `count` base bodies, then the file's address and length, the operand
-    /// records' address and the call records' address.
+    /// header, `count` entries, `count` base bodies, then the file's address and length and the call
+    /// records' address.
     ///
     /// # Safety
     /// `table` is the aligned entry table symbol of an image of exactly `count` functions, emitted by
@@ -84,7 +82,7 @@ impl LinkedTable {
             let bases = std::slice::from_raw_parts(words.add(header + count), count);
             let tail = words.add(header + 2 * count);
             let file = std::slice::from_raw_parts(tail.read() as *const u8, tail.add(1).read());
-            Ok(Self { entries, bases, file, operands: tail.add(2).read() as *const [u64; 2], calls: tail.add(3).read() as *mut CallRecord })
+            Ok(Self { entries, bases, file, calls: tail.add(2).read() as *mut CallRecord })
         }
     }
 }
@@ -97,12 +95,11 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
     if table.entries.len() != count || table.bases.len() != count {
         return Err("native image table does not match its image".into());
     }
-    // SAFETY: the table names the image's operand records, one per `image.operands`, alive for the
-    // process, and its writable call records (`LinkedTable::read`).
-    let (operands, calls) = unsafe { (std::slice::from_raw_parts(table.operands, image.operands.len()), BoundCalls::linked(image, table.calls)) };
+    // SAFETY: the table names the image's writable call records, alive for the process (`LinkedTable::read`).
+    let calls = unsafe { BoundCalls::linked(image, table.calls) };
     // The object places no lane body (`object::codes`): each is relinked from the image when a VM installs it.
     let lanes = vec![None; count].into_boxed_slice();
-    Ok(LiveImage { _code: None, invalidation: Invalidation::default(), operands: std::borrow::Cow::Borrowed(operands), calls,
+    Ok(LiveImage { _code: None, invalidation: Invalidation::default(), calls,
         entries: table.entries.into(), bases: table.bases.into(), lanes })
 }
 
@@ -114,7 +111,7 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
 pub(crate) fn link_lane(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records() };
+    let places = Places { bases: &bases, invalidation: live.invalidation.address(), calls: live.calls.records() };
     let mut roots = FoldedRoots::default();
     let code = lane.code.link(0, |namespace, key| {
         let word = resolve(image, vm, &places, namespace, key)?;
@@ -166,8 +163,6 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
     let symbol = SymbolTable::decode(image, namespace, key)?;
     match symbol {
         Symbol::Helper(helper) => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
-        Symbol::SemanticEntry(op) => semantic_entry(op),
-        Symbol::Operands { .. } => places.operands.get(key as usize).map(|record| record.as_ptr().addr() as u64),
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
         Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
         Symbol::Invalidation => Some(places.invalidation as u64),
@@ -177,17 +172,6 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
         Symbol::HeapValue(_) | Symbol::Shape(_) => symbols::resolve_recipe(symbol, image, vm),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
-}
-
-/// The address of opcode `op`'s monomorphized semantic entry.
-#[cfg(feature = "native-execution")]
-fn semantic_entry(op: u16) -> Option<u64> {
-    crate::compiled::native_js_operation_entry_for(op as usize).map(|entry| entry as usize as u64)
-}
-
-#[cfg(not(feature = "native-execution"))]
-fn semantic_entry(_op: u16) -> Option<u64> {
-    None
 }
 
 /// The address of record `pc` of function `function`'s base body, if control enters it.

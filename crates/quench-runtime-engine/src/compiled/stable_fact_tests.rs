@@ -8,8 +8,8 @@ use super::*;
 /// The lane-body compilation of the named function of `source`, after it ran.
 fn compiled_lane_body(source: &str, name: &str) -> (Vm, ResidualProgram, LaneMethod) {
     let program = quench_runtime::Engine::specialize(source, "stable-facts.js").unwrap();
-    let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.execute(&program).unwrap();
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     vm.programs.enable_js_lane_methods();
     let function = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -121,10 +121,10 @@ fn stable_facts_changed_mid_run_leave_compiled_bodies_with_exact_results() {
     let program = quench_runtime::Engine::specialize(source, "stable-facts-mid-run.js").unwrap();
     let mut answers = Vec::new();
     for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let answer = vm.intern_atom("answer");
         let value = vm.own_property(vm.realm.globals, answer).unwrap();
         answers.push(vm.heap_reads().string(value).unwrap().to_string());
@@ -209,10 +209,10 @@ const GLOBAL_FACTS_LATER: [&str; 3] = [
 fn global_bindings_changed_under_compiled_bodies_read_as_the_interpreter_reads() {
     let program = quench_runtime::Engine::specialize(GLOBAL_FACTS_FIRST, "global-facts.js").unwrap();
     for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         for (index, source) in GLOBAL_FACTS_LATER.iter().enumerate() {
             vm.eval_script_source(&program, source, &format!("global-facts-{index}.js")).unwrap();
         }

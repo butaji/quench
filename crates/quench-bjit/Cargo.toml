@@ -10,6 +10,11 @@ build = "build.rs"
 [lib]
 doctest = false
 
+[features]
+# Never enabled here: quench-runtime's files this crate mounts name quench-runtime's feature of that
+# name (`quench_macros::test_visible`), which must be a known cfg value in this crate too.
+test-support = []
+
 [dependencies]
 
 [build-dependencies]

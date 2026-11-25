@@ -8,17 +8,18 @@ use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPla
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
-#[cfg(test)]
-pub(crate) mod counts {
+#[cfg(any(test, feature = "test-support"))]
+pub mod counts {
     use std::cell::Cell;
 
     thread_local! {
-        pub(crate) static GLOBAL_CALL_OUTS: Cell<usize> = const { Cell::new(0) };
-        pub(crate) static DIRECT_GLOBAL_STORES: Cell<usize> = const { Cell::new(0) };
+        pub static GLOBAL_CALL_OUTS: Cell<usize> = const { Cell::new(0) };
+        pub static DIRECT_GLOBAL_STORES: Cell<usize> = const { Cell::new(0) };
         /// The receivers whose run of constant field defines was skipped as already held.
-        pub(crate) static CONSTANT_FIELD_SKIPS: Cell<usize> = const { Cell::new(0) };
+        pub static CONSTANT_FIELD_SKIPS: Cell<usize> = const { Cell::new(0) };
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn bump(counter: &'static std::thread::LocalKey<Cell<usize>>) {
         counter.with(|count| count.set(count.get() + 1));
     }
@@ -52,7 +53,7 @@ impl Vm {
         operands: OperandValues<Value>) -> Result<Option<Value>, JsError> {
         let OperandValues { fixed: [first, second], list } = operands;
         let operand = second.unwrap_or(Value::UNDEFINED);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if matches!(operation, CallOut::GlobalWrite { .. } | CallOut::GlobalTypeof { .. }) {
             counts::bump(&counts::GLOBAL_CALL_OUTS);
         }
@@ -193,10 +194,12 @@ impl Vm {
         }
     }
 
-    /// Retires every view's speculative int32 kinds, once per thread (`dispatch_fast::int_kinds`).
+    /// Retires every view's speculative int32 kinds, once per thread (`dispatch_fast::int_kinds`):
+    /// an update overflowed one, or native code ran an activation the lane goes on in
+    /// (`int_kinds::retire_after_native`).
     #[cold]
     #[inline(never)]
-    pub(super) fn retire_int_speculation(&self) {
+    pub fn retire_int_speculation(&self) {
         if crate::vm::engine_calls::note_int_speculation_retired() {
             self.programs.retire_int_speculation();
         }

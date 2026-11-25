@@ -34,12 +34,12 @@ fn a_loop_compiled_by_the_region_specializer_runs() {
     let program = quench_runtime::Engine::specialize(
         "function run(){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){s=s+i;} } return s; } throw run();",
         "lane-osr.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    let error = vm.execute(&program).unwrap_err();
+    let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(quench_runtime::Value::integer(9_900_000)));
     assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
@@ -59,12 +59,12 @@ fn a_remainder_loop_runs_through_the_lane_unit() {
          let calls = 0; print(remainderLoop({valueOf() {calls++; return 7;}}, 3)); print(calls);",
         "lane-osr-remainder.js").unwrap();
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(output.clone()));
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(output.clone()));
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), [
         "-0,-0,0,NaN,NaN,NaN,NaN,2,-2,NaN,NaN,-0,0.09999999999999998,1.5", "1", "64",
     ]);
@@ -90,15 +90,14 @@ fn a_return_inside_a_loop_completes_through_the_lane_unit() {
          print(s);",
         "lane-osr-return.js").unwrap();
     let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(expected.clone()))
-        .execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(expected.clone())), &program).unwrap();
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(output.clone()));
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(output.clone()));
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
     let function_id = program.functions.iter().position(|function|
         function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
@@ -120,15 +119,14 @@ fn an_append_growth_loop_runs_through_the_lane_unit() {
          print(sum);",
         "lane-osr-append.js").unwrap();
     let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(expected.clone()))
-        .execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(expected.clone())), &program).unwrap();
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(output.clone()));
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(output.clone()));
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
     assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
@@ -146,12 +144,12 @@ fn a_float_unary_loop_runs_through_the_lane_unit() {
          if(negate(-2147483648)!==2147483648) throw Error('int32 minimum');
          print('ok');", "lane-osr-unary.js")).unwrap();
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(output.clone()));
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(output.clone()));
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["ok"]);
     assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
@@ -163,12 +161,12 @@ fn a_field_loop_compiled_by_the_region_specializer_runs() {
     let program = quench_runtime::Engine::specialize(
         "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+o.x)|0; } } return s; } throw helper({x:1});",
         "lane-osr-field.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    let error = vm.execute(&program).unwrap_err();
+    let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(quench_runtime::Value::integer(10_100_000)));
     assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
@@ -179,12 +177,12 @@ fn an_array_loop_compiled_by_the_region_specializer_runs() {
     let program = quench_runtime::Engine::specialize(
         "function helper(arr){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+arr[i&3])|0; } } return s; } throw helper([1,2,3,4]);",
         "lane-osr-array.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    let error = vm.execute(&program).unwrap_err();
+    let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(quench_runtime::Value::integer(10_400_000)));
     assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
@@ -193,11 +191,11 @@ fn an_array_loop_compiled_by_the_region_specializer_runs() {
 /// region runs of the function named `name`.
 fn thrown_with_native_runs(source: &str, name: &str) -> (Option<quench_runtime::Value>, u64) {
     let program = quench_runtime::Engine::specialize(source, "lane-osr-views.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.disable_js_entry_specializations();
-    let thrown = vm.execute(&program).unwrap_err().thrown_value();
+    let thrown = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err().thrown_value();
     let function_id = program.functions.iter().position(|function|
         function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
     let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
@@ -257,28 +255,27 @@ fn a_capture_loop_keeps_its_capture_value() {
     let program = quench_runtime::Engine::specialize(
         "function helper(){ let add=1; let f=()=>add; let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=s+i+add; } } return s; } function main(){ return helper(); } throw main();",
         "lane-osr-capture.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    let error = vm.execute(&program).unwrap_err();
+    let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(quench_runtime::Value::integer(10_100_000)));
 }
 /// Runs `source` interpreted and compiled with lane OSR, and returns the compiled output,
 /// equal to the interpreter's, and the OSR diagnostics of the function named `function`.
-pub(crate) fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::dispatch_fast::OsrDiagnostics) {
+pub(crate) fn osr_run(source: &str, function: &str) -> (Vec<String>, quench_runtime::vm::engine_types::OsrDiagnostics) {
     let program = quench_runtime::Engine::specialize(source, "lane-osr-admission.js").unwrap();
     let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(expected.clone()))
-        .execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(expected.clone())), &program).unwrap();
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::writing_to(output.clone()));
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::writing_to(output.clone()));
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow(), "compiled output matches the interpreter");
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|name| &program.atoms[name as usize] == function)).unwrap();
@@ -351,12 +348,12 @@ fn a_field_store_loop_keeps_its_result() {
         "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ o.x=(o.x+i)|0; s=(s+o.x)|0; } } return s; } throw helper({x:1});",
         "lane-osr-field-store.js").unwrap();
     let run = |mode| {
-        let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-        vm.set_execution_mode(mode);
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+        quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, mode);
         vm.programs.enable_js_jit_diagnostics();
         vm.programs.enable_js_lane_methods();
         vm.programs.disable_js_entry_specializations();
-        vm.execute(&program).unwrap_err().thrown_value()
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap_err().thrown_value()
     };
     let interpreted = run(quench_runtime::ExecutionMode::Interpreted);
     let compiled = run(quench_runtime::ExecutionMode::Compiled);
@@ -408,12 +405,12 @@ fn an_inlined_call_loop_runs_through_the_lane_unit() {
     let program = quench_runtime::Engine::specialize(
         "function callee(o){ return o.x; } function caller(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+callee(o))|0; } } return s; } throw caller({x:1});",
         "lane-osr-inline.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.programs.disable_js_entry_specializations();
-    let error = vm.execute(&program).unwrap_err();
+    let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(quench_runtime::Value::integer(200_000)));
     assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::OsrRun) > 0,
         "the inlining lane OSR path ran");

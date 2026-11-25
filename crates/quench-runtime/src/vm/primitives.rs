@@ -9,6 +9,7 @@ pub(super) use whitespace::is_ecma_whitespace_character;
 const REPEAT_COPY_MAX_UNITS: usize = 4096;
 
 impl Vm {
+    #[quench_macros::test_visible]
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.function(callee) {
             Some(FunctionRecord {
@@ -493,6 +494,7 @@ impl Vm {
             }
             Native::MathSumPrecise => self.math_sum_precise(p, args.first().copied()),
             Native::MathRandom => {
+                crate::clock::note_input("Math.random");
                 let mut state = self.random_state;
                 state ^= state << 13;
                 state ^= state >> 7;

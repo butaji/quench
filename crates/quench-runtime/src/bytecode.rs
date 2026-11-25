@@ -105,6 +105,7 @@ pub use crate::units::MAX_ARRAY_LENGTH;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub const OPTIONAL_REGISTER_BIAS: Register = 1;
 
+#[quench_macros::test_visible]
 /// The field encoding of an optional register operand.
 pub(crate) const fn encode_optional_register(register: Option<Register>) -> Register {
     match register {
@@ -2099,6 +2100,7 @@ impl Default for RegisterRoots {
 }
 
 impl RegisterRoots {
+    #[quench_macros::test_visible]
     /// A function of uncovered registers bounds none live at entry; a covered one's bound is
     /// derived on its first ask.
     pub(crate) fn new(covered: bool) -> Self {
@@ -4473,6 +4475,7 @@ impl ResidualProgram {
         self.tier0_record(index).unwrap_or_else(lowered)
     }
 
+    #[quench_macros::test_visible]
     /// `write` applied to `index`'s record: the record itself when it is compiled, else one
     /// built for this call alone and dropped after it. Encoding a program reads every
     /// record once; compiling its released ones all again for that held them all at once

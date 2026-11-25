@@ -196,11 +196,11 @@ print(JSON.stringify(out));
     fn printed(program: &ResidualProgram, test262: bool, compiled: bool) -> (Vm, Vec<String>) {
         let output = Rc::new(RefCell::new(Vec::new()));
         let host = TestHost::writing_to(output.clone());
-        let mut vm = Vm::new(if test262 { host.with_test262() } else { host });
+        let mut vm = quench_runtime::test_support::vm(if test262 { host.with_test262() } else { host });
         if compiled {
             vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
         }
-        vm.execute(program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, program).unwrap();
         let lines = output.borrow().clone();
         (vm, lines)
     }

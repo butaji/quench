@@ -97,6 +97,8 @@ mod wasm_rows;
 #[cfg(stencil_family = "regexp")]
 pub mod regexp_layout;
 #[cfg(stencil_family = "regexp")]
+mod regexp_stage;
+#[cfg(stencil_family = "regexp")]
 mod regexp_rows;
 #[cfg(all(stencil_family = "regexp", target_arch = "x86_64"))]
 mod regexp_entry;
@@ -122,101 +124,95 @@ macro_rules! go {
     }};
 }
 
-macro_rules! number_row {
-    ($name:ident, $k:expr, $d:expr, $a:expr, $b:expr, $spec:expr) => {
+/// A stencil row's entry: the row ABI's arguments as the state `$s`, then `$body`, which goes on
+/// to a successor. The one spelling of a row's signature every family's row macro expands to.
+macro_rules! row_entry {
+    ($name:ident, $s:ident, $body:block) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
             unsafe {
-                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match numeric::run::<{ $k }, { $d }, { $a }, { $b }, { $spec }>(s) {
-                    Out::Next(s) => go!(HOLE_NEXT, s),
-                    Out::Taken(s) => go!(HOLE_TAKEN, s),
-                    Out::Exit(s) => {
-                        core::hint::cold_path();
-                        go!(HOLE_EXIT0, s)
-                    }
-                }
+                let $s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                $body
             }
         }
+    };
+}
+
+macro_rules! number_row {
+    ($name:ident, $k:expr, $d:expr, $a:expr, $b:expr, $spec:expr) => {
+        row_entry!($name, s, {
+        match numeric::run::<{ $k }, { $d }, { $a }, { $b }, { $spec }>(s) {
+            Out::Next(s) => go!(HOLE_NEXT, s),
+            Out::Taken(s) => go!(HOLE_TAKEN, s),
+            Out::Exit(s) => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT0, s)
+            }
+        }
+        });
     };
 }
 
 macro_rules! heap_row {
     ($name:ident, $k:expr, $entry:expr, $d:expr, $a:expr, $b:expr) => {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-            unsafe {
-                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match heap_rows::run::<{ $k }, { $entry }, { $d }, { $a }, { $b }>(s) {
-                    Out::Next(s) => go!(HOLE_NEXT, s),
-                    Out::Taken(s) => go!(HOLE_TAKEN, s),
-                    Out::Exit(s) => {
-                        core::hint::cold_path();
-                        go!(HOLE_EXIT0, s)
-                    }
-                }
+        row_entry!($name, s, {
+        match heap_rows::run::<{ $k }, { $entry }, { $d }, { $a }, { $b }>(s) {
+            Out::Next(s) => go!(HOLE_NEXT, s),
+            Out::Taken(s) => go!(HOLE_TAKEN, s),
+            Out::Exit(s) => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT0, s)
             }
         }
+        });
     };
 }
 
 macro_rules! supernode_row {
     ($name:ident, $first:ty, $second:ty) => {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-            unsafe {
-                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match supernode_rows::run::<$first, $second>(s) {
-                    Out::Next(s) => go!(HOLE_NEXT, s),
-                    Out::Taken(s) => go!(HOLE_TAKEN, s),
-                    Out::Exit(s) => {
-                        core::hint::cold_path();
-                        go!(HOLE_EXIT0, s)
-                    }
-                }
+        row_entry!($name, s, {
+        match supernode_rows::run::<$first, $second>(s) {
+            Out::Next(s) => go!(HOLE_NEXT, s),
+            Out::Taken(s) => go!(HOLE_TAKEN, s),
+            Out::Exit(s) => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT0, s)
             }
         }
+        });
     };
 }
 
 macro_rules! wasm_row {
     ($name:ident, $k:expr, $op:expr, $w:expr, $shape:expr) => {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-            unsafe {
-                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match wasm_rows::run::<{ $k }, { $op }, { $w }, { $shape }>(s) {
-                    Out::Next(s) => go!(HOLE_NEXT, s),
-                    Out::Taken(s) => go!(HOLE_TAKEN, s),
-                    Out::Exit(s) => {
-                        core::hint::cold_path();
-                        go!(HOLE_EXIT0, s)
-                    }
-                }
+        row_entry!($name, s, {
+        match wasm_rows::run::<{ $k }, { $op }, { $w }, { $shape }>(s) {
+            Out::Next(s) => go!(HOLE_NEXT, s),
+            Out::Taken(s) => go!(HOLE_TAKEN, s),
+            Out::Exit(s) => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT0, s)
             }
         }
+        });
     };
 }
 
 /// A regexp row: its way on is the next or taken row, the backtrack row (exit 0), or a row by its
-/// address (`regexp_rows::Way::Jump`).
+/// address (`regexp_stage::Way::Jump`).
 macro_rules! regexp_row {
     ($name:ident, $k:expr, $a:expr, $b:expr) => {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-            unsafe {
-                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match regexp_rows::row::<{ $k }, { $a }, { $b }>(s) {
-                    regexp_rows::Way::Next(s) => go!(HOLE_NEXT, s),
-                    regexp_rows::Way::Taken(s) => go!(HOLE_TAKEN, s),
-                    regexp_rows::Way::Fail(s) => go!(HOLE_EXIT0, s),
-                    regexp_rows::Way::Jump(s, address) => {
-                        let next: Row = core::mem::transmute(address);
-                        become next(s.frame, s.ctx, s.p[0], s.p[1], s.p[2], s.p[3], s.f[0], s.f[1], s.f[2], s.f[3], s.f[4], s.f[5], s.f[6], s.f[7])
-                    }
-                }
+        row_entry!($name, s, {
+        match regexp_rows::row::<{ $k }, { $a }, { $b }>(s) {
+            regexp_stage::Way::Next(s) => go!(HOLE_NEXT, s),
+            regexp_stage::Way::Taken(s) => go!(HOLE_TAKEN, s),
+            regexp_stage::Way::Fail(s) => go!(HOLE_EXIT0, s),
+            regexp_stage::Way::Jump(s, address) => {
+                let next: Row = core::mem::transmute(address);
+                become next(s.frame, s.ctx, s.p[0], s.p[1], s.p[2], s.p[3], s.f[0], s.f[1], s.f[2], s.f[3], s.f[4], s.f[5], s.f[6], s.f[7])
             }
         }
+        });
     };
 }
 

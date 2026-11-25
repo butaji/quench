@@ -76,10 +76,10 @@ fn plain_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: 
 
 /// A field read through two cache entries: the first names a value the second entry's site reads from.
 #[inline(always)]
-pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
-    site_tables(stage, tables, miss)?;
-    let middle = site_read_in(stage, tables, object, first, miss)?;
-    site_read_in(stage, tables, middle, second, miss)
+pub(crate) fn site_chain<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, (entries, records), miss)?;
+    let middle = site_read_in(stage, (entries, records, functions), object, first, miss)?;
+    site_read_in(stage, (entries, records, functions), middle, second, miss)
 }
 
 /// Stores `value` at `slot` of the object record at `record`, whose shape the caller proved and
@@ -248,11 +248,31 @@ pub(crate) fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shap
 /// `None` (leaving at `miss`) where the word is no direct object or the entry is no entry for
 /// the record (`own_entry_value`, `holder_entry_value`).
 #[inline(always)]
-fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
-    let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
+fn site_read_in<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    let record = readable_record(stage, (records, functions), object, miss)?;
+    let entry = stage.add_imm(entries, offset);
     let own = own_entry(stage, entry);
     stage.choose_leaving(own, #[inline(always)] |stage| own_entry_value(stage, record, entry, miss),
-        #[inline(always)] |stage| holder_entry_value(stage, tables.1, record, entry, miss))
+        #[inline(always)] |stage| holder_entry_value(stage, records, record, entry, miss))
+}
+
+/// The record whose own properties a read of `object` takes: a direct object's in the record table
+/// `records`, or, where the function record table `functions` is present, a function's `Object` (at
+/// `NATIVE_FUNCTION_LAYOUT.object_offset`), which a cache entry keys by its shape as any object's.
+/// `None` (leaving at `miss`) for any other word.
+#[inline(always)]
+fn readable_record<S: Stage>(stage: &mut S, (records, functions): (S::Word, S::Word), object: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let direct = super::value::is_direct_object(stage, object);
+    let id = super::value::direct_object_id(stage, object);
+    stage.choose_leaving(direct, #[inline(always)] |stage| Some(super::object::object_record_at(stage, records, id)), #[inline(always)] |stage| {
+        let function = super::value::is_direct_function(stage, object);
+        stage.guard(function, miss)?;
+        let present = stage.ne_imm(functions, 0u32);
+        stage.guard(present, miss)?;
+        let offset = stage.mul_imm(id, super::layout_offsets::NATIVE_FUNCTION_LAYOUT.record_size as u64);
+        let record = stage.add(functions, offset);
+        Some(stage.add_imm(record, super::layout_offsets::NATIVE_FUNCTION_LAYOUT.object_offset as u64))
+    })
 }
 
 /// `site_read_in` of an own entry alone: `None` (leaving at `miss`) for an entry that names a
@@ -287,9 +307,9 @@ pub(crate) fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word)
 /// offset is the row's only per-site operand, so a site is read as the interpreter's cached
 /// read reads it.
 #[inline(always)]
-pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
-    site_tables(stage, tables, miss)?;
-    site_read_in(stage, tables, object, offset, miss)
+pub(crate) fn site_read<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, (entries, records), miss)?;
+    site_read_in(stage, (entries, records, functions), object, offset, miss)
 }
 
 /// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
@@ -400,7 +420,7 @@ mod tests {
             let records = heap.object_record_base().expect("object records exist") as u64;
             let read = |object: Value, entry: [u32; 4]| {
                 let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
-                site_read(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, ()).map(Value::from_bits)
+                site_read(&mut stage, (entry.as_ptr() as u64, records, 0), object.to_bits(), 0u64, ()).map(Value::from_bits)
             };
             for slot in 0..count as u32 {
                 assert_eq!(read(receiver, stored(receiver_shape, holder_shape, slot)), Some(Value::integer(71 + slot as i32)), "{count} values, slot {slot}");
@@ -428,7 +448,7 @@ mod tests {
         let records = heap.object_record_base().expect("object records exist") as u64;
         let read = |object: Value| {
             let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
-            site_chain(&mut stage, (entries.as_ptr() as u64, records), object.to_bits(), (0u64, ENTRY.entry_size as u64), ()).map(Value::from_bits)
+            site_chain(&mut stage, (entries.as_ptr() as u64, records, 0), object.to_bits(), (0u64, ENTRY.entry_size as u64), ()).map(Value::from_bits)
         };
         assert_eq!(read(outer), Some(Value::integer(9)));
         assert_eq!(read(plain), None, "an integer has no fields");
@@ -468,9 +488,9 @@ mod tests {
     #[test]
     fn the_site_read_has_one_per_site_hole() {
         let mut stage = crate::staged::trace::Trace::default();
-        let (entries, records, object) = (stage.constant(0), stage.constant(1), stage.constant(2));
+        let (entries, records, object, functions) = (stage.constant(0), stage.constant(1), stage.constant(2), stage.constant(3));
         let offset = stage.site(ENTRY.entry_size as u64);
-        site_read(&mut stage, (entries, records), object, offset, ());
+        site_read(&mut stage, (entries, records, functions), object, offset, ());
         assert_eq!(stage.holes, [ENTRY.entry_size as u64], "{:?}", stage.holes);
     }
 }
