@@ -2420,7 +2420,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { OP == quench_runtime::bytecode::TIER_PROLOGUE as u16 || OP == quench_runtime::bytecode::BODY_ENTRY as u16 } {
         // A prologue record enters the activation's function in the lane context `cx` (`tier_prologue_resumed`,
-        // `body_entry_resumed`), erased of its host so the frame names no `H`.
+        // `body_calls::enter_published_body`), erased of its host so the frame names no `H`.
         let entry = EntryHost {
             cx: cx.cast(),
             ip,

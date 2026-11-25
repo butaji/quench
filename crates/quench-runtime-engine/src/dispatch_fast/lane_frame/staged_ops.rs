@@ -65,7 +65,7 @@ impl AwaitSource {
 
 /// The activation entries of the running lane context, erased of its host so the frame names no `H`
 /// (`PrologueFrame`): the tier prologue and the body entry the prologue records run
-/// (`tier_prologue_resumed`, `body_entry_resumed`), each answering where the lane resumes. `ip` is the
+/// (`tier_prologue_resumed`, `body_calls::enter_published_body`), each answering where the lane resumes. `ip` is the
 /// body entry's record.
 #[derive(Clone, Copy)]
 pub(crate) struct EntryHost {
@@ -86,7 +86,7 @@ impl<const ACC: u8> quench_runtime::staged::PrologueFrame<Concrete> for LaneFram
     }
 
     /// The specialized body's prologue: the body runs on the activation's registers, and the lane
-    /// resumes where it leaves (`body_entry_resumed`).
+    /// resumes where it leaves (`body_calls::enter_published_body`).
     fn body_entry(&mut self, _stage: &mut Concrete, function: u32, binds_this: bool) -> Option<LaneControl> {
         let entry = self.entry?;
         // SAFETY: as `tier_prologue`; `entry.ip` is the prologue record the row runs at.
