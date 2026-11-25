@@ -1075,7 +1075,7 @@ impl<'a> NativeContext<'a> {
         source: &str,
         name: &str,
     ) -> Result<RootId, RootedError> {
-        let result = self.vm.evaluate_embedding_script(source, name);
+        let result = self.vm.evaluate_embedding_global_script(source, name);
         self.completion(result)
     }
 
