@@ -171,6 +171,9 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
     let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
+    // The host operations the startup heap holds, from which the image's table starts.
+    let held: (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>) = runtime.held_host_operations();
+    fs::write(output.with_extension("operations"), serde_json::to_vec(&held).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
@@ -380,11 +383,16 @@ fn compile(options: Options) -> Result<(), String> {
     let saved_waits = prepare_saved_waits(&waits, &work.0, &native_entry, &mut report);
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\n", resumes_at_rest(&saved_waits), makes_code(&graph), runs_wasm(&graph)).as_bytes())).map_err(|error| error.to_string())?;
-    let inputs = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { inputs };
+    let (inputs, startup_held) = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { (inputs, None) };
+    // The heaps the image starts from: each saved run's, else the startup snapshot's.
+    let heaps: Vec<(Vec<u32>, Vec<(Vec<String>, Vec<u32>)>)> = match startup_held {
+        Some(held) => vec![held],
+        None => saved_waits.iter().map(|wait| (wait.held.0.clone(), wait.held.1.clone())).collect(),
+    };
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
     // global's module): every one the graph names.
-    let held: Option<std::collections::BTreeSet<u32>> = (!saved_waits.is_empty()).then(|| {
+    let held: Option<std::collections::BTreeSet<u32>> = (!heaps.is_empty()).then(|| {
         // What the global object holds only for globals no loaded code names (a pending lazy
         // global's initializer, an accessor's getter) runs only when code reads one of those
         // names: code the program holds names it, code it loads may, and so may a computed read
@@ -399,11 +407,11 @@ fn compile(options: Options) -> Result<(), String> {
         let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned))
             .chain(compresses.then(|| "zlib".to_owned()));
         let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
-        report["unnamed_globals"] = json!(saved_waits.iter().flat_map(|wait| &wait.held.1).map(|(names, operations)| json!({
+        report["unnamed_globals"] = json!(heaps.iter().flat_map(|heap| &heap.1).map(|(names, operations)| json!({
             "names": names, "operations": operations.len(),
             "kept": names_any || names.iter().any(|name| graph.global_names.contains(name)),
         })).collect::<Vec<_>>());
-        let lazy = saved_waits.iter().flat_map(|wait| &wait.held.1)
+        let lazy = heaps.iter().flat_map(|heap| &heap.1)
             .filter(|(names, _)| names_any || names.iter().any(|name| graph.global_names.contains(name)))
             .flat_map(|(_, operations)| operations.iter().copied());
         // The internal bindings it may load as it runs: those it names, or every one where it
@@ -413,7 +421,7 @@ fn compile(options: Options) -> Result<(), String> {
         } else {
             graph.bindings.iter().filter_map(|name| crate::modules::trace_shared_vm::binding_operation(name)).map(|operation| operation.0).collect()
         };
-        saved_waits.iter().flat_map(|wait| wait.held.0.iter().copied()).chain(lazy).chain(builders).chain(bindings).collect()
+        heaps.iter().flat_map(|heap| heap.0.iter().copied()).chain(lazy).chain(builders).chain(bindings).collect()
     });
     let support_report = match &options.sdk_report {
         Some(path) => {
@@ -742,7 +750,9 @@ fn operation_table(graph: &super::graph::DependencyGraph, kept: Option<&std::col
 
 /// The image's inputs with its startup snapshot (`--bootstrap-worker`), or without one when the
 /// snapshot cannot be prepared; the catalog gains the start's constants either way.
-fn bootstrap_inputs(graph: &super::graph::DependencyGraph, work: &Path, native_entry: &Path, inputs: quench_runtime::native_link::NativeImageInputs, report: &mut Value) -> Result<quench_runtime::native_link::NativeImageInputs, String> {
+/// Also the host operations the snapshot's heap holds (`build_bootstrap`).
+fn bootstrap_inputs(graph: &super::graph::DependencyGraph, work: &Path, native_entry: &Path, inputs: quench_runtime::native_link::NativeImageInputs, report: &mut Value)
+    -> Result<(quench_runtime::native_link::NativeImageInputs, Option<(Vec<u32>, Vec<(Vec<String>, Vec<u32>)>)>), String> {
     let bootstrap = work.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
@@ -757,11 +767,12 @@ fn bootstrap_inputs(graph: &super::graph::DependencyGraph, work: &Path, native_e
                 .map_err(|error| error.to_string())?;
             report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
                 "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
-            inputs.with_bootstrap(bootstrap)
+            let held = serde_json::from_slice(&fs::read(bootstrap.with_extension("operations")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+            (inputs.with_bootstrap(bootstrap), Some(held))
         },
         Err(error) => {
             report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
-            inputs
+            (inputs, None)
         },
     })
 }

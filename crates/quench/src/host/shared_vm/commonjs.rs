@@ -488,6 +488,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let raw_queue_key = context.string_rooted("\0quench:queueMicrotaskRaw");
     context.define_data_property_rooted(global, raw_queue_key, raw_queue_microtask, false, false, true)?;
     let require = get(context, global, BOOTSTRAP_REQUIRE)?;
+    // Required by name, so its builder is marked here (`link_with_reached_operations`).
+    let _ = crate::host::shared_vm::operation!("builtin:internal/process/task_queues");
     let task_queues_name = context.string_rooted("internal/process/task_queues");
     let undefined = context.undefined();
     let task_queues = context.call_rooted(require, undefined, &[task_queues_name])?;
