@@ -439,8 +439,7 @@ use quench_runtime::vm::engine_types::EnvironmentWindow;
 pub(crate) use quench_runtime::vm::engine_types::WINDOW_ENVIRONMENT;
 pub(crate) use quench_runtime::vm::engine_types::WINDOW_SLOTS;
 pub(crate) const WINDOW_CAPTURED: u16 = 2;
-pub(crate) use quench_runtime::vm::engine_types::WINDOW_STORAGE;
-pub(crate) use quench_runtime::vm::engine_types::WINDOW_LOCALS;
+pub(crate) use quench_runtime::vm::engine_types::{WINDOW_LOCALS, WINDOW_STORAGE};
 
 use quench_runtime::vm::engine_types::TargetBody;
 
