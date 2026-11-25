@@ -279,6 +279,33 @@ pub trait Stage: crate::projection::Sealed {
         super::spans::equal_at_by_rows(self, text, needle, start)
     }
 
+    /// The `length` units at `source` written to `target`, of one width (two bytes a unit where
+    /// `wide`), the runs apart: a span primitive (`spans`).
+    #[inline(always)]
+    fn copy_span(&mut self, wide: bool, target: Self::Word, source: Self::Word, length: Self::Word) where Self: Sized {
+        super::spans::copy_by_rows(self, wide, target, source, length);
+    }
+
+    /// `unit` written to each of the `length` units at `target`: a span primitive (`spans`).
+    #[inline(always)]
+    fn fill_span(&mut self, wide: bool, target: Self::Word, unit: Self::Word, length: Self::Word) where Self: Sized {
+        super::spans::fill_by_rows(self, wide, target, unit, length);
+    }
+
+    /// The ASCII case map (upper or lower) of the `length` bytes at `source` written to `target`:
+    /// a span primitive (`spans`).
+    #[inline(always)]
+    fn case_span(&mut self, target: Self::Word, source: Self::Word, length: Self::Word, upper: bool) where Self: Sized {
+        super::spans::case_by_rows(self, target, source, length, upper);
+    }
+
+    /// Whether the ASCII case map (upper or lower) changes any of the `length` bytes at `source`:
+    /// a span primitive (`spans`).
+    #[inline(always)]
+    fn case_changes_span(&mut self, source: Self::Word, length: Self::Word, upper: bool) -> Self::Cond where Self: Sized {
+        super::spans::case_changes_by_rows(self, source, length, upper)
+    }
+
     /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain
     /// of the object record `object`, as `(decided, holds)`: at most `max_depth` links past the
     /// first are followed, in the object record table at `records`, and a link naming no object

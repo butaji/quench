@@ -1,8 +1,8 @@
 //! ASCII text builtins (trim, case, pad, repeat): one body per builtin, over flat unit slices.
 //! The general natives (`vm::primitives`, `vm::wtf16::conversions::case`) and the in-place ASCII
-//! paths (`vm::inplace::ascii_text`) both call these, so each rule is written once. Trim is the
-//! staged row (`strings::trim_bounds`) run on `Concrete`; case, pad and repeat are still plain
-//! loops over units. The caller makes the one allocation of the result.
+//! paths (`vm::inplace::ascii_text`) both call these, so each rule is written once. Each is a
+//! staged row (`strings::trim_bounds`, `pad_into_row`, `repeat_into_row`) or a span primitive
+//! (`Stage::case_span`) run on `Concrete`. The caller makes the one allocation of the result.
 
 use std::ops::Range;
 
@@ -32,14 +32,24 @@ pub(crate) fn ascii_case_byte(byte: u8, upper: bool) -> u8 {
 
 /// Whether the ASCII case mapping changes any of `bytes`.
 pub(crate) fn ascii_case_changes(bytes: &[u8], upper: bool) -> bool {
-    bytes.iter().any(|byte| ascii_case_byte(*byte, upper) != *byte)
+    use super::Stage;
+    let mut stage = super::Concrete::new(std::ptr::null());
+    stage.case_changes_span(bytes.as_ptr() as u64, bytes.len() as u64, upper)
 }
 
-/// The ASCII case mapping of `bytes` written into `out`, which is as long as `bytes`.
+/// The ASCII case mapping of `bytes` written into `out`, which is as long as `bytes`: the span
+/// primitive (`Stage::case_span`) on `Concrete`.
 pub(crate) fn ascii_case(bytes: &[u8], upper: bool, out: &mut [u8]) {
-    for (slot, byte) in out.iter_mut().zip(bytes) {
-        *slot = ascii_case_byte(*byte, upper);
-    }
+    assert_eq!(out.len(), bytes.len());
+    ascii_case_raw(bytes, upper, out.as_mut_ptr());
+}
+
+/// `ascii_case` into the `bytes.len()` bytes at `out`, which may be uninitialized; the caller
+/// proves they are writable and apart from `bytes`.
+pub(crate) fn ascii_case_raw(bytes: &[u8], upper: bool, out: *mut u8) {
+    use super::Stage;
+    let mut stage = super::Concrete::new(std::ptr::null());
+    stage.case_span(out as u64, bytes.as_ptr() as u64, bytes.len() as u64, upper);
 }
 
 /// The length of `padStart` or `padEnd` of a `len`-unit receiver to `target` units, or `None`
@@ -51,23 +61,16 @@ pub(crate) fn pad_length(len: usize, target: usize) -> Option<usize> {
 /// `text` written into `out`, the rest of `out` filled with repeats of `fill` (non-empty): at its
 /// end when `at_end` (`padEnd`), else at its start (`padStart`).
 pub(crate) fn pad_into<T: Copy>(out: &mut [T], text: &[T], fill: &[T], at_end: bool) {
-    let pad_len = out.len() - text.len();
-    let (text_out, pad_out) = if at_end {
-        out.split_at_mut(text.len())
-    } else {
-        let (pad_out, text_out) = out.split_at_mut(pad_len);
-        (text_out, pad_out)
-    };
-    text_out.copy_from_slice(text);
-    for (slot, unit) in pad_out.iter_mut().zip(fill.iter().copied().cycle()) {
-        *slot = unit;
-    }
+    assert!(out.len() > text.len() && !fill.is_empty() && size_of::<T>() <= 2);
+    let mut stage = super::Concrete::new(std::ptr::null());
+    super::strings::pad_into_row(&mut stage, size_of::<T>() == 2, out.as_mut_ptr() as u64, out.len() as u64,
+        text.as_ptr() as u64, text.len() as u64, fill.as_ptr() as u64, fill.len() as u64, at_end);
 }
 
 /// `unit` repeated through `out`, whose length is a multiple of `unit.len()` (non-empty): the one
 /// byte writer of a `repeat` over flat ASCII units.
 pub(crate) fn repeat_into(out: &mut [u8], unit: &[u8]) {
-    for chunk in out.chunks_exact_mut(unit.len()) {
-        chunk.copy_from_slice(unit);
-    }
+    assert!(!unit.is_empty() && out.len() % unit.len() == 0);
+    let mut stage = super::Concrete::new(std::ptr::null());
+    super::strings::repeat_into_row(&mut stage, out.as_mut_ptr() as u64, out.len() as u64, unit.as_ptr() as u64, unit.len() as u64);
 }
