@@ -196,9 +196,9 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// (`captures::store_capture`).
     #[inline(always)]
     fn store_capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, value: ir::Value) -> Option<()> {
-        self.capture?;
+        let site = self.capture?;
         let Edges::ValueGuarded { miss } = self.edges else { return None };
-        super::captures::store_capture(stage.builder, (self.payload, self.helpers), (depth, slot), value, miss);
+        super::captures::store_capture(stage.builder, (self.payload, self.helpers), site, (depth, slot), value, miss);
         Some(())
     }
 

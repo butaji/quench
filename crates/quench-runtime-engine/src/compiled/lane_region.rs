@@ -381,6 +381,8 @@ struct Entry {
     /// The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`).
     capture_values: Variable,
     capture_len: Variable,
+    /// Whether those slots admit every direct store (the captures word's `CAPTURE_STORES_BIT`).
+    capture_stores: Variable,
     /// The word of the storage the activation's environment-owned locals live in (`JsStepDispatch::environment_storage`),
     /// read once at entry and again after an operation that makes an environment (`Lowering::reload_environment`).
     environment: Variable,
@@ -2637,13 +2639,13 @@ impl Lowering<'_, '_> {
 
     /// The running activation's dense capture slots (address, count): a lane body's caller
     /// packs them in the entry's word (`entry_cell::capture_word`), a loop region reads its window's header.
-    fn entry_capture_words(&mut self) -> (ir::Value, ir::Value) {
-        if !self.body_entry() {
+    fn entry_capture_words(&mut self) -> (ir::Value, ir::Value, ir::Value) {
+        let word = if self.body_entry() { self.entry_words.1 } else {
             let window = self.loop_window();
-            let word = emit_frame_word(&mut self.builder, window, quench_runtime::staged::frame::CONTEXT_BODY);
-            return self.capture_slots_of(word);
-        }
-        self.entry_capture_slots()
+            emit_frame_word(&mut self.builder, window, quench_runtime::staged::frame::CONTEXT_BODY)
+        };
+        let (values, len) = self.capture_slots_of(word);
+        (values, len, self.raw_binary_imm(Binary::And, word, quench_bjit::shared_words::CAPTURE_STORES_BIT as i64))
     }
 
     /// The window a loop region runs in: its payload's register file, whose header holds its receiver and captures word.
@@ -2674,9 +2676,11 @@ impl Lowering<'_, '_> {
         // have stored to it.
         let capture_values = self.builder.declare_var(types::I64);
         let capture_len = self.builder.declare_var(types::I64);
-        let (values, len) = self.entry_capture_words();
+        let capture_stores = self.builder.declare_var(types::I64);
+        let (values, len, stores) = self.entry_capture_words();
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
+        self.builder.def_var(capture_stores, stores);
         let environment = self.builder.declare_var(types::I64);
         let storage = self.environment_word();
         self.builder.def_var(environment, storage);
@@ -2820,7 +2824,7 @@ impl Lowering<'_, '_> {
             self.return_at(origin(self.coverage.entry()));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, environment, this, fields, calls, call_receivers }
+        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, capture_stores, environment, this, fields, calls, call_receivers }
     }
 
     /// Per receiver shape a field site folds, whether the receiver has it.
