@@ -4,15 +4,14 @@
 use super::{DependencyGraph, GraphRequirement};
 use quench_runtime::NativeImageSupport;
 
-/// Support archives, from most capable to least.
+/// Support archives, from most capable to least. A strict compile (`aot::strict`) links none
+/// when the program folds, and one of these when it reads a dynamic input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {
     /// Interpreter and JIT for dynamic source, the Wasm frontend and the Node host.
     Full,
     /// No interpreter or JIT; the Wasm frontend and the Node host remain.
     Static,
-    /// Static without the Wasm frontend or the Node host modules a graph does not reach.
-    Strict,
 }
 
 impl Variant {
@@ -20,7 +19,6 @@ impl Variant {
         match self {
             Self::Full => "full",
             Self::Static => "static",
-            Self::Strict => "strict",
         }
     }
 
@@ -28,23 +26,18 @@ impl Variant {
     pub const fn image_support(self) -> NativeImageSupport {
         match self {
             Self::Full => NativeImageSupport::DynamicSource,
-            Self::Static | Self::Strict => NativeImageSupport::Static,
+            Self::Static => NativeImageSupport::Static,
         }
     }
 }
 
-/// The variant a compile links: `strict` evaluates the program at build time
-/// (`aot::strict`), where source it makes and evaluates is the build's, so its demands
-/// decide nothing; otherwise the explicit support choice and the demands decide, where a
+/// The variant a compile links: the explicit support choice and the demands decide, where a
 /// dynamic load counts as a demand for full support.
-pub fn select(strict: bool, explicit: Option<NativeImageSupport>, graph: &DependencyGraph) -> Result<Variant, String> {
-    if strict {
-        return Ok(Variant::Strict);
-    }
+pub fn select(explicit: Option<NativeImageSupport>, graph: &DependencyGraph) -> Variant {
     let dynamic_load = graph.requirements.iter().any(GraphRequirement::is_dynamic_load);
     match NativeImageSupport::select(explicit, graph.requires_dynamic_source || dynamic_load) {
-        NativeImageSupport::DynamicSource => Ok(Variant::Full),
-        NativeImageSupport::Static => Ok(Variant::Static),
+        NativeImageSupport::DynamicSource => Variant::Full,
+        NativeImageSupport::Static => Variant::Static,
     }
 }
 

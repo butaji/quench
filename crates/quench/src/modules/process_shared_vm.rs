@@ -403,7 +403,7 @@ pub(crate) fn initialize_terminal(context: &mut NativeContext<'_>, _: RootId, _:
     let key = context.string_rooted(if fd == STDERR_FD { "stderr" } else { "stdout" });
     let stream = context.get_property_rooted(process, key)?;
     let terminal = if crate::aot::prefix::armed() {
-        crate::aot::prefix::terminal(fd).ok_or_else(|| crate::aot::prefix::stop(context))?
+        crate::aot::prefix::answer(crate::aot::prefix::Question::Terminal(fd)).ok_or_else(|| crate::aot::prefix::stop(context))?
     } else {
         crate::modules::tty_state::is_terminal_fd(fd)
     };

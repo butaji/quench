@@ -102,9 +102,6 @@ impl Options {
             }
         }
         let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if strict && matches!(support, Some(SourceSupport::Dynamic)) {
-            return Err("--strict-aot excludes --dynamic-source".into());
-        }
         if !matches!(profile.as_str(), "experiment" | "release" | "iteration") {
             return Err("compile profile must be experiment, release or iteration".into());
         }
@@ -189,7 +186,9 @@ fn compile(options: Options) -> Result<(), String> {
         SourceSupport::Static => Some(NativeImageSupport::Static),
         SourceSupport::Automatic => None,
     };
-    let variant = variant::select(options.strict, explicit, &graph)?;
+    // A strict compile that reads a dynamic input falls back to full support: static support
+    // still retains the interpreter, which its link audit refuses (TOD-2196).
+    let variant = if options.strict { variant::Variant::Full } else { variant::select(explicit, &graph) };
     let support = variant.image_support();
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
@@ -243,11 +242,16 @@ fn compile(options: Options) -> Result<(), String> {
         ));
     }
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
-    if variant == variant::Variant::Strict {
-        let compiled = super::strict::compile(&entry, &output, &work.0, &mut report);
-        report["status"] = json!(if compiled.is_ok() { "compiled" } else { "dynamic_input" });
-        write_report(report_path.as_deref(), &report)?;
-        return compiled;
+    // A strict compile links no support when the program folds at build time; one that reads
+    // a dynamic input links its support variant, and the report names the input.
+    if options.strict {
+        if let super::strict::Outcome::Image = super::strict::compile(&entry, &output, &work.0, &mut report)? {
+            report["status"] = json!("compiled");
+            report["support_variant"] = json!("strict");
+            report["execution_mode"] = json!("replay");
+            write_report(report_path.as_deref(), &report)?;
+            return Ok(());
+        }
     }
     manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
     report["source_units"] = json!(manifest.units().len());
@@ -456,7 +460,6 @@ mod tests {
             vec!["entry.js", "other.js", "-o", "a"],
             vec!["entry.js", "-o", "a", "--profile", "unknown"],
             vec!["entry.js", "-o", "a", "--static-source", "--dynamic-source"],
-            vec!["entry.js", "-o", "a", "--strict-aot", "--dynamic-source"],
         ] {
             assert!(Options::parse(args.into_iter().map(str::to_owned).collect()).is_err());
         }

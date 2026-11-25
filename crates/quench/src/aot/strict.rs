@@ -30,14 +30,14 @@ pub(super) fn resume(entry: &Path, rest: &Path, arguments: Vec<String>) -> Resul
     }
 }
 
-/// The worker: evaluates `entry` at build time under `assumptions` (`FD=0|1`: whether
-/// descriptor FD is a terminal) and writes what it left to `journal`.
+/// The worker: evaluates `entry` at build time under `assumptions` (`QUESTION=0|1`, a
+/// question by its key and its answer) and writes what it left to `journal`.
 pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> Result<(), String> {
-    let terminals = assumptions.iter().map(|assumption| {
-        let (fd, value) = assumption.split_once('=').ok_or("evaluation assumption must be FD=0|1")?;
-        Ok((fd.parse::<i32>().map_err(|error| error.to_string())?, value == "1"))
+    let answers = assumptions.iter().map(|assumption| {
+        let (key, value) = assumption.rsplit_once('=').ok_or("evaluation assumption must be QUESTION=0|1")?;
+        Ok((super::prefix::Question::of_key(key)?, value == "1"))
     }).collect::<Result<Vec<_>, String>>()?;
-    super::prefix::begin(terminals);
+    super::prefix::begin(answers);
     let input = crate::shared_run::SharedInput::File {
         path: entry.to_owned(),
         exec_argv: Vec::new(),
@@ -48,7 +48,7 @@ pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> 
     let dynamic = |input: String| json!({"status": "dynamic", "input": input});
     let report = match (completion, super::prefix::finish()) {
         (_, Residual::Dynamic(input)) => dynamic(input),
-        (_, Residual::Terminal(fd)) => json!({"status": "terminal", "fd": fd}),
+        (_, Residual::Question(question)) => json!({"status": "question", "key": question.key()}),
         (_, Residual::Waiting(effects, rest)) => {
             let path = journal.with_extension("rest");
             fs::write(&path, &rest).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -67,43 +67,54 @@ pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> 
     fs::write(journal, report.to_string()).map_err(|error| format!("{}: {error}", journal.display()))
 }
 
-/// The most descriptors whose terminal answers one image specializes on.
-const MOST_TERMINAL_CHOICES: usize = 3;
+/// The most questions whose answers one image specializes on.
+const MOST_QUESTIONS: usize = 3;
 
-/// One specialization of the program: the terminal answers it assumes, its effects in order
-/// and its exit status.
+/// One specialization of the program: the answers it assumes, its effects in order and its
+/// exit status.
 struct Variant {
-    terminals: Vec<(i32, bool)>,
+    answers: Vec<(super::prefix::Question, bool)>,
     effects: Vec<(i32, Vec<u8>)>,
     exit: i32,
 }
 
+/// What a strict compile made: a strict image, or nothing, because a build-time run read the
+/// named dynamic input, which strict images do not yet keep code for; the compile then links
+/// the program's support variant (`aot::cli`).
+pub(super) enum Outcome {
+    Image,
+    Dynamic,
+}
+
 /// Compiles `entry` to a strict image at `output`, in the build directory `work`; `report`
 /// gains what the evaluations left.
-pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Value) -> Result<(), String> {
+pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Value) -> Result<Outcome, String> {
     let mut variants = Vec::new();
-    specialize(entry, work, Vec::new(), &mut variants)?;
+    if let Some(input) = specialize(entry, work, Vec::new(), &mut variants)? {
+        report["strict"] = json!({"status": "dynamic_input", "input": input});
+        return Ok(Outcome::Dynamic);
+    }
     let source = work.join("strict_image.rs");
     fs::write(&source, replay_source(&variants)).map_err(|error| error.to_string())?;
     let mut rustc = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
     rustc.args(["--edition", "2024", "--crate-type", "bin", "-C", "panic=abort", "-C", "opt-level=s", "-C", "strip=symbols", "-C", "link-arg=-lc"])
         .arg("-o").arg(output).arg(&source);
     quench_runtime::native_link::checked_output(&mut rustc, "strict image link")?;
-    report["evaluation"] = json!(variants.iter().map(|variant| json!({
-        "terminals": variant.terminals, "writes": variant.effects.len(),
+    report["strict"] = json!({"status": "image", "evaluation": variants.iter().map(|variant| json!({
+        "answers": variant.answers.iter().map(|(question, answer)| (question.key(), *answer)).collect::<Vec<_>>(), "writes": variant.effects.len(),
         "bytes": variant.effects.iter().map(|(_, bytes)| bytes.len()).sum::<usize>(), "exit": variant.exit,
-    })).collect::<Vec<_>>());
+    })).collect::<Vec<_>>()});
     report["engine_linked"] = json!(false);
-    Ok(())
+    Ok(Outcome::Image)
 }
 
-/// Evaluates `entry` under `terminals`, and once per answer of each terminal question the
-/// run asks, adding each completed run to `variants`.
-fn specialize(entry: &Path, work: &Path, terminals: Vec<(i32, bool)>, variants: &mut Vec<Variant>) -> Result<(), String> {
+/// Evaluates `entry` under `answers`, and once per answer of each question the run asks,
+/// adding each completed run to `variants`; or the first dynamic input a run read.
+fn specialize(entry: &Path, work: &Path, answers: Vec<(super::prefix::Question, bool)>, variants: &mut Vec<Variant>) -> Result<Option<String>, String> {
     let journal = work.join(format!("evaluation-{}.json", variants.len()));
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", EVALUATION_WORKER_OPTION]).arg(entry).arg(&journal)
-        .args(terminals.iter().map(|(fd, terminal)| format!("{fd}={}", u8::from(*terminal))));
+        .args(answers.iter().map(|(question, answer)| format!("{}={}", question.key(), u8::from(*answer))));
     crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
     quench_runtime::native_link::checked_output(&mut worker, "build-time evaluation")?;
     let left: Value = serde_json::from_slice(&fs::read(&journal).map_err(|error| error.to_string())?)
@@ -111,44 +122,40 @@ fn specialize(entry: &Path, work: &Path, terminals: Vec<(i32, bool)>, variants: 
     match left["status"].as_str() {
         Some("effects") => {
             let effects = serde_json::from_value(left["effects"].clone()).map_err(|error| error.to_string())?;
-            variants.push(Variant { terminals, effects, exit: left["exit"].as_i64().unwrap_or(0) as i32 });
-            Ok(())
+            variants.push(Variant { answers, effects, exit: left["exit"].as_i64().unwrap_or(0) as i32 });
+            Ok(None)
         }
-        Some("terminal") if terminals.len() < MOST_TERMINAL_CHOICES => {
-            let fd = left["fd"].as_i64().ok_or("build-time evaluation journal: terminal without its descriptor")? as i32;
+        Some("question") if answers.len() < MOST_QUESTIONS => {
+            let question = super::prefix::Question::of_key(left["key"].as_str().ok_or("build-time evaluation journal: question without its key")?)?;
             for answer in [false, true] {
-                let mut assumed = terminals.clone();
-                assumed.push((fd, answer));
-                specialize(entry, work, assumed, variants)?;
+                let mut assumed = answers.clone();
+                assumed.push((question.clone(), answer));
+                if let Some(input) = specialize(entry, work, assumed, variants)? {
+                    return Ok(Some(input));
+                }
             }
-            Ok(())
+            Ok(None)
         }
-        Some("waiting") => Err(format!(
-            "strict AOT: {} waits for input after {} write(s), and strict images do not yet resume from the saved wait ({} bytes)",
-            entry.display(),
-            left["effects"].as_array().map_or(0, Vec::len),
-            left["rest_bytes"].as_u64().unwrap_or(0),
-        )),
-        _ => Err(format!(
-            "strict AOT: {} reads {} at build time, and strict images do not yet keep code for dynamic inputs",
-            entry.display(),
-            left["input"].as_str().unwrap_or("whether more descriptors are terminals"),
-        )),
+        Some("question") => Ok(Some(format!("more than {MOST_QUESTIONS} yes-or-no inputs ({})", left["key"].as_str().unwrap_or("")))),
+        Some("waiting") => Ok(Some("standard input, after it waits for it".into())),
+        Some("dynamic") => Ok(Some(left["input"].as_str().unwrap_or("an unnamed input").to_owned())),
+        _ => Err(format!("build-time evaluation journal: unknown status {}", left["status"])),
     }
 }
 
-/// The image of the program's `variants`: as it starts it asks whether each descriptor the
-/// variants assume is a terminal, and the variant whose answers hold makes its writes in
+/// The image of the program's `variants`: as it starts it asks the questions the variants
+/// assume answers to (`asked`), and the variant whose answers hold makes its writes in
 /// order to their descriptors, as the program's stream writes made them (a closed or failing
 /// descriptor is ignored, as Node's stdio writes ignore it, with SIGPIPE ignored as Node
 /// ignores it), then exits with its status.
 fn replay_source(variants: &[Variant]) -> String {
     let mut source = String::from(
         "#![no_std]\n#![no_main]\n\
-         unsafe extern \"C\" { fn write(fd: i32, buf: *const u8, n: usize) -> isize; fn signal(signal: i32, handler: usize) -> usize; fn isatty(fd: i32) -> i32; }\n\
+         unsafe extern \"C\" { fn write(fd: i32, buf: *const u8, n: usize) -> isize; fn signal(signal: i32, handler: usize) -> usize; fn isatty(fd: i32) -> i32; fn getenv(name: *const u8) -> *const u8; }\n\
          #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n\
          fn put(fd: i32, bytes: &[u8]) { let mut at = 0; while at < bytes.len() { let n = unsafe { write(fd, bytes.as_ptr().add(at), bytes.len() - at) }; if n <= 0 { return; } at += n as usize; } }\n\
-         fn terminal(fd: i32) -> bool { unsafe { isatty(fd) == 1 } }\n",
+         fn terminal(fd: i32) -> bool { unsafe { isatty(fd) == 1 } }\n\
+         fn environment(name: &[u8], value: &[u8]) -> bool { let at = unsafe { getenv(name.as_ptr()) }; if at.is_null() { return false; } let mut index = 0; loop { let byte = unsafe { *at.add(index) }; if index == value.len() { return byte == 0; } if byte != value[index] { return false; } index += 1; } }\n",
     );
     for (number, variant) in variants.iter().enumerate() {
         for (index, (_, bytes)) in variant.effects.iter().enumerate() {
@@ -157,8 +164,8 @@ fn replay_source(variants: &[Variant]) -> String {
     }
     source.push_str("#[unsafe(no_mangle)] pub extern \"C\" fn main() -> i32 {\n    unsafe { signal(13, 1) };\n");
     for (number, variant) in variants.iter().enumerate() {
-        let guard = variant.terminals.iter()
-            .map(|(fd, terminal)| format!("{}terminal({fd})", if *terminal { "" } else { "!" }))
+        let guard = variant.answers.iter()
+            .map(|(question, answer)| format!("{}{}", if *answer { "" } else { "!" }, asked(question)))
             .collect::<Vec<_>>();
         let guard = if guard.is_empty() { "true".to_owned() } else { guard.join(" && ") };
         source.push_str(&format!("    if {guard} {{\n"));
@@ -169,4 +176,16 @@ fn replay_source(variants: &[Variant]) -> String {
     }
     source.push_str("    70\n}\n");
     source
+}
+
+/// The image's expression that asks `question` as it starts.
+fn asked(question: &super::prefix::Question) -> String {
+    match question {
+        super::prefix::Question::Terminal(fd) => format!("terminal({fd})"),
+        super::prefix::Question::Environment(name, value) => {
+            let mut name = name.as_bytes().to_vec();
+            name.push(0);
+            format!("environment(&{name:?}, &{:?})", value.as_bytes())
+        }
+    }
 }

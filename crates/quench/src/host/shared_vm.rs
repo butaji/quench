@@ -2742,7 +2742,7 @@ impl quench_runtime::Host for NodeHost {
         if crate::aot::prefix::armed() {
             let name = OPERATION_DESCRIPTORS.get(index)?.name;
             if !crate::aot::prefix::admits(name) {
-                crate::aot::prefix::refuse(format!("the host operation {name}"));
+                crate::aot::prefix::refuse(crate::aot::prefix::input_of(name));
                 return Some(crate::aot::prefix::refused);
             }
         }
