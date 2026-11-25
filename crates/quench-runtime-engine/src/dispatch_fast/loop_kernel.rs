@@ -123,11 +123,11 @@ fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[
 
 #[quench_macros::ext(LoopKernelOps1)]
 impl LoopKernel {
-    /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
-    /// its stencils run it slower (`install_loop_sites`).
-    pub(crate) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
+    /// The recurrence of the loop `header..=backedge`'s kernel, where it has one: the tiers leave
+    /// such a loop to it, as their rows run it slower (`install_loop_sites`, `base_body::kernel_loop`).
+    pub(crate) fn recurrence(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> Option<recur::Recurrence> {
         Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
-            .is_some_and(|shape| shape.guarded.is_empty() && pass(&shape).is_some())
+            .filter(|shape| shape.guarded.is_empty()).and_then(|shape| pass(&shape))
     }
 
     /// The registered kernel of the loop `header..=backedge`, if it has one.

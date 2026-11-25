@@ -39,6 +39,18 @@ fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register)
 }
 
 /// The PCs a previous body left at: its rows there take the general (tagged) semantics.
+/// Whether a loop of `code` has an interpreter kernel (`LoopKernel::recurrence`) that `cheaper`
+/// says runs it in fewer instructions than the tier asking: its back jump lands before it, on a
+/// header whose loop the kernel takes.
+pub(super) fn kernel_loop(code: &[WideInstruction], constants: &[Value], function: &quench_runtime::bytecode::Function,
+    cheaper: impl Fn(&crate::dispatch_fast::loop_kernel::recur::Recurrence) -> bool) -> bool {
+    code.iter().enumerate().any(|(backedge, jump)| {
+        matches!(quench_runtime::staged::Operation::<(), ()>::decode(*jump, quench_runtime::staged::DecodeContext::EMPTY), Some(quench_runtime::staged::Operation::Jump))
+            && (jump.jump_target() as usize) < backedge
+            && crate::dispatch_fast::loop_kernel::LoopKernel::recurrence(code, constants, function, jump.jump_target() as usize, backedge).is_some_and(|recurrence| cheaper(&recurrence))
+    })
+}
+
 fn widened(generic: &[LaneExit]) -> Vec<usize> {
     generic.iter().filter_map(|exit| match exit { LaneExit::At(pc) => Some(*pc), _ => None }).collect()
 }
@@ -164,7 +176,7 @@ impl Vm {
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
         let code: Vec<_> = body.instructions().collect();
         let facts = super::admission::UnitFacts {
-            covers: super::base_region::covers(&code),
+            covers: super::base_region::covers(&code) && !kernel_loop(&code, self.programs.constants(self.active_program), body, |_| true),
             amortizes: super::body_may_amortize(self.programs.tiers(), body, crate::compiled::admission::Tier::Base),
             called_by_bodies: caller.called_by_bodies(),
             indexes_typed: indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))),
