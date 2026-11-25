@@ -1479,7 +1479,7 @@ impl Vm {
             let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
             let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
             // A Function body compiles from its text alone, so its compiled form goes through the
-            // host's compile cache as a host script's does (`eval_host_script`).
+            // host's compile cache (`Host::kept_compiled_program`).
             let kept_key = [self.specialization_part(), dynamic.text.as_str()];
             let kept = self.host.kept_compiled_program(source_name, &kept_key).and_then(|bytes| {
                 let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(dynamic.text.as_str()));

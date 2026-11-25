@@ -220,9 +220,17 @@ impl<'a> Admit<'a, '_> {
         }
     }
 
+    /// Whether a whole import or export is type-only (`import type`, `export type`): it is
+    /// declared as a module type and leaves no statement.
+    fn type_only(&mut self, kind: ImportOrExportKind, span: Span) -> bool {
+        if kind.is_type() {
+            self.declare(DeclaredKind::ModuleType, None, span);
+        }
+        kind.is_type()
+    }
+
     fn import(&mut self, mut import: ArenaBox<'a, ImportDeclaration<'a>>) -> Vec<Produced<'a>> {
-        if import.import_kind.is_type() {
-            self.declare(DeclaredKind::ModuleType, None, import.span);
+        if self.type_only(import.import_kind, import.span) {
             return Vec::new();
         }
         // An import whose names were all types keeps its evaluation edge.
@@ -240,30 +248,18 @@ impl<'a> Admit<'a, '_> {
     }
 
     fn export_list(&mut self, mut export: ArenaBox<'a, ExportNamedDeclaration<'a>>) -> Vec<Produced<'a>> {
-        if export.export_kind.is_type() {
-            self.declare(DeclaredKind::ModuleType, None, export.span);
+        if self.type_only(export.export_kind, export.span) {
             return Vec::new();
         }
-        let declared = &mut *self.declarations;
-        export.specifiers.retain(|specifier| {
-            if !specifier.export_kind.is_type() { return true; }
-            declared.declare(DeclaredKind::ModuleType, Some(&specifier.exported.name()), specifier.span);
-            false
-        });
+        strip_type_only_exports(self.declarations, &mut export.specifiers);
         vec![(Statement::ExportNamedDeclaration(export), true)]
     }
 
     fn export_from(&mut self, mut export: ArenaBox<'a, ExportFromDeclaration<'a>>) -> Vec<Produced<'a>> {
-        if export.export_kind.is_type() {
-            self.declare(DeclaredKind::ModuleType, None, export.span);
+        if self.type_only(export.export_kind, export.span) {
             return Vec::new();
         }
-        let declared = &mut *self.declarations;
-        export.specifiers.retain(|specifier| {
-            if !specifier.export_kind.is_type() { return true; }
-            declared.declare(DeclaredKind::ModuleType, Some(&specifier.exported.name()), specifier.span);
-            false
-        });
+        strip_type_only_exports(self.declarations, &mut export.specifiers);
         vec![(Statement::ExportFromDeclaration(export), true)]
     }
 
@@ -653,4 +649,14 @@ impl<'a> VisitMut<'a> for Admit<'a, '_> {
         walk_mut::walk_function_body(self, body);
         self.lexical = lexical;
     }
+}
+
+/// Drops the type-only specifiers of an export list (`export { type T }`), declaring each as a
+/// module type; the export keeps its other specifiers and its evaluation edge.
+fn strip_type_only_exports(declared: &mut DeclaredTypes, specifiers: &mut ArenaVec<'_, ExportSpecifier<'_>>) {
+    specifiers.retain(|specifier| {
+        if !specifier.export_kind.is_type() { return true; }
+        declared.declare(DeclaredKind::ModuleType, Some(&specifier.exported.name()), specifier.span);
+        false
+    });
 }

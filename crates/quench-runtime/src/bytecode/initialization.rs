@@ -143,23 +143,7 @@ impl BasicBlocks {
     fn of(function: &Function, decoded: &[WideInstruction]) -> Self {
         let successors = super::Successors::of(function, decoded);
         let end = decoded.len();
-        let mut leader = BitSet::new(end + 1);
-        leader.insert(0);
-        for pc in 0..end {
-            let mut only_falls_through = true;
-            let mut falls_through = false;
-            successors.at(pc).for_each(|(successor, edge)| {
-                if successor == pc + 1 && edge == ControlEdge::Normal {
-                    falls_through = true;
-                } else {
-                    only_falls_through = false;
-                    leader.checked_insert(successor);
-                }
-            });
-            if !(only_falls_through && falls_through) {
-                leader.insert(pc + 1);
-            }
-        }
+        let leader = successors.leaders(end);
         let mut starts = Vec::new();
         let mut block_at = vec![None; end + 1];
         for pc in leader.iter() {
