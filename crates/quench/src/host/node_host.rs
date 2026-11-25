@@ -45,6 +45,8 @@ pub struct NodeHost {
     /// snapshot): bootstrap's own programs decode back to back (`cached_program_decoded`).
     pub(crate) bootstrapped: bool,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
+    /// The callback of each host operation, by index (`with_operations`).
+    pub(crate) operations: &'static [quench_runtime::HostCallback],
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
     pub(crate) eval_builtin_globals: bool,
@@ -112,7 +114,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
-    pub(crate) sqlite: crate::modules::sqlite_shared_vm::State,
+    /// The `node:sqlite` engine's handles (`sqlite_shared_vm::State`).
+    pub(crate) sqlite: LazyState,
     #[cfg(quench_icu)]
     pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
     pub(crate) fs_classes: crate::modules::fs_shared_vm::classes::State,
@@ -355,7 +358,7 @@ impl SharedNodeState {
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
-            sqlite: crate::modules::sqlite_shared_vm::State::default(),
+            sqlite: LazyState::default(),
             #[cfg(quench_icu)]
             icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
             fs_classes: crate::modules::fs_shared_vm::classes::State::default(),
@@ -452,7 +455,15 @@ impl NodeHost {
             && crate::host::startup_snapshot::native_bootstrap_environment_is_compatible()
     }
 
+    /// A host whose every operation is linked.
     pub fn new(argv: Vec<String>) -> Self {
+        Self::with_operations(argv, crate::host::shared_vm::OPERATION_CALLBACKS)
+    }
+
+    /// A host that runs host operation `index` with `operations[index]`: an image keeps only
+    /// the operations its program can reach and links `unlinked_operation` for the rest, so
+    /// the modules behind them are not linked.
+    pub fn with_operations(argv: Vec<String>, operations: &'static [quench_runtime::HostCallback]) -> Self {
         #[cfg(feature = "profile-memory")]
         crate::shared_run::profile_startup_boundary("node_host_begin");
         // The Node test common/tmpdir helper exposes a per-process host path.
@@ -476,6 +487,7 @@ impl NodeHost {
         #[cfg(feature = "profile-memory")]
         crate::shared_run::profile_startup_boundary("node_host_cwd_ready");
         Self {
+            operations,
             #[cfg(feature = "native-execution")]
             module_assets: Default::default(),
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
@@ -586,5 +598,30 @@ impl NodeHost {
     /// Exit code recorded by `process.exit`, if any.
     pub fn exit_code(&self) -> Option<i32> {
         self.shared_state.borrow().process_control.exit_code()
+    }
+}
+
+/// The callback of a host operation an image did not link: its program was compiled as one
+/// that cannot reach it (`aot::operations`).
+pub fn unlinked_operation(
+    _: &mut quench_runtime::NativeContext<'_>, _: quench_runtime::RootId, _: &[quench_runtime::RootId],
+) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
+    Err(quench_runtime::RootedError::host("this host operation is not linked into the compiled image"))
+}
+
+/// A module's state, made on the module's first use and dropped through its own vtable: a
+/// program that never uses the module links none of its code, and none of its dependencies'.
+#[derive(Default)]
+pub(crate) struct LazyState(Option<Box<dyn std::any::Any>>);
+
+impl LazyState {
+    /// The state, if the module has made it.
+    pub(crate) fn get<T: 'static>(&self) -> Option<&T> {
+        self.0.as_ref().and_then(|state| state.downcast_ref())
+    }
+
+    /// The state, made now if the module has not made it.
+    pub(crate) fn get_or_default<T: Default + 'static>(&mut self) -> &mut T {
+        self.0.get_or_insert_with(|| Box::new(T::default())).downcast_mut().expect("a lazy state slot holds one module's state")
     }
 }

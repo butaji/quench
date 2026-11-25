@@ -33,18 +33,15 @@ macro_rules! node_bindings {
             $($(#[$attribute])* const { operation_abi(stringify!($scope), $name, $length, stringify!($callback)) }),*
         ]);
 
-        fn callbacks() -> &'static [HostCallback] {
-            quench_runtime::host_functions![@callbacks;
-                $($(#[$attribute])* $scope $name ($length) => $callback),*
-            ]
-        }
+        /// Every operation's callback, by index. A constant, not a static: a table built from
+        /// it (`NodeHost::with_operations`) names only the callbacks it copies, so an image's
+        /// table links only the operations it keeps.
+        pub const OPERATION_CALLBACKS: &[HostCallback] = quench_runtime::host_functions![@callbacks;
+            $($(#[$attribute])* $scope $name ($length) => $callback),*
+        ];
 
-        // Compatibility projection for embedders using the combined catalog.
-        fn bindings() -> &'static [quench_runtime::HostFunction] {
-            quench_runtime::host_functions![
-                $($(#[$attribute])* $scope $name ($length) => $callback),*
-            ]
-        }
+        /// Each operation's callback path, by index: the module that implements it.
+        pub const OPERATION_CALLBACK_PATHS: &[&str] = &[$($(#[$attribute])* stringify!($callback)),*];
     };
 }
 
@@ -2725,10 +2722,6 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
     }
 
-    fn functions(&self) -> &[quench_runtime::HostFunction] {
-        bindings()
-    }
-
     fn function_count(&self) -> usize {
         OPERATION_DESCRIPTORS.len()
     }
@@ -2746,7 +2739,7 @@ impl quench_runtime::Host for NodeHost {
                 return Some(crate::aot::prefix::refused);
             }
         }
-        callbacks().get(index).copied()
+        self.operations.get(index).copied()
     }
 
     /// The host operations a lane calls beside its frameless activations: each reads no
@@ -3210,11 +3203,11 @@ mod tests {
     fn operation_names_are_unique() {
         let mut names = std::collections::HashSet::new();
         let host = super::NodeHost::new(Vec::new());
-        assert_eq!(super::OPERATION_DESCRIPTORS.len(), super::callbacks().len());
+        assert_eq!(super::OPERATION_DESCRIPTORS.len(), super::OPERATION_CALLBACKS.len());
         for (index, binding) in super::OPERATION_DESCRIPTORS.iter().enumerate() {
-            let legacy = &super::bindings()[index];
-            assert_eq!((binding.name, binding.length, binding.global), (legacy.name, legacy.length, legacy.global));
-            assert!(std::ptr::fn_addr_eq(super::callbacks()[index], legacy.call));
+            let callback = quench_runtime::Host::function_callback(&host, index).expect("every operation is linked");
+            assert!(std::ptr::fn_addr_eq(super::OPERATION_CALLBACKS[index], callback));
+            assert_eq!(super::OPERATION_CALLBACK_PATHS.len(), super::OPERATION_CALLBACKS.len());
             assert_eq!(quench_runtime::Host::function_descriptor(&host, index), Some(*binding));
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
             assert_eq!(super::static_operation(binding.name), quench_runtime::HostFunctionId(index as u32));
