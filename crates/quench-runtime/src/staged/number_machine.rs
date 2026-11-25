@@ -7,7 +7,7 @@
 use super::machine::{Binary, Lane, MachineAccess, MachineScalar, Relation, Unary};
 use super::{Domain, NumericStage};
 use crate::vm::operations::{
-    number_remainder, number_truthiness, NumberArithmetic, NumberBitwise, NumberRelation, NumberTruthinessStage,
+    number_truthiness, NumberArithmetic, NumberBitwise, NumberRelation, NumberTruthinessStage,
     WORD32_SHIFT_MASK,
 };
 
@@ -101,7 +101,7 @@ const REMAINDER_PARAMETERS: [Lane; 2] = [Lane::F64, Lane::F64];
 
 /// The remainder of two binary64 Numbers: a call of the shared leaf, which touches no VM state.
 pub fn float_remainder<M: MachineAccess>(machine: &mut M, left: M::Word, right: M::Word) -> M::Word {
-    machine.call_leaf_lanes(number_remainder as *const () as usize, (REMAINDER_PARAMETERS.as_slice(), Lane::F64), &[left, right])
+    machine.call_leaf_lanes(super::machine::RuntimeSlowPath::NumberRemainder, (REMAINDER_PARAMETERS.as_slice(), Lane::F64), &[left, right])
 }
 
 /// The ToBoolean stage of a machine: `number_truthiness`' predicates as comparison and bitwise rows.

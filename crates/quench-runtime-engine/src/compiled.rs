@@ -83,6 +83,7 @@ pub(crate) fn performed(instruction: impl std::borrow::Borrow<quench_runtime::by
 /// What an instruction means to the compiled tiers, classified from the shared decode (`staged/meaning_compiled.rs`).
 #[path = "compiled/meaning_compiled.rs"]
 pub(crate) mod meaning_compiled;
+#[path = "compiled/slow_paths.rs"] pub(crate) mod slow_paths;
 
 /// The Number unary operation a record denotes with its operator (`NumberUnary::from_js_instruction`
 /// asked of the record's opcode), so a tier passes the record and names no opcode.
@@ -844,7 +845,7 @@ fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
 fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-    object_slots::emit(builder).call_words(helper, arguments)
+    object_slots::emit(builder).call_words(quench_runtime::staged::machine::CallTarget::entry(helper, crate::compiled::slow_paths::EngineEntry::LaneHelper), arguments)
 }
 
 fn emit_lane_helper_call(
@@ -6476,7 +6477,7 @@ impl Emitter<'_, '_> {
         let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
         let function = self.raw_const(Lane::I64, i64::from(function));
         let roots = self.root();
-        let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
+        let status = self.call_signature(callout_signature, quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmCallOut), &[context, function, args, out])[0];
         self.unroot(roots);
         self.propagate(status);
         let destination = instruction.result_register();
@@ -7138,7 +7139,7 @@ impl<'a> Analysis<'a> {
         }
         let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
         let target = stage.raw_load(Lane::I64, MemFlagsData::trusted(), table, (index * 8) as i32);
-        let results = stage.call_signature(target_signature, target, &call_args);
+        let results = stage.call_signature(target_signature, quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmFunctionEntry), &call_args);
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
                 Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),

@@ -102,7 +102,7 @@ pub(crate) fn operand_value(vm: &mut Vm, kind: u64, bits: u64) -> Value {
 /// The allocating step `packed` (with immediate `imm`) over the operand block the emitted code
 /// spilled: `count` registers, their kinds and their Wasm bits, then the result word `out`. The
 /// step's result, if any, is its Wasm bits: a reference's Value bits, a descriptor test's flag.
-unsafe extern "C" fn gc_allocate(
+pub(super) unsafe extern "C" fn gc_allocate(
     context: *mut CallContext,
     packed: u64,
     imm: u64,
@@ -262,7 +262,7 @@ impl Emitter<'_, '_> {
         let operands = self.slot_address(slot, 0);
         let count = self.constant(Width::I64, operand_count as i64);
         let out = self.slot_address(slot, (3 * operand_count * WORD) as i32);
-        let target = gc_allocate as *const () as usize;
+        let target = crate::compiled::slow_paths::EngineSlowPath::GcAllocate;
         let status = self.call_leaf(target, &[context, packed, imm, operands, count, out]);
         self.propagate(status);
         if let Some(kind) = allocating_result(instruction) {

@@ -52,19 +52,19 @@ unsafe fn machine<'a>(context: *const CallContext) -> &'a mut Vm {
 
 /// The heap primitives of `WasmGc`, one callout each; every one returns a word, zero where the
 /// primitive has none. The rules have checked each argument before the callout runs.
-unsafe extern "C" fn gc_is_object(context: *mut CallContext, reference: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_is_object(context: *mut CallContext, reference: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.is_object(reference)
 }
 
-unsafe extern "C" fn gc_field_slot(context: *mut CallContext, reference: u64, index: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_field_slot(context: *mut CallContext, reference: u64, index: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.field_slot(reference, index)
 }
 
-unsafe extern "C" fn gc_field_slot_for_write(context: *mut CallContext, reference: u64, index: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_field_slot_for_write(context: *mut CallContext, reference: u64, index: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.field_slot_for_write(reference, index)
 }
 
-unsafe extern "C" fn gc_field_count(context: *mut CallContext, reference: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_field_count(context: *mut CallContext, reference: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.field_count(reference)
 }
 
@@ -79,26 +79,26 @@ fn field_lane(field: GcField) -> Lane {
     }
 }
 
-unsafe extern "C" fn gc_array_mutable(context: *mut CallContext, reference: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_array_mutable(context: *mut CallContext, reference: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.array_mutable(reference)
 }
 
-unsafe extern "C" fn gc_storage_admits(context: *mut CallContext, source: u64, destination: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_storage_admits(context: *mut CallContext, source: u64, destination: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.storage_admits(source, destination)
 }
 
-unsafe extern "C" fn gc_fields_exceed(context: *mut CallContext, reference: u64, index: u64, extent: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_fields_exceed(context: *mut CallContext, reference: u64, index: u64, extent: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.fields_exceed(reference, index, extent)
 }
 
 /// Stores the Wasm bits `bits` in `extent` elements of the array; the element storage the array
 /// holds gives the value's form.
-unsafe extern "C" fn gc_fill_fields(context: *mut CallContext, reference: u64, index: u64, extent: u64, bits: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_fill_fields(context: *mut CallContext, reference: u64, index: u64, extent: u64, bits: u64) -> u64 {
     HeapStage { vm: unsafe { machine(context) } }.fill_field_bits(reference, index, extent, bits);
     0
 }
 
-unsafe extern "C" fn gc_copy_fields(
+pub(super) unsafe extern "C" fn gc_copy_fields(
     context: *mut CallContext,
     destination: u64,
     output: u64,
@@ -112,7 +112,7 @@ unsafe extern "C" fn gc_copy_fields(
 
 /// Whether `reference` passes a cast to the target `target` (a `ReferenceTarget` tag), by the
 /// declarations of the running program.
-unsafe extern "C" fn gc_admits(context: *mut CallContext, reference: u64, target: u64) -> u64 {
+pub(super) unsafe extern "C" fn gc_admits(context: *mut CallContext, reference: u64, target: u64) -> u64 {
     let vm = unsafe { machine(context) };
     let program = unsafe { (*context).head.program };
     let Some(signatures) = vm.programs.wasm_signatures_shared(program) else {
@@ -124,7 +124,7 @@ unsafe extern "C" fn gc_admits(context: *mut CallContext, reference: u64, target
 
 /// Rejects with the validation message `reason` (static bytes): the error the rules raise for a
 /// module validation proved impossible, which the status propagates.
-unsafe extern "C" fn gc_reject(context: *mut CallContext, reason: u64, length: u64) -> i64 {
+pub(super) unsafe extern "C" fn gc_reject(context: *mut CallContext, reason: u64, length: u64) -> i64 {
     // SAFETY: the emitted code passes the address and length of a static message.
     let bytes = unsafe { std::slice::from_raw_parts(reason as usize as *const u8, length as usize) };
     let message = std::str::from_utf8(bytes).unwrap_or("invalid Wasm GC operation");
@@ -142,12 +142,12 @@ impl WasmGc for Emitter<'_, '_> {
 
     fn is_object(&mut self, reference: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_is_object as *const () as usize, &[context, reference])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcIsObject, &[context, reference])
     }
 
     fn field_slot(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_field_slot as *const () as usize, &[context, reference, index])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcFieldSlot, &[context, reference, index])
     }
 
     /// An array element's read address, inline (`array_element_address`), where the reference is a
@@ -168,12 +168,12 @@ impl WasmGc for Emitter<'_, '_> {
 
     fn field_slot_for_write(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_field_slot_for_write as *const () as usize, &[context, reference, index])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcFieldSlotForWrite, &[context, reference, index])
     }
 
     fn field_count(&mut self, reference: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_field_count as *const () as usize, &[context, reference])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcFieldCount, &[context, reference])
     }
 
     /// One load of the field's storage, zero-extended to the word: the field's static type says
@@ -192,22 +192,22 @@ impl WasmGc for Emitter<'_, '_> {
 
     fn array_mutable(&mut self, reference: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_array_mutable as *const () as usize, &[context, reference])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcArrayMutable, &[context, reference])
     }
 
     fn storage_admits(&mut self, source: ir::Value, destination: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_storage_admits as *const () as usize, &[context, source, destination])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcStorageAdmits, &[context, source, destination])
     }
 
     fn fields_exceed(&mut self, reference: ir::Value, index: ir::Value, extent: ir::Value) -> ir::Value {
         let context = self.body.core.context;
-        self.call_leaf(gc_fields_exceed as *const () as usize, &[context, reference, index, extent])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcFieldsExceed, &[context, reference, index, extent])
     }
 
     fn fill_fields(&mut self, reference: ir::Value, index: ir::Value, extent: ir::Value, value: ir::Value) {
         let context = self.body.core.context;
-        self.call_leaf(gc_fill_fields as *const () as usize, &[context, reference, index, extent, value]);
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcFillFields, &[context, reference, index, extent, value]);
     }
 
     fn copy_fields(
@@ -220,7 +220,7 @@ impl WasmGc for Emitter<'_, '_> {
     ) {
         let context = self.body.core.context;
         let arguments = [context, destination, output, source, input, extent];
-        self.call_leaf(gc_copy_fields as *const () as usize, &arguments);
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcCopyFields, &arguments);
     }
 
     /// The cast's declarations are the running program's, which the callout reads itself; the
@@ -228,7 +228,7 @@ impl WasmGc for Emitter<'_, '_> {
     fn admits(&mut self, reference: ir::Value, target: ReferenceTarget, _declarations: &WasmTypes) -> ir::Value {
         let context = self.body.core.context;
         let tag = self.constant(Width::I64, i64::from(target.tag()));
-        self.call_leaf(gc_admits as *const () as usize, &[context, reference, tag])
+        self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcAdmits, &[context, reference, tag])
     }
 
     /// Continues where `flag` is 0; where it is 1, the emitted code raises `reason` as the
@@ -241,7 +241,7 @@ impl WasmGc for Emitter<'_, '_> {
         self.enter(reject);
         let message = self.constant(Width::I64, reason.as_ptr() as usize as i64);
         let length = self.constant(Width::I64, reason.len() as i64);
-        let status = self.call_leaf(gc_reject as *const () as usize, &[context, message, length]);
+        let status = self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcReject, &[context, message, length]);
         self.propagate(status);
         self.goto(next, &[]);
         self.enter(next);
@@ -274,7 +274,7 @@ impl Emitter<'_, '_> {
         let address = address(self, payload);
         self.goto(join, &[address]);
         self.enter(callout);
-        let address = self.call_leaf(gc_field_slot as *const () as usize, &[context, reference, index]);
+        let address = self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::GcFieldSlot, &[context, reference, index]);
         self.goto(join, &[address]);
         self.enter(join);
         slot
