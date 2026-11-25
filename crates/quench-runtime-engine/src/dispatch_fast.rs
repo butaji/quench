@@ -827,8 +827,7 @@ fn requicken(ip: Ip, handler: Handler) {
         if loop_kernel::requicken_kernel(ip, handler) {
             return;
         }
-        // A record whose result carries flags got the general step at its edge (`derive_lane_view`), which
-        // decodes them; it keeps it, as the generated rows read `a` as a plain register.
+        // A record whose result carries flags keeps its edge's general step (`derive_lane_view`).
         if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
             return;
         }
@@ -4731,9 +4730,8 @@ pub(crate) const fn own_site_decodes(site: u8) -> bool {
         && form != quench_runtime::value_vec::NARROW_FORM)
 }
 
-/// The value of the slot word `word` an own-field read at a decoding site took: a form fixed
-/// untagged runs only where slots hold raw doubles (`own_formed_handler`), so it decodes a
-/// Number's word without testing the switch; an unfixed form tests it (`decode_staged_word`).
+/// The value of slot word `word` an own-field read at a decoding site took: a fixed untagged form holds raw
+/// doubles (`own_formed_handler`), decoded untested; an unfixed form tests (`decode_staged_word`).
 #[inline(always)]
 pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
     if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
