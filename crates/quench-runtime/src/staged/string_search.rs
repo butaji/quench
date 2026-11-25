@@ -3,13 +3,15 @@
 //! (`vm::primitives::in_place`) and the general calls (`Vm::string_search_general`, the
 //! `primitives` substring arms) all derive from `search` and `cut`. The searches are one staged row
 //! (`search_row`) over the span primitives (`staged::spans`), which the interpreter runs on
-//! `Concrete` with the tuned searches; `cut` and the position conversions are plain arithmetic.
+//! `Concrete` with the tuned searches; `cut` is the staged row `cut_row` too, and the position conversions
+//! are plain arithmetic.
 
 use std::ops::Range;
 
 use crate::Value;
 use crate::heap::Native;
 use crate::vm::wtf16::Units;
+use super::Stage;
 use super::spans::{concrete_span, UnitSpan};
 
 /// The end argument `substr` takes when it is left out: every unit from the start. `i64::MAX`
@@ -52,7 +54,7 @@ pub enum SearchMethod {
 /// `lastIndexOf` backward from `position`, `startsWith` compares the affix at `position` and
 /// `endsWith` the one ending there, each where the needle fits.
 #[inline(always)]
-pub fn search_row<S: super::Stage>(stage: &mut S, method: SearchMethod, text: UnitSpan<S::Word>, needle: UnitSpan<S::Word>,
+pub fn search_row<S: Stage>(stage: &mut S, method: SearchMethod, text: UnitSpan<S::Word>, needle: UnitSpan<S::Word>,
     position: S::Word) -> S::Word {
     let (one, none) = (stage.constant(1), stage.constant(0));
     match method {
@@ -108,26 +110,87 @@ fn index_value(found: Option<usize>) -> Value {
     Value::number(found.map_or(-1.0, |index| index as f64))
 }
 
-/// The units range `slice`, `substring` or `substr` cuts from a string of `length` units, given
-/// its integer arguments. `slice` takes `start` and `end` (negative bounds count from the end);
-/// `substring` takes them in either order, clamped; `substr` takes `start` (negative counts from
-/// the end) and, in the `end` argument, a count (`SUBSTR_REST` for every unit from the start).
-pub(crate) fn cut(native: Native, length: i64, start: i64, end: i64) -> Range<usize> {
-    match native {
-        Native::StringSubstr => {
-            let start = if start < 0 { (length + start).max(0) } else { start.min(length) };
-            let end = start.saturating_add(end.max(0)).min(length);
-            start as usize..end as usize
+/// Which cut of a string a row makes: `slice`, `substring` or `substr`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CutMethod {
+    Slice,
+    Substring,
+    Substr,
+}
+
+/// Whether the integer word `a` is below zero.
+#[inline(always)]
+fn negative<S: Stage>(stage: &mut S, a: S::Word) -> S::Cond {
+    let sign = stage.shr_imm(a, 63u64);
+    stage.ne_imm(sign, 0u64)
+}
+
+/// The smaller of the unsigned words `a` and `b`.
+#[inline(always)]
+fn min_word<S: Stage>(stage: &mut S, a: S::Word, b: S::Word) -> S::Word {
+    let below = stage.ult(a, b);
+    stage.select(below, a, b)
+}
+
+/// The integer `bound` within `0..=length`: a negative bound counts back from the end (`slice`,
+/// `substr`'s start) or is zero (`substring`), a larger one is the length.
+#[inline(always)]
+fn bound_within<S: Stage>(stage: &mut S, length: S::Word, bound: S::Word, from_end: bool) -> S::Word {
+    let below = negative(stage, bound);
+    stage.choose(below, #[inline(always)] |stage| {
+        let zero = stage.constant(0);
+        if from_end {
+            let distance = stage.sub(zero, bound);
+            let past = stage.ult(length, distance);
+            let counted = stage.sub(length, distance);
+            stage.select(past, zero, counted)
+        } else {
+            zero
         }
-        _ => {
-            let (start, end) = if native == Native::StringSlice {
-                let from_end = |bound: i64| if bound < 0 { (length + bound).max(0) } else { bound.min(length) };
-                (from_end(start), from_end(end))
-            } else {
-                let (start, end) = (start.clamp(0, length), end.clamp(0, length));
-                (start.min(end), start.max(end))
-            };
-            start as usize..end.max(start) as usize
+    }, #[inline(always)] |stage| min_word(stage, bound, length))
+}
+
+/// The units `slice`, `substring` or `substr` cuts from a string of `length` units, as its start
+/// and end, given its integer arguments as words. `slice` takes `start` and `end` (negative
+/// bounds count from the end); `substring` takes them in either order, clamped; `substr` takes
+/// `start` (negative counts from the end) and, in `end`, a count (`SUBSTR_REST` for every unit
+/// from the start). The one body of the three for every tier.
+#[inline(always)]
+pub fn cut_row<S: Stage>(stage: &mut S, method: CutMethod, length: S::Word, start: S::Word, end: S::Word) -> (S::Word, S::Word) {
+    match method {
+        CutMethod::Substr => {
+            let start = bound_within(stage, length, start, true);
+            let zero = stage.constant(0);
+            let below = negative(stage, end);
+            let count = stage.select(below, zero, end);
+            let room = stage.sub(length, start);
+            let take = min_word(stage, count, room);
+            (start, stage.add(start, take))
+        }
+        CutMethod::Slice => {
+            let start = bound_within(stage, length, start, true);
+            let end = bound_within(stage, length, end, true);
+            let empty = stage.ult(end, start);
+            (start, stage.select(empty, start, end))
+        }
+        CutMethod::Substring => {
+            let start = bound_within(stage, length, start, false);
+            let end = bound_within(stage, length, end, false);
+            let swapped = stage.ult(end, start);
+            (stage.select(swapped, end, start), stage.select(swapped, start, end))
         }
     }
+}
+
+/// `cut_row` on `Concrete` for `native` (`slice`, `substring` or `substr`), as a units range.
+pub(crate) fn cut(native: Native, length: i64, start: i64, end: i64) -> Range<usize> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let (length, start, end) = (length as u64, start as u64, end as u64);
+    // Each method is its own instance of the row, folded for it.
+    let (start, end) = match native {
+        Native::StringSubstr => cut_row(&mut stage, CutMethod::Substr, length, start, end),
+        Native::StringSlice => cut_row(&mut stage, CutMethod::Slice, length, start, end),
+        _ => cut_row(&mut stage, CutMethod::Substring, length, start, end),
+    };
+    start as usize..end as usize
 }
