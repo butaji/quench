@@ -19,7 +19,7 @@ use quench_regexp::backtrack::{Assertion, Inst, UnitTest};
 struct Tables {
     pcs: Box<[usize]>,
     resumes: Box<[usize]>,
-    masks: Box<[[u64; 2]]>,
+    sets: Box<[[u8; 256]]>,
     lists: Box<[u32]>,
     guards: Box<[[u64; 3]]>,
     intervals: Box<[[u32; 4]]>,
@@ -223,7 +223,7 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
     let mut tables = Tables {
         pcs: vec![0; count].into_boxed_slice(),
         resumes: vec![0; codes::RESUME_KINDS * count].into_boxed_slice(),
-        masks: plan.masks.clone(),
+        sets: plan.masks.iter().map(set_table).collect(),
         lists: plan.lists.clone(),
         guards: plan.guards.iter().map(|guard| admission_words(*guard)).collect(),
         intervals: Box::default(),
@@ -245,7 +245,7 @@ pub(crate) fn stitch(plan: &NativePlan) -> Option<Stitched> {
     let program = Box::new(RegexpProgram {
         pcs: tables.pcs.as_ptr(),
         resumes: tables.resumes.as_ptr(),
-        masks: tables.masks.as_ptr(),
+        sets: tables.sets.as_ptr(),
         lists: tables.lists.as_ptr(),
         guards: tables.guards.as_ptr(),
         intervals: tables.intervals.as_ptr(),
@@ -316,4 +316,12 @@ impl Stitched {
         let entry = unsafe { std::mem::transmute::<*mut u8, NativeFn>(memory.pointer()) };
         Some(NativeCode { entry, keep: Box::new((memory, program, tables)) })
     }
+}
+
+/// A set's table: a byte per byte unit, nonzero for an ASCII unit its mask has, so a run's scan
+/// tests a unit with one load.
+fn set_table(&[low, high]: &[u64; 2]) -> [u8; 256] {
+    const ASCII: usize = 128;
+    const WORD_BITS: usize = 64;
+    std::array::from_fn(|unit| u8::from(unit < ASCII && (if unit < WORD_BITS { low } else { high }) >> (unit % WORD_BITS) & 1 != 0))
 }

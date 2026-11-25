@@ -201,8 +201,8 @@ impl Stencil {
     }
 
     #[inline(always)]
-    pub(crate) fn mask_has(mask: [u64; 2], unit: usize) -> bool {
-        mask[(unit >> 6) & 1] >> (unit & 63) & 1 != 0
+    pub(crate) fn mask_has([low, high]: [u64; 2], unit: usize) -> bool {
+        (if unit & 64 == 0 { low } else { high }) >> (unit & 63) & 1 != 0 // a select: an indexed pair spills
     }
 }
 
@@ -243,13 +243,13 @@ impl MatchStage for Stencil {
         unsafe { usize::from(*(self.s.p[2] as *const u8).add(index)) }
     }
 
-    /// An ASCII subject's unit: a literal at or past 128 matches none, a set by its ASCII mask.
+    /// An ASCII subject's unit: a literal at or past 128 matches none, a set by its ASCII table.
     #[inline(always)]
     fn passes(&mut self, unit: usize, test: UnitTest) -> bool {
         match test {
             UnitTest::Exact(expected) => unit == expected as usize,
-            // SAFETY: a set test names one of the program's sets.
-            UnitTest::Set(set) => Self::mask_has(unsafe { *self.program.masks.add(set as usize) }, unit),
+            // SAFETY: a set test names one of the program's sets, whose table has every byte unit.
+            UnitTest::Set(set) => unsafe { (*self.program.sets.add(set as usize))[unit] != 0 },
         }
     }
 
