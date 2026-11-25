@@ -72,10 +72,22 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
         let leaves: usize = functions.iter().map(|function| function.base.generic_rows()).sum();
         eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body; base bodies leave at {leaves} records", program.source_name, functions.len());
+        // The opcodes those records stand for, most first: what staging drives the leaves to zero.
+        let mut by_op = std::collections::BTreeMap::<&str, usize>::new();
+        for function in &functions {
+            let code: Vec<_> = program.function(function.id as usize).instructions().collect();
+            for &pc in function.base.generic.iter() {
+                if let Some(instruction) = code.get(pc as usize) { *by_op.entry(quench_runtime::bytecode::Op::NAMES[instruction.op() as usize]).or_default() += 1; }
+            }
+        }
+        let mut by_op: Vec<_> = by_op.into_iter().collect();
+        by_op.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("aot-lanes: {} leaves by opcode: {by_op:?}", program.source_name);
     }
     let mut image = assemble(program, functions, symbols.finish(), &sites)?;
     image.regexps = regexps(program);
     if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: {} step records: {}", program.source_name, demand::step_records(&image, program));
         eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
     }
     Ok(image)
@@ -151,6 +163,7 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
     let mut image = assemble(program, functions, symbols.finish(), &std::collections::BTreeMap::new())?;
     image.wasm = wasm;
     if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: {} step records: {}", program.source_name, demand::step_records(&image, program));
         eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
     }
     Ok(image)

@@ -60,6 +60,29 @@ pub(crate) fn of(image: &AotImage, program: &ResidualProgram) -> Demand {
     demand
 }
 
+/// The records whose rows call the general step helpers (`Step`, `VmStep`): the interpreter's semantics,
+/// by opcode, most first, base bodies by the record each call lies in and lane bodies counted apart.
+pub(crate) fn step_records(image: &AotImage, program: &ResidualProgram) -> String {
+    let stepping = |relocation: &quench_runtime::vm::jit_backend::relocatable_code::Relocation| matches!(SymbolTable::decode(image, relocation.namespace, relocation.key),
+        Some(Symbol::Helper(helper)) if matches!(crate::compiled::LaneHelper::name(helper as usize), Some("Step" | "VmStep")));
+    let mut by_op = std::collections::BTreeMap::<String, usize>::new();
+    let mut lane = 0;
+    for function in &image.functions {
+        let code: Vec<_> = program.function(function.id as usize).instructions().collect();
+        let mut starts: Vec<(u32, usize)> = function.base.pc_offsets.iter().enumerate().filter(|(_, offset)| **offset != super::base::NO_ENTRY).map(|(pc, offset)| (*offset, pc)).collect();
+        starts.sort_unstable();
+        for relocation in function.base.code.relocations.iter().filter(|relocation| stepping(relocation)) {
+            let at = starts.partition_point(|(offset, _)| *offset as usize <= relocation.offset as usize);
+            let name = at.checked_sub(1).and_then(|at| code.get(starts[at].1)).map_or("?", |instruction| quench_runtime::bytecode::Op::NAMES[instruction.op() as usize]);
+            *by_op.entry(name.to_string()).or_default() += 1;
+        }
+        lane += function.lane.iter().flat_map(|lane| lane.code.relocations.iter()).filter(|relocation| stepping(relocation)).count();
+    }
+    let mut by_op: Vec<_> = by_op.into_iter().collect();
+    by_op.sort_by(|a, b| b.1.cmp(&a.1));
+    format!("lane {lane}, base {by_op:?}")
+}
+
 impl std::fmt::Display for Demand {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let list = |items: Vec<&str>| items.join(" ");
