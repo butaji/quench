@@ -143,8 +143,9 @@ fn link_header(cx: *mut LaneContext, window: Registers, index: usize) {
         let flags = (packed & !quench_runtime::staged::frame::NATIVE_FLAG) | quench_runtime::staged::frame::COMPLETION_FLAG;
         *words.sub(CONTEXT_PACKED).cast::<u64>() = flags | (u64::from(argc) << quench_runtime::staged::frame::ARGC_SHIFT);
     }
-    window.set_env(callee.target.env);
-    window.set_capture(callee.target.capture);
+    let (env, capture) = crate::compiled::direct_callee::header_closure(unsafe { super::vm(cx) }, unsafe { &*(*cx).code }, callee, window.0);
+    window.set_env(env);
+    window.set_capture(capture);
     let mut side = super::lane_frames::Side::plain(completion, program);
     side.native = index;
     if let Some(skipped) = callee.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
@@ -230,8 +231,7 @@ fn in_innermost_frame_of(cx: *mut LaneContext, helper: impl FnOnce() -> u64) -> 
 /// The environment a running body's captures resolve in when it runs as a native callee: its
 /// closure's, which no lane activation holds; `None` in the activation's own.
 pub(crate) fn innermost_callee_env(cx: *mut LaneContext) -> Option<Value> {
-    // SAFETY: a frame names the caller-owned callee, whose descriptor outlives the run.
-    unsafe { vm(cx) }.lane_stack.top_native().map(|frame| unsafe { (*frame.callee).target.env })
+    unsafe { vm(cx) }.lane_stack.top_native().map(crate::compiled::direct_callee::frame_env)
 }
 
 /// Continues the lane in the innermost native frame a run left inside: the frames become

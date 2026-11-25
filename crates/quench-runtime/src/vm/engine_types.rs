@@ -1520,6 +1520,32 @@ pub struct DirectCallee {
     /// initializer, which runs with the receiver the constructor's plan allocates and
     /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
     pub forwarder: Option<SkippedForwarder>,
+    /// The closure of the function the site calls now and its capture word, which a u-jit call reads at run time.
+    pub bound: BoundClosure,
+}
+
+/// A direct call's closure and capture word (`DirectCallee::bound`): its own `callee` and captures, until the site's
+/// helper call resolves another closure of the same function and rebinds them (`direct_callee::rebind_closure`), so a
+/// closure made per call of the caller misses once, not per call. `read` says the code reads them (a Cranelift call
+/// guarded by them, `call_frames::EmitFrame::rebinds`). A collection unbinds a dead closure (`unbind_dead`): the words
+/// then name none, never a reused locator, and the next call misses once and rebinds.
+#[derive(Clone, Default, Debug)]
+#[repr(C)]
+pub struct BoundClosure {
+    pub callee: std::cell::Cell<u64>,
+    pub captures: std::cell::Cell<u64>,
+    pub read: std::cell::Cell<bool>,
+}
+
+impl BoundClosure {
+    pub fn new(callee: u64, captures: u64) -> Self {
+        Self { callee: std::cell::Cell::new(callee), captures: std::cell::Cell::new(captures), read: std::cell::Cell::new(false) }
+    }
+
+    /// Unbinds the closure if `live` says it died (`Value::DELETED` names no closure).
+    pub fn unbind_dead(&self, live: &impl Fn(Value) -> bool) {
+        if self.callee.get() != Value::DELETED.to_bits() && !live(Value::from_bits(self.callee.get())) { self.callee.set(Value::DELETED.to_bits()); }
+    }
 }
 
 pub use super::fact_edge::{ExitFact, FactMissing};
@@ -4131,9 +4157,12 @@ impl CallCode {
         };
         // A planned callee whose site has no record is named by constants (a Cranelift region's guard and capture
         // words), as is one an entry check holds: its death retires the code.
+        // One whose code reads its closure from its bound words (`BoundClosure::read`) was unbound instead (`unbind_dead`).
         let constant = self.direct.iter().filter(|callee| !live(callee.callee)).any(|callee| {
             let word = callee.callee.to_bits();
-            if self.held.contains(&word) || !self.records.iter().any(|record| record.call == callee.call as u64) { return true; }
+            if self.held.contains(&word) { return true; }
+            if callee.bound.read.get() { return false; }
+            if !self.records.iter().any(|record| record.call == callee.call as u64) { return true; }
             unbind(word);
             false
         });
