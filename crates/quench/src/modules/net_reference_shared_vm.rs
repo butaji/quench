@@ -184,15 +184,15 @@ fn create_handle(
         && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(), id)
     {
         for (name, operation) in [
-            ("setNoDelay", "netHandleSetNoDelay"),
-            ("setKeepAlive", "netHandleSetKeepAlive"),
-            ("setTypeOfService", "netHandleSetTypeOfService"),
-            ("getTypeOfService", "netHandleGetTypeOfService"),
-            ("getsockname", "netHandleGetSockName"),
-            ("getpeername", "netHandleGetPeerName"),
+            ("setNoDelay", crate::host::shared_vm::operation!("netHandleSetNoDelay")),
+            ("setKeepAlive", crate::host::shared_vm::operation!("netHandleSetKeepAlive")),
+            ("setTypeOfService", crate::host::shared_vm::operation!("netHandleSetTypeOfService")),
+            ("getTypeOfService", crate::host::shared_vm::operation!("netHandleGetTypeOfService")),
+            ("getsockname", crate::host::shared_vm::operation!("netHandleGetSockName")),
+            ("getpeername", crate::host::shared_vm::operation!("netHandleGetPeerName")),
         ] {
             let method = context
-                .host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
+                .host_function_with_data(operation, data)?;
             let key = context.string_rooted("name");
             let name_root = context.string_rooted(name);
             context.define_data_property_rooted(method, key, name_root, false, false, true)?;
@@ -202,12 +202,12 @@ fn create_handle(
 
     if matches!(kind, EndpointKind::Socket) {
         for (name, operation) in [
-            ("readStart", "netHandleReadStart"),
-            ("readStop", "netHandleReadStop"),
-            ("hasPendingRead", "netHandleHasPendingRead"),
+            ("readStart", crate::host::shared_vm::operation!("netHandleReadStart")),
+            ("readStop", crate::host::shared_vm::operation!("netHandleReadStop")),
+            ("hasPendingRead", crate::host::shared_vm::operation!("netHandleHasPendingRead")),
         ] {
             let method = context
-                .host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
+                .host_function_with_data(operation, data)?;
             let key = context.string_rooted("name");
             let name_root = context.string_rooted(name);
             context.define_data_property_rooted(method, key, name_root, false, false, true)?;

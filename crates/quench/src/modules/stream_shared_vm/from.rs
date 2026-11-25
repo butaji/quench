@@ -33,7 +33,7 @@ pub(crate) fn from(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let (iterable, opts) = (arg(c, args, 0), arg(c, args, 1));
     if is_string(c, iterable) || is_buffer(c, iterable)? {
         let options = options(c, false, opts)?;
-        let read = closure(c, "streamFromWholeRead", "read", &[iterable])?;
+        let read = closure(c, crate::host::shared_vm::operation!("streamFromWholeRead"), "read", &[iterable])?;
         put(c, options, "read", read)?;
         return new_readable(c, options);
     }
@@ -62,9 +62,9 @@ pub(crate) fn from(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     put_bool(c, record, "reading", false)?;
     put_bool(c, record, "isAsync", asynchronous)?;
     put_bool(c, record, "isAsyncValues", false)?;
-    let read = closure(c, "streamFromRead", "", &[record])?;
+    let read = closure(c, crate::host::shared_vm::operation!("streamFromRead"), "", &[record])?;
     put(c, readable, "_read", read)?;
-    let destroy = closure(c, "streamFromDestroy", "", &[record])?;
+    let destroy = closure(c, crate::host::shared_vm::operation!("streamFromDestroy"), "", &[record])?;
     put(c, readable, "_destroy", destroy)?;
     Ok(readable)
 }
@@ -186,7 +186,7 @@ fn attempted(c: &mut Context<'_>, record: RootId, result: Result<(), RootedError
     }
 }
 
-fn continuation(c: &mut Context<'_>, record: RootId, operation: &str) -> Outcome {
+fn continuation(c: &mut Context<'_>, record: RootId, operation: quench_runtime::HostFunctionId) -> Outcome {
     closure(c, operation, "", &[record])
 }
 
@@ -198,8 +198,8 @@ fn change_to_async_values(c: &mut Context<'_>, record: RootId, value: RootId) ->
 
 /// Awaits a thenable value, pushing it when it fulfills.
 fn await_async_value(c: &mut Context<'_>, record: RootId, value: RootId) -> Result<(), RootedError> {
-    let fulfilled = continuation(c, record, "streamFromAsyncValue")?;
-    let rejected = continuation(c, record, "streamFromRejected")?;
+    let fulfilled = continuation(c, record, crate::host::shared_vm::operation!("streamFromAsyncValue"))?;
+    let rejected = continuation(c, record, crate::host::shared_vm::operation!("streamFromRejected"))?;
     await_then(c, value, fulfilled, rejected)
 }
 
@@ -257,8 +257,8 @@ fn next_async(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
         Ok(result) => result,
         Err(thrown) => return destroy_with(c, record, thrown),
     };
-    let fulfilled = continuation(c, record, "streamFromAsyncResult")?;
-    let rejected = continuation(c, record, "streamFromRejected")?;
+    let fulfilled = continuation(c, record, crate::host::shared_vm::operation!("streamFromAsyncResult"))?;
+    let rejected = continuation(c, record, crate::host::shared_vm::operation!("streamFromRejected"))?;
     await_then(c, result, fulfilled, rejected)
 }
 
@@ -299,8 +299,8 @@ pub(crate) fn destroy(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcom
     put(c, settle, "promise", promise)?;
     put(c, settle, "error", error)?;
     close(c, settle)?;
-    let fulfilled = closure(c, "streamFromClosed", "", &[callback, error])?;
-    let rejected = closure(c, "streamFromCloseFailed", "", &[callback, error])?;
+    let fulfilled = closure(c, crate::host::shared_vm::operation!("streamFromClosed"), "", &[callback, error])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamFromCloseFailed"), "", &[callback, error])?;
     await_then(c, promise, fulfilled, rejected)?;
     Ok(c.undefined())
 }
@@ -330,8 +330,8 @@ fn close(c: &mut Context<'_>, settle: RootId) -> Result<(), RootedError> {
     if !is_nullish(c, error) && c.is_callable_rooted(throw)? {
         match super::attempt(c.call_rooted(throw, iterator, &[error]))? {
             Ok(result) => {
-                let fulfilled = closure(c, "streamFromThrown", "", &[settle])?;
-                let rejected = closure(c, "streamFromCloseRejected", "", &[settle])?;
+                let fulfilled = closure(c, crate::host::shared_vm::operation!("streamFromThrown"), "", &[settle])?;
+                let rejected = closure(c, crate::host::shared_vm::operation!("streamFromCloseRejected"), "", &[settle])?;
                 await_then(c, result, fulfilled, rejected)?;
             }
             Err(thrown) => c.reject_promise_rooted(promise, thrown)?,
@@ -352,8 +352,8 @@ fn close_return(c: &mut Context<'_>, settle: RootId) -> Result<(), RootedError> 
     }
     match super::attempt(c.call_rooted(method, iterator, &[]))? {
         Ok(result) => {
-            let fulfilled = closure(c, "streamFromReturned", "", &[settle])?;
-            let rejected = closure(c, "streamFromCloseRejected", "", &[settle])?;
+            let fulfilled = closure(c, crate::host::shared_vm::operation!("streamFromReturned"), "", &[settle])?;
+            let rejected = closure(c, crate::host::shared_vm::operation!("streamFromCloseRejected"), "", &[settle])?;
             await_then(c, result, fulfilled, rejected)
         }
         Err(thrown) => c.reject_promise_rooted(promise, thrown),
@@ -380,8 +380,8 @@ pub(crate) fn thrown(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
             return Ok(c.undefined());
         }
     };
-    let fulfilled = closure(c, "streamFromThrownValue", "", &[settle, done])?;
-    let rejected = closure(c, "streamFromCloseRejected", "", &[settle])?;
+    let fulfilled = closure(c, crate::host::shared_vm::operation!("streamFromThrownValue"), "", &[settle, done])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamFromCloseRejected"), "", &[settle])?;
     await_then(c, value, fulfilled, rejected)?;
     Ok(c.undefined())
 }
@@ -410,8 +410,8 @@ pub(crate) fn returned(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outco
             return Ok(c.undefined());
         }
     };
-    let fulfilled = closure(c, "streamFromSettle", "", &[promise])?;
-    let rejected = closure(c, "streamFromCloseRejected", "", &[settle])?;
+    let fulfilled = closure(c, crate::host::shared_vm::operation!("streamFromSettle"), "", &[promise])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamFromCloseRejected"), "", &[settle])?;
     await_then(c, value, fulfilled, rejected)?;
     Ok(c.undefined())
 }

@@ -2,7 +2,6 @@
 //! its type, subtype and parameters in private slots; parameters keep their ordered
 //! name/value list (alternating strings).
 use super::private_slots as slots;
-use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -18,15 +17,15 @@ const WHITESPACE: &[char] = &['\r', '\n', '\t', ' '];
 /// The MIMEType accessors in prototype order, and whether each has a setter.
 const ACCESSORS: &[(&str, bool)] = &[("type", true), ("subtype", true), ("essence", false), ("params", false)];
 /// The MIMEParams methods in prototype order, with their lengths.
-const PARAMS_METHODS: &[(&str, &str, f64)] = &[
-    ("delete", "mimeParamsDelete", 1.0),
-    ("get", "mimeParamsGet", 1.0),
-    ("has", "mimeParamsHas", 1.0),
-    ("set", "mimeParamsSet", 2.0),
-    ("entries", "mimeParamsEntries", 0.0),
-    ("keys", "mimeParamsKeys", 0.0),
-    ("values", "mimeParamsValues", 0.0),
-    ("toString", "mimeParamsToString", 0.0),
+const PARAMS_METHODS: &[(&str, crate::host::shared_vm::MarkedOperation, f64)] = &[
+    ("delete", crate::host::shared_vm::marked_operation!("mimeParamsDelete"), 1.0),
+    ("get", crate::host::shared_vm::marked_operation!("mimeParamsGet"), 1.0),
+    ("has", crate::host::shared_vm::marked_operation!("mimeParamsHas"), 1.0),
+    ("set", crate::host::shared_vm::marked_operation!("mimeParamsSet"), 2.0),
+    ("entries", crate::host::shared_vm::marked_operation!("mimeParamsEntries"), 0.0),
+    ("keys", crate::host::shared_vm::marked_operation!("mimeParamsKeys"), 0.0),
+    ("values", crate::host::shared_vm::marked_operation!("mimeParamsValues"), 0.0),
+    ("toString", crate::host::shared_vm::marked_operation!("mimeParamsToString"), 0.0),
 ];
 
 type Pairs = Vec<(String, String)>;
@@ -201,8 +200,8 @@ fn this_pairs(c: &mut Context<'_>, this: RootId) -> Result<Pairs, RootedError> {
     Ok(pairs)
 }
 
-fn define_method(c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, length: f64) -> Result<RootId, RootedError> {
-    let function = c.host_function_named(operation(operation_name), name)?;
+fn define_method(c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, length: f64) -> Result<RootId, RootedError> {
+    let function = c.host_function_named(operation, name)?;
     let key = c.string_rooted("length");
     let length = c.number(length);
     c.define_data_property_rooted(function, key, length, false, false, true)?;
@@ -234,7 +233,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
         let key = c.string_rooted(name);
         c.define_property_descriptor_rooted(prototype, key, descriptor)?;
     }
-    let to_string = define_method(c, prototype, "toString", "mimeTypeToString", 0.0)?;
+    let to_string = define_method(c, prototype, "toString", crate::host::shared_vm::operation!("mimeTypeToString"), 0.0)?;
     let key = c.string_rooted("toJSON");
     c.define_data_property_rooted(prototype, key, to_string, true, true, true)?;
     let params = c.host_constructor_named(crate::host::shared_vm::operation!("mimeParamsConstruct"), "MIMEParams")?;
@@ -245,7 +244,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
     let mut entries = None;
     let mut to_string = None;
     for &(name, operation_name, length) in PARAMS_METHODS {
-        let function = define_method(c, params_prototype, name, operation_name, length)?;
+        let function = define_method(c, params_prototype, name, operation_name.id(), length)?;
         match name {
             "entries" => entries = Some(function),
             "toString" => to_string = Some(function),

@@ -1,6 +1,7 @@
 //! `events.EventEmitterAsyncResource`: an EventEmitter whose emits run in the scope of its own
 //! `AsyncResource`, an `EventEmitterReferencingAsyncResource` that names it back.
 use super::event_target_shared_vm::{api, argument, attach_slot, get, put, receiver_slot, require_new};
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -13,10 +14,10 @@ const CLASS: &str = "EventEmitterAsyncResource";
 const REFERENCING_CLASS: &str = "EventEmitterReferencingAsyncResource";
 
 /// `(name, getter operation)` of the class's accessors.
-const ACCESSORS: [(&str, &str); 3] = [
-    ("asyncId", "emitterAsyncId"),
-    ("triggerAsyncId", "emitterAsyncTriggerId"),
-    ("asyncResource", "emitterAsyncResource"),
+const ACCESSORS: [(&str, MarkedOperation); 3] = [
+    ("asyncId", marked_operation!("emitterAsyncId")),
+    ("triggerAsyncId", marked_operation!("emitterAsyncTriggerId")),
+    ("asyncResource", marked_operation!("emitterAsyncResource")),
 ];
 
 /// `EventEmitter.EventEmitterAsyncResource`, a getter that builds the class on first use.
@@ -32,8 +33,8 @@ pub(super) fn install(c: &mut Context<'_>, emitter: RootId) -> Result<(), Rooted
     Ok(())
 }
 
-fn define_accessor(c: &mut Context<'_>, holder: RootId, name: &str, operation: &str) -> Result<(), RootedError> {
-    let getter = c.host_function_named(crate::host::shared_vm::operation(operation), &format!("get {name}"))?;
+fn define_accessor(c: &mut Context<'_>, holder: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
+    let getter = c.host_function_named(operation, &format!("get {name}"))?;
     let key = c.string_rooted(name);
     let undefined = c.undefined();
     c.define_property_fields_rooted(
@@ -44,15 +45,15 @@ fn define_accessor(c: &mut Context<'_>, holder: RootId, name: &str, operation: &
     Ok(())
 }
 
-fn define_method(c: &mut Context<'_>, holder: RootId, name: &str, operation: &str) -> Result<(), RootedError> {
-    let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+fn define_method(c: &mut Context<'_>, holder: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
+    let method = c.host_function_named(operation, name)?;
     c.define_named_data_property_rooted(holder, name, method, true, false, true)?;
     Ok(())
 }
 
 /// A subclass constructor of `base` with a read-only `prototype`.
-fn subclass(c: &mut Context<'_>, name: &str, operation: &str, base: RootId) -> Result<(RootId, RootId), RootedError> {
-    let class = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+fn subclass(c: &mut Context<'_>, name: &str, operation: quench_runtime::HostFunctionId, base: RootId) -> Result<(RootId, RootId), RootedError> {
+    let class = c.host_constructor_named(operation, name)?;
     c.set_prototype_rooted(class, base)?;
     let prototype = get(c, class, "prototype")?;
     let base_prototype = get(c, base, "prototype")?;
@@ -70,15 +71,15 @@ pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Resul
     }
     let hooks = super::async_hooks_shared_vm::module(c)?;
     let resource = get(c, hooks, "AsyncResource")?;
-    let (referencing, prototype) = subclass(c, REFERENCING_CLASS, "emitterAsyncReferencingConstructor", resource)?;
-    define_accessor(c, prototype, "eventEmitter", "emitterAsyncEventEmitter")?;
+    let (referencing, prototype) = subclass(c, REFERENCING_CLASS, crate::host::shared_vm::operation!("emitterAsyncReferencingConstructor"), resource)?;
+    define_accessor(c, prototype, "eventEmitter", crate::host::shared_vm::operation!("emitterAsyncEventEmitter"))?;
     put(c, data, "asyncReferencingClass", referencing)?;
     let emitter = get(c, data, "emitter")?;
-    let (class, prototype) = subclass(c, CLASS, "emitterAsyncResourceConstructor", emitter)?;
-    define_method(c, prototype, "emit", "emitterAsyncEmit")?;
-    define_method(c, prototype, "emitDestroy", "emitterAsyncDestroy")?;
+    let (class, prototype) = subclass(c, CLASS, crate::host::shared_vm::operation!("emitterAsyncResourceConstructor"), emitter)?;
+    define_method(c, prototype, "emit", crate::host::shared_vm::operation!("emitterAsyncEmit"))?;
+    define_method(c, prototype, "emitDestroy", crate::host::shared_vm::operation!("emitterAsyncDestroy"))?;
     for (name, operation) in ACCESSORS {
-        define_accessor(c, prototype, name, operation)?;
+        define_accessor(c, prototype, name, operation.id())?;
     }
     put(c, data, "asyncEmitterClass", class)?;
     Ok(class)

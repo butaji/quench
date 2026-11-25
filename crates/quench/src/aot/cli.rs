@@ -10,6 +10,10 @@ use std::{
 
 const COMPILE_REPORT_VERSION: u64 = 1;
 pub(super) const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
+
+/// The compile worker option that runs a native entry's residual program at build time to its
+/// first wait for input and saves the run there (`build_rest`).
+pub(super) const WAIT_WORKER_OPTION: &str = "--wait-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
@@ -125,12 +129,15 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
     enum Work {
         Application(Options),
         Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
+        Wait { program: PathBuf, output: PathBuf, assumptions: Vec<String> },
         Evaluation { entry: PathBuf, journal: PathBuf, assumptions: Vec<String> },
         Resumption { entry: PathBuf, rest: PathBuf, arguments: Vec<String> },
     }
     let work = match arguments.as_slice() {
         [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
             Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
+        [option, program, output, assumptions @ ..] if option == WAIT_WORKER_OPTION =>
+            Work::Wait { program: program.into(), output: output.into(), assumptions: assumptions.to_vec() },
         [option, entry, journal, assumptions @ ..] if option == super::strict::EVALUATION_WORKER_OPTION =>
             Work::Evaluation { entry: entry.into(), journal: journal.into(), assumptions: assumptions.to_vec() },
         [option, entry, rest, arguments @ ..] if option == super::strict::RESUMPTION_WORKER_OPTION =>
@@ -143,6 +150,7 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .spawn(move || match work {
             Work::Application(options) => compile(options),
             Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
+            Work::Wait { program, output, assumptions } => super::image::build_rest(&program, &output, &assumptions),
             Work::Evaluation { entry, journal, assumptions } => super::strict::evaluate(&entry, &journal, &assumptions),
             Work::Resumption { entry, rest, arguments } => super::strict::resume(&entry, &rest, arguments),
         })
@@ -161,7 +169,7 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
     host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
-    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
+    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
@@ -188,6 +196,7 @@ fn compile(options: Options) -> Result<(), String> {
     // A strict compile that reads a dynamic input falls back to full support: static support
     // still retains the interpreter, which its link audit refuses (TOD-2196).
     let variant = if options.strict { variant::Variant::Full } else { variant::select(explicit, &graph) };
+    let core = variant == variant::Variant::Core;
     let support = variant.image_support();
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
@@ -243,18 +252,20 @@ fn compile(options: Options) -> Result<(), String> {
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
     // A strict compile links no support when the program folds at build time; one that reads
     // a dynamic input links its support variant, and the report names the input.
+    let mut waits = Vec::new();
     if options.strict {
-        if let super::strict::Outcome::Image = super::strict::compile(&entry, &output, &work.0, &mut report)? {
-            report["status"] = json!("compiled");
-            report["support_variant"] = json!("strict");
-            report["execution_mode"] = json!("replay");
-            write_report(report_path.as_deref(), &report)?;
-            return Ok(());
+        match super::strict::compile(&entry, &output, &work.0, &mut report)? {
+            super::strict::Outcome::Image => {
+                report["status"] = json!("compiled");
+                report["support_variant"] = json!("strict");
+                report["execution_mode"] = json!("replay");
+                write_report(report_path.as_deref(), &report)?;
+                return Ok(());
+            }
+            super::strict::Outcome::Waits(runs) => waits = runs,
+            super::strict::Outcome::Dynamic => {}
         }
     }
-    // A core image runs no Node bootstrap: its program is the whole application, so no
-    // snapshot sources are staged and no bootstrap bytes are linked.
-    let core = variant == variant::Variant::Core;
     super::image::capture_bootstrap(core, &graph, &mut manifest)?;
     report["source_units"] = json!(manifest.units().len());
     report["archived_module_sources"] = json!(manifest.assets().modules.len());
@@ -264,8 +275,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let image_host = super::compiler::ImageHost::of(core);
-    let inputs = compiled.emit(&images, &options.target, image_host)?;
+    let inputs = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
         inputs
@@ -273,7 +283,8 @@ fn compile(options: Options) -> Result<(), String> {
         inputs.self_contained()
     };
     report["self_contained"] = json!(inputs.is_self_contained());
-    let inputs = super::image::stage_image(core, &graph, &work.0, &images, inputs, &mut report)?;
+    let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
+    let (inputs, held) = super::image::stage_image(core, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -301,7 +312,7 @@ fn compile(options: Options) -> Result<(), String> {
     support.check_build()?;
     report["support_artifacts"] = support.report();
     let staged = work.0.join("native-image");
-    let audit = super::image::link_image(core, &support, &inputs, &work.0, &staged)?;
+    let audit = super::image::link_image(core, &support, &inputs, &work.0, &staged, &graph, held, &mut report)?;
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
@@ -397,12 +408,6 @@ impl BuildDirectory {
 }
 impl Drop for BuildDirectory {
     fn drop(&mut self) {
-        // A failed compile leaves its objects and the linker's command for inspection
-        // (`QUENCH_TRACE=build-dir`), which is what a relocation defect needs.
-        if quench_runtime::trace::Channel::BuildDir.on() {
-            eprintln!("quench: build directory {}", self.0.display());
-            return;
-        }
         let _ = fs::remove_dir_all(&self.0);
     }
 }

@@ -254,6 +254,58 @@ pub trait Stage: crate::projection::Sealed {
         fill_by_rows(self, top, undefined, prefix, passed, registers);
     }
 
+    /// The first index at or after `from` (at most the text's length) where `needle` occurs in
+    /// `text`, and whether one does: a span primitive (`spans`). A stage with a tuned search runs it
+    /// instead of the rows (`Concrete`).
+    #[inline(always)]
+    fn find_span(&mut self, text: super::spans::UnitSpan<Self::Word>, needle: super::spans::UnitSpan<Self::Word>,
+        from: Self::Word) -> (Self::Cond, Self::Word) where Self: Sized {
+        super::spans::find_by_rows(self, text, needle, from)
+    }
+
+    /// The last index at or before `from` (clamped to the last start that fits) where `needle` occurs
+    /// in `text`, and whether one does: a span primitive (`spans`).
+    #[inline(always)]
+    fn rfind_span(&mut self, text: super::spans::UnitSpan<Self::Word>, needle: super::spans::UnitSpan<Self::Word>,
+        from: Self::Word) -> (Self::Cond, Self::Word) where Self: Sized {
+        super::spans::rfind_by_rows(self, text, needle, from)
+    }
+
+    /// Whether `needle`'s units are `text`'s from `start`, which the caller proves leaves room for
+    /// them: a span primitive (`spans`).
+    #[inline(always)]
+    fn span_equal_at(&mut self, text: super::spans::UnitSpan<Self::Word>, needle: super::spans::UnitSpan<Self::Word>,
+        start: Self::Word) -> Self::Cond where Self: Sized {
+        super::spans::equal_at_by_rows(self, text, needle, start)
+    }
+
+    /// The `length` units at `source` written to `target`, of one width (two bytes a unit where
+    /// `wide`), the runs apart: a span primitive (`spans`).
+    #[inline(always)]
+    fn copy_span(&mut self, wide: bool, target: Self::Word, source: Self::Word, length: Self::Word) where Self: Sized {
+        super::spans::copy_by_rows(self, wide, target, source, length);
+    }
+
+    /// `unit` written to each of the `length` units at `target`: a span primitive (`spans`).
+    #[inline(always)]
+    fn fill_span(&mut self, wide: bool, target: Self::Word, unit: Self::Word, length: Self::Word) where Self: Sized {
+        super::spans::fill_by_rows(self, wide, target, unit, length);
+    }
+
+    /// The ASCII case map (upper or lower) of the `length` bytes at `source` written to `target`:
+    /// a span primitive (`spans`).
+    #[inline(always)]
+    fn case_span(&mut self, target: Self::Word, source: Self::Word, length: Self::Word, upper: bool) where Self: Sized {
+        super::spans::case_by_rows(self, target, source, length, upper);
+    }
+
+    /// Whether the ASCII case map (upper or lower) changes any of the `length` bytes at `source`:
+    /// a span primitive (`spans`).
+    #[inline(always)]
+    fn case_changes_span(&mut self, source: Self::Word, length: Self::Word, upper: bool) -> Self::Cond where Self: Sized {
+        super::spans::case_changes_by_rows(self, source, length, upper)
+    }
+
     /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain
     /// of the object record `object`, as `(decided, holds)`: at most `max_depth` links past the
     /// first are followed, in the object record table at `records`, and a link naming no object

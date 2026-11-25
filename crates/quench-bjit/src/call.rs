@@ -31,57 +31,6 @@ pub enum CallRow {
     /// The unconditional leave at the instruction: successor EXIT0 alone, every register as it
     /// came (the exit stub writes the live pinned ones back).
     Here,
-    /// A builtin of a native the callee is, run on its staged row (`stencils/builtin_rows.rs`): value
-    /// hole 0 is the `CallRecord`'s address, whose `callee` is the identity the callee register must hold;
-    /// successors TAKEN (completed: the result is in the call's register), NEXT (a miss, nothing written:
-    /// the helper row the planner lays out behind it).
-    Builtin(BuiltinRow),
-}
-
-/// The builtins a call row runs on their staged rows (`stencils/builtin_rows.rs`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum BuiltinRow {
-    /// `String.prototype.charCodeAt` of a flat string.
-    CharCodeAt,
-    /// `String.prototype.charAt` of a flat string, at an index of an ASCII unit.
-    CharAt,
-    /// `Number.isInteger` of a Number.
-    IsInteger,
-    /// `Math.imul` of two int32 operands.
-    Imul,
-    /// `Array.prototype.push` of one value onto a dense array (`staged::builtins::array_push_one`).
-    Push,
-    /// `Array.prototype.pop` of a dense array (`staged::builtins::array_pop`).
-    Pop,
-}
-
-impl BuiltinRow {
-    /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 6] = [
-        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Imul,
-        BuiltinRow::Push, BuiltinRow::Pop,
-    ];
-
-    /// The row's name in the stencil object, after `builtin_`.
-    pub const fn symbol(self) -> &'static str {
-        match self {
-            BuiltinRow::CharCodeAt => "char_code_at",
-            BuiltinRow::CharAt => "char_at",
-            BuiltinRow::IsInteger => "is_integer",
-            BuiltinRow::Imul => "imul",
-            BuiltinRow::Push => "push",
-            BuiltinRow::Pop => "pop",
-        }
-    }
-
-    /// The arguments the builtin reads after its receiver's window: the count the planner must match.
-    pub const fn arguments(self) -> u16 {
-        match self {
-            BuiltinRow::Imul => 2,
-            BuiltinRow::Pop => 0,
-            _ => 1,
-        }
-    }
 }
 
 /// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
@@ -105,7 +54,6 @@ impl CallRow {
                 Ok(format!("call_direct_a{argc}_{mode}{}{window}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
-            CallRow::Builtin(row) => Ok(format!("builtin_{}", row.symbol())),
             other => Err(format!("no call row {other:?}")),
         }
     }
@@ -158,10 +106,6 @@ mod tests {
                 CallRow::Reload(_) => {
                     assert!(successors.iter().all(|s| *s == NEXT), "{successors:?}");
                     assert!(stencil.imm32.iter().any(|field| field.index == 0), "the slot offset is hole 0");
-                }
-                CallRow::Builtin(_) => {
-                    assert!([NEXT, TAKEN].iter().all(|s| successors.contains(s)), "{successors:?}");
-                    assert!(values.contains(&0), "the record address is the value hole: {values:?}");
                 }
             }
         }

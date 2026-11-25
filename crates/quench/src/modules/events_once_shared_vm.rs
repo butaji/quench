@@ -274,9 +274,8 @@ pub(crate) fn on(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Root
         put(c, state, key, value)?;
     }
     let iterator = c.object_rooted()?;
-    let operation = crate::host::shared_vm::operation;
-    for (method, op) in [("next", "eventsOnNext"), ("return", "eventsOnReturn"), ("throw", "eventsOnThrow")] {
-        let function = c.host_function_named_with_data(operation(op), method, state)?;
+    for (method, op) in [("next", crate::host::shared_vm::operation!("eventsOnNext")), ("return", crate::host::shared_vm::operation!("eventsOnReturn")), ("throw", crate::host::shared_vm::operation!("eventsOnThrow"))] {
+        let function = c.host_function_named_with_data(op, method, state)?;
         c.define_named_data_property_rooted(iterator, method, function, true, true, true)?;
     }
     let global = c.global_root()?;

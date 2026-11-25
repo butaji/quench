@@ -87,25 +87,25 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let parent = super::tcp_binding::libuv_prototype(c)?;
         c.set_prototype_rooted(p, parent)?;
         for (name, op) in [
-            ("open", "nativePipeOpen"),
-            ("bind", "nativePipeBind"),
-            ("readStart", "nativePipeReadStart"),
-            ("readStop", "nativePipeReadStop"),
-            ("writeUtf8String", "nativePipeWriteUtf8"),
-            ("writeBuffer", "nativePipeWriteBuffer"),
-            ("close", "nativePipeClose"),
-            ("ref", "nativePipeRef"),
-            ("unref", "nativePipeUnref"),
-            ("hasRef", "nativePipeHasRef"),
+            ("open", crate::host::shared_vm::marked_operation!("nativePipeOpen")),
+            ("bind", crate::host::shared_vm::marked_operation!("nativePipeBind")),
+            ("readStart", crate::host::shared_vm::marked_operation!("nativePipeReadStart")),
+            ("readStop", crate::host::shared_vm::marked_operation!("nativePipeReadStop")),
+            ("writeUtf8String", crate::host::shared_vm::marked_operation!("nativePipeWriteUtf8")),
+            ("writeBuffer", crate::host::shared_vm::marked_operation!("nativePipeWriteBuffer")),
+            ("close", crate::host::shared_vm::marked_operation!("nativePipeClose")),
+            ("ref", crate::host::shared_vm::marked_operation!("nativePipeRef")),
+            ("unref", crate::host::shared_vm::marked_operation!("nativePipeUnref")),
+            ("hasRef", crate::host::shared_vm::marked_operation!("nativePipeHasRef")),
         ] {
-            let f = c.host_function_named(crate::host::shared_vm::operation(op), name)?;
+            let f = c.host_function_named(op.id(), name)?;
             put(c, p, name, f)?;
         }
         for (name, op) in [
-            ("fd", "nativePipeFd"),
-            ("writeQueueSize", "nativePipeQueue"),
+            ("fd", crate::host::shared_vm::marked_operation!("nativePipeFd")),
+            ("writeQueueSize", crate::host::shared_vm::marked_operation!("nativePipeQueue")),
         ] {
-            let f = c.host_function(crate::host::shared_vm::operation(op))?;
+            let f = c.host_function(op.id())?;
             let d = c.object_rooted()?;
             put(c, d, "get", f)?;
             let yes = c.boolean(true);
@@ -673,7 +673,7 @@ pub(crate) fn poll(
             queue_runtime(
                 runtime,
                 program,
-                "nativePipeWriteComplete",
+                crate::host::shared_vm::operation!("nativePipeWriteComplete"),
                 handle,
                 &[request.root, status],
                 Some((resource.id, request.root)),
@@ -774,13 +774,13 @@ fn deliver_read_runtime(
 fn queue_runtime(
     runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
-    op: &str,
+    op: quench_runtime::HostFunctionId,
     handle: RootId,
     args: &[RootId],
     execution: Option<(u64, RootId)>,
 ) -> Result<(), String> {
     let callback = runtime
-        .host_function(crate::host::shared_vm::operation(op))
+        .host_function(op)
         .map_err(|e| runtime.format_error(program, &e.error))?;
     let receiver = runtime.root(
         runtime

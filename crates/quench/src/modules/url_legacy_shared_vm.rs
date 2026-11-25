@@ -1,6 +1,5 @@
 //! Node's legacy URL API (lib/url.js): the `Url` class with `parse`, `format`, `resolve`,
 //! `resolveObject` and `parseHost`, and the module functions over it.
-use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;
@@ -195,7 +194,7 @@ impl Legacy {
         }
         let query = match &self.query {
             Some((Query::Object(object), _)) => {
-                let querystring = crate::host::shared_vm::commonjs::builtin_require(c, "querystring")?;
+                let querystring = crate::host::shared_vm::commonjs::builtin!(c, "querystring")?;
                 let stringify = get(c, querystring, "stringify")?;
                 let text = c.call_rooted(stringify, querystring, &[*object])?;
                 c.to_string(text)?
@@ -427,7 +426,7 @@ fn query(c: &mut Context<'_>, text: &str, parse_query: bool) -> Result<(Query, S
     if !parse_query {
         return Ok((Query::Text, text.to_owned()));
     }
-    let querystring = crate::host::shared_vm::commonjs::builtin_require(c, "querystring")?;
+    let querystring = crate::host::shared_vm::commonjs::builtin!(c, "querystring")?;
     let parse = get(c, querystring, "parse")?;
     let text = c.string_rooted(text);
     let object = c.call_rooted(parse, querystring, &[text])?;
@@ -779,13 +778,13 @@ pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.define_data_property_rooted(class, key, zero, false, false, true)?;
     let prototype = get(c, class, "prototype")?;
     for (name, operation_name, length) in [
-        ("parse", "urlLegacyParseMethod", 3.0),
-        ("format", "urlLegacyFormatMethod", 0.0),
-        ("resolve", "urlLegacyResolveMethod", 1.0),
-        ("resolveObject", "urlLegacyResolveObjectMethod", 1.0),
-        ("parseHost", "urlLegacyParseHostMethod", 0.0),
+        ("parse", crate::host::shared_vm::operation!("urlLegacyParseMethod"), 3.0),
+        ("format", crate::host::shared_vm::operation!("urlLegacyFormatMethod"), 0.0),
+        ("resolve", crate::host::shared_vm::operation!("urlLegacyResolveMethod"), 1.0),
+        ("resolveObject", crate::host::shared_vm::operation!("urlLegacyResolveObjectMethod"), 1.0),
+        ("parseHost", crate::host::shared_vm::operation!("urlLegacyParseHostMethod"), 0.0),
     ] {
-        let function = c.host_function_named(operation(operation_name), name)?;
+        let function = c.host_function_named(operation_name, name)?;
         let key = c.string_rooted("length");
         let length = c.number(length);
         c.define_data_property_rooted(function, key, length, false, false, true)?;

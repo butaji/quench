@@ -97,8 +97,11 @@ impl DeserializerDelegate for IpcDeserializer {
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:ipc_serdes", |c| {
         let module = c.object_rooted()?;
-        for (name, operation) in [("serialize", "ipcSerdesSerialize"), ("deserialize", "ipcSerdesDeserialize")] {
-            let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        for (name, operation) in [
+            ("serialize", crate::host::shared_vm::marked_operation!("ipcSerdesSerialize")),
+            ("deserialize", crate::host::shared_vm::marked_operation!("ipcSerdesDeserialize")),
+        ] {
+            let function = c.host_function_named(operation.id(), name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(module, key, function, true, true, true)?;
         }

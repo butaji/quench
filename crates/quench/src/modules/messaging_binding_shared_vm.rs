@@ -1,5 +1,6 @@
 //! Native messaging primitives consumed by Node's `internal/worker` library.
 
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -20,13 +21,12 @@ fn build(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         context.define_data_property_rooted(binding, key, constructor, true, true, true)?;
     }
     for (name, operation) in [
-        ("structuredClone", "messagingStructuredClone"),
-        ("markAsUncloneable", "markAsUncloneable"),
-        ("markAsUntransferable", "markAsUntransferable"),
-        ("isMarkedAsUntransferable", "isMarkedAsUntransferable"),
+        ("structuredClone", marked_operation!("messagingStructuredClone")),
+        ("markAsUncloneable", marked_operation!("markAsUncloneable")),
+        ("markAsUntransferable", marked_operation!("markAsUntransferable")),
+        ("isMarkedAsUntransferable", marked_operation!("isMarkedAsUntransferable")),
     ] {
-        let function =
-            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }

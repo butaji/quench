@@ -4072,15 +4072,15 @@ impl AheadImages {
     /// Adds `program`'s image while recording; a program that does not lower adds none.
     #[inline]
     pub fn record(program: &ResidualProgram) {
-        if recorded().is_none() { return; }
-        let images = match Self::compile(program) {
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower) else { return };
+        let images = match lower(program) {
             Ok(images) => images,
             Err(why) => {
                 if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} records no image: {why}", program.source_name); }
                 return;
             }
         };
-        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
+        if !images.is_empty() { if let Some(recording) = recorded().as_mut() { recording.images.push(images.image); } }
     }
 }
 
@@ -5386,9 +5386,15 @@ impl LoopSite {
 /// The images of each program stored while recording (`start_recording`); the entry may run
 /// on a worker thread, so this is process-wide. It holds the lowered images alone: a linked
 /// image belongs to the VM (and thread) that loaded it.
-pub static RECORDED: std::sync::Mutex<Option<Vec<AotImage>>> = std::sync::Mutex::new(None);
+pub static RECORDED: std::sync::Mutex<Option<Recording>> = std::sync::Mutex::new(None);
 
-pub fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AotImage>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+/// A recording: the lowering that started it, which only a build links, and its images.
+pub struct Recording {
+    pub lower: fn(&ResidualProgram) -> Result<AheadImages, String>,
+    pub images: Vec<AotImage>,
+}
+
+pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
 
 

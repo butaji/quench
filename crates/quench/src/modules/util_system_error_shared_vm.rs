@@ -1,5 +1,5 @@
 //! Target libuv protocol facts shared by Node utility and host I/O errors.
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError};
 
 include!("uv_errors.rs");
 type Context<'a> = NativeContext<'a>;
@@ -37,8 +37,8 @@ pub(crate) fn uv_binding(context: &mut Context<'_>) -> Result<RootId, RootedErro
             let value = context.number(f64::from(code));
             context.define_data_property_rooted(binding, key, value, false, true, false)?;
         }
-        method(context, binding, "getErrorMap", "uvGetErrorMap")?;
-        method(context, binding, "getErrorMessage", "uvGetErrorMessage")?;
+        method(context, binding, "getErrorMap", crate::host::shared_vm::operation!("uvGetErrorMap"))?;
+        method(context, binding, "getErrorMessage", crate::host::shared_vm::operation!("uvGetErrorMessage"))?;
         Ok(binding)
     })
 }
@@ -46,9 +46,9 @@ fn method(
     c: &mut Context<'_>,
     binding: RootId,
     name: &str,
-    operation: &str,
+    operation: HostFunctionId,
 ) -> Result<(), RootedError> {
-    let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    let function = c.host_function_named(operation, name)?;
     let key = c.string_rooted(name);
     c.define_data_property_rooted(binding, key, function, true, true, true)?;
     Ok(())

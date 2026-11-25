@@ -36,21 +36,21 @@ const TIMED_OUT: (&str, &str) = ("The operation was aborted due to timeout", "Ti
 /// The private-field error of a controller method on a foreign receiver.
 const FOREIGN_CONTROLLER: &str = "Cannot read private member #signal from an object whose class did not declare it";
 
-const SIGNAL_PROTOTYPE_ENUMERABLE_HEAD: [Member; 1] = [Member::Accessor("aborted", "abortSignalAborted", None, 0.0)];
+const SIGNAL_PROTOTYPE_ENUMERABLE_HEAD: [Member; 1] = [Member::Accessor("aborted", crate::host::shared_vm::marked_operation!("abortSignalAborted"), None, 0.0)];
 const SIGNAL_PROTOTYPE_HIDDEN: [Member; 2] = [
-    Member::Accessor("reason", "abortSignalReason", None, 0.0),
-    Member::Method("throwIfAborted", "abortSignalThrowIfAborted", 0.0),
+    Member::Accessor("reason", crate::host::shared_vm::marked_operation!("abortSignalReason"), None, 0.0),
+    Member::Method("throwIfAborted", crate::host::shared_vm::marked_operation!("abortSignalThrowIfAborted"), 0.0),
 ];
 const SIGNAL_PROTOTYPE_ENUMERABLE_TAIL: [Member; 1] =
-    [Member::Accessor("onabort", "abortSignalGetOnabort", Some("abortSignalSetOnabort"), 0.0)];
+    [Member::Accessor("onabort", crate::host::shared_vm::marked_operation!("abortSignalGetOnabort"), Some(crate::host::shared_vm::marked_operation!("abortSignalSetOnabort")), 0.0)];
 const SIGNAL_STATICS: [Member; 3] = [
-    Member::Method("abort", "abortSignalStaticAbort", 0.0),
-    Member::Method("timeout", "abortSignalStaticTimeout", 0.0),
-    Member::Method("any", "abortSignalStaticAny", 0.0),
+    Member::Method("abort", crate::host::shared_vm::marked_operation!("abortSignalStaticAbort"), 0.0),
+    Member::Method("timeout", crate::host::shared_vm::marked_operation!("abortSignalStaticTimeout"), 0.0),
+    Member::Method("any", crate::host::shared_vm::marked_operation!("abortSignalStaticAny"), 0.0),
 ];
 const CONTROLLER_MEMBERS: [Member; 2] = [
-    Member::Accessor("signal", "abortControllerSignal", None, 0.0),
-    Member::Method("abort", "abortControllerAbort", 0.0),
+    Member::Accessor("signal", crate::host::shared_vm::marked_operation!("abortControllerSignal"), None, 0.0),
+    Member::Method("abort", crate::host::shared_vm::marked_operation!("abortControllerAbort"), 0.0),
 ];
 
 /// Builds both classes and records them in the event group's data.
@@ -65,12 +65,12 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
     install_members(c, prototype, &SIGNAL_PROTOTYPE_HIDDEN, false)?;
     install_members(c, prototype, &SIGNAL_PROTOTYPE_ENUMERABLE_TAIL, true)?;
     install_members(c, signal, &SIGNAL_STATICS, false)?;
-    install_tag_and_inspect(c, prototype, "AbortSignal", Some("abortSignalInspect"))?;
+    install_tag_and_inspect(c, prototype, "AbortSignal", Some(crate::host::shared_vm::marked_operation!("abortSignalInspect")))?;
     put(c, data, "abortSignalCtor", signal)?;
     let controller = c.host_constructor_named(crate::host::shared_vm::operation!("abortControllerConstructor"), "AbortController")?;
     let prototype = get(c, controller, "prototype")?;
     install_members(c, prototype, &CONTROLLER_MEMBERS, true)?;
-    install_tag_and_inspect(c, prototype, "AbortController", Some("abortControllerInspect"))?;
+    install_tag_and_inspect(c, prototype, "AbortController", Some(crate::host::shared_vm::marked_operation!("abortControllerInspect")))?;
     put(c, data, "abortControllerCtor", controller)?;
     let abort = c.host_function_named(crate::host::shared_vm::operation!("abortSignalAbort"), "abortSignal")?;
     put(c, data, "abortSignal", abort)?;

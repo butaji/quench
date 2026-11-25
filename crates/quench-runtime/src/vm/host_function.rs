@@ -204,14 +204,12 @@ impl Vm {
     }
 
     pub(super) fn initialize_host(&mut self) -> Result<(), JsError> {
-        for index in 0..self.host.function_count() {
-            let Some(name) = self.host.function_descriptor(index)
+        for id in self.host.global_functions() {
+            let Some(name) = self.host.function_descriptor(id.0 as usize)
                 .ok_or_else(|| JsError("unknown host function index".into()))?.global else {
                 continue;
             };
-            let id = u32::try_from(index)
-                .map_err(|_| JsError("host function table exceeds index space".into()))?;
-            let function = self.create_host_function(HostFunctionId(id))?;
+            let function = self.create_host_function(id)?;
             // A host's globals are its platform's operations (timers, `fetch`,
             // `structuredClone`), enumerable as WebIDL makes a global's operations and as
             // Node defines them, unlike the language's own non-enumerable builtins.
@@ -288,6 +286,27 @@ impl Vm {
     pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
         let index = self.host_operation_index(self.heap.function(function)?.env)?;
         self.host.function_descriptor(index as usize).map(|binding| binding.name)
+    }
+
+    /// The host operations the heap's host functions run, ascending, each with the plain
+    /// operation its row may forward a call to (`run_host_function`).
+    pub fn held_host_operations(&self) -> Vec<u32> {
+        let mut environments = Vec::new();
+        self.heap.for_each_live_function_record(|function| {
+            if matches!(function.kind, FunctionKind::Native(Native::HostFunction)) {
+                environments.push(function.env);
+            }
+        });
+        let mut operations = Vec::new();
+        for index in environments.into_iter().filter_map(|environment| self.host_operation_index(environment)) {
+            operations.push(index);
+            if let Some(crate::staged::host_rows::HostRow::PlainText { plain, .. }) = self.host.function_row(index as usize) {
+                operations.push(plain);
+            }
+        }
+        operations.sort_unstable();
+        operations.dedup();
+        operations
     }
 
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {

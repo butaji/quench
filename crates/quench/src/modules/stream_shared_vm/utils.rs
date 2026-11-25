@@ -679,7 +679,7 @@ fn add_abort_signal_unchecked(c: &mut Context<'_>, signal: RootId, stream: RootI
     }
     let node = is_node_stream(c, stream)?;
     let node = c.boolean(node);
-    let on_abort = super::closure(c, "streamOnSignalAbort", "", &[stream, signal, node])?;
+    let on_abort = super::closure(c, crate::host::shared_vm::operation!("streamOnSignalAbort"), "", &[stream, signal, node])?;
     let aborted = get(c, signal, "aborted")?;
     let undefined = c.undefined();
     if c.truthy_rooted(aborted)? {

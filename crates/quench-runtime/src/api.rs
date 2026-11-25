@@ -88,6 +88,9 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
+    /// A runtime only ever restored from one saved at rest (`resume_native_from_snapshot` of a
+    /// `snapshot_at_rest`): it never installs its host.
+    pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
@@ -297,8 +300,14 @@ impl<H: Host> Runtime<H> {
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> Result<Vec<u8>, String> {
         self.vm.forget_spare_await_state();
+        self.vm.materialize_named_lazy_globals(program).map_err(|error| error.to_string())?;
         self.vm.collect_now(program);
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
+    }
+
+    /// The host operations the heap's host functions run, ascending (`Vm::held_host_operations`).
+    pub fn held_host_operations(&self) -> Vec<u32> {
+        self.vm.held_host_operations()
     }
 
     /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
@@ -318,6 +327,25 @@ impl<H: Host> Runtime<H> {
         // this runtime was put in is the process's, so it is adopted again here.
         self.set_execution_mode(mode);
         Ok(restored)
+    }
+
+    /// Continues a runtime `restore_snapshot` restored from a run saved at rest
+    /// (`snapshot_at_rest`): the host binds its process inputs again, and nothing runs until
+    /// its sources deliver.
+    pub fn resume_restored(&mut self) -> Result<(), JsError> {
+        self.vm.resume_restored()
+    }
+
+    /// `resume_restored` for a run saved at rest that `program`'s native image continues.
+    #[cfg(feature = "native-execution")]
+    pub fn resume_native_from_snapshot(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        program: &crate::NativeJsProgram,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), JsError> {
+        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
+        self.vm.resume_restored()
     }
 
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).

@@ -1,4 +1,5 @@
 //! Native option queries project the same startup state used by feature gates.
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) mod internal;
 mod schema;
@@ -10,14 +11,14 @@ pub(crate) fn binding(context: &mut NativeContext<'_>) -> Result<RootId, RootedE
     }
     let module = context.object_rooted()?;
     for (name, operation) in [
-        ("getCLIOptionsValues", "cliOptionsValues"),
-        ("getCLIOptionsInfo", "cliOptionsInfo"),
-        ("getOptionsAsFlags", "cliOptionsFlags"),
-        ("getEmbedderOptions", "cliEmbedderOptions"),
-        ("parseNodeOptionsEnvVar", "cliParseNodeOptions"),
+        ("getCLIOptionsValues", marked_operation!("cliOptionsValues")),
+        ("getCLIOptionsInfo", marked_operation!("cliOptionsInfo")),
+        ("getOptionsAsFlags", marked_operation!("cliOptionsFlags")),
+        ("getEmbedderOptions", marked_operation!("cliEmbedderOptions")),
+        ("parseNodeOptionsEnvVar", marked_operation!("cliParseNodeOptions")),
     ] {
         let function =
-            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            context.host_function_named(operation.id(), name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(module, key, function, true, true, true)?;
     }

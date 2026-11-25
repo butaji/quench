@@ -234,4 +234,86 @@ impl Stage for Concrete {
     fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
         super::object::walk_prototypes_loop(self, records, object, target, max_depth)
     }
+    /// The tuned forward search of `vm::wtf16::search` (memchr, the block filter, memmem).
+    #[inline(always)]
+    fn find_span(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, from: u64) -> (bool, u64) {
+        let found = super::spans::concrete_units(text).find(super::spans::concrete_units(needle), from as usize);
+        (found.is_some(), found.map_or(u64::MAX, |index| index as u64))
+    }
+    /// The tuned reverse search: memrchr or memmem's reverse search for ASCII, `Units::rfind` otherwise.
+    #[inline(always)]
+    fn rfind_span(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, from: u64) -> (bool, u64) {
+        let found = super::spans::concrete_units(text).rfind(super::spans::concrete_units(needle), from as usize);
+        (found.is_some(), found.map_or(u64::MAX, |index| index as u64))
+    }
+    /// Slice equality of the units from `start`.
+    #[inline(always)]
+    fn span_equal_at(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, start: u64) -> bool {
+        let start = start as usize;
+        super::spans::concrete_units(text).slice(start..start + needle.length as usize) == super::spans::concrete_units(needle)
+    }
+    /// memcpy of the units.
+    #[inline(always)]
+    fn copy_span(&mut self, wide: bool, target: u64, source: u64, length: u64) {
+        let bytes = length as usize * if wide { 2 } else { 1 };
+        // SAFETY: a Concrete span names live, disjoint units the caller holds for the call.
+        unsafe {
+            let (from, to) = (source as *const u8, target as *mut u8);
+            // A short run is cheaper copied in line than through a memcpy call: two overlapping
+            // reads of the widest word that fits, from each end.
+            if bytes >= 8 && bytes <= 16 {
+                let (head, tail) = (from.cast::<u64>().read_unaligned(), from.add(bytes - 8).cast::<u64>().read_unaligned());
+                to.cast::<u64>().write_unaligned(head);
+                to.add(bytes - 8).cast::<u64>().write_unaligned(tail);
+            } else if bytes >= 4 && bytes < 8 {
+                let (head, tail) = (from.cast::<u32>().read_unaligned(), from.add(bytes - 4).cast::<u32>().read_unaligned());
+                to.cast::<u32>().write_unaligned(head);
+                to.add(bytes - 4).cast::<u32>().write_unaligned(tail);
+            } else if bytes >= 2 && bytes < 4 {
+                let (head, tail) = (from.cast::<u16>().read_unaligned(), from.add(bytes - 2).cast::<u16>().read_unaligned());
+                to.cast::<u16>().write_unaligned(head);
+                to.add(bytes - 2).cast::<u16>().write_unaligned(tail);
+            } else if bytes == 1 {
+                to.write(from.read());
+            } else if bytes > 16 {
+                std::ptr::copy_nonoverlapping(source as *const u8, target as *mut u8, bytes);
+            }
+        }
+    }
+    /// memset of a byte, or a slice fill of a wide unit.
+    #[inline(always)]
+    fn fill_span(&mut self, wide: bool, target: u64, unit: u64, length: u64) {
+        // SAFETY: a Concrete span names live units the caller holds for the call.
+        unsafe {
+            if wide {
+                std::slice::from_raw_parts_mut(target as *mut u16, length as usize).fill(unit as u16);
+            } else if (8..=16).contains(&length) {
+                // A short fill is two overlapping words of the byte, from each end, not a memset call.
+                let (to, word) = (target as *mut u8, (unit & 0xff) * 0x0101_0101_0101_0101);
+                to.cast::<u64>().write_unaligned(word);
+                to.add(length as usize - 8).cast::<u64>().write_unaligned(word);
+            } else {
+                std::slice::from_raw_parts_mut(target as *mut u8, length as usize).fill(unit as u8);
+            }
+        }
+    }
+    /// The slice loop of the case map, which the compiler vectorizes.
+    #[inline(always)]
+    fn case_span(&mut self, target: u64, source: u64, length: u64, upper: bool) {
+        // SAFETY: a Concrete span names live, disjoint bytes the caller holds for the call; the
+        // target may be uninitialized, so it is written through its pointer only.
+        let bytes = unsafe { std::slice::from_raw_parts(source as *const u8, length as usize) };
+        let out = target as *mut u8;
+        for (index, byte) in bytes.iter().enumerate() {
+            let mapped = if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() };
+            unsafe { out.add(index).write(mapped) };
+        }
+    }
+    /// The slice scan of the case map.
+    #[inline(always)]
+    fn case_changes_span(&mut self, source: u64, length: u64, upper: bool) -> bool {
+        // SAFETY: a Concrete span names live bytes the caller holds for the call.
+        let bytes = unsafe { std::slice::from_raw_parts(source as *const u8, length as usize) };
+        if upper { bytes.iter().any(u8::is_ascii_lowercase) } else { bytes.iter().any(u8::is_ascii_uppercase) }
+    }
 }

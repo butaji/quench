@@ -29,10 +29,10 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let encodings = c.array_rooted(&encodings)?;
     put(c, binding, "encodings", encodings)?;
     for (name, operation) in [
-        ("decode", "stringDecoderDecode"),
-        ("flush", "stringDecoderFlush"),
+        ("decode", crate::host::shared_vm::operation!("stringDecoderDecode")),
+        ("flush", crate::host::shared_vm::operation!("stringDecoderFlush")),
     ] {
-        let function = c.host_function(crate::host::shared_vm::operation(operation))?;
+        let function = c.host_function(operation)?;
         let key = c.string_rooted("name");
         let value = c.string_rooted(name);
         c.define_data_property_rooted(function, key, value, false, false, true)?;
@@ -136,18 +136,17 @@ fn state_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// `node:string_decoder` (lib/string_decoder.js): `{ StringDecoder }`.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let operation = crate::host::shared_vm::operation;
     let class = c.host_constructor_named(crate::host::shared_vm::operation!("stringDecoderConstruct"), "StringDecoder")?;
     let length = c.number(1.0);
     let key = c.string_rooted("length");
     c.define_data_property_rooted(class, key, length, false, false, true)?;
     let prototype = c.get_named_property_rooted(class, "prototype")?;
     for (name, operation_name, length) in [
-        ("write", "stringDecoderWrite", 1.0),
-        ("end", "stringDecoderEnd", 1.0),
-        ("text", "stringDecoderText", 2.0),
+        ("write", crate::host::shared_vm::operation!("stringDecoderWrite"), 1.0),
+        ("end", crate::host::shared_vm::operation!("stringDecoderEnd"), 1.0),
+        ("text", crate::host::shared_vm::operation!("stringDecoderText"), 2.0),
     ] {
-        let method = c.host_function_named(operation(operation_name), name)?;
+        let method = c.host_function_named(operation_name, name)?;
         let key = c.string_rooted("length");
         let length = c.number(length);
         c.define_data_property_rooted(method, key, length, false, false, true)?;

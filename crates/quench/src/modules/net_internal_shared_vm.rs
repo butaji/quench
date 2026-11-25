@@ -18,8 +18,8 @@ const SYMBOLS: [(&str, &str); 6] = [
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0net:internal/net.js", |c| {
         let module = c.object_rooted()?;
-        for (name, operation) in [("isIP", "netIsIP"), ("isIPv4", "netIsIPv4"), ("isIPv6", "netIsIPv6")] {
-            let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        for (name, operation) in [("isIP", crate::host::shared_vm::operation!("netIsIP")), ("isIPv4", crate::host::shared_vm::operation!("netIsIPv4")), ("isIPv6", crate::host::shared_vm::operation!("netIsIPv6"))] {
+            let function = c.host_function_named(operation, name)?;
             c.assign_named_property_rooted(module, name, function)?;
         }
         for (name, description) in SYMBOLS {

@@ -458,20 +458,15 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
     Ok((part(stencil, holes, vec![Exit::Status]), record))
 }
 
-/// The builtin row of a call of the builtin's arity whose callee is that builtin, and the record the row reads (its
-/// callee identity and registers); none for another call. The row's miss is the helper row behind it.
-fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Option<(CallPart, Box<CallRecord>)>, String> {
-    let Some(BuiltinCall { identity, row }) = builtin else { return Ok(None) };
+/// A call of the builtin's arity whose callee is that builtin declines the region: the interpreter runs the call in
+/// place (`lane_call_in_place`), and with the call inside it the region measured slower than the interpreter
+/// (TOD-2211). Any other call is planned as it is.
+fn decline_builtin(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<(), String> {
+    let Some(BuiltinCall { row }) = builtin else { return Ok(()) };
     if shape.form != CallForm::Plain || shape.returning || shape.argc != row.arguments() {
-        return Ok(None);
+        return Ok(());
     }
-    let record = Box::new(CallRecord {
-        proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
-        callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
-        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0, env: 0, capture: 0,
-    });
-    let stencil = call::stencil(CallRow::Builtin(row))?;
-    Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
+    Err(format!("the builtin call {row:?} runs in place in the interpreter"))
 }
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
@@ -501,9 +496,9 @@ pub(crate) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
         directs.push(direct_part(&plan.shape, facts, arguments, plan.proven_args)?);
     }
-    // A builtin callee's row stands where no direct row does: its miss is the helper row behind it.
-    if directs.is_empty() && let Some(builtin) = builtin_part(&plan.shape, plan.builtin)? {
-        directs.push(builtin);
+    // A builtin callee where no direct row stands declines the region (`decline_builtin`).
+    if directs.is_empty() {
+        decline_builtin(&plan.shape, plan.builtin)?;
     }
     // Every spill comes before the direct rows. A spill behind them (a pinned argument only the refusal path
     // reads) wrote what the refused row passed on: every pinned register is dead past a direct row, whose NEXT

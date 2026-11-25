@@ -14,7 +14,7 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
 use operation_index::{bootstrap_abi, operation_abi, operation_beside_activations, operation_bits};
-pub(crate) use operation_index::{operation, static_operation};
+pub(crate) use operation_index::static_operation;
 
 // Operation identities must remain available without retaining callback addresses.
 // Both projections preserve declaration order and platform-specific entries.
@@ -23,6 +23,12 @@ pub(crate) use operation_index::{operation, static_operation};
 macro_rules! host_row {
     () => { None };
     ($kind:ident($($argument:expr),*)) => { Some(operation_index::host_rows::$kind($($argument),*)) };
+}
+
+/// Pushes a `global` operation's identity, by its mark; a `method` names no global.
+macro_rules! global_operation {
+    (global $name:literal, $globals:ident) => { $globals.push(marked_operation!($name).id()) };
+    (method $name:literal, $globals:ident) => {};
 }
 
 macro_rules! node_bindings {
@@ -51,14 +57,67 @@ macro_rules! node_bindings {
             $($(#[$attribute])* $scope $name ($length) => $callback),*
         ];
 
+        /// The operations the runtime installs as globals, each marked (`marked_operation!`).
+        fn global_operations() -> Vec<quench_runtime::HostFunctionId> {
+            let mut globals = Vec::new();
+            $($(#[$attribute])* global_operation!($scope $name, globals);)*
+            globals
+        }
+
         /// Each operation's callback path, by index: the module that implements it.
         pub const OPERATION_CALLBACK_PATHS: &[&str] = &[$($(#[$attribute])* stringify!($callback)),*];
     };
 }
 
+/// An operation marked as one the code that names it makes (`operation!`): a static named
+/// `QUENCH_OPERATION_MARK` holding its index, which only that code refers to. Each static has a
+/// section of its own, so a linked image holds the mark exactly when it links the code
+/// (`aot::cli::link_with_reached_operations` reads the marks from the symbol table).
+#[derive(Clone, Copy)]
+pub(crate) struct MarkedOperation(pub(crate) &'static u32);
+
+impl MarkedOperation {
+    /// The operation, read through the mark: the reference is materialized, so the code
+    /// that names the operation refers to its mark.
+    #[inline(always)]
+    pub(crate) fn id(self) -> quench_runtime::HostFunctionId {
+        let mark: *const u32 = self.0;
+        // SAFETY: the empty template only receives the address.
+        unsafe { ::core::arch::asm!("/* {mark} */", mark = in(reg) mark, options(nomem, nostack, preserves_flags)) };
+        quench_runtime::HostFunctionId(*self.0)
+    }
+}
+
+/// Runs operation `id` when the image links it, else `None`: a call that names an operation
+/// without marking it, for a value of a kind only the operation's owner makes. The owner
+/// marks the operation where it makes the first such value, so an image links it exactly
+/// when a value of that kind can exist.
+pub(crate) fn call_linked(
+    context: &mut NativeContext<'_>,
+    id: quench_runtime::HostFunctionId,
+    args: &[quench_runtime::RootId],
+) -> Result<Option<quench_runtime::RootId>, RootedError> {
+    let callback = context.host_as::<NodeHost>().capabilities.operations[id.0 as usize];
+    if std::ptr::fn_addr_eq(callback, crate::host::unlinked_operation as HostCallback) {
+        return Ok(None);
+    }
+    let undefined = context.undefined();
+    callback(context, undefined, args).map(Some)
+}
+
+/// The operation registered as `name`, as a mark (`MarkedOperation`), for a table.
+macro_rules! marked_operation {
+    ($name:expr $(,)?) => {{
+        static QUENCH_OPERATION_MARK: u32 = $crate::host::shared_vm::static_operation($name).0;
+        $crate::host::shared_vm::MarkedOperation(&QUENCH_OPERATION_MARK)
+    }};
+}
+pub(crate) use marked_operation;
+
+/// The operation registered as `name`, marked as one the enclosing code makes.
 macro_rules! literal_operation {
-    ($name:literal $(,)?) => {
-        const { $crate::host::shared_vm::static_operation($name) }
+    ($name:expr $(,)?) => {
+        $crate::host::shared_vm::marked_operation!($name).id()
     };
 }
 pub(crate) use literal_operation as operation;
@@ -1425,6 +1484,8 @@ node_bindings! {
         method "assertRejected" (1) => crate::modules::assert_shared_vm::rejected,
         method "utilExternalValue" (0) => crate::modules::util_shared_vm::external_value,
         #[cfg(quench_openssl_provider)]
+        method "cryptoStructuredClone" (1) => crate::modules::crypto_node::clone::structured_clone,
+        #[cfg(quench_openssl_provider)]
         method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
         #[cfg(quench_openssl_provider)]
         method "cryptoPbkdf2JobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_pbkdf2,
@@ -2402,6 +2463,92 @@ node_bindings! {
         method "cliModuleEmbedder" (0) => crate::modules::cli_options_shared_vm::internal::get_embedder,
         method "cliModuleSchema" (0) => crate::modules::cli_options_shared_vm::internal::generate_schema,
         method "cliModuleRefresh" (0) => crate::modules::cli_options_shared_vm::internal::refresh,
+        // Each builtin module's builder (`commonjs::builtin!`).
+        method "builtin:internal/options" (0) => commonjs::builders::internal_options,
+        method "builtin:_http_agent" (0) => commonjs::builders::http_agent,
+        method "builtin:_http_client" (0) => commonjs::builders::http_client,
+        method "builtin:_http_incoming" (0) => commonjs::builders::http_incoming,
+        method "builtin:_http_outgoing" (0) => commonjs::builders::http_outgoing,
+        method "builtin:_http_server" (0) => commonjs::builders::http_server,
+        method "builtin:_tls_common" (0) => commonjs::builders::tls_common,
+        method "builtin:_tls_wrap" (0) => commonjs::builders::tls_wrap,
+        #[cfg(quench_openssl_provider)]
+        method "builtin:internal/crypto/keys" (0) => commonjs::builders::internal_crypto_keys,
+        method "builtin:internal/source_map/source_map_cache" (0) => commonjs::builders::internal_source_map_cache,
+        method "builtin:internal/worker/io" (0) => commonjs::builders::internal_worker_io,
+        method "builtin:internal/worker" (0) => commonjs::builders::internal_worker,
+        method "builtin:internal/abort_controller" (0) => commonjs::builders::internal_abort_controller,
+        method "builtin:internal/process/task_queues" (0) => commonjs::builders::internal_task_queues,
+        method "builtin:internal/streams/readable" (0) => commonjs::builders::internal_streams_readable,
+        method "builtin:internal/streams/writable" (0) => commonjs::builders::internal_streams_writable,
+        method "builtin:internal/streams/duplex" (0) => commonjs::builders::internal_streams_duplex,
+        method "builtin:internal/streams/transform" (0) => commonjs::builders::internal_streams_transform,
+        method "builtin:internal/streams/passthrough" (0) => commonjs::builders::internal_streams_passthrough,
+        method "builtin:internal/streams/end-of-stream" (0) => commonjs::builders::internal_streams_end_of_stream,
+        method "builtin:internal/streams/legacy" (0) => commonjs::builders::internal_streams_legacy,
+        method "builtin:internal/streams/state" (0) => commonjs::builders::internal_streams_state,
+        method "builtin:internal/streams/utils" (0) => commonjs::builders::internal_streams_utils,
+        method "builtin:internal/streams/destroy" (0) => commonjs::builders::internal_streams_destroy,
+        method "builtin:internal/streams/pipeline" (0) => commonjs::builders::internal_streams_pipeline,
+        method "builtin:internal/streams/add-abort-signal" (0) => commonjs::builders::internal_streams_add_abort_signal,
+        method "builtin:internal/net" (0) => commonjs::builders::internal_net,
+        method "builtin:_http_common" (0) => commonjs::builders::http_common,
+        method "builtin:punycode" (0) => commonjs::builders::punycode,
+        method "builtin:readline/promises" (0) => commonjs::builders::readline_promises,
+        method "builtin:constants" (0) => commonjs::builders::constants,
+        method "builtin:inspector/promises" (0) => commonjs::builders::inspector_promises,
+        method "builtin:inspector" (0) => commonjs::builders::inspector,
+        method "builtin:wasi" (0) => commonjs::builders::wasi,
+        method "builtin:sqlite" (0) => commonjs::builders::sqlite,
+        method "builtin:node:test/reporters" (0) => commonjs::builders::node_test_reporters,
+        method "builtin:_stream_wrap" (0) => commonjs::builders::stream_wrap,
+        method "builtin:fs" (0) => commonjs::builders::fs,
+        method "builtin:internal/url" (0) => commonjs::builders::internal_url,
+        method "builtin:util/types" (0) => commonjs::builders::util_types,
+        method "builtin:fs/promises" (0) => commonjs::builders::fs_promises,
+        method "builtin:net" (0) => commonjs::builders::net,
+        method "builtin:http" (0) => commonjs::builders::http,
+        method "builtin:os" (0) => commonjs::builders::os,
+        method "builtin:buffer" (0) => commonjs::builders::buffer,
+        method "builtin:stream" (0) => commonjs::builders::stream,
+        method "builtin:stream/promises" (0) => commonjs::builders::stream_promises,
+        method "builtin:stream/web" (0) => commonjs::builders::web_streams,
+        method "builtin:string_decoder" (0) => commonjs::builders::string_decoder,
+        method "builtin:timers" (0) => commonjs::builders::timers,
+        method "builtin:timers/promises" (0) => commonjs::builders::timers_promises,
+        method "builtin:internal/timers" (0) => commonjs::builders::internal_timers,
+        method "builtin:node:test" (0) => commonjs::builders::node_test,
+        method "builtin:vm" (0) => commonjs::builders::vm,
+        method "builtin:worker_threads" (0) => commonjs::builders::worker_threads,
+        method "builtin:url" (0) => commonjs::builders::url,
+        method "builtin:querystring" (0) => commonjs::builders::querystring,
+        method "builtin:readline" (0) => commonjs::builders::readline,
+        method "builtin:stream/consumers" (0) => commonjs::builders::stream_consumers,
+        method "builtin:events" (0) => commonjs::builders::events,
+        method "builtin:console" (0) => commonjs::builders::console,
+        method "builtin:tty" (0) => commonjs::builders::tty,
+        method "builtin:dns" (0) => commonjs::builders::dns,
+        method "builtin:dgram" (0) => commonjs::builders::dgram,
+        method "builtin:perf_hooks" (0) => commonjs::builders::perf_hooks,
+        method "builtin:zlib" (0) => commonjs::builders::zlib,
+        method "builtin:crypto" (0) => commonjs::builders::crypto,
+        method "builtin:domain" (0) => commonjs::builders::domain,
+        method "builtin:tls" (0) => commonjs::builders::tls,
+        method "builtin:v8" (0) => commonjs::builders::v8,
+        method "builtin:module" (0) => commonjs::builders::module,
+        method "builtin:util" (0) => commonjs::builders::util,
+        method "builtin:sys" (0) => commonjs::builders::sys,
+        method "builtin:child_process" (0) => commonjs::builders::child_process,
+        method "builtin:internal/child_process" (0) => commonjs::builders::internal_child_process,
+        method "builtin:https" (0) => commonjs::builders::https,
+        method "builtin:trace_events" (0) => commonjs::builders::trace_events,
+        method "builtin:dns/promises" (0) => commonjs::builders::dns_promises,
+        method "builtin:internalBinding/cares_wrap" (0) => commonjs::builders::cares_binding,
+        method "builtin:http2" (0) => commonjs::builders::http2,
+        method "builtin:internalBinding/http2" (0) => commonjs::builders::http2_binding,
+        method "builtin:cluster" (0) => commonjs::builders::cluster,
+        method "builtin:repl" (0) => commonjs::builders::repl,
+        method "builtin:sea" (0) => commonjs::builders::sea,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing
@@ -2729,6 +2876,10 @@ impl quench_runtime::Host for NodeHost {
         OPERATION_DESCRIPTORS.len()
     }
 
+    fn global_functions(&self) -> Vec<quench_runtime::HostFunctionId> {
+        global_operations()
+    }
+
     fn function_descriptor(&self, index: usize) -> Option<HostFunctionDescriptor> {
         OPERATION_DESCRIPTORS.get(index).copied()
     }
@@ -2743,6 +2894,12 @@ impl quench_runtime::Host for NodeHost {
             }
         }
         self.capabilities.operations.get(index).copied()
+    }
+
+    /// A build-time run saved at rest settles only the lazy globals whose initializers its
+    /// gate admits (`aot::prefix`): any other initializer is an input the image reads as it runs.
+    fn settles_at_rest(&self, index: usize) -> bool {
+        !crate::aot::prefix::armed() || OPERATION_DESCRIPTORS.get(index).is_some_and(|descriptor| crate::aot::prefix::admits(descriptor.name))
     }
 
     fn function_row(&self, index: usize) -> Option<quench_runtime::staged::host_rows::HostRow> {
@@ -2793,6 +2950,17 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn resume(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
+        Self::resume_at_rest(context)?;
+        if !context.host_as::<crate::host::NodeHost>().bootstrapped {
+            commonjs::finish_initialize(context)?;
+            context.host_as::<crate::host::NodeHost>().bootstrapped = true;
+        }
+        Ok(())
+    }
+
+    /// A run saved at its wait for input (`aot::prefix::reach_wait`) finished installing
+    /// before it was saved: only the process's own inputs are bound again.
+    fn resume_at_rest(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
         context.scoped(commonjs::refresh_module_paths)?;
@@ -2801,8 +2969,6 @@ impl quench_runtime::Host for NodeHost {
         context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_resume_time_origins");
-        commonjs::finish_initialize(context)?;
-        context.host_as::<crate::host::NodeHost>().bootstrapped = true;
         Ok(())
     }
 }
@@ -2844,17 +3010,17 @@ fn install_event_emitter(context: &mut NativeContext<'_>) -> Result<(), RootedEr
     for (event, operation_name, name) in [
         (
             "newListener",
-            "processStartListeningSignal",
+            crate::host::shared_vm::operation!("processStartListeningSignal"),
             "startListeningIfSignal",
         ),
         (
             "removeListener",
-            "processStopListeningSignal",
+            crate::host::shared_vm::operation!("processStopListeningSignal"),
             "stopListeningIfSignal",
         ),
     ] {
         let event = context.string_rooted(event);
-        let function = context.host_constructor_named(operation(operation_name), name)?;
+        let function = context.host_constructor_named(operation_name, name)?;
         context.call_rooted(on, process, &[event, function])?;
     }
     Ok(())
@@ -3218,7 +3384,6 @@ mod tests {
             assert_eq!(quench_runtime::Host::function_descriptor(&host, index), Some(*binding));
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
             assert_eq!(super::static_operation(binding.name), quench_runtime::HostFunctionId(index as u32));
-            assert_eq!(super::operation(binding.name), super::static_operation(binding.name));
             assert_eq!(quench_runtime::Host::host_function_runs_beside_activations(&host, index),
                 super::operation_index::BESIDE_ACTIVATIONS.contains(&binding.name), "{}", binding.name);
         }
@@ -3227,7 +3392,7 @@ mod tests {
             assert!(quench_runtime::Host::function_callback(&host, index).is_none());
             assert!(!quench_runtime::Host::host_function_runs_beside_activations(&host, index));
         }
-        const FIRST: quench_runtime::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
+        const FIRST: quench_runtime::HostFunctionId = crate::host::shared_vm::static_operation("streamConstant");
         assert_eq!(FIRST, quench_runtime::HostFunctionId(0));
     }
 }

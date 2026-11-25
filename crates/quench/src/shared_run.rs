@@ -470,7 +470,7 @@ fn execute_shared_on_worker(
         worker.control.set_online();
     }
     let execution = if resuming {
-        Ok(())
+        runtime.resume_restored()
     } else if restored {
         runtime.execute_restored(&program)
     } else {

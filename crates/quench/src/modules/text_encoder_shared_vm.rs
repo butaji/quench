@@ -10,10 +10,9 @@ type Context<'a> = NativeContext<'a>;
 pub(crate) fn constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0encoding:TextEncoder", |c| {
         c.with_startup_intrinsics(|c| {
-            let operation = crate::host::shared_vm::operation;
             let brand = c.private_symbol_rooted(Some("TextEncoder"));
             let constructor = c.host_constructor_named_with_data(
-                operation("textEncoderConstruct"),
+                crate::host::shared_vm::operation!("textEncoderConstruct"),
                 "TextEncoder",
                 brand,
             )?;
@@ -28,16 +27,15 @@ pub(crate) fn constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// The `encoding` getter and the encode methods.
 fn install_members(c: &mut Context<'_>, prototype: RootId, brand: RootId) -> Result<(), RootedError> {
-    let operation = crate::host::shared_vm::operation;
-    let getter = c.host_function_named_with_data(operation("textEncoderEncoding"), "get encoding", brand)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("textEncoderEncoding"), "get encoding", brand)?;
     let key = c.string_rooted("encoding");
     c.define_property_fields_rooted(
         prototype,
         key,
         DescriptorFields { get: Some(getter), enumerable: Some(true), configurable: Some(true), ..Default::default() },
     )?;
-    for (name, callback) in [("encode", "textEncoderEncode"), ("encodeInto", "textEncoderEncodeInto")] {
-        let function = c.host_function_named_with_data(operation(callback), name, brand)?;
+    for (name, callback) in [("encode", crate::host::shared_vm::operation!("textEncoderEncode")), ("encodeInto", crate::host::shared_vm::operation!("textEncoderEncodeInto"))] {
+        let function = c.host_function_named_with_data(callback, name, brand)?;
         c.define_named_data_property_rooted(prototype, name, function, true, true, true)?;
     }
     Ok(())
@@ -53,7 +51,7 @@ fn install_symbols(c: &mut Context<'_>, prototype: RootId, brand: RootId) -> Res
     let name = c.string_rooted(super::keys::INSPECT_CUSTOM);
     let inspect_key = c.call_rooted(symbol_for, symbol, &[name])?;
     let inspect = c.host_function_named_with_data(
-        crate::host::shared_vm::operation("textEncoderInspect"),
+        crate::host::shared_vm::operation!("textEncoderInspect"),
         "[nodejs.util.inspect.custom]",
         brand,
     )?;

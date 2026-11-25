@@ -500,7 +500,7 @@ fn clear_buffer(c: &mut Context<'_>, stream: RootId, state: RootId) -> Result<()
             intrinsic(c, |i| i.nop)?
         } else {
             let first_root = c.number(first);
-            closure(c, "streamWritevCallback", "", &[buffered, first_root])?
+            closure(c, crate::host::shared_vm::operation!("streamWritevCallback"), "", &[buffered, first_root])?
         };
         let chunks = if all_noop && first == 0.0 {
             buffered
@@ -687,7 +687,7 @@ fn prefinish(c: &mut Context<'_>, stream: RootId, state: RootId) -> Result<(), R
         change(c, state, FINAL_CALLED | SYNC, 0)?;
         let pending = number(c, state, "pendingcb")?;
         put_number(c, state, "pendingcb", pending + 1.0)?;
-        let callback = closure(c, "streamOnFinal", "", &[stream, state])?;
+        let callback = closure(c, crate::host::shared_vm::operation!("streamOnFinal"), "", &[stream, state])?;
         let result = c.call_rooted(final_method, stream, &[callback]);
         if let Err(thrown) = super::attempt(result)? {
             on_finish(c, stream, state, thrown)?;
@@ -807,13 +807,13 @@ pub(crate) fn async_dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> 
 }
 
 /// `Writable.prototype`'s methods before its accessors, as Node defines them.
-pub(crate) const PROTOTYPE_METHODS: &[(Key, &str, &str)] = &[
-    (Key::Name("pipe"), "streamWritablePipe", ""),
-    (Key::Name("write"), "streamWritableWrite", ""),
-    (Key::Name("cork"), "streamWritableCork", ""),
-    (Key::Name("uncork"), "streamWritableUncork", ""),
-    (Key::Name("setDefaultEncoding"), "streamWritableSetDefaultEncoding", "setDefaultEncoding"),
-    (Key::Name("_write"), "streamWritableDefaultWrite", ""),
+pub(crate) const PROTOTYPE_METHODS: &[(Key, crate::host::shared_vm::MarkedOperation, &str)] = &[
+    (Key::Name("pipe"), crate::host::shared_vm::marked_operation!("streamWritablePipe"), ""),
+    (Key::Name("write"), crate::host::shared_vm::marked_operation!("streamWritableWrite"), ""),
+    (Key::Name("cork"), crate::host::shared_vm::marked_operation!("streamWritableCork"), ""),
+    (Key::Name("uncork"), crate::host::shared_vm::marked_operation!("streamWritableUncork"), ""),
+    (Key::Name("setDefaultEncoding"), crate::host::shared_vm::marked_operation!("streamWritableSetDefaultEncoding"), "setDefaultEncoding"),
+    (Key::Name("_write"), crate::host::shared_vm::marked_operation!("streamWritableDefaultWrite"), ""),
 ];
 
 pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) -> Outcome {
@@ -831,17 +831,17 @@ pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) ->
     let null = c.null();
     let key = c.string_rooted("_writev");
     c.define_data_property_rooted(prototype, key, null, true, true, true)?;
-    define_methods(c, prototype, &[(Key::Name("end"), "streamWritableEnd", "")])?;
+    define_methods(c, prototype, &[(Key::Name("end"), crate::host::shared_vm::marked_operation!("streamWritableEnd"), "")])?;
     super::utils::define_stream_accessors(c, prototype, super::utils::WRITABLE_ACCESSORS)?;
     define_methods(
         c,
         prototype,
         &[
-            (Key::Name("destroy"), "streamWritableDestroy", ""),
-            (Key::Name("_undestroy"), "streamUndestroy", "undestroy"),
-            (Key::Name("_destroy"), "streamDefaultDestroy", ""),
-            (Key::Symbol(Slot::Rejection), "streamCaptureRejection", ""),
-            (Key::Symbol(Slot::AsyncDispose), "streamWritableAsyncDispose", ""),
+            (Key::Name("destroy"), crate::host::shared_vm::marked_operation!("streamWritableDestroy"), ""),
+            (Key::Name("_undestroy"), crate::host::shared_vm::marked_operation!("streamUndestroy"), "undestroy"),
+            (Key::Name("_destroy"), crate::host::shared_vm::marked_operation!("streamDefaultDestroy"), ""),
+            (Key::Symbol(Slot::Rejection), crate::host::shared_vm::marked_operation!("streamCaptureRejection"), ""),
+            (Key::Symbol(Slot::AsyncDispose), crate::host::shared_vm::marked_operation!("streamWritableAsyncDispose"), ""),
         ],
     )?;
     Ok(constructor)

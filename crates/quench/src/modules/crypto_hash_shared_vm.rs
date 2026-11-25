@@ -6,6 +6,7 @@ use super::{
     crypto_digest_error::{self as errors, Operation},
     crypto_digest_state::{HashState, HmacState},
 };
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use crate::host::NodeHost;
 use quench_runtime::{CollectionContext, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::Arc;
@@ -334,23 +335,31 @@ fn one_shot_error(c: &mut Context<'_>, name: &str, error: DigestError) -> Rooted
     }
 }
 /// The native handle classes: name, constructor operation and prototype methods.
-const CLASSES: [(&str, &str, &[(&str, &str)]); 2] = [
-    ("Hash", "cryptoNativeHashNew", &[("update", "cryptoNativeHashUpdate"), ("digest", "cryptoNativeHashDigest")]),
+const CLASSES: [(&str, MarkedOperation, &[(&str, MarkedOperation)]); 2] = [
+    (
+        "Hash",
+        marked_operation!("cryptoNativeHashNew"),
+        &[("update", marked_operation!("cryptoNativeHashUpdate")), ("digest", marked_operation!("cryptoNativeHashDigest"))],
+    ),
     (
         "Hmac",
-        "cryptoNativeHmacNew",
-        &[("init", "cryptoNativeHmacInit"), ("update", "cryptoNativeHashUpdate"), ("digest", "cryptoNativeHashDigest")],
+        marked_operation!("cryptoNativeHmacNew"),
+        &[
+            ("init", marked_operation!("cryptoNativeHmacInit")),
+            ("update", marked_operation!("cryptoNativeHashUpdate")),
+            ("digest", marked_operation!("cryptoNativeHashDigest")),
+        ],
     ),
 ];
 /// A class whose instances and methods share the slot key as function data.
-fn class(c: &mut Context<'_>, slot_key: RootId, name: &str, operation: &str, methods: &[(&str, &str)]) -> Result<RootId, RootedError> {
-    let constructor = c.host_constructor_with_data(crate::host::shared_vm::operation(operation), slot_key)?;
+fn class(c: &mut Context<'_>, slot_key: RootId, name: &str, operation: MarkedOperation, methods: &[(&str, MarkedOperation)]) -> Result<RootId, RootedError> {
+    let constructor = c.host_constructor_with_data(operation.id(), slot_key)?;
     let key = c.string_rooted("name");
     let text = c.string_rooted(name);
     c.define_data_property_rooted(constructor, key, text, false, false, true)?;
     let prototype = c.object_rooted()?;
     for (name, operation) in methods {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, slot_key)?;
+        let function = c.host_function_named_with_data(operation.id(), name, slot_key)?;
         put(c, prototype, name, function)?;
     }
     let key = c.string_rooted("constructor");

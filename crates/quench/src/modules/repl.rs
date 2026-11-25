@@ -1,6 +1,7 @@
 //! `node:repl`: `REPLServer`, a readline `Interface` that evaluates each line (or the
 //! lines a recoverable syntax error buffers) in its context and writes the result with
 //! its writer; `.`-commands; and the interactive REPL `-i` starts.
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -24,27 +25,27 @@ const HELP_GAP: usize = 3;
 const RECOVERABLE_MESSAGES: [&str; 3] = ["Unexpected end of input", "Unterminated template literal", "missing ) after argument list"];
 
 /// The commands every REPL has: (name, help, operation).
-const DEFAULT_COMMANDS: [(&str, &str, &str); 6] = [
-    ("break", "Sometimes you get stuck, this gets you out", "replCommandBreak"),
-    ("clear", "Break, and also clear the local context", "replCommandClear"),
-    ("exit", "Exit the REPL", "replCommandExit"),
-    ("help", "Print this help message", "replCommandHelp"),
-    ("save", "Save all evaluated commands in this REPL session to a file", "replCommandSave"),
-    ("load", "Load JS from a file into the REPL session", "replCommandLoad"),
+const DEFAULT_COMMANDS: [(&str, &str, MarkedOperation); 6] = [
+    ("break", "Sometimes you get stuck, this gets you out", marked_operation!("replCommandBreak")),
+    ("clear", "Break, and also clear the local context", marked_operation!("replCommandClear")),
+    ("exit", "Exit the REPL", marked_operation!("replCommandExit")),
+    ("help", "Print this help message", marked_operation!("replCommandHelp")),
+    ("save", "Save all evaluated commands in this REPL session to a file", marked_operation!("replCommandSave")),
+    ("load", "Load JS from a file into the REPL session", marked_operation!("replCommandLoad")),
 ];
 const CLEAR_ALIAS_HELP: &str = "Alias for .break";
 
-const PROTOTYPE_METHODS: [(&str, &str); 10] = [
-    ("setupHistory", "replSetupHistory"),
-    ("clearBufferedCommand", "replClearBufferedCommand"),
-    ("close", "replClose"),
-    ("createContext", "replCreateContext"),
-    ("resetContext", "replResetContext"),
-    ("displayPrompt", "replDisplayPrompt"),
-    ("setPrompt", "replSetPrompt"),
-    ("complete", "replComplete"),
-    ("completeOnEditorMode", "replCompleteOnEditorMode"),
-    ("defineCommand", "replDefineCommand"),
+const PROTOTYPE_METHODS: [(&str, MarkedOperation); 10] = [
+    ("setupHistory", marked_operation!("replSetupHistory")),
+    ("clearBufferedCommand", marked_operation!("replClearBufferedCommand")),
+    ("close", marked_operation!("replClose")),
+    ("createContext", marked_operation!("replCreateContext")),
+    ("resetContext", marked_operation!("replResetContext")),
+    ("displayPrompt", marked_operation!("replDisplayPrompt")),
+    ("setPrompt", marked_operation!("replSetPrompt")),
+    ("complete", marked_operation!("replComplete")),
+    ("completeOnEditorMode", marked_operation!("replCompleteOnEditorMode")),
+    ("defineCommand", marked_operation!("replDefineCommand")),
 ];
 
 use crate::modules::util_shared_vm::named_get as get;
@@ -66,8 +67,8 @@ fn call(c: &mut Context<'_>, object: RootId, method: &str, args: &[RootId]) -> R
     c.call_rooted(function, object, args)
 }
 
-fn function(c: &mut Context<'_>, operation: &str, name: &str, data: RootId) -> Result<RootId, RootedError> {
-    c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)
+fn function(c: &mut Context<'_>, operation: quench_runtime::HostFunctionId, name: &str, data: RootId) -> Result<RootId, RootedError> {
+    c.host_function_named_with_data(operation, name, data)
 }
 
 fn write(c: &mut Context<'_>, server: RootId, text: &str) -> Result<(), RootedError> {
@@ -111,7 +112,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     let module = c.object_rooted()?;
     let undefined = c.undefined();
-    let start = function(c, "replStart", "start", undefined)?;
+    let start = function(c, crate::host::shared_vm::operation!("replStart"), "start", undefined)?;
     put(c, module, "start", start)?;
     let writer = writer(c)?;
     put(c, module, "writer", writer)?;
@@ -123,7 +124,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     let recoverable = recoverable_class(c)?;
     put(c, module, "Recoverable", recoverable)?;
-    let valid = function(c, "replIsValidSyntax", "isValidSyntax", undefined)?;
+    let valid = function(c, crate::host::shared_vm::operation!("replIsValidSyntax"), "isValidSyntax", undefined)?;
     put(c, module, "isValidSyntax", valid)?;
     remember(c, MODULE_CACHE, module)
 }
@@ -131,7 +132,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// `repl.writer`: `util.inspect` with `writer.options` (Node's defaults plus `showProxy`).
 fn writer(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
-    let writer = function(c, "replWriter", "writer", undefined)?;
+    let writer = function(c, crate::host::shared_vm::operation!("replWriter"), "writer", undefined)?;
     let util = crate::host::shared_vm::commonjs::util_module(c)?;
     let inspect = get(c, util, "inspect")?;
     let defaults = get(c, inspect, "defaultOptions")?;
@@ -205,7 +206,7 @@ fn server_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.set_prototype_rooted(constructor, interface)?;
     let undefined = c.undefined();
     for (name, operation) in PROTOTYPE_METHODS {
-        let method = function(c, operation, name, undefined)?;
+        let method = function(c, operation.id(), name, undefined)?;
         hidden(c, prototype, name, method)?;
     }
     remember(c, SERVER_CACHE, constructor)
@@ -306,7 +307,7 @@ pub(crate) fn construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         put(c, server, name, undefined)?;
     }
     let evaluate = option(c, options, "eval")?;
-    let evaluate = if c.is_callable_rooted(evaluate)? { evaluate } else { function(c, "replDefaultEval", "defaultEval", undefined)? };
+    let evaluate = if c.is_callable_rooted(evaluate)? { evaluate } else { function(c, crate::host::shared_vm::operation!("replDefaultEval"), "defaultEval", undefined)? };
     put(c, server, "eval", evaluate)?;
     let requested_writer = option(c, options, "writer")?;
     let module = module(c)?;
@@ -318,7 +319,7 @@ pub(crate) fn construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         assign(c, colored, defaults)?;
         let yes = c.boolean(true);
         put(c, colored, "colors", yes)?;
-        let writer = function(c, "replColoredWriter", "writer", colored)?;
+        let writer = function(c, crate::host::shared_vm::operation!("replColoredWriter"), "writer", colored)?;
         put(c, writer, "options", colored)?;
         writer
     } else {
@@ -334,8 +335,8 @@ pub(crate) fn construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     crate::modules::private_slots::write(c, server, BUFFERED, empty)?;
     reset_context(c, server, &[])?;
     define_default_commands(c, server)?;
-    for (event, operation) in [("line", "replLine"), ("close", "replEmitExit")] {
-        let listener = function(c, operation, "", server)?;
+    for (event, operation) in [("line", marked_operation!("replLine")), ("close", marked_operation!("replEmitExit"))] {
+        let listener = function(c, operation.id(), "", server)?;
         let event = c.string_rooted(event);
         call(c, server, "on", &[event, listener])?;
     }
@@ -353,7 +354,7 @@ fn define_default_commands(c: &mut Context<'_>, server: RootId) -> Result<(), Ro
         let help = c.string_rooted(help);
         put(c, command, "help", help)?;
         let undefined = c.undefined();
-        let action = function(c, operation, "action", undefined)?;
+        let action = function(c, operation.id(), "action", undefined)?;
         put(c, command, "action", action)?;
         put(c, commands, name, command)?;
     }
@@ -422,7 +423,7 @@ pub(crate) fn on_line(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result
 fn finisher(c: &mut Context<'_>, server: RootId, line: &str) -> Result<RootId, RootedError> {
     let line = c.string_rooted(line);
     let data = c.array_rooted(&[server, line])?;
-    function(c, "replFinish", "finish", data)
+    function(c, crate::host::shared_vm::operation!("replFinish"), "finish", data)
 }
 
 /// The next `REPLn` resource name, numbered across every REPL of the process.
@@ -807,10 +808,13 @@ pub(crate) fn create_context(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
         context
     };
     builtin_accessors(c, context)?;
-    for (name, getter, setter) in [("_", "replUnderscoreGet", "replUnderscoreSet"), ("_error", "replUnderscoreErrorGet", "replUnderscoreErrorSet")] {
+    for (name, getter, setter) in [
+        ("_", marked_operation!("replUnderscoreGet"), marked_operation!("replUnderscoreSet")),
+        ("_error", marked_operation!("replUnderscoreErrorGet"), marked_operation!("replUnderscoreErrorSet")),
+    ] {
         let descriptor = c.object_rooted()?;
-        let get_function = function(c, getter, &format!("get {name}"), this)?;
-        let set_function = function(c, setter, &format!("set {name}"), this)?;
+        let get_function = function(c, getter.id(), &format!("get {name}"), this)?;
+        let set_function = function(c, setter.id(), &format!("set {name}"), this)?;
         put(c, descriptor, "get", get_function)?;
         put(c, descriptor, "set", set_function)?;
         let yes = c.boolean(true);
@@ -834,8 +838,8 @@ fn builtin_accessors(c: &mut Context<'_>, context: RootId) -> Result<(), RootedE
         }
         let data = c.array_rooted(&[context, key])?;
         let descriptor = c.object_rooted()?;
-        let getter = function(c, "replBuiltinGet", "get", data)?;
-        let setter = function(c, "replBuiltinSet", "set", data)?;
+        let getter = function(c, crate::host::shared_vm::operation!("replBuiltinGet"), "get", data)?;
+        let setter = function(c, crate::host::shared_vm::operation!("replBuiltinSet"), "set", data)?;
         put(c, descriptor, "get", getter)?;
         put(c, descriptor, "set", setter)?;
         let yes = c.boolean(true);

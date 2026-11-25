@@ -210,23 +210,76 @@ pub fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: 
     step_string_native_of(&mut stage, StringNative::CharAt { string, index: index.to_bits(), table: table as u64 }, ()).map(Value::from_bits)
 }
 
-/// The unit index that `String.prototype.at` (`from_end`) or `codePointAt` reads for the relative
-/// `index`: a negative `at` index counts back from the end, and any other index is taken as given.
-/// `None` where the index lies outside `units`. Plain over `Units`, which the stencils do not
-/// name, so the row callers stay on the runtime.
-#[cfg(not(stencil_build))]
-pub(crate) fn relative_unit(units: Units<'_>, index: i64, from_end: bool) -> Option<usize> {
-    let index = if from_end && index < 0 { units.len() as i64 + index } else { index };
-    usize::try_from(index).ok().filter(|&index| index < units.len())
+/// The position a relative `index` (an integer word) names in a run of `length` elements or
+/// units, and whether it lies inside: a negative index counts back from the end where `from_end`
+/// (`at`), and is outside otherwise (`codePointAt`). The one body of `String.prototype.at`,
+/// `codePointAt`, `Array.prototype.at` and `with` for every tier.
+#[inline(always)]
+pub fn relative_index_row<S: Stage>(stage: &mut S, index: S::Word, length: S::Word, from_end: bool) -> (S::Cond, S::Word) {
+    let position = if from_end {
+        let sign = stage.shr_imm(index, 63u64);
+        let below = stage.ne_imm(sign, 0u64);
+        let counted = stage.add(length, index);
+        stage.select(below, counted, index)
+    } else {
+        index
+    };
+    // A position below zero is a huge unsigned word, past any length.
+    (stage.ult(position, length), position)
 }
 
-/// The code point that `codePointAt` answers at the unit `index` of `units`: the supplementary
-/// code point of a high surrogate followed by a low one, else the unit itself. `None` past the end.
+/// `relative_index_row` on `Concrete`: the position `index` names in a run of `length`, or `None`.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn relative_index(index: i64, length: usize, from_end: bool) -> Option<usize> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let (inside, position) = relative_index_row(&mut stage, index as u64, length as u64, from_end);
+    inside.then_some(position as usize)
+}
+
+/// The unit index that `String.prototype.at` (`from_end`) or `codePointAt` reads for the relative
+/// `index` of `units` (`relative_index_row`); `None` where it lies outside.
+#[cfg(not(stencil_build))]
+pub(crate) fn relative_unit(units: Units<'_>, index: i64, from_end: bool) -> Option<usize> {
+    relative_index(index, units.len(), from_end)
+}
+
+/// The code point that `codePointAt` answers at the unit `index` (inside the `length` units at
+/// `units`, two bytes a unit where `wide`): the supplementary code point of a high surrogate
+/// followed by a low one, else the unit itself. The one body for every tier.
+#[inline(always)]
+pub fn code_point_at_row<S: Stage>(stage: &mut S, wide: bool, units: S::Word, length: S::Word, index: S::Word) -> S::Word {
+    let first = super::code_units::code_unit(stage, wide, units, index);
+    if !wide {
+        return first;
+    }
+    let from_high = stage.add_imm(first, 0xD800u64.wrapping_neg());
+    let span = stage.constant(0x400);
+    let high = stage.ult(from_high, span);
+    let next = stage.add_imm(index, 1u64);
+    let room = stage.ult(next, length);
+    let pairable = stage.all(high, room);
+    stage.choose(pairable, #[inline(always)] |stage| {
+        let second = super::code_units::code_unit(stage, true, units, next);
+        let from_low = stage.add_imm(second, 0xDC00u64.wrapping_neg());
+        let span = stage.constant(0x400);
+        let low = stage.ult(from_low, span);
+        let upper = stage.mul_imm(from_high, 0x400u64);
+        let joined = stage.add(upper, from_low);
+        let point = stage.add_imm(joined, 0x10000u64);
+        stage.select(low, point, first)
+    }, #[inline(always)] |_| first)
+}
+
+/// `code_point_at_row` on `Concrete` over `units`; `None` past the end.
 #[cfg(not(stencil_build))]
 pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
-    let first = units.get(index)?;
-    let pair = units.get(index + 1).and_then(|low| crate::unicode::decode_surrogate_pair(first, low));
-    Some(pair.unwrap_or_else(|| u32::from(first)))
+    if index >= units.len() {
+        return None;
+    }
+    let span = super::spans::concrete_span(units);
+    let mut stage = super::Concrete::new(std::ptr::null());
+    Some(code_point_at_row(&mut stage, span.form.wide(), span.units, span.length, index as u64) as u32)
 }
 
 /// The code unit `String.fromCharCode` stores for an argument whose ToNumber is `number`: its
@@ -235,6 +288,146 @@ pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
 #[inline(always)]
 pub(crate) fn from_char_code_unit(number: f64) -> u16 {
     crate::value::number_to_u32(number) as u16
+}
+
+/// Whether the code unit `unit` is ECMAScript WhiteSpace or LineTerminator (what `trim` strips):
+/// U+0009..U+000D, U+0020, U+00A0, and, of a wide string, U+1680, U+2000..U+200A, U+2028, U+2029,
+/// U+202F, U+205F, U+3000 and U+FEFF. A narrow unit is at most U+00FF, so it tests the first three.
+#[inline(always)]
+pub fn is_trim_space<S: Stage>(stage: &mut S, width: UnitWidth, unit: S::Word) -> S::Cond {
+    let in_range = |stage: &mut S, first: u64, count: u64| {
+        let offset = stage.add_imm(unit, first.wrapping_neg());
+        let bound = stage.constant(count);
+        stage.ult(offset, bound)
+    };
+    let controls = in_range(stage, 0x09, 5);
+    let space = stage.eq_imm(unit, 0x20u64);
+    let no_break = stage.eq_imm(unit, 0xA0u64);
+    let narrow = stage.any(controls, space);
+    let narrow = stage.any(narrow, no_break);
+    if width == UnitWidth::Narrow {
+        return narrow;
+    }
+    let mut found = narrow;
+    let spaces = in_range(stage, 0x2000, 11);
+    found = stage.any(found, spaces);
+    let separators = in_range(stage, 0x2028, 2);
+    found = stage.any(found, separators);
+    for single in [0x1680u64, 0x202F, 0x205F, 0x3000, 0xFEFF] {
+        let same = stage.eq_imm(unit, single);
+        found = stage.any(found, same);
+    }
+    found
+}
+
+/// The units `trim` keeps of the flat string of `width` at `units`, `length` long: the start and end
+/// left once the whitespace (`is_trim_space`) at the chosen ends is stripped. `trimStart` keeps the
+/// end, `trimEnd` the start. The one body of `trim`, `trimStart` and `trimEnd` for every tier.
+#[inline(always)]
+pub fn trim_bounds<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, length: S::Word,
+    (from_start, from_end): (bool, bool)) -> (S::Word, S::Word) {
+    let zero = stage.constant(0);
+    let start = if from_start {
+        let [start] = stage.loop_words([zero], #[inline(always)] |stage, [index]| {
+            let inside = stage.ult(index, length);
+            let space = stage.choose(inside, #[inline(always)] |stage| {
+                let unit = super::code_units::code_unit(stage, width == UnitWidth::Wide, units, index);
+                let space = is_trim_space(stage, width, unit);
+                let (one, none) = (stage.constant(1), stage.constant(0));
+                stage.select(space, one, none)
+            }, #[inline(always)] |stage| stage.constant(0));
+            let more = stage.ne_imm(space, 0u64);
+            (more, [stage.add(index, space)])
+        });
+        start
+    } else {
+        zero
+    };
+    let end = if from_end {
+        let [end] = stage.loop_words([length], #[inline(always)] |stage, [end]| {
+            let inside = stage.ult(start, end);
+            let space = stage.choose(inside, #[inline(always)] |stage| {
+                let last = stage.add_imm(end, u64::MAX);
+                let unit = super::code_units::code_unit(stage, width == UnitWidth::Wide, units, last);
+                let space = is_trim_space(stage, width, unit);
+                let (one, none) = (stage.constant(1), stage.constant(0));
+                stage.select(space, one, none)
+            }, #[inline(always)] |stage| stage.constant(0));
+            let more = stage.ne_imm(space, 0u64);
+            (more, [stage.sub(end, space)])
+        });
+        end
+    } else {
+        length
+    };
+    (start, end)
+}
+
+/// `count` units of a pattern already at the start of the `length` units at `out` (`count`
+/// at most `length`, above zero) doubled through the rest: each copy takes the units written so
+/// far, or the cut still left, so a run of n units takes about log2(n / count) copies.
+#[inline(always)]
+fn double_through<S: Stage>(stage: &mut S, wide: bool, out: S::Word, length: S::Word, count: S::Word) {
+    let unit_bytes = if wide { 2u64 } else { 1 };
+    let more = stage.ult(count, length);
+    stage.choose(more, #[inline(always)] |stage| {
+        let [_] = stage.loop_words([count], #[inline(always)] |stage, [written]| {
+            let left = stage.sub(length, written);
+            let short = stage.ult(left, written);
+            let step = stage.select(short, left, written);
+            let offset = stage.mul_imm(written, unit_bytes);
+            let at = stage.add(out, offset);
+            stage.copy_span(wide, at, out, step);
+            let next = stage.add(written, step);
+            (stage.ult(next, length), [next])
+        });
+        stage.constant(0)
+    }, #[inline(always)] |stage| stage.constant(0));
+}
+
+/// `padStart` or `padEnd`: the `text_length` units at `text` and repeats of the `fill_length`
+/// (non-empty) units at `fill` written to the `length` units at `out` (`length` above
+/// `text_length`), the filler at the end when `at_end`, else at the start. All are of one width.
+/// A one-unit filler is a fill; a longer one is copied once, or its cut, then doubled. The one
+/// body of both builtins for every tier, over the span primitives.
+#[inline(always)]
+pub fn pad_into_row<S: Stage>(stage: &mut S, wide: bool, out: S::Word, length: S::Word, text: S::Word, text_length: S::Word,
+    fill: S::Word, fill_length: S::Word, at_end: bool) {
+    let unit_bytes = if wide { 2u64 } else { 1 };
+    let pad_length = stage.sub(length, text_length);
+    let (text_out, pad_out) = if at_end {
+        let after = stage.mul_imm(text_length, unit_bytes);
+        (out, stage.add(out, after))
+    } else {
+        let after = stage.mul_imm(pad_length, unit_bytes);
+        (stage.add(out, after), out)
+    };
+    stage.copy_span(wide, text_out, text, text_length);
+    let single = stage.eq_imm(fill_length, 1u64);
+    stage.choose(single, #[inline(always)] |stage| {
+        let zero = stage.constant(0);
+        let unit = super::code_units::code_unit(stage, wide, fill, zero);
+        stage.fill_span(wide, pad_out, unit, pad_length);
+        stage.constant(0)
+    }, #[inline(always)] |stage| {
+        let short = stage.ult(pad_length, fill_length);
+        let first = stage.select(short, pad_length, fill_length);
+        stage.copy_span(wide, pad_out, fill, first);
+        double_through(stage, wide, pad_out, pad_length, first);
+        stage.constant(0)
+    });
+}
+
+/// `repeat`: the `unit_length` (non-empty) bytes at `unit` copied through the `length` bytes at
+/// `out`, a whole multiple of them: one copy, then doubled. The one body of the builtin for every tier.
+#[inline(always)]
+pub fn repeat_into_row<S: Stage>(stage: &mut S, out: S::Word, length: S::Word, unit: S::Word, unit_length: S::Word) {
+    let some = stage.ne_imm(length, 0u64);
+    stage.choose(some, #[inline(always)] |stage| {
+        stage.copy_span(false, out, unit, unit_length);
+        double_through(stage, false, out, length, unit_length);
+        stage.constant(0)
+    }, #[inline(always)] |stage| stage.constant(0));
 }
 
 #[cfg(test)]
@@ -325,5 +518,38 @@ mod tests {
         assert_eq!(concrete_char_at(ConcreteString::Units(wide), table, Value::number(1.5)), None);
         let no_table: *const Value = std::ptr::null();
         assert_eq!(concrete_char_at(ConcreteString::Units(wide), no_table, Value::integer(2)), None, "no table yet");
+    }
+
+    /// The ECMAScript WhiteSpace and LineTerminator units, as the specification lists them.
+    fn spec_space(unit: u16) -> bool {
+        matches!(unit, 0x09..=0x0D | 0x20 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF)
+    }
+
+    #[test]
+    fn trim_space_is_the_specification_set_for_every_unit() {
+        for unit in 0..=u16::MAX {
+            assert_eq!(is_trim_space(&mut stage(), UnitWidth::Wide, u64::from(unit)), spec_space(unit), "{unit:#x}");
+        }
+        for unit in 0..=u8::MAX {
+            assert_eq!(is_trim_space(&mut stage(), UnitWidth::Narrow, u64::from(unit)), spec_space(u16::from(unit)), "{unit:#x}");
+        }
+    }
+
+    #[test]
+    fn trim_bounds_strip_the_chosen_ends() {
+        let narrow = |text: &[u8], ends| {
+            let (start, end) = trim_bounds(&mut stage(), UnitWidth::Narrow, text.as_ptr() as u64, text.len() as u64, ends);
+            (start, end)
+        };
+        assert_eq!(narrow(b"", (true, true)), (0, 0));
+        assert_eq!(narrow(b"   ", (true, true)), (3, 3));
+        assert_eq!(narrow(b"   ", (false, true)), (0, 0));
+        assert_eq!(narrow(b" \t a b \n", (true, true)), (3, 6));
+        assert_eq!(narrow(b" \t a b \n", (true, false)), (3, 9));
+        assert_eq!(narrow(b" \t a b \n", (false, true)), (0, 6));
+        assert_eq!(narrow(b"\xa0x\xa0", (true, true)), (1, 2));
+        let wide: Vec<u16> = [0xFEFF, 0x3000, 0x41, 0x2028, 0x42, 0x205F].to_vec();
+        let (start, end) = trim_bounds(&mut stage(), UnitWidth::Wide, wide.as_ptr() as u64, wide.len() as u64, (true, true));
+        assert_eq!((start, end), (2, 5));
     }
 }

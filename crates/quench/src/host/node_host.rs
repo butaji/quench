@@ -57,50 +57,6 @@ pub struct HostPollers {
     pub dns: Option<HostPoller>,
 }
 
-/// A builtin family's module builder: the builtin's internal name when it is an internal
-/// module, `None` for the public module.
-pub type BuiltinBuilder = fn(
-    &mut quench_runtime::NativeContext<'_>,
-    Option<&'static str>,
-) -> Result<quench_runtime::RootId, quench_runtime::RootedError>;
-
-/// The builtin families an image links. A family is installed only when the program can reach
-/// its module (directly or through another builtin's internal requires), so `build_builtin`'s
-/// arm for an absent family is never linked.
-#[derive(Clone, Copy, Default)]
-pub struct BuiltinFamilies {
-    pub tls: Option<BuiltinBuilder>,
-    pub crypto: Option<BuiltinBuilder>,
-    pub http: Option<BuiltinBuilder>,
-    pub http2: Option<BuiltinBuilder>,
-    pub https: Option<BuiltinBuilder>,
-    pub net: Option<BuiltinBuilder>,
-    pub dns: Option<BuiltinBuilder>,
-    pub dgram: Option<BuiltinBuilder>,
-    pub zlib: Option<BuiltinBuilder>,
-    pub child_process: Option<BuiltinBuilder>,
-    pub worker_threads: Option<BuiltinBuilder>,
-    pub vm: Option<BuiltinBuilder>,
-    pub v8: Option<BuiltinBuilder>,
-    pub readline: Option<BuiltinBuilder>,
-    pub repl: Option<BuiltinBuilder>,
-    pub cluster: Option<BuiltinBuilder>,
-    pub perf_hooks: Option<BuiltinBuilder>,
-    pub sqlite: Option<BuiltinBuilder>,
-}
-
-impl BuiltinFamilies {
-    /// Every family, for the CLI and any host that runs arbitrary source.
-    pub fn all() -> Self {
-        crate::host::builtin_families::ALL
-    }
-
-    /// The family's builder, or the error an unlinked builtin raises.
-    pub(crate) fn builder(slot: Option<BuiltinBuilder>, name: &str) -> Result<BuiltinBuilder, quench_runtime::RootedError> {
-        slot.ok_or_else(|| quench_runtime::RootedError::host(format!("node:{name} support is not linked into the compiled image")))
-    }
-}
-
 /// The host services an executable links, in one value: the operation table, the event loop's
 /// polled sources and the WebAssembly frontend. A compiled image's catalog derives each from
 /// what its program can reach; the CLI and every non-sliced host link all of them.
@@ -109,7 +65,6 @@ pub struct HostCapabilities {
     pub operations: &'static [quench_runtime::HostCallback],
     pub pollers: HostPollers,
     pub wasm: Option<quench_runtime::WasmFrontend>,
-    pub builtins: BuiltinFamilies,
 }
 
 impl HostCapabilities {
@@ -119,7 +74,6 @@ impl HostCapabilities {
             operations: crate::host::shared_vm::OPERATION_CALLBACKS,
             pollers: crate::host::pollers::all(),
             wasm: Some(crate::host::wasm_frontend::FRONTEND),
-            builtins: BuiltinFamilies::all(),
         }
     }
 }

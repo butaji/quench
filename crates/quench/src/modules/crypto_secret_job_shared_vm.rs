@@ -372,29 +372,29 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         .borrow_mut()
         .builtin_cache
         .insert(CACHE.into(), root);
-    install_job_class(c, binding, "SecretKeyGenJob", "cryptoSecretJobNew")?;
+    install_job_class(c, binding, "SecretKeyGenJob", crate::host::shared_vm::operation!("cryptoSecretJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "HashJob", "cryptoHashJobNew")?;
+    install_job_class(c, binding, "HashJob", crate::host::shared_vm::operation!("cryptoHashJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "AESCipherJob", "cryptoAesJobNew")?;
+    install_job_class(c, binding, "AESCipherJob", crate::host::shared_vm::operation!("cryptoAesJobNew"))?;
     #[cfg(quench_openssl_provider)]
     install_job_class(
         c,
         binding,
         "ChaCha20Poly1305CipherJob",
-        "cryptoChaChaJobNew",
+        crate::host::shared_vm::operation!("cryptoChaChaJobNew"),
     )?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "RSACipherJob", "cryptoRsaCipherJobNew")?;
+    install_job_class(c, binding, "RSACipherJob", crate::host::shared_vm::operation!("cryptoRsaCipherJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "DHBitsJob", "cryptoDhBitsJobNew")?;
+    install_job_class(c, binding, "DHBitsJob", crate::host::shared_vm::operation!("cryptoDhBitsJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "HKDFJob", "cryptoHkdfJobNew")?;
+    install_job_class(c, binding, "HKDFJob", crate::host::shared_vm::operation!("cryptoHkdfJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "PBKDF2Job", "cryptoPbkdf2JobNew")?;
+    install_job_class(c, binding, "PBKDF2Job", crate::host::shared_vm::operation!("cryptoPbkdf2JobNew"))?;
     #[cfg(quench_openssl_provider)]
     if super::crypto_argon2::available() {
-        install_job_class(c, binding, "Argon2Job", "cryptoArgon2JobNew")?;
+        install_job_class(c, binding, "Argon2Job", crate::host::shared_vm::operation!("cryptoArgon2JobNew"))?;
         for (name, value) in [
             ("kTypeArgon2d", 0),
             ("kTypeArgon2i", 1),
@@ -405,27 +405,27 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         }
     }
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "SignJob", "cryptoSignJobNew")?;
+    install_job_class(c, binding, "SignJob", crate::host::shared_vm::operation!("cryptoSignJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "HmacJob", "cryptoHmacJobNew")?;
+    install_job_class(c, binding, "HmacJob", crate::host::shared_vm::operation!("cryptoHmacJobNew"))?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "KmacJob", "cryptoKmacJobNew")?;
+    install_job_class(c, binding, "KmacJob", crate::host::shared_vm::operation!("cryptoKmacJobNew"))?;
     #[cfg(quench_openssl_provider)]
     install_job_class(
         c,
         binding,
         "KEMEncapsulateJob",
-        "cryptoKemEncapsulateJobNew",
+        crate::host::shared_vm::operation!("cryptoKemEncapsulateJobNew"),
     )?;
     #[cfg(quench_openssl_provider)]
     install_job_class(
         c,
         binding,
         "KEMDecapsulateJob",
-        "cryptoKemDecapsulateJobNew",
+        crate::host::shared_vm::operation!("cryptoKemDecapsulateJobNew"),
     )?;
     #[cfg(quench_openssl_provider)]
-    install_job_class(c, binding, "RandomBytesJob", "cryptoRandomJobNew")?;
+    install_job_class(c, binding, "RandomBytesJob", crate::host::shared_vm::operation!("cryptoRandomJobNew"))?;
     #[cfg(quench_openssl_provider)]
     for &(name, value) in super::crypto_signature_request::CONSTANTS {
         let value = c.number(value as f64);
@@ -433,13 +433,13 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     }
     #[cfg(quench_openssl_provider)]
     for (name, operation) in [
-        ("RsaKeyPairGenJob", "cryptoRsaKeyPairJobNew"),
-        ("EcKeyPairGenJob", "cryptoEcKeyPairJobNew"),
-        ("DsaKeyPairGenJob", "cryptoDsaKeyPairJobNew"),
-        ("DhKeyPairGenJob", "cryptoDhKeyPairJobNew"),
-        ("NamedKeyPairGenJob", "cryptoNamedKeyPairJobNew"),
+        ("RsaKeyPairGenJob", crate::host::shared_vm::marked_operation!("cryptoRsaKeyPairJobNew")),
+        ("EcKeyPairGenJob", crate::host::shared_vm::marked_operation!("cryptoEcKeyPairJobNew")),
+        ("DsaKeyPairGenJob", crate::host::shared_vm::marked_operation!("cryptoDsaKeyPairJobNew")),
+        ("DhKeyPairGenJob", crate::host::shared_vm::marked_operation!("cryptoDhKeyPairJobNew")),
+        ("NamedKeyPairGenJob", crate::host::shared_vm::marked_operation!("cryptoNamedKeyPairJobNew")),
     ] {
-        install_job_class(c, binding, name, operation)?;
+        install_job_class(c, binding, name, operation.id())?;
     }
     #[cfg(quench_openssl_provider)]
     for (name, value) in [
@@ -489,9 +489,9 @@ fn install_job_class(
     c: &mut Context<'_>,
     binding: RootId,
     name: &str,
-    operation: &str,
+    operation: quench_runtime::HostFunctionId,
 ) -> Result<(), RootedError> {
-    let constructor = c.host_constructor(crate::host::shared_vm::operation(operation))?;
+    let constructor = c.host_constructor(operation)?;
     let key = c.string_rooted("name");
     let name_value = c.string_rooted(name);
     c.define_data_property_rooted(constructor, key, name_value, false, false, true)?;
@@ -1233,11 +1233,11 @@ fn exception(c: &mut Context<'_>, error: RootedError) -> Result<RootId, RootedEr
 }
 fn queue(c: &mut Context<'_>, data: RootId, completion: bool) -> Result<(), RootedError> {
     let callback = c.host_function_with_data(
-        crate::host::shared_vm::operation(if completion {
-            "cryptoSecretJobComplete"
+        if completion {
+            crate::host::shared_vm::operation!("cryptoSecretJobComplete")
         } else {
-            "cryptoSecretJobPoll"
-        }),
+            crate::host::shared_vm::operation!("cryptoSecretJobPoll")
+        },
         data,
     )?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();

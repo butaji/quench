@@ -10,14 +10,14 @@ use super::{
 use quench_runtime::{RootId, RootedError};
 
 /// The listeners `eos` installs, each sharing one record.
-const LISTENERS: &[(&str, &str)] = &[
-    ("onlegacyfinish", "streamEosOnLegacyFinish"),
-    ("onfinish", "streamEosOnFinish"),
-    ("onend", "streamEosOnEnd"),
-    ("onerror", "streamEosOnError"),
-    ("onclose", "streamEosOnClose"),
-    ("onclosed", "streamEosOnClosed"),
-    ("onrequest", "streamEosOnRequest"),
+const LISTENERS: &[(&str, crate::host::shared_vm::MarkedOperation)] = &[
+    ("onlegacyfinish", crate::host::shared_vm::marked_operation!("streamEosOnLegacyFinish")),
+    ("onfinish", crate::host::shared_vm::marked_operation!("streamEosOnFinish")),
+    ("onend", crate::host::shared_vm::marked_operation!("streamEosOnEnd")),
+    ("onerror", crate::host::shared_vm::marked_operation!("streamEosOnError")),
+    ("onclose", crate::host::shared_vm::marked_operation!("streamEosOnClose")),
+    ("onclosed", crate::host::shared_vm::marked_operation!("streamEosOnClosed")),
+    ("onrequest", crate::host::shared_vm::marked_operation!("streamEosOnRequest")),
 ];
 
 /// `eos(stream[, options], callback)`, the exported `finished`.
@@ -88,7 +88,7 @@ pub(crate) fn eos(c: &mut Context<'_>, stream: RootId, options: RootId, callback
     let closed = utils::is_closed(c, stream)?;
     put(c, record, "closed", closed)?;
     for &(name, operation) in LISTENERS {
-        let listener = closure(c, operation, name, &[record])?;
+        let listener = closure(c, operation.id(), name, &[record])?;
         put(c, record, name, listener)?;
     }
     let listener = |c: &mut Context<'_>, name: &str| get(c, record, name);
@@ -163,9 +163,9 @@ pub(crate) fn eos(c: &mut Context<'_>, stream: RootId, options: RootId, callback
         let settle = listener(c, name)?;
         next_tick(c, settle, &[])?;
     }
-    let cleanup = closure(c, "streamEosCleanup", "cleanup", &[record])?;
+    let cleanup = closure(c, crate::host::shared_vm::operation!("streamEosCleanup"), "cleanup", &[record])?;
     if c.truthy_rooted(signal)? && !c.truthy_rooted(closed)? {
-        let abort = closure(c, "streamEosAbort", "abort", &[record, signal])?;
+        let abort = closure(c, crate::host::shared_vm::operation!("streamEosAbort"), "abort", &[record, signal])?;
         let aborted = get(c, signal, "aborted")?;
         if c.truthy_rooted(aborted)? {
             next_tick(c, abort, &[])?;
@@ -189,7 +189,7 @@ fn no_pending_callbacks(c: &mut Context<'_>, state: RootId) -> Result<bool, Root
 /// `eosWeb(stream, options, callback)`: settle when the web stream's closed promise does.
 fn eos_web(c: &mut Context<'_>, record: RootId, stream: RootId, signal: RootId) -> Outcome {
     if c.truthy_rooted(signal)? {
-        let abort = closure(c, "streamEosWebAbort", "abort", &[record, signal])?;
+        let abort = closure(c, crate::host::shared_vm::operation!("streamEosWebAbort"), "abort", &[record, signal])?;
         let aborted = get(c, signal, "aborted")?;
         if c.truthy_rooted(aborted)? {
             next_tick(c, abort, &[])?;
@@ -201,7 +201,7 @@ fn eos_web(c: &mut Context<'_>, record: RootId, stream: RootId, signal: RootId) 
     let key = utils::registered_symbol(c, "nodejs.webstream.isClosedPromise")?;
     let closed = c.get_property_rooted(stream, key)?;
     let promise = get(c, closed, "promise")?;
-    let resolver = closure(c, "streamEosWebSettled", "", &[record])?;
+    let resolver = closure(c, crate::host::shared_vm::operation!("streamEosWebSettled"), "", &[record])?;
     let then = get(c, promise, "then")?;
     c.call_rooted(then, promise, &[resolver, resolver])?;
     let nop = intrinsic(c, |i| i.nop)?;
@@ -212,7 +212,7 @@ pub(crate) fn web_settled(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     let [record] = captures(c)?;
     if !super::truthy_member(c, record, "aborted")? {
         let values = c.array_rooted(args)?;
-        let deliver = closure(c, "streamEosWebDeliver", "", &[record, values])?;
+        let deliver = closure(c, crate::host::shared_vm::operation!("streamEosWebDeliver"), "", &[record, values])?;
         next_tick(c, deliver, &[])?;
     }
     Ok(c.undefined())
@@ -418,7 +418,7 @@ pub(crate) fn promises_finished(c: &mut Context<'_>, _: RootId, args: &[RootId])
     let promise = c.pending_promise_rooted()?;
     let holder = c.null_object_rooted()?;
     let auto = c.boolean(auto_cleanup);
-    let callback = closure(c, "streamPromisesFinishedSettle", "", &[promise, holder, auto])?;
+    let callback = closure(c, crate::host::shared_vm::operation!("streamPromisesFinishedSettle"), "", &[promise, holder, auto])?;
     match super::attempt(eos(c, stream, options, callback))? {
         Ok(cleanup) => put(c, holder, "cleanup", cleanup)?,
         Err(thrown) => c.reject_promise_rooted(promise, thrown)?,
@@ -456,7 +456,7 @@ pub(crate) enum Tolerated {
 pub(crate) fn settle_when_finished(c: &mut Context<'_>, stream: RootId, error: RootId, tolerated: Tolerated) -> Outcome {
     let promise = c.pending_promise_rooted()?;
     let aborts = c.boolean(matches!(tolerated, Tolerated::Aborts));
-    let callback = closure(c, "streamDisposeSettle", "", &[promise, error, aborts])?;
+    let callback = closure(c, crate::host::shared_vm::operation!("streamDisposeSettle"), "", &[promise, error, aborts])?;
     let undefined = c.undefined();
     match super::attempt(eos(c, stream, undefined, callback))? {
         Ok(_) => {}

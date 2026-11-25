@@ -7,6 +7,7 @@ use super::{
     crypto_signature_state::{Error, State as Signature},
 };
 use crate::host::NodeHost;
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
@@ -211,8 +212,8 @@ pub(crate) fn verify(
 }
 pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     for (name, final_name, final_operation) in [
-        ("Sign", "sign", "cryptoNativeSignFinal"),
-        ("Verify", "verify", "cryptoNativeVerifyFinal"),
+        ("Sign", "sign", marked_operation!("cryptoNativeSignFinal")),
+        ("Verify", "verify", marked_operation!("cryptoNativeVerifyFinal")),
     ] {
         let constructor = c.host_constructor(crate::host::shared_vm::operation!(
             "cryptoNativeSignatureNew",
@@ -222,12 +223,11 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         c.define_data_property_rooted(constructor, property, text, false, false, true)?;
         let prototype = c.object_rooted()?;
         for (name, operation) in [
-            ("init", "cryptoNativeSignatureInit"),
-            ("update", "cryptoNativeSignatureUpdate"),
+            ("init", marked_operation!("cryptoNativeSignatureInit")),
+            ("update", marked_operation!("cryptoNativeSignatureUpdate")),
             (final_name, final_operation),
         ] {
-            let function =
-                c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            let function = c.host_function_named(operation.id(), name)?;
             put(c, prototype, name, function)?
         }
         let property = c.string_rooted("constructor");

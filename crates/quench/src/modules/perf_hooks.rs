@@ -12,9 +12,9 @@ pub(super) type Context<'a> = NativeContext<'a>;
 pub(super) type Outcome = Result<RootId, RootedError>;
 
 /// A class member: (name, operation, length).
-pub(super) type Method = (&'static str, &'static str, f64);
+pub(super) type Method = (&'static str, crate::host::shared_vm::MarkedOperation, f64);
 /// A getter: (name, operation).
-pub(super) type Getter = (&'static str, &'static str);
+pub(super) type Getter = (&'static str, crate::host::shared_vm::MarkedOperation);
 
 /// The members of the group's shared data.
 pub(super) mod api {
@@ -49,25 +49,25 @@ const PRIVATE_SLOTS: [&str; 5] =
 
 /// `Performance.prototype`'s web members, each enumerable, in Node's order.
 const PERFORMANCE_METHODS: [Method; 11] = [
-    ("clearMarks", "perfClearMarks", 0.0),
-    ("clearMeasures", "perfClearMeasures", 0.0),
-    ("clearResourceTimings", "perfClearResourceTimings", 0.0),
-    ("getEntries", "perfGetEntries", 0.0),
-    ("getEntriesByName", "perfGetEntriesByName", 1.0),
-    ("getEntriesByType", "perfGetEntriesByType", 1.0),
-    ("mark", "perfMark", 1.0),
-    ("measure", "perfMeasure", 1.0),
-    ("now", "perfNow", 0.0),
-    ("setResourceTimingBufferSize", "perfSetResourceTimingBufferSize", 1.0),
-    ("toJSON", "perfToJson", 0.0),
+    ("clearMarks", crate::host::shared_vm::marked_operation!("perfClearMarks"), 0.0),
+    ("clearMeasures", crate::host::shared_vm::marked_operation!("perfClearMeasures"), 0.0),
+    ("clearResourceTimings", crate::host::shared_vm::marked_operation!("perfClearResourceTimings"), 0.0),
+    ("getEntries", crate::host::shared_vm::marked_operation!("perfGetEntries"), 0.0),
+    ("getEntriesByName", crate::host::shared_vm::marked_operation!("perfGetEntriesByName"), 1.0),
+    ("getEntriesByType", crate::host::shared_vm::marked_operation!("perfGetEntriesByType"), 1.0),
+    ("mark", crate::host::shared_vm::marked_operation!("perfMark"), 1.0),
+    ("measure", crate::host::shared_vm::marked_operation!("perfMeasure"), 1.0),
+    ("now", crate::host::shared_vm::marked_operation!("perfNow"), 0.0),
+    ("setResourceTimingBufferSize", crate::host::shared_vm::marked_operation!("perfSetResourceTimingBufferSize"), 1.0),
+    ("toJSON", crate::host::shared_vm::marked_operation!("perfToJson"), 0.0),
 ];
 /// The members before `timeOrigin` in `Performance.prototype`'s key order.
 const MEMBERS_BEFORE_TIME_ORIGIN: usize = 10;
 /// Node's extensions on `Performance.prototype`, not enumerable.
 const PERFORMANCE_EXTENSIONS: [Method; 3] = [
-    ("eventLoopUtilization", "perfEventLoopUtilization", 2.0),
-    ("markResourceTiming", "perfMarkResourceTiming", 7.0),
-    ("timerify", "perfTimerify", 1.0),
+    ("eventLoopUtilization", crate::host::shared_vm::marked_operation!("perfEventLoopUtilization"), 2.0),
+    ("markResourceTiming", crate::host::shared_vm::marked_operation!("perfMarkResourceTiming"), 7.0),
+    ("timerify", crate::host::shared_vm::marked_operation!("perfTimerify"), 1.0),
 ];
 
 /// The extensions before `nodeTiming` in `Performance.prototype`'s key order.
@@ -89,9 +89,6 @@ const MICROS_PER_MILLI: f64 = 1e3;
 /// A milestone not yet reached.
 const UNREACHED_MILESTONE: f64 = -1.0;
 
-pub(super) fn operation(name: &str) -> quench_runtime::HostFunctionId {
-    crate::host::shared_vm::operation(name)
-}
 
 /// The group's shared data, building the module on first use.
 pub(super) fn shared_api(c: &mut Context<'_>) -> Outcome {
@@ -204,7 +201,7 @@ pub(super) fn call_method(c: &mut Context<'_>, receiver: RootId, name: &str, arg
 
 pub(super) fn define_methods(c: &mut Context<'_>, holder: RootId, methods: &[Method], enumerable: bool) -> Result<(), RootedError> {
     for &(name, op, length) in methods {
-        let function = c.host_function_named(operation(op), name)?;
+        let function = c.host_function_named(op.id(), name)?;
         let length = c.number(length);
         c.define_named_data_property_rooted(function, "length", length, false, false, true)?;
         c.define_named_data_property_rooted(holder, name, function, true, enumerable, true)?;
@@ -212,8 +209,8 @@ pub(super) fn define_methods(c: &mut Context<'_>, holder: RootId, methods: &[Met
     Ok(())
 }
 
-pub(super) fn define_getter(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data: RootId, enumerable: bool) -> Result<(), RootedError> {
-    let getter = c.host_function_named_with_data(operation(op), &format!("get {name}"), data)?;
+pub(super) fn define_getter(c: &mut Context<'_>, holder: RootId, name: &str, op: crate::host::shared_vm::MarkedOperation, data: RootId, enumerable: bool) -> Result<(), RootedError> {
+    let getter = c.host_function_named_with_data(op.id(), &format!("get {name}"), data)?;
     let key = c.string_rooted(name);
     let undefined = c.undefined();
     let fields = DescriptorFields {
@@ -238,17 +235,17 @@ pub(super) fn define_tag(c: &mut Context<'_>, holder: RootId, tag: &str) -> Resu
 }
 
 /// `[util.inspect.custom]`: operation `op` with the class's data.
-pub(super) fn define_inspect(c: &mut Context<'_>, holder: RootId, op: &str) -> Result<(), RootedError> {
+pub(super) fn define_inspect(c: &mut Context<'_>, holder: RootId, op: crate::host::shared_vm::MarkedOperation) -> Result<(), RootedError> {
     let key = api_member(c, api::INSPECT)?;
-    let function = c.host_function_named(operation(op), "[nodejs.util.inspect.custom]")?;
+    let function = c.host_function_named(op.id(), "[nodejs.util.inspect.custom]")?;
     c.define_data_property_rooted(holder, key, function, true, false, true)?;
     Ok(())
 }
 
 /// A class as a declaration makes it, extending `parent` when given: a read-only `prototype`
 /// and the parent class as its own prototype.
-pub(super) fn class(c: &mut Context<'_>, name: &str, constructor: &str, length: f64, parent: Option<RootId>) -> Outcome {
-    let class = c.host_constructor_named(operation(constructor), name)?;
+pub(super) fn class(c: &mut Context<'_>, name: &str, constructor: crate::host::shared_vm::MarkedOperation, length: f64, parent: Option<RootId>) -> Outcome {
+    let class = c.host_constructor_named(constructor.id(), name)?;
     let length = c.number(length);
     c.define_named_data_property_rooted(class, "length", length, false, false, true)?;
     let prototype = get(c, class, "prototype")?;
@@ -379,12 +376,12 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
 
 fn performance_class(c: &mut Context<'_>, global: RootId) -> Outcome {
     let event_target = intrinsic(c, global, "EventTarget")?;
-    let class = class(c, "Performance", "perfConstructor", 0.0, Some(event_target))?;
+    let class = class(c, "Performance", crate::host::shared_vm::marked_operation!("perfConstructor"), 0.0, Some(event_target))?;
     let prototype = get(c, class, "prototype")?;
     let (before, after) = PERFORMANCE_METHODS.split_at(MEMBERS_BEFORE_TIME_ORIGIN);
     define_methods(c, prototype, before, true)?;
     let undefined = c.undefined();
-    define_getter(c, prototype, "timeOrigin", "perfTimeOrigin", undefined, true)?;
+    define_getter(c, prototype, "timeOrigin", crate::host::shared_vm::marked_operation!("perfTimeOrigin"), undefined, true)?;
     define_methods(c, prototype, after, true)?;
     define_tag(c, prototype, "Performance")?;
     let (utilization, resource_and_timerify) = PERFORMANCE_EXTENSIONS.split_at(EXTENSIONS_BEFORE_NODE_TIMING);
@@ -397,7 +394,7 @@ fn performance_class(c: &mut Context<'_>, global: RootId) -> Outcome {
     let setter = c.host_function_named(crate::host::shared_vm::operation!("perfSetBufferFullHandler"), &format!("set {BUFFER_FULL_HANDLER}"))?;
     let fields = DescriptorFields { get: Some(getter), set: Some(setter), enumerable: Some(true), configurable: Some(true), ..DescriptorFields::default() };
     c.define_property_fields_rooted(prototype, key, fields)?;
-    define_inspect(c, prototype, "perfInspect")?;
+    define_inspect(c, prototype, crate::host::shared_vm::marked_operation!("perfInspect"))?;
     Ok(class)
 }
 
@@ -612,8 +609,8 @@ fn node_timing(c: &mut Context<'_>) -> Outcome {
     let prototype = get(c, class, "prototype")?;
     let entry_prototype = api_member(c, api::ENTRY_PROTOTYPE)?;
     c.set_prototype_rooted(prototype, entry_prototype)?;
-    define_inspect(c, prototype, "perfNodeTimingInspect")?;
-    define_methods(c, prototype, &[("toJSON", "perfNodeTimingToJson", 0.0)], false)?;
+    define_inspect(c, prototype, crate::host::shared_vm::marked_operation!("perfNodeTimingInspect"))?;
+    define_methods(c, prototype, &[("toJSON", crate::host::shared_vm::marked_operation!("perfNodeTimingToJson"), 0.0)], false)?;
     let timing = c.object_rooted()?;
     c.set_prototype_rooted(timing, prototype)?;
     let name = c.string_rooted(NODE_TIMING_NAME);
@@ -622,13 +619,13 @@ fn node_timing(c: &mut Context<'_>) -> Outcome {
         c.define_named_data_property_rooted(timing, field, value, false, true, true)?;
     }
     let undefined = c.undefined();
-    define_getter(c, timing, "duration", "perfNodeTimingNow", undefined, true)?;
+    define_getter(c, timing, "duration", crate::host::shared_vm::marked_operation!("perfNodeTimingNow"), undefined, true)?;
     for milestone in NODE_TIMING_MILESTONES {
         let label = c.string_rooted(milestone);
-        define_getter(c, timing, milestone, "perfNodeTimingMilestone", label, true)?;
+        define_getter(c, timing, milestone, crate::host::shared_vm::marked_operation!("perfNodeTimingMilestone"), label, true)?;
     }
-    define_getter(c, timing, "idleTime", "perfNodeTimingIdleTime", undefined, true)?;
-    define_getter(c, timing, "uvMetricsInfo", "perfNodeTimingUvMetrics", undefined, true)?;
+    define_getter(c, timing, "idleTime", crate::host::shared_vm::marked_operation!("perfNodeTimingIdleTime"), undefined, true)?;
+    define_getter(c, timing, "uvMetricsInfo", crate::host::shared_vm::marked_operation!("perfNodeTimingUvMetrics"), undefined, true)?;
     Ok(timing)
 }
 

@@ -8,6 +8,7 @@
 //! stripping as a first load.
 
 use crate::host::NodeHost;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use rustc_hash::{FxHashMap, FxHashSet};
 use sha1::Digest;
@@ -38,11 +39,11 @@ const REGISTRATION_CALLBACK: &str = "callback";
 const REGISTRATION_EXPECTS_ARRAY: &str = "expectsArray";
 
 /// The hot object's methods and the host operations behind them.
-const HOT_METHODS: [(&str, &str); 4] = [
-    ("accept", "hmrHotAccept"),
-    ("dispose", "hmrHotDispose"),
-    ("decline", "hmrHotDecline"),
-    ("invalidate", "hmrHotInvalidate"),
+const HOT_METHODS: [(&str, MarkedOperation); 4] = [
+    ("accept", marked_operation!("hmrHotAccept")),
+    ("dispose", marked_operation!("hmrHotDispose")),
+    ("decline", marked_operation!("hmrHotDecline")),
+    ("invalidate", marked_operation!("hmrHotInvalidate")),
 ];
 
 type Context<'a> = NativeContext<'a>;
@@ -333,7 +334,7 @@ pub(crate) fn create_hot(context: &mut Context<'_>, id: &str) -> Result<RootId, 
         set(context, hot, list, values, false)?;
     }
     for (name, operation) in HOT_METHODS {
-        let method = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, hot)?;
+        let method = context.host_function_named_with_data(operation.id(), name, hot)?;
         set(context, hot, name, method, true)?;
     }
     Ok(hot)

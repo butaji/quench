@@ -31,7 +31,7 @@ fn binding() -> Binding {
     let program = Engine::specialize("0;", "native-hash-slots.js").unwrap();
     runtime.execute(&program).unwrap();
     let undefined = runtime.root(JsValue::UNDEFINED);
-    let initialize = runtime.host_function(crate::host::shared_vm::operation("cryptoHashBinding")).unwrap();
+    let initialize = runtime.host_function(crate::host::shared_vm::operation!("cryptoHashBinding")).unwrap();
     let binding = runtime.call_rooted(initialize, undefined, &[]).unwrap();
     let hash = runtime.get_named_property_rooted(binding, "Hash").unwrap();
     let hmac = runtime.get_named_property_rooted(binding, "Hmac").unwrap();

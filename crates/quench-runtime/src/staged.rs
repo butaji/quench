@@ -136,8 +136,13 @@ pub mod slot_store;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
 pub mod strings;
+/// The natives run in place by identity: the table (`native_row_table`) and the map to it (`native_row`).
+pub mod native_row_table;
+pub mod native_row;
 pub mod string_length;
 pub(crate) mod code_units;
+/// The span primitives string rows call (find, rfind, equal at).
+pub mod spans;
 /// The rows host operations declare (`Host::function_row`).
 #[cfg(not(stencil_build))]
 pub mod host_rows;

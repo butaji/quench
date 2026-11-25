@@ -295,7 +295,7 @@ macro_rules! catalog {
     /// the code unit, an int32 into the destination (hole 0). Any other receiver, index or form leaves through EXIT0 with
     /// nothing written, to the call's own step.
     CHAR_CODE_AT_ROW: uses(Dst, Unread, Src, Never) twin: kernel(str_charcodeat) = Heap::CharCodeAt,
-    /// `parseInt` of a flat string (hole 1: the frame slot) in radix 10 (`staged::parse_int::decimal_int32`): the int32
+    /// `parseInt` of a flat string (hole 1: the frame slot) in radix 10 (`staged::parse_int::decimal_int32_row`): the int32
     /// into the destination (hole 0). Any other text leaves through EXIT0 with nothing written.
     PARSE_INT_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(parse_int) = Heap::ParseInt,
     /// The staged rows (`staged_rows.rs`): a Number operation the planner's operator tables do not name, a relation or

@@ -357,6 +357,41 @@ impl Vm {
         Ok(())
     }
 
+    /// Materializes each lazy data property of the global object that a loaded program reads
+    /// by name (`console`). A run saved at rest (`crate::Runtime::snapshot_at_rest`) does this
+    /// once, where every start of its image would otherwise build the value on the name's
+    /// first read: the saved realm holds the data property instead. A group whose building
+    /// reads a dynamic input is the host's to refuse, as any other host operation is.
+    pub(crate) fn materialize_named_lazy_globals(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        let globals = self.realm.globals;
+        let mut atoms = Vec::new();
+        for program in self.programs.residuals() {
+            for index in 0..program.function_count() {
+                let Some(function) = program.function_get(index) else { continue };
+                atoms.extend(function.instructions().filter(|instruction| instruction.op().loads_name())
+                    .map(|instruction| instruction.atom_index()));
+            }
+        }
+        atoms.sort_unstable();
+        atoms.dedup();
+        for atom in atoms {
+            let key = PropertyKey::string(atom);
+            // A group whose initializer the host keeps from a run saved at rest stays pending.
+            while let Some(group) = self.lazy_data_group(globals, key) {
+                let initializer = self.heap.environment_slot(group, GroupSlot::Initializer as usize).unwrap_or(Value::UNDEFINED);
+                let settles = self.heap.function(initializer)
+                    .filter(|function| matches!(function.kind, FunctionKind::Native(Native::HostFunction)))
+                    .and_then(|function| self.host_operation_index(function.env))
+                    .is_none_or(|index| self.host.settles_at_rest(index as usize));
+                if self.lazy_group_state(group) != GroupState::Pending || !settles {
+                    break;
+                }
+                self.materialize_lazy_group(p, group)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Materializes `holder`'s own property `key` when it is a lazy data property, so a
     /// reflective operation observes its data descriptor.
     pub fn materialize_lazy_data_property(

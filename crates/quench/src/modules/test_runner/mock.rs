@@ -1,5 +1,6 @@
 //! `MockTracker` and `MockFunctionContext`: mock functions record each call and run the
 //! current implementation; method mocks replace a property and restore its descriptor.
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use super::{accessor, function, get, put, with_state, Context, NodeId};
 use crate::modules::private_slots;
 use quench_runtime::{RootId, RootedError};
@@ -13,18 +14,18 @@ const ONCE: &str = "\0quench:mock:once";
 /// `[object, key, descriptor]` a method mock restores.
 const RESTORE: &str = "\0quench:mock:restore";
 
-const TRACKER_METHODS: [(&str, &str); 4] = [
-    ("fn", "nodeTestMockFn"),
-    ("method", "nodeTestMockMethod"),
-    ("reset", "nodeTestMockReset"),
-    ("restoreAll", "nodeTestMockRestoreAll"),
+const TRACKER_METHODS: [(&str, MarkedOperation); 4] = [
+    ("fn", marked_operation!("nodeTestMockFn")),
+    ("method", marked_operation!("nodeTestMockMethod")),
+    ("reset", marked_operation!("nodeTestMockReset")),
+    ("restoreAll", marked_operation!("nodeTestMockRestoreAll")),
 ];
-const CONTEXT_METHODS: [(&str, &str); 5] = [
-    ("callCount", "nodeTestMockCallCount"),
-    ("mockImplementation", "nodeTestMockImplementation"),
-    ("mockImplementationOnce", "nodeTestMockImplementationOnce"),
-    ("resetCalls", "nodeTestMockResetCalls"),
-    ("restore", "nodeTestMockRestore"),
+const CONTEXT_METHODS: [(&str, MarkedOperation); 5] = [
+    ("callCount", marked_operation!("nodeTestMockCallCount")),
+    ("mockImplementation", marked_operation!("nodeTestMockImplementation")),
+    ("mockImplementationOnce", marked_operation!("nodeTestMockImplementationOnce")),
+    ("resetCalls", marked_operation!("nodeTestMockResetCalls")),
+    ("restore", marked_operation!("nodeTestMockRestore")),
 ];
 
 fn slot(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
@@ -38,16 +39,16 @@ fn slot(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, Roote
     }
 }
 
-fn prototype(c: &mut Context<'_>, methods: &[(&str, &str)], getter: Option<(&str, &str)>) -> Result<RootId, RootedError> {
+fn prototype(c: &mut Context<'_>, methods: &[(&str, MarkedOperation)], getter: Option<(&str, MarkedOperation)>) -> Result<RootId, RootedError> {
     let prototype = c.object_rooted()?;
     let undefined = c.undefined();
     for (name, operation) in methods {
-        let method = function(c, operation, name, undefined)?;
+        let method = function(c, operation.id(), name, undefined)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, method, true, false, true)?;
     }
     if let Some((name, operation)) = getter {
-        let getter = function(c, operation, &format!("get {name}"), undefined)?;
+        let getter = function(c, operation.id(), &format!("get {name}"), undefined)?;
         accessor(c, prototype, name, getter)?;
     }
     c.retain(prototype)
@@ -85,7 +86,7 @@ fn context_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(prototype) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().builtin_cache.get(CACHE).copied() {
         return Ok(prototype);
     }
-    let prototype = prototype(c, &CONTEXT_METHODS, Some(("calls", "nodeTestMockCalls")))?;
+    let prototype = prototype(c, &CONTEXT_METHODS, Some(("calls", marked_operation!("nodeTestMockCalls"))))?;
     c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().builtin_cache.insert(CACHE.to_owned(), prototype);
     Ok(prototype)
 }
@@ -109,7 +110,7 @@ fn create(c: &mut Context<'_>, tracker: RootId, original: RootId, implementation
     } else {
         String::new()
     };
-    let mock = function(c, "nodeTestMockCall", &name, context)?;
+    let mock = function(c, crate::host::shared_vm::operation!("nodeTestMockCall"), &name, context)?;
     let key = c.string_rooted("mock");
     c.define_data_property_rooted(mock, key, context, false, false, true)?;
     let push = get(c, mocks, "push")?;
@@ -127,7 +128,7 @@ fn callable_or(c: &mut Context<'_>, value: Option<RootId>, fallback: RootId) -> 
 /// `mock.fn([original[, implementation]][, options])`.
 pub(crate) fn fn_mock(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
-    let noop = function(c, "nodeTestMockNoop", "", undefined)?;
+    let noop = function(c, crate::host::shared_vm::operation!("nodeTestMockNoop"), "", undefined)?;
     let original = callable_or(c, args.first().copied(), noop)?;
     let implementation = callable_or(c, args.get(1).copied(), original)?;
     create(c, this, original, implementation)

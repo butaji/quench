@@ -146,11 +146,11 @@ fn script_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let key = c.string_rooted("prototype");
         c.define_data_property_rooted(class, key, prototype, false, false, false)?;
         for (name, operation) in [
-            ("runInThisContext", "vmScriptRunInThisContext"),
-            ("runInContext", "vmScriptRunInContext"),
-            ("runInNewContext", "vmScriptRunInNewContext"),
+            ("runInThisContext", crate::host::shared_vm::operation!("vmScriptRunInThisContext")),
+            ("runInContext", crate::host::shared_vm::operation!("vmScriptRunInContext")),
+            ("runInNewContext", crate::host::shared_vm::operation!("vmScriptRunInNewContext")),
         ] {
-            let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            let method = c.host_function_named(operation, name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(prototype, key, method, true, false, true)?;
         }
@@ -539,17 +539,17 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let script = script_class(c)?;
     c.assign_named_property_rooted(module, "Script", script)?;
     for (name, operation) in [
-        ("createContext", "vmCreateContext"),
-        ("createScript", "vmCreateScript"),
-        ("runInContext", "vmRunInContext"),
-        ("runInNewContext", "vmRunInNewContext"),
-        ("runInThisContext", "vmRunInThisContext"),
-        ("isContext", "vmIsContext"),
-        ("compileFunction", "vmCompileFunction"),
-        ("measureMemory", "vmMeasureMemory"),
+        ("createContext", crate::host::shared_vm::operation!("vmCreateContext")),
+        ("createScript", crate::host::shared_vm::operation!("vmCreateScript")),
+        ("runInContext", crate::host::shared_vm::operation!("vmRunInContext")),
+        ("runInNewContext", crate::host::shared_vm::operation!("vmRunInNewContext")),
+        ("runInThisContext", crate::host::shared_vm::operation!("vmRunInThisContext")),
+        ("isContext", crate::host::shared_vm::operation!("vmIsContext")),
+        ("compileFunction", crate::host::shared_vm::operation!("vmCompileFunction")),
+        ("measureMemory", crate::host::shared_vm::operation!("vmMeasureMemory")),
     ] {
         // Ordinary functions in Node, so `new` applies them too.
-        let function = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_constructor_named(operation, name)?;
         c.assign_named_property_rooted(module, name, function)?;
     }
     let constants = constants(c)?;

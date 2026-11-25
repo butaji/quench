@@ -5,14 +5,27 @@ impl Vm {
         Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default())
     }
 
+    /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
+    pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
+    }
+
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
+        Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
+    }
+
+    fn with_statics<T: crate::Host>(
+        host: T,
+        execution_interrupt: crate::ExecutionInterrupt,
+        host_statics: crate::host::HostStatics,
+    ) -> Self {
         let runs_lane = host.runs_lane();
         let mut vm = Self {
             host: Box::new(host),
-            host_statics: crate::host::HostStatics::of::<T>(),
+            host_statics,
             runs_lane,
             typed_views: Default::default(),
             native_microtask_running: false,

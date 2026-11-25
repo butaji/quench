@@ -1,6 +1,5 @@
 //! `node:sea` (lib/sea.js) for an executable that is never a single-executable application:
 //! `isSea()` is false and every asset accessor fails as Node's does outside one.
-use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -9,18 +8,18 @@ const NOT_IN_SEA: &str = "ERR_NOT_IN_SINGLE_EXECUTABLE_APPLICATION";
 const NOT_IN_SEA_MESSAGE: &str = "Operation cannot be invoked when not in a single-executable application";
 
 /// lib/sea.js's exports in its order.
-const EXPORTS: [(&str, &str); 5] = [
-    ("isSea", "seaIsSea"),
-    ("getAsset", "seaGetAsset"),
-    ("getRawAsset", "seaGetRawAsset"),
-    ("getAssetAsBlob", "seaGetAssetAsBlob"),
-    ("getAssetKeys", "seaGetAssetKeys"),
+const EXPORTS: [(&str, crate::host::shared_vm::MarkedOperation); 5] = [
+    ("isSea", crate::host::shared_vm::marked_operation!("seaIsSea")),
+    ("getAsset", crate::host::shared_vm::marked_operation!("seaGetAsset")),
+    ("getRawAsset", crate::host::shared_vm::marked_operation!("seaGetRawAsset")),
+    ("getAssetAsBlob", crate::host::shared_vm::marked_operation!("seaGetAssetAsBlob")),
+    ("getAssetKeys", crate::host::shared_vm::marked_operation!("seaGetAssetKeys")),
 ];
 
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let module = c.object_rooted()?;
     for (name, operation_name) in EXPORTS {
-        let function = c.host_function_named(operation(operation_name), name)?;
+        let function = c.host_function_named(operation_name.id(), name)?;
         c.assign_named_property_rooted(module, name, function)?;
     }
     Ok(module)

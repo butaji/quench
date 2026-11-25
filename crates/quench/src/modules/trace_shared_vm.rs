@@ -4,6 +4,7 @@
 //! process retains each enabled one (`TraceState::enabled`).
 use super::event_constructor_shared_vm::get;
 use super::trace_state::EnabledTracing;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const MAX_ENABLED_TRACING_WITHOUT_WARNING: usize = 10;
@@ -131,11 +132,11 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
     let class = context.host_constructor_named_with_data(crate::host::shared_vm::operation!("traceInitialize"), "Tracing", api)?;
     let prototype = get(context, class, "prototype")?;
     for (name, operation) in TRACING_METHODS {
-        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, api)?;
+        let function = context.host_function_named_with_data(operation.id(), name, api)?;
         context.define_named_data_property_rooted(prototype, name, function, true, false, true)?;
     }
     for (name, operation) in TRACING_GETTERS {
-        let getter = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), &format!("get {name}"), api)?;
+        let getter = context.host_function_named_with_data(operation.id(), &format!("get {name}"), api)?;
         let key = context.string_rooted(name);
         let undefined = context.undefined();
         let fields = quench_runtime::DescriptorFields {
@@ -156,16 +157,16 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
     put(context, api, "constructor", class)?;
     let module = context.object_rooted()?;
     for (name, operation) in MODULE_FUNCTIONS {
-        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, api)?;
+        let function = context.host_function_named_with_data(operation.id(), name, api)?;
         put(context, module, name, function)?;
     }
     Ok(module)
 }
 
 /// `Tracing.prototype`'s methods and getters, and the module's functions.
-const TRACING_METHODS: [(&str, &str); 2] = [("enable", "traceEnable"), ("disable", "traceDisable")];
-const TRACING_GETTERS: [(&str, &str); 2] = [("enabled", "traceEnabled"), ("categories", "traceCategories")];
-const MODULE_FUNCTIONS: [(&str, &str); 2] = [("createTracing", "traceCreate"), ("getEnabledCategories", "traceGetEnabledCategories")];
+const TRACING_METHODS: [(&str, MarkedOperation); 2] = [("enable", marked_operation!("traceEnable")), ("disable", marked_operation!("traceDisable"))];
+const TRACING_GETTERS: [(&str, MarkedOperation); 2] = [("enabled", marked_operation!("traceEnabled")), ("categories", marked_operation!("traceCategories"))];
+const MODULE_FUNCTIONS: [(&str, MarkedOperation); 2] = [("createTracing", marked_operation!("traceCreate")), ("getEnabledCategories", marked_operation!("traceGetEnabledCategories"))];
 
 pub(crate) fn create(
     context: &mut NativeContext<'_>,
@@ -433,13 +434,13 @@ fn build_internal_binding(
         "trace_events" => {
             let binding = context.object_rooted()?;
             for (name, operation) in [
-                ("getCategoryEnabledBuffer", "traceCategoryBuffer"),
-                ("trace", "traceRecord"),
-                ("isTraceCategoryEnabled", "traceCategoryEnabled"),
-                ("getEnabledCategories", "traceGetEnabledCategories"),
+                ("getCategoryEnabledBuffer", crate::host::shared_vm::operation!("traceCategoryBuffer")),
+                ("trace", crate::host::shared_vm::operation!("traceRecord")),
+                ("isTraceCategoryEnabled", crate::host::shared_vm::operation!("traceCategoryEnabled")),
+                ("getEnabledCategories", crate::host::shared_vm::operation!("traceGetEnabledCategories")),
             ] {
                 let function =
-                    context.host_function(crate::host::shared_vm::operation(operation))?;
+                    context.host_function(operation)?;
                 put(context, binding, name, function)?;
             }
             let perfetto = context.boolean(false);
@@ -532,7 +533,7 @@ pub(crate) fn cjs_lexer_parse(
 }
 
 /// `tty_wrap`'s handle members: (name, operation, length).
-const TTY_METHODS: [(&str, &str, f64); 2] = [("getWindowSize", "ttyWrapGetWindowSize", 1.0), ("setRawMode", "ttyWrapSetRawMode", 1.0)];
+const TTY_METHODS: [(&str, MarkedOperation, f64); 2] = [("getWindowSize", marked_operation!("ttyWrapGetWindowSize"), 1.0), ("setRawMode", marked_operation!("ttyWrapSetRawMode"), 1.0)];
 /// The status libuv's tty calls report: success.
 const UV_OK: f64 = 0.0;
 
@@ -545,7 +546,7 @@ fn tty_binding(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let class = context.host_constructor_named(crate::host::shared_vm::operation!("ttyWrapConstructor"), "TTY")?;
     let prototype = get(context, class, "prototype")?;
     for (name, operation, length) in TTY_METHODS {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         let length = context.number(length);
         context.define_named_data_property_rooted(function, "length", length, false, false, true)?;
         context.define_named_data_property_rooted(prototype, name, function, true, false, true)?;

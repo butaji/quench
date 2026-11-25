@@ -61,21 +61,15 @@ pub(crate) fn structured_clone(
         Some(options) => serialize_options_transfer(context, options)?,
         None => Vec::new(),
     };
+    // A KeyObject or CryptoKey travels by the crypto module's own operation, which an image
+    // links with the module that makes keys.
     #[cfg(quench_openssl_provider)]
     if transfers.is_empty() && context.is_object_rooted(value)? {
-        use crate::modules::crypto_node::clone;
-        // A KeyObject or CryptoKey below the root travels as a record of its material:
-        // the generic clone would copy it as an empty ordinary object.
-        if clone::contains_nested_key(context, value)? {
-            let prepared = clone::prepare(context, value)?;
-            let cloned = match context.structured_clone_with_transfers_rooted(prepared, &[]) {
-                Ok(cloned) => cloned,
-                Err(error) => return Err(as_dom_exception(context, error)),
-            };
-            return clone::restore(context, cloned);
-        }
-        if let Some(cloned) = clone::clone_key(context, value)? {
-            return Ok(cloned);
+        let keys = crate::host::shared_vm::static_operation("cryptoStructuredClone");
+        if let Some(cloned) = crate::host::shared_vm::call_linked(context, keys, &[value])? {
+            if !context.rooted_value(cloned).is_some_and(|cloned| cloned.is_undefined()) {
+                return Ok(cloned);
+            }
         }
     }
     if transfers.is_empty() {

@@ -6,7 +6,10 @@ use crate::host::startup_snapshot::{require_quiescent, HostSnap};
 use quench_runtime::{SnapshotReader, SnapshotWriter};
 
 impl NodeHost {
-    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+    /// The host's part of a snapshot: of a startup snapshot, which the restoring host finishes
+    /// installing (`Host::resume`), or `at_rest`, of a run saved at its wait for input
+    /// (`aot::prefix::reach_wait`), whose installation is finished and whose run has begun.
+    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>, at_rest: bool) -> Result<(), String> {
         let Self {
             #[cfg(feature = "native-execution")]
             module_assets: _,
@@ -29,7 +32,8 @@ impl NodeHost {
             building_snapshot: _,
             // Read only while a snapshot is built.
             snapshot_builtins: _,
-            // False at the snapshot point; a restored host sets it in `Host::resume`.
+            // Set again from `at_rest`: a startup snapshot is taken once bootstrap has set it,
+            // and its restoring host still finishes installing.
             bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
@@ -40,6 +44,7 @@ impl NodeHost {
             "socket writes",
         )?;
         writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI);
+        writer.u8(u8::from(at_rest));
         shared_state.borrow().write_snapshot(writer)
     }
 
@@ -47,6 +52,7 @@ impl NodeHost {
         if reader.u64()? != crate::host::shared_vm::BOOTSTRAP_ABI {
             return Err("Node bootstrap ABI does not match runtime".into());
         }
+        self.bootstrapped = reader.u8()? != 0;
         self.shared_state.borrow_mut().read_snapshot(reader)
     }
 }
@@ -339,7 +345,7 @@ if (before === Module.globalPaths || JSON.stringify(before) !== JSON.stringify(M
                 if building { host.building_snapshot = Some(kind); }
                 let mut runtime = Runtime::new(host);
                 if building {
-                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer)).unwrap();
+                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false)).unwrap();
                     fs::write(file, bytes).unwrap();
                 } else {
                     #[cfg(feature = "native-execution")]

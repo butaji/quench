@@ -478,7 +478,7 @@ pub(crate) fn poll(
     if !has_work(shared_state) {
         return Ok(false);
     }
-    crate::modules::process_shared_vm::deliver_each(runtime, program, "messagingDrain")
+    crate::modules::process_shared_vm::deliver_each(runtime, program, crate::host::shared_vm::operation!("messagingDrain"))
 }
 
 impl State {

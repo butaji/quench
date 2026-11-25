@@ -1,4 +1,5 @@
 use super::net_connect_error::TcpConnectFailure;
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
@@ -1263,9 +1264,6 @@ fn connect_resolved_address(
 
 pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let operation = |context: &mut NativeContext<'_>, name: &str| {
-        context.host_function(crate::host::shared_vm::operation(name))
-    };
     // Destruction latches its outcome before guest error handlers run.
     let close_outcome = context.symbol_rooted(Some("kSocketCloseHadError"));
     let destroy = context.host_function_with_data(
@@ -1334,32 +1332,32 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
     let symbols = crate::modules::util_shared_vm::symbols_binding(context)?;
     let async_id = context.get_named_property_rooted(symbols, "async_id_symbol")?;
     let operations = super::net_class_shared_vm::Operations {
-        connect: operation(context, "netConnect")?,
-        write: operation(context, "netSocketWrite")?,
-        end: operation(context, "netSocketEnd")?,
+        connect: context.host_function(crate::host::shared_vm::operation!("netConnect"))?,
+        write: context.host_function(crate::host::shared_vm::operation!("netSocketWrite"))?,
+        end: context.host_function(crate::host::shared_vm::operation!("netSocketEnd"))?,
         destroy,
-        encoding: operation(context, "netSocketSetEncoding")?,
+        encoding: context.host_function(crate::host::shared_vm::operation!("netSocketSetEncoding"))?,
         listen,
         close,
         address,
         account,
-        endpoint: operation(context, "netNormalizeEndpoint")?,
-        server_reference: operation(context, "netServerReference")?,
-        socket_reference: operation(context, "netSocketReference")?,
-        unref_timeout: operation(context, "netSocketUnrefTimeout")?,
-        socket_options: operation(context, "netSocketOptions")?,
-        server_options: operation(context, "netServerOptions")?,
-        init_end: operation(context, "netSocketInitEnd")?,
+        endpoint: context.host_function(crate::host::shared_vm::operation!("netNormalizeEndpoint"))?,
+        server_reference: context.host_function(crate::host::shared_vm::operation!("netServerReference"))?,
+        socket_reference: context.host_function(crate::host::shared_vm::operation!("netSocketReference"))?,
+        unref_timeout: context.host_function(crate::host::shared_vm::operation!("netSocketUnrefTimeout"))?,
+        socket_options: context.host_function(crate::host::shared_vm::operation!("netSocketOptions"))?,
+        server_options: context.host_function(crate::host::shared_vm::operation!("netServerOptions"))?,
+        init_end: context.host_function(crate::host::shared_vm::operation!("netSocketInitEnd"))?,
         readable_end,
         init_server_emitter,
         init_socket_options,
         set_no_delay,
         set_keep_alive,
         init_server_options,
-        get_connections: operation(context, "netServerGetConnections")?,
-        initialize_read: operation(context, "netSocketInitializeRead")?,
+        get_connections: context.host_function(crate::host::shared_vm::operation!("netServerGetConnections"))?,
+        initialize_read: context.host_function(crate::host::shared_vm::operation!("netSocketInitializeRead"))?,
         read: {
-            let read = operation(context, "netSocketRead")?;
+            let read = context.host_function(crate::host::shared_vm::operation!("netSocketRead"))?;
             super::net_internal_shared_vm::method(context, read, "_read")?
         },
         end_stream,
@@ -1392,31 +1390,23 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
         export(context, name, find(name))?;
     }
     for (name, operation) in [
-        ("isIP", "netIsIP"),
-        ("isIPv4", "netIsIPv4"),
-        ("isIPv6", "netIsIPv6"),
+        ("isIP", marked_operation!("netIsIP")),
+        ("isIPv4", marked_operation!("netIsIPv4")),
+        ("isIPv6", marked_operation!("netIsIPv6")),
     ] {
-        let function =
-            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         export(context, name, function)?;
     }
     for name in ["Server", "Socket", "Stream"] {
         export(context, name, find(name))?;
     }
     for (name, operation) in [
-        ("getDefaultAutoSelectFamily", "netGetAutoSelectFamily"),
-        ("setDefaultAutoSelectFamily", "netSetAutoSelectFamily"),
-        (
-            "getDefaultAutoSelectFamilyAttemptTimeout",
-            "netGetAutoSelectFamilyAttemptTimeout",
-        ),
-        (
-            "setDefaultAutoSelectFamilyAttemptTimeout",
-            "netSetAutoSelectFamilyAttemptTimeout",
-        ),
+        ("getDefaultAutoSelectFamily", marked_operation!("netGetAutoSelectFamily")),
+        ("setDefaultAutoSelectFamily", marked_operation!("netSetAutoSelectFamily")),
+        ("getDefaultAutoSelectFamilyAttemptTimeout", marked_operation!("netGetAutoSelectFamilyAttemptTimeout")),
+        ("setDefaultAutoSelectFamilyAttemptTimeout", marked_operation!("netSetAutoSelectFamilyAttemptTimeout")),
     ] {
-        let function =
-            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         export(context, name, function)?;
     }
     let options_data = context

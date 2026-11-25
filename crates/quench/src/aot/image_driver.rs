@@ -34,12 +34,19 @@ fn run() -> Result<std::process::ExitCode, String> {
             unsafe { resolve(&namespace, name, parts) }
         });
     quench::host::resident_pages::phase_peak("native host ready");
-    #[cfg(quench_native_bootstrap)]
-    let result = quench::aot::execute_native_process_entry_with_bootstrap(
-        host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
-    );
-    #[cfg(not(quench_native_bootstrap))]
-    let result = quench::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT);
+    // A run saved at its first wait for input, whose answers hold, resumes from there
+    // (`RESUMES_AT_REST`); else the entry runs, from the startup snapshot where there is one.
+    // An image with saved runs has one for every start (`RESUME_ONLY`) and links no entry run.
+    let result = match quench::aot::saved_wait(RESUMES_AT_REST) {
+        Some(wait) => quench::aot::resume_native_process_entry(host, &entry, SUPPORT, wait),
+        None if RESUME_ONLY => Err("no saved run answers this start".into()),
+        #[cfg(quench_native_bootstrap)]
+        None => quench::aot::execute_native_process_entry_with_bootstrap(
+            host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
+        ),
+        #[cfg(not(quench_native_bootstrap))]
+        None => quench::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT),
+    };
     result.map(|completion| completion.exit_code())
 }
 

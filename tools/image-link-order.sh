@@ -8,9 +8,9 @@
 #
 # usage: tools/image-link-order.sh [BINARY]   (default: target/experiment/quench)
 #
-# Corpus: tools/image-layout-corpus, each program compiled with full support (the support a
-# strict compile falls back to) and its symbols
-# kept, run once with a line of input. The scored engine suites are never run. Requires
+# Corpus: tools/image-layout-corpus, each program compiled as `--strict-aot` compiles it (a
+# program that waits for input resumes its saved wait; one that reads another dynamic input
+# falls back to full support) with its symbols kept, run once with a line of input. The scored engine suites are never run. Requires
 # valgrind; takes about a minute. Rebuild afterwards (the order is a link input).
 set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +23,7 @@ cargo build --profile experiment -p quench-symbols --bin symbol-order >/dev/null
 images=()
 for program in tools/image-layout-corpus/*.js tools/image-layout-corpus/*.mjs; do
     name="$(basename "${program%.*}")"
-    env -u NODE_OPTIONS -u NODE_PATH QUENCH_KEEP_SYMBOLS=1 RUSTC_BOOTSTRAP=1 "$binary" compile "$program" -o "$work/images/$name" --profile experiment --dynamic-source >/dev/null
+    env -u NODE_OPTIONS -u NODE_PATH QUENCH_KEEP_SYMBOLS=1 RUSTC_BOOTSTRAP=1 "$binary" compile "$program" -o "$work/images/$name" --profile experiment --strict-aot >/dev/null
     printf 'a line\n' | (cd "$work" && env -i PATH="$PATH" HOME="$HOME" valgrind --tool=cachegrind --cache-sim=no --demangle=no \
         --cachegrind-out-file="$work/profiles/$name.out" "$work/images/$name" x y >/dev/null 2>&1 || true)
     images+=("$work/images/$name")
