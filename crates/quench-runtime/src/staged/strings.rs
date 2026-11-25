@@ -310,6 +310,73 @@ pub fn trim_bounds<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, le
     (start, end)
 }
 
+/// `count` units of a pattern already at the start of the `length` units at `out` (`count`
+/// at most `length`, above zero) doubled through the rest: each copy takes the units written so
+/// far, or the cut still left, so a run of n units takes about log2(n / count) copies.
+#[inline(always)]
+fn double_through<S: Stage>(stage: &mut S, wide: bool, out: S::Word, length: S::Word, count: S::Word) {
+    let unit_bytes = if wide { 2u64 } else { 1 };
+    let more = stage.ult(count, length);
+    stage.choose(more, #[inline(always)] |stage| {
+        let [_] = stage.loop_words([count], #[inline(always)] |stage, [written]| {
+            let left = stage.sub(length, written);
+            let short = stage.ult(left, written);
+            let step = stage.select(short, left, written);
+            let offset = stage.mul_imm(written, unit_bytes);
+            let at = stage.add(out, offset);
+            stage.copy_span(wide, at, out, step);
+            let next = stage.add(written, step);
+            (stage.ult(next, length), [next])
+        });
+        stage.constant(0)
+    }, #[inline(always)] |stage| stage.constant(0));
+}
+
+/// `padStart` or `padEnd`: the `text_length` units at `text` and repeats of the `fill_length`
+/// (non-empty) units at `fill` written to the `length` units at `out` (`length` above
+/// `text_length`), the filler at the end when `at_end`, else at the start. All are of one width.
+/// A one-unit filler is a fill; a longer one is copied once, or its cut, then doubled. The one
+/// body of both builtins for every tier, over the span primitives.
+#[inline(always)]
+pub fn pad_into_row<S: Stage>(stage: &mut S, wide: bool, out: S::Word, length: S::Word, text: S::Word, text_length: S::Word,
+    fill: S::Word, fill_length: S::Word, at_end: bool) {
+    let unit_bytes = if wide { 2u64 } else { 1 };
+    let pad_length = stage.sub(length, text_length);
+    let (text_out, pad_out) = if at_end {
+        let after = stage.mul_imm(text_length, unit_bytes);
+        (out, stage.add(out, after))
+    } else {
+        let after = stage.mul_imm(pad_length, unit_bytes);
+        (stage.add(out, after), out)
+    };
+    stage.copy_span(wide, text_out, text, text_length);
+    let single = stage.eq_imm(fill_length, 1u64);
+    stage.choose(single, #[inline(always)] |stage| {
+        let zero = stage.constant(0);
+        let unit = super::code_units::code_unit(stage, wide, fill, zero);
+        stage.fill_span(wide, pad_out, unit, pad_length);
+        stage.constant(0)
+    }, #[inline(always)] |stage| {
+        let short = stage.ult(pad_length, fill_length);
+        let first = stage.select(short, pad_length, fill_length);
+        stage.copy_span(wide, pad_out, fill, first);
+        double_through(stage, wide, pad_out, pad_length, first);
+        stage.constant(0)
+    });
+}
+
+/// `repeat`: the `unit_length` (non-empty) bytes at `unit` copied through the `length` bytes at
+/// `out`, a whole multiple of them: one copy, then doubled. The one body of the builtin for every tier.
+#[inline(always)]
+pub fn repeat_into_row<S: Stage>(stage: &mut S, out: S::Word, length: S::Word, unit: S::Word, unit_length: S::Word) {
+    let some = stage.ne_imm(length, 0u64);
+    stage.choose(some, #[inline(always)] |stage| {
+        stage.copy_span(false, out, unit, unit_length);
+        double_through(stage, false, out, length, unit_length);
+        stage.constant(0)
+    }, #[inline(always)] |stage| stage.constant(0));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

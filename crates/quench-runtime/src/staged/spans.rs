@@ -8,6 +8,7 @@
 
 use super::Stage;
 use super::code_units::code_unit;
+use super::region::Region;
 
 /// How a span's units are stored: one byte a unit, all ASCII (`Ascii`) or any Latin-1 (`Latin1`), or
 /// two bytes a unit (`Wide`). A static value, so each form's code is its own in a specializer's output.
@@ -146,4 +147,99 @@ pub(crate) fn concrete_span(units: crate::vm::wtf16::Units<'_>) -> UnitSpan<u64>
         Units::Latin1(bytes) => UnitSpan { form: SpanForm::Latin1, units: bytes.as_ptr() as u64, length: bytes.len() as u64 },
         Units::Wide(wide) => UnitSpan { form: SpanForm::Wide, units: wide.as_ptr() as u64, length: wide.len() as u64 },
     }
+}
+
+/// The span primitives the text rows write with: copying a run of units (`Stage::copy_span`),
+/// filling a run with one unit (`Stage::fill_span`) and the ASCII case map of a run of bytes
+/// (`Stage::case_span`, `Stage::case_changes_span`). The bodies below are rows over the units one at
+/// a time; `Concrete` runs memcpy, memset and the slice loops instead.
+#[inline(always)]
+fn unit_at<S: Stage>(stage: &mut S, wide: bool, units: S::Word, index: S::Word) -> S::Word {
+    let offset = stage.mul_imm(index, if wide { 2u64 } else { 1 });
+    stage.add(units, offset)
+}
+
+/// Stores `unit` at `index` of the units at `units`, two bytes a unit where `wide`.
+#[inline(always)]
+fn store_unit<S: Stage>(stage: &mut S, wide: bool, units: S::Word, index: S::Word, unit: S::Word) {
+    let address = unit_at(stage, wide, units, index);
+    if wide {
+        stage.store_u16(Region::HeapMeta.mutable(), address, 0, unit);
+    } else {
+        stage.store_u8(Region::HeapMeta.mutable(), address, 0, unit);
+    }
+}
+
+/// Runs `body` for each index below `length`, one unit at a time; nothing for an empty run.
+#[inline(always)]
+fn each_unit<S: Stage>(stage: &mut S, length: S::Word, mut body: impl FnMut(&mut S, S::Word)) {
+    let some = stage.ne_imm(length, 0u64);
+    stage.choose(some, #[inline(always)] |stage| {
+        let zero = stage.constant(0);
+        let [_] = stage.loop_words([zero], #[inline(always)] |stage, [index]| {
+            body(stage, index);
+            let next = stage.add_imm(index, 1u64);
+            (stage.ult(next, length), [next])
+        });
+        stage.constant(0)
+    }, #[inline(always)] |stage| stage.constant(0));
+}
+
+/// The `length` units at `source` written to `target`, both of one width; the runs do not overlap.
+#[inline(always)]
+pub fn copy_by_rows<S: Stage>(stage: &mut S, wide: bool, target: S::Word, source: S::Word, length: S::Word) {
+    each_unit(stage, length, #[inline(always)] |stage, index| {
+        let unit = code_unit(stage, wide, source, index);
+        store_unit(stage, wide, target, index, unit);
+    });
+}
+
+/// `unit` written to each of the `length` units at `target`.
+#[inline(always)]
+pub fn fill_by_rows<S: Stage>(stage: &mut S, wide: bool, target: S::Word, unit: S::Word, length: S::Word) {
+    each_unit(stage, length, #[inline(always)] |stage, index| store_unit(stage, wide, target, index, unit));
+}
+
+/// The ASCII case map of `byte`, upper or lower: a letter of the other case moves by 32, any
+/// other byte is itself.
+#[inline(always)]
+pub fn case_byte<S: Stage>(stage: &mut S, byte: S::Word, upper: bool) -> S::Word {
+    let first = if upper { b'a' } else { b'A' };
+    let from_first = stage.add_imm(byte, u64::from(first).wrapping_neg());
+    let letters = stage.constant(26);
+    let letter = stage.ult(from_first, letters);
+    let moved = stage.add_imm(byte, if upper { 32u64.wrapping_neg() } else { 32 });
+    stage.select(letter, moved, byte)
+}
+
+/// The ASCII case map of the `length` bytes at `source` written to `target`.
+#[inline(always)]
+pub fn case_by_rows<S: Stage>(stage: &mut S, target: S::Word, source: S::Word, length: S::Word, upper: bool) {
+    each_unit(stage, length, #[inline(always)] |stage, index| {
+        let byte = code_unit(stage, false, source, index);
+        let mapped = case_byte(stage, byte, upper);
+        store_unit(stage, false, target, index, mapped);
+    });
+}
+
+/// Whether the ASCII case map changes any of the `length` bytes at `source`.
+#[inline(always)]
+pub fn case_changes_by_rows<S: Stage>(stage: &mut S, source: S::Word, length: S::Word, upper: bool) -> S::Cond {
+    let some = stage.ne_imm(length, 0u64);
+    let changed = stage.choose(some, #[inline(always)] |stage| {
+        let zero = stage.constant(0);
+        let [index] = stage.loop_words([zero], #[inline(always)] |stage, [index]| {
+            let byte = code_unit(stage, false, source, index);
+            let mapped = case_byte(stage, byte, upper);
+            let same = stage.eq(byte, mapped);
+            let next = stage.add_imm(index, 1u64);
+            let more = stage.ult(next, length);
+            // A change stops at its own index, below the length; no change stops at the length.
+            (stage.all(same, more), [stage.select(same, next, index)])
+        });
+        let unchanged = stage.eq(index, length);
+        let (none, one) = (stage.constant(0), stage.constant(1));
+        stage.select(unchanged, none, one)
+    }, #[inline(always)] |stage| stage.constant(0));
+    stage.ne_imm(changed, 0u64)
 }

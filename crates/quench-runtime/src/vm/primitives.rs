@@ -445,7 +445,10 @@ impl Vm {
                 // Radix 10 (or absent): the shared int32 form of the text (`staged::parse_int`), which the b-jit's row answers too.
                 let decimal = if radix == 0 || radix == 10 {
                     match (&text, self.heap.string(value)) {
-                        (None, Some(string)) => string.read_units(|units| crate::staged::parse_int::decimal_int32(units.iter())),
+                        (None, Some(string)) => string.read_units(|units| {
+                            let span = crate::staged::spans::concrete_span(units);
+                            crate::staged::parse_int::decimal_int32_at(span.form.wide(), span.units, span.length)
+                        }),
                         _ => text.as_deref().and_then(|text| crate::staged::parse_int::decimal_int32(text.encode_utf16())),
                     }
                 } else {
