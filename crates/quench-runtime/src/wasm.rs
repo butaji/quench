@@ -24,6 +24,8 @@ pub use element::{WasmElement, WasmElementItems, WasmElementMode};
 pub use table::{WasmTable, WasmTableInitializer};
 pub(crate) mod atomic;
 pub mod memory;
+mod bindings;
+pub use bindings::WasmBindingType;
 mod wait;
 pub const INDEX_GROW_FAILURE: i64 = -1;
 pub use memory::{WasmData, WasmDataMode, WasmMemory};

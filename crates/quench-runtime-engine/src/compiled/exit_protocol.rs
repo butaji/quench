@@ -177,6 +177,15 @@ impl ExitTable {
         table
     }
 
+    /// The table of a b-jit body over `code`, its function's: a leave at each caller PC, its fact the
+    /// instruction's there. Leaves inside an inlined callee have no site yet (TOD-2195 step 4b).
+    pub(crate) fn of_code(code: &[quench_runtime::bytecode::WideInstruction]) -> Self {
+        let mut table = Self { sigs: vec![ExitSig { kind: ExitKind::At, live: Box::default() }], ..Self::default() };
+        for (pc, instruction) in code.iter().enumerate() { table.add(LaneExit::At(pc), 0, pc, Fact::of(instruction)); }
+        table.crossings = (0..table.sites.len()).map(|_| std::cell::Cell::new(0)).collect();
+        table
+    }
+
     /// Counts a run that left at `exit`, and answers its typed edge; a leave at no site (an entry,
     /// a callee's activation) has none.
     pub(crate) fn cross(&self, exit: LaneExit) -> Option<FactMissing> {

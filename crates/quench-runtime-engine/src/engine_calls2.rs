@@ -10,6 +10,9 @@ use quench_runtime::bytecode::Function;
 fn quench_engine2_aheadimages_compile(program: &ResidualProgram) -> Result<AheadImages, String> { <AheadImages as AheadImagesLifted160>::compile(program) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_aheadimages_compile = quench_engine2_aheadimages_compile;
 #[unsafe(no_mangle)]
+fn quench_engine2_aheadimages_compile_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[quench_runtime::WasmBindingType]) -> Result<AheadImages, String> { <AheadImages as AheadImagesLifted160>::compile_wasm(vm, id, program, bindings) }
+const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_aheadimages_compile_wasm = quench_engine2_aheadimages_compile_wasm;
+#[unsafe(no_mangle)]
 fn quench_engine2_laneview_invalidate_shape_bindings(this: &LaneView) -> () { <LaneView as LaneViewLifted648>::invalidate_shape_bindings(this) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_laneview_invalidate_shape_bindings = quench_engine2_laneview_invalidate_shape_bindings;
 #[unsafe(no_mangle)]

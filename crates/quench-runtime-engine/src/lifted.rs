@@ -17,6 +17,12 @@ impl AheadImages {
         let image = aot_image::lower(program, &facts, &ImageTarget::default())?;
         Ok(Self { facts: std::cell::OnceCell::from(facts), ..Self::of(image) })
     }
+
+    /// The image of Wasm program `id` (`aot_image::lower_wasm`), planned from the module's binding types.
+    #[inline]
+    pub fn compile_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[quench_runtime::WasmBindingType]) -> Result<Self, String> {
+        Ok(Self::of(aot_image::lower_wasm(vm, id, program, bindings)?))
+    }
 }
 
 

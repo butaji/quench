@@ -1113,11 +1113,11 @@ impl Vm {
         if self.programs.len() == 0 {
             self.initialize_shared(program, super::builtins::RealmScope::Core)?;
         }
-        let id = if let Some(id) = self.programs.find_shared(program) {
+        let found = self.programs.find_shared(program);
+        let fresh = found.is_none();
+        let id = if let Some(id) = found {
             id
         } else {
-            // A Wasm module lowers through the one image driver as any program does (`AheadImages::record`).
-            crate::vm::engine_types::AheadImages::record(program);
             let id = self
                 .programs
                 .insert_shared(program.clone())
@@ -1131,6 +1131,8 @@ impl Vm {
                 "invalid or conflicting Wasm signature authority".into(),
             ));
         }
+        // A Wasm module lowers through the one image driver as any program does, planned from its declarations.
+        if fresh { crate::vm::engine_types::AheadImages::record_wasm(self, id, program, &module.binding_types()); }
         Ok(id)
     }
 
