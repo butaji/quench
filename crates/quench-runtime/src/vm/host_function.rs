@@ -289,24 +289,38 @@ impl Vm {
     }
 
     /// The host operations the heap's host functions run, ascending, each with the plain
-    /// operation its row may forward a call to (`run_host_function`).
-    pub fn held_host_operations(&self) -> Vec<u32> {
-        let mut environments = Vec::new();
-        self.heap.for_each_live_function_record(|function| {
+    /// operation its row may forward a call to (`run_host_function`); and, apart, per set of
+    /// globals no loaded program names, those only the global object holds for them, which run
+    /// only when code reads one of those names (`unnamed_global_functions`).
+    pub fn held_host_operations(&self) -> (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>) {
+        let unnamed = self.unnamed_global_functions();
+        let mut held = Vec::new();
+        let mut lazy = vec![Vec::new(); unnamed.len()];
+        self.heap.for_each_live_function_record(|record_id, function| {
             if matches!(function.kind, FunctionKind::Native(Native::HostFunction)) {
-                environments.push(function.env);
+                let only = unnamed.iter().position(|(_, functions)| {
+                    functions.iter().any(|function| function.direct_function_index() == Some(record_id))
+                });
+                only.map_or(&mut held, |only| &mut lazy[only]).push(function.env);
             }
         });
-        let mut operations = Vec::new();
-        for index in environments.into_iter().filter_map(|environment| self.host_operation_index(environment)) {
-            operations.push(index);
-            if let Some(crate::staged::host_rows::HostRow::PlainText { plain, .. }) = self.host.function_row(index as usize) {
-                operations.push(plain);
+        let operations = |environments: Vec<Value>| {
+            let mut operations = Vec::new();
+            for index in environments.into_iter().filter_map(|environment| self.host_operation_index(environment)) {
+                operations.push(index);
+                if let Some(crate::staged::host_rows::HostRow::PlainText { plain, .. }) = self.host.function_row(index as usize) {
+                    operations.push(plain);
+                }
             }
-        }
-        operations.sort_unstable();
-        operations.dedup();
-        operations
+            operations.sort_unstable();
+            operations.dedup();
+            operations
+        };
+        let held = operations(held);
+        let lazy = unnamed.into_iter().zip(lazy).map(|((names, _), environments)| {
+            (names, operations(environments).into_iter().filter(|index| held.binary_search(index).is_err()).collect())
+        }).collect();
+        (held, lazy)
     }
 
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {

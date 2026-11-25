@@ -17,6 +17,7 @@ use crate::heap::Cell;
 use crate::value::Value;
 use std::collections::BTreeMap;
 mod function_sites;
+pub(crate) use function_sites::unfrozen_call_sites;
 
 /// What `CallPrinter` prints for an operand it does not render.
 const INTERMEDIATE_VALUE: &str = "(intermediate value)";
@@ -168,8 +169,8 @@ pub fn freeze_call_sites(program: &ResidualProgram) {
 /// The call-site descriptions of `source`: frozen ones, or, in a dynamic build, those its
 /// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
 fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate::bytecode::CallSiteDescription]> {
-    if crate::DYNAMIC_EXECUTION_ENABLED {
-        freeze_source_call_sites(source);
+    if crate::DYNAMIC_EXECUTION_ENABLED && let Some(routes) = crate::compile::source_routes::routes() {
+        (routes.freeze_call_sites)(source);
     }
     source.call_sites.get().map(|sites| &sites[..])
 }

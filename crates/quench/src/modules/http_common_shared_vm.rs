@@ -36,4 +36,3 @@ pub(crate) fn module(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     })
 }
 
-crate::host::shared_vm::binding_operation!(binding_operation, module);

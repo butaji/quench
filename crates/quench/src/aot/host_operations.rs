@@ -114,7 +114,7 @@ impl OperationFamily {
 }
 
 /// Whether the program may load code as it runs, which may name any module.
-fn loads_code(graph: &DependencyGraph) -> bool {
+pub(super) fn loads_code(graph: &DependencyGraph) -> bool {
     graph.requirements.iter().any(|requirement| {
         requirement.is_dynamic_load() || matches!(requirement, GraphRequirement::NativeAddon { .. })
     }) || !graph.dynamic_eval_sites.is_empty()
@@ -147,6 +147,8 @@ pub(super) fn link_with_reached_operations(
     let mut kept = held.filter(|_| !loads_code(graph));
     report["held_host_operations"] = json!(kept.as_ref().map(BTreeSet::len));
     let mut links = 0;
+    // The operations each link's marks added, by name.
+    let mut rounds: Vec<Vec<&'static str>> = Vec::new();
     loop {
         let (table, unlinked) = operation_table(graph, kept.as_ref());
         fs::write(inputs.catalog(), format!("{catalog}{table}")).map_err(|error| error.to_string())?;
@@ -158,9 +160,11 @@ pub(super) fn link_with_reached_operations(
             return Ok(audit);
         };
         let marks = quench_runtime::native_link::marked_words(staged, "QUENCH_OPERATION_MARK")?;
-        let before = operations.len();
-        operations.extend(marks);
-        if operations.len() == before {
+        let added: Vec<u32> = marks.into_iter().filter(|mark| !operations.contains(mark)).collect();
+        rounds.push(added.iter().map(|&operation| crate::host::shared_vm::commonjs::operation_name(operation)).collect::<Vec<_>>());
+        report["operation_rounds"] = json!(rounds);
+        operations.extend(added);
+        if rounds.last().is_some_and(Vec::is_empty) {
             report["unlinked_host_operations"] = json!(unlinked);
             report["operation_links"] = json!(links);
             return Ok(audit);
@@ -198,17 +202,15 @@ fn operation_table(graph: &DependencyGraph, kept: Option<&BTreeSet<u32>>) -> (St
     }).collect::<Vec<_>>().join(", ");
     let table = format!("static OPERATIONS: [quench_runtime::HostCallback; {n}] = [{entries}];\n\
         const _: () = assert!(quench::host::OPERATION_CALLBACKS.len() == {n}, \"native image host operation table mismatch\");\n", n = paths.len());
-    (format!("{table}{}", capability_table(graph, dynamic, &demands)), unlinked)
+    (format!("{table}{}", capability_table(dynamic, &demands)), unlinked)
 }
 
-/// The host services table (`NodeHost::with_capabilities`): the polled I/O sources and the
-/// WebAssembly frontend the image links, named only for what its program can reach.
-fn capability_table(graph: &DependencyGraph, dynamic: bool, demands: &[String]) -> String {
+/// The host services table (`NodeHost::with_capabilities`): the polled I/O sources the image
+/// links, named only for what its program can reach.
+fn capability_table(dynamic: bool, demands: &[String]) -> String {
     let pollers = poller_table(dynamic, demands);
-    let wasm = dynamic || graph.needs_wasm();
-    let wasm = if wasm { "Some(quench::host::wasm_frontend::FRONTEND)" } else { "None" };
     format!("static POLLERS: quench::host::HostPollers = quench::host::HostPollers {{ {pollers} }};\n\
-        static CAPABILITIES: quench::host::HostCapabilities = quench::host::HostCapabilities {{ operations: &OPERATIONS, pollers: POLLERS, wasm: {wasm} }};\n")
+        static CAPABILITIES: quench::host::HostCapabilities = quench::host::HostCapabilities {{ operations: &OPERATIONS, pollers: POLLERS }};\n")
 }
 
 fn reached(dynamic: bool, demands: &[String], families: &[&str]) -> bool {

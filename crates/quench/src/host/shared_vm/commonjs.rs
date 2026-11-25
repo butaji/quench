@@ -428,6 +428,11 @@ fn goal_after_wrapper_syntax_error(path: &Path, text: &str) -> quench_runtime::S
 /// unsupported compile keeps its error, so it is no ES module; a failure that is not a compile
 /// diagnostic (a stack exhaustion, a host failure) decides by full detection, as before.
 fn failed_wrapper_goal(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
+    // A wrapper fails to compile only where the source frontend links (`enable_dynamic_source`).
+    super::source_route(|routes| routes.failed_wrapper_goal).map_or(quench_runtime::SourceKind::Script, |goal| goal(error, path, text))
+}
+
+pub(super) fn failed_wrapper_goal_parsed(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
     match error.compile_failure() {
         Some(quench_runtime::CompileFailureKind::Syntax) => goal_after_wrapper_syntax_error(path, text),
         Some(quench_runtime::CompileFailureKind::Unsupported) => quench_runtime::SourceKind::Script,
@@ -496,10 +501,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
     context.scoped(install_performance_global)?;
     #[cfg(quench_openssl_provider)]
-    {
-        let initialize = crate::host::shared_vm::operation!("cryptoGlobalInitialize");
-        crate::host::shared_vm::call_linked(context, initialize, &[])?;
-    }
+    context.scoped(crate::modules::crypto_node::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // The SDK console reads its primordial snapshot. It loads on the first read of
@@ -678,6 +680,10 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
         context.define_lazy_data_properties_rooted(global, &names, false, initializer)?;
         context.release_root(initializer);
     }
+    // `fetch`, enumerable as in Node, is built on its first read, as Node loads undici then.
+    let initializer = context.host_function(crate::host::shared_vm::operation!("webFetchFunctionInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["fetch"], true, initializer)?;
+    context.release_root(initializer);
     Ok(())
 }
 
@@ -1642,7 +1648,23 @@ fn cached_builtin(
 
 /// The host operation that builds the builtin `key` names, if any.
 pub(crate) fn builtin_operation(key: &str) -> Option<quench_runtime::HostFunctionId> {
-    let name = format!("builtin:{key}");
+    named_operation(&format!("builtin:{key}"))
+}
+
+/// The name operation `id` is registered as.
+pub(crate) fn operation_name(id: u32) -> &'static str {
+    super::OPERATION_DESCRIPTORS.get(id as usize).map_or("", |descriptor| descriptor.name)
+}
+
+/// The builder operations of every internal binding (`binding:NAME`).
+pub(crate) fn binding_operations() -> impl Iterator<Item = quench_runtime::HostFunctionId> {
+    super::OPERATION_DESCRIPTORS.iter().enumerate().filter(|(_, descriptor)| descriptor.name.starts_with("binding:"))
+        .map(|(index, _)| quench_runtime::HostFunctionId(index as u32))
+}
+
+/// The host operation registered as `name`, found as the code runs: a call through it links
+/// nothing, so the image keeps it only where something marks it.
+pub(crate) fn named_operation(name: &str) -> Option<quench_runtime::HostFunctionId> {
     super::OPERATION_DESCRIPTORS.iter().position(|descriptor| descriptor.name == name)
         .map(|index| quench_runtime::HostFunctionId(index as u32))
 }
@@ -1747,8 +1769,20 @@ pub(crate) fn zlib_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     builtin!(context, "zlib")
 }
 
+/// `zlib`, found by name (`cached_builtin`): a compression stream builds it, which an image
+/// keeps where its program can name one (`aot::cli`), so building every web stream class marks
+/// no compressor.
+pub(crate) fn zlib_module_named(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Zlib)
+}
+
 pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     builtin!(context, "stream")
+}
+
+/// `internalBinding/http2`'s binding, built by the module.
+pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::modules::http2_shared_vm::binding(context)
 }
 
 pub(crate) fn cares_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1888,10 +1922,10 @@ fn task_queues_module(context: &mut Context<'_>) -> Result<RootId, RootedError> 
     Ok(module)
 }
 
-/// The web and timer globals Node defines enumerable.
+/// The web and timer globals Node defines enumerable (`fetch` is defined so, lazily).
 const ENUMERABLE_GLOBALS: &[&str] = &[
     "queueMicrotask", "clearImmediate", "clearInterval", "clearTimeout", "setImmediate",
-    "setInterval", "setTimeout", "structuredClone", "fetch", "crypto", "performance",
+    "setInterval", "setTimeout", "structuredClone", "crypto", "performance",
 ];
 
 /// Node's global descriptors: `ENUMERABLE_GLOBALS` enumerable, a `navigator` getter, and

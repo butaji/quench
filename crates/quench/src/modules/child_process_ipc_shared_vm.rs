@@ -1109,8 +1109,7 @@ fn duplicate_native_handle(
     let fd = {
         let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let state = shared.borrow();
-        let tcp = state.tcp();
-        super::net_shared_vm::native_tcp_fd(&tcp, id)
+        super::net_shared_vm::native_tcp_fd(&state.tcp, id)
     };
     if fd < 0 {
         return Ok(None);
@@ -1210,7 +1209,7 @@ pub(crate) fn destroy_transferred_public_socket(
     // queued the native close.
     {
         let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-        super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp(), id);
+        super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp, id);
     }
     // Give the public Socket destroy hook a chance to decrement
     // server._connections before removing the native listener identity. The

@@ -659,4 +659,3 @@ pub(crate) fn generated_asymmetric(
     }
 }
 
-crate::host::shared_vm::binding_operation!(binding_operation, binding);

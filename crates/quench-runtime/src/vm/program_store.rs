@@ -1592,6 +1592,19 @@ impl ProgramStore {
         self.programs.iter().flatten().map(|entry| &**entry.residual)
     }
 
+    /// The opcodes of every live program's lowered functions, which the lane's views run.
+    pub(crate) fn lowered_ops(&self) -> Vec<u16> {
+        let mut seen = vec![false; crate::bytecode::Op::COUNT];
+        for program in self.residuals() {
+            for index in 0..program.function_count() {
+                for instruction in program.function(index).instructions() {
+                    seen[instruction.op() as usize] = true;
+                }
+            }
+        }
+        (0..seen.len()).filter(|&op| seen[op]).map(|op| op as u16).collect()
+    }
+
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
         self.entry(id)?.module_environment
     }

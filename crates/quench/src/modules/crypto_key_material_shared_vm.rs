@@ -23,7 +23,7 @@ pub(crate) struct State {
 }
 fn lookup(c: &mut Context<'_>, handle: RootId) -> Result<Option<Value>, RootedError> {
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    for entry in &shared.borrow().crypto_key_material().handles {
+    for entry in &shared.borrow().crypto_key_material.handles {
         if let Some(value) = c.resolve_host_weak_root(entry.identity) {
             if c.strict_equal_rooted(value, handle)? {
                 return Ok(Some(entry.value.clone()));
@@ -66,23 +66,13 @@ pub(crate) fn register_asymmetric(
 ) -> Result<(), RootedError> {
     register(c, handle, Value::Asymmetric(value))
 }
-pub(crate) fn prune_context(c: &mut Context<'_>) {
-    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let dead = shared.borrow().crypto_key_material().handles.iter().enumerate()
-        .filter_map(|(index, handle)| c.resolve_host_weak_root(handle.identity).is_none().then_some(index))
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let handle = shared.borrow_mut().crypto_key_material().handles.remove(index);
-        c.release_host_weak_root(handle.identity);
-    }
-}
 fn register(c: &mut Context<'_>, handle: RootId, value: Value) -> Result<(), RootedError> {
     prune_context(c);
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let mut replace = None;
     for (index, entry) in shared
         .borrow()
-        .crypto_key_material()
+        .crypto_key_material
         .handles
         .iter()
         .enumerate()
@@ -95,42 +85,69 @@ fn register(c: &mut Context<'_>, handle: RootId, value: Value) -> Result<(), Roo
         }
     }
     if let Some(index) = replace {
-        shared.borrow_mut().crypto_key_material().handles[index].value = value;
+        shared.borrow_mut().crypto_key_material.handles[index].value = value;
         return Ok(());
     }
     let identity = c.host_weak_root(handle)?;
     shared
         .borrow_mut()
-        .crypto_key_material()
+        .crypto_key_material
         .handles
         .push(Handle { identity, value });
     Ok(())
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::prune_lazy_state(runtime, |shared| &shared.crypto_key_material);
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.crypto_key_material);
-}
-
-crate::host::startup_snapshot::host_snap_empty!(State { handles } "key material");
-
-impl crate::host::node_host::LazyStateValue for State {
-    fn snapshot_write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
-        self.write_snapshot(writer)
+pub(crate) fn prune_context(c: &mut Context<'_>) {
+    let shared = c.host_as::<crate::host::NodeHost>().shared_state();
+    let dead = shared
+        .borrow()
+        .crypto_key_material
+        .handles
+        .iter()
+        .enumerate()
+        .filter_map(|(index, handle)| {
+            c.resolve_host_weak_root(handle.identity)
+                .is_none()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    for index in dead.into_iter().rev() {
+        let handle = shared
+            .borrow_mut()
+            .crypto_key_material
+            .handles
+            .remove(index);
+        c.release_host_weak_root(handle.identity);
     }
-    fn snapshot_read(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
-        self.read_snapshot(reader)
-    }
-    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        let dead: Vec<usize> = self.handles.iter().enumerate()
-            .filter_map(|(index, handle)| (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)).collect();
-        for index in dead.into_iter().rev() {
-            let handle = self.handles.remove(index);
+}
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        for handle in std::mem::take(&mut shared.borrow_mut().crypto_key_material.handles) {
             runtime.release_host_weak_root(handle.identity);
         }
     }
-    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        for handle in std::mem::take(&mut self.handles) { runtime.release_host_weak_root(handle.identity); }
+
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared
+            .borrow()
+            .crypto_key_material
+            .handles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, handle)| {
+                (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let handle = shared
+                .borrow_mut()
+                .crypto_key_material
+                .handles
+                .remove(index);
+            runtime.release_host_weak_root(handle.identity);
+        }
     }
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { handles } "key material");

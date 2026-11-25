@@ -32,6 +32,11 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Whether no handle has been made, so a startup snapshot holds none of the engine's state.
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        self.databases.is_empty() && self.statements.is_empty() && self.keys.iter().all(Option::is_none)
+    }
+
     /// The open connection of database `database`, if it is open.
     pub(crate) fn connection(&self, database: usize) -> Option<&Arc<Connection>> {
         self.databases.get(database).and_then(|handle| handle.connection.as_ref())
@@ -105,12 +110,12 @@ pub(crate) fn define_accessors<M: Members>(c: &mut Context<'_>, target: RootId, 
 /// The hidden private symbol that keys `kind`'s index, created once per process.
 fn key(c: &mut Context<'_>, kind: Kind) -> Result<RootId, RootedError> {
     let slot = kind as usize;
-    if let Some(key) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().sqlite.state::<State>().keys[slot] {
+    if let Some(key) = c.host_as::<crate::host::NodeHost>().shared_state().borrow().sqlite.get::<State>().and_then(|state| state.keys[slot]) {
         return Ok(key);
     }
     let symbol = c.private_symbol_rooted(Some("sqlite"));
     let key = c.retain(symbol)?;
-    c.host_as::<crate::host::NodeHost>().shared_state().borrow().sqlite.state::<State>().keys[slot] = Some(key);
+    c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().sqlite.get_or_default::<State>().keys[slot] = Some(key);
     Ok(key)
 }
 
@@ -141,9 +146,8 @@ pub(crate) fn iterator_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError
 /// Runs `f` over the process's engine state. `f` must not call into the guest.
 pub(crate) fn with_state<T>(c: &mut Context<'_>, f: impl FnOnce(&mut State) -> T) -> T {
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let guard = shared.borrow();
-    let mut state = guard.sqlite.state::<State>();
-    f(&mut state)
+    let mut guard = shared.borrow_mut();
+    f(guard.sqlite.get_or_default())
 }
 
 /// A new object whose prototype is `prototype`, tagged as `kind` number `index`.
@@ -216,5 +220,3 @@ pub(crate) fn require_new(c: &mut Context<'_>, name: &str) -> Result<RootId, Roo
         }
     }
 }
-
-impl crate::host::node_host::LazyStateValue for State {}

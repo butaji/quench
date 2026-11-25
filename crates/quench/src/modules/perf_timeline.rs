@@ -464,6 +464,8 @@ pub(crate) fn resource_buffer_full(c: &mut Context<'_>, _: RootId, _: &[RootId])
     while timeline(c, |timeline| !timeline.overflow.is_empty()) {
         let performance = api_member(c, api::PERFORMANCE)?;
         let global = c.global_root()?;
+        // A lazy global read by name: its initializer is linked with this read.
+        let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
         let event = super::perf_hooks::intrinsic(c, global, "Event")?;
         let kind = c.string_rooted(super::perf_hooks::BUFFER_FULL_EVENT);
         let event = c.construct_rooted(event, event, &[kind])?;

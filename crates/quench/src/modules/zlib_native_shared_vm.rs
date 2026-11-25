@@ -50,7 +50,7 @@ fn find_index(c: &mut Context<'_>, handle: RootId) -> Result<Option<usize>, Root
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let keys = shared
         .borrow()
-        .zlib_native()
+        .zlib_native
         .entries
         .iter()
         .map(|e| e.identity)
@@ -180,7 +180,7 @@ fn create_handle(c: &mut Context<'_>, handle: RootId, mode: Mode) -> Result<Root
     c.host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
-        .zlib_native()
+        .zlib_native
         .entries
         .push(Entry {
             identity,
@@ -197,8 +197,8 @@ pub(crate) fn initialize(
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let mode = shared.borrow().zlib_native().entries[i].mode;
-    if !matches!(shared.borrow().zlib_native().entries[i].phase, Phase::New) {
+    let mode = shared.borrow().zlib_native.entries[i].mode;
+    if !matches!(shared.borrow().zlib_native.entries[i].phase, Phase::New) {
         return Err(fail(c, "Compression handle already initialized"));
     }
     let (engine, state_index, callback_index) =
@@ -244,7 +244,7 @@ pub(crate) fn initialize(
         .ok_or_else(|| RootedError::host("compression callback missing"))?;
     put(c, data, "state", state)?;
     put(c, data, "callback", callback)?;
-    shared.borrow_mut().zlib_native().entries[i].phase = Phase::Ready(engine);
+    shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
     Ok(c.undefined())
 }
 fn pledged_size(c: &mut Context<'_>, value: Option<RootId>) -> Result<Option<u64>, RootedError> {
@@ -428,11 +428,11 @@ pub(crate) fn write_sync(
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
-    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native().entries[i].phase, Phase::New);
+    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
         other => {
-            shared.borrow_mut().zlib_native().entries[i].phase = other;
+            shared.borrow_mut().zlib_native.entries[i].phase = other;
             return Err(fail(c, "Compression handle is not ready"));
         }
     };
@@ -445,7 +445,7 @@ pub(crate) fn write_sync(
         None => c.with_buffer_bytes_mut_rooted(target, |bytes| step(&[], bytes)),
     };
     // Restore the real engine before any guest callback can close or re-enter it.
-    shared.borrow_mut().zlib_native().entries[i].phase = Phase::Ready(engine);
+    shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
     let result = result.flatten().ok_or_else(|| fail(c, "Compression output is not writable"))?;
     complete(c, api, handle, write.delivery, &result, None, false)?;
     Ok(c.undefined())
@@ -482,11 +482,11 @@ pub(crate) fn write(
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native().entries[i].phase, Phase::New);
+    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
         other => {
-            shared.borrow_mut().zlib_native().entries[i].phase = other;
+            shared.borrow_mut().zlib_native.entries[i].phase = other;
             return Err(fail(c, "Compression handle is not ready"));
         }
     };
@@ -504,7 +504,7 @@ pub(crate) fn write(
         });
     })
     .map_err(RootedError::host)?;
-    shared.borrow_mut().zlib_native().entries[i].phase = Phase::Busy(rx);
+    shared.borrow_mut().zlib_native.entries[i].phase = Phase::Busy(rx);
     let input = *args
         .get(1)
         .ok_or_else(|| RootedError::host("compression input missing"))?;
@@ -525,8 +525,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let completed = {
         let state = shared.borrow();
-        let zlib = state.zlib_native();
-        match &zlib.entries[i].phase {
+        match &state.zlib_native.entries[i].phase {
             Phase::Busy(rx) => rx.try_recv(),
             _ => {
                 return Err(RootedError::host(
@@ -553,9 +552,8 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
         output,
     } = completed;
     let close_requested = {
-        let state = shared.borrow_mut();
-        let mut zlib = state.zlib_native();
-        let entry = &mut zlib.entries[i];
+        let mut state = shared.borrow_mut();
+        let entry = &mut state.zlib_native.entries[i];
         entry.phase = Phase::Ready(engine);
         entry.close_requested
     };
@@ -594,11 +592,11 @@ fn close_handle(c: &mut Context<'_>, api: RootId, handle: RootId) -> Result<(), 
         return Ok(());
     };
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    if matches!(shared.borrow().zlib_native().entries[i].phase, Phase::Busy(_)) {
-        shared.borrow_mut().zlib_native().entries[i].close_requested = true;
+    if matches!(shared.borrow().zlib_native.entries[i].phase, Phase::Busy(_)) {
+        shared.borrow_mut().zlib_native.entries[i].close_requested = true;
         return Ok(());
     }
-    let entry = shared.borrow_mut().zlib_native().entries.remove(i);
+    let entry = shared.borrow_mut().zlib_native.entries.remove(i);
     c.release_host_weak_root(entry.identity);
     let undefined = c.undefined();
     put(c, data, "state", undefined)?;
@@ -636,7 +634,7 @@ fn with_engine(
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = match &mut shared.borrow_mut().zlib_native().entries[i].phase {
+    let result = match &mut shared.borrow_mut().zlib_native.entries[i].phase {
         Phase::Ready(engine) => Some(operation(engine)),
         Phase::Busy(_) => None,
         Phase::New => Some(Ok(())),
@@ -684,35 +682,27 @@ pub(crate) fn crc32(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<R
     });
     Ok(c.number(f64::from(crc)))
 }
-
-
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::prune_lazy_state(runtime, |shared| &shared.zlib_native);
+    let shared = runtime.host_mut().shared_state();
+    let dead = shared
+        .borrow()
+        .zlib_native
+        .entries
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| (!runtime.host_weak_root_is_live(e.identity)).then_some(i))
+        .collect::<Vec<_>>();
+    for i in dead.into_iter().rev() {
+        let entry = shared.borrow_mut().zlib_native.entries.remove(i);
+        runtime.release_host_weak_root(entry.identity);
+    }
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.zlib_native);
+    let shared = runtime.host_mut().shared_state();
+    let entries = std::mem::take(&mut shared.borrow_mut().zlib_native.entries);
+    for entry in entries {
+        runtime.release_host_weak_root(entry.identity);
+    }
 }
 
 crate::host::startup_snapshot::host_snap_empty!(State { entries } "a zlib stream");
-
-crate::host::shared_vm::binding_operation!(binding_operation, binding);
-
-impl crate::host::node_host::LazyStateValue for State {
-    fn snapshot_write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
-        self.write_snapshot(writer)
-    }
-    fn snapshot_read(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
-        self.read_snapshot(reader)
-    }
-    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        let dead: Vec<usize> = self.entries.iter().enumerate()
-            .filter_map(|(index, entry)| (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)).collect();
-        for index in dead.into_iter().rev() {
-            let entry = self.entries.remove(index);
-            runtime.release_host_weak_root(entry.identity);
-        }
-    }
-    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        for entry in std::mem::take(&mut self.entries) { runtime.release_host_weak_root(entry.identity); }
-    }
-}

@@ -13,7 +13,7 @@ fn set(
 }
 pub(crate) fn install(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    if let Some(api) = shared.borrow().tls().api {
+    if let Some(api) = shared.borrow().tls_contexts.api {
         return Ok(api);
     }
     let api = super::surface::context_facades(context)?;
@@ -23,7 +23,7 @@ pub(crate) fn install(context: &mut NativeContext<'_>) -> Result<RootId, RootedE
     let prototype = get(context, native, "prototype")?;
     install_context_methods(context, prototype)?;
     let api = context.retain(api)?;
-    shared.borrow_mut().tls().api = Some(api);
+    shared.borrow_mut().tls_contexts.api = Some(api);
     Ok(api)
 }
 /// Gives a host function the `name` Node's function of that name reports.

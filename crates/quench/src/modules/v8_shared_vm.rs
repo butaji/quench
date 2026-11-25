@@ -861,8 +861,5 @@ mod tests {
     }
 }
 
-crate::host::shared_vm::binding_operation!(binding_operation, binding);
 
-crate::host::shared_vm::binding_operation!(heap_utils_binding_operation, heap_utils_binding);
 
-crate::host::shared_vm::binding_operation!(internal_only_binding_operation, internal_only_binding);

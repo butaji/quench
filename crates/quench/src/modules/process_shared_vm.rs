@@ -2079,7 +2079,7 @@ pub(crate) fn get_active_network_resources(
 ) -> Result<RootId, RootedError> {
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
-    let tcp = state.tcp();
+    let tcp = &state.tcp;
     let active_sockets = state
         .net_sockets
         .iter()
@@ -2818,7 +2818,7 @@ fn wait_for_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) {
     let extra = Vec::new();
     let control = shared_state.borrow().process_control.clone();
     let started = std::time::Instant::now();
-    shared_state.borrow().tcp.net_wait_ready(&extra, wait);
+    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, &extra, wait);
     control.record_event_loop_idle(started.elapsed());
 }
 
@@ -2864,7 +2864,7 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
-        || shared_state.borrow().tcp.net_has_work()
+        || crate::modules::net_shared_vm::has_work(&shared_state.borrow().tcp)
         || crate::modules::napi::has_work()
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
@@ -3262,15 +3262,12 @@ fn drain_shared_jobs(
         let unhandled = runtime.take_promise_rejection_unhandled_events();
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
-            super::crypto_key_material_shared_vm::prune(runtime);
-            #[cfg(quench_openssl_provider)]
-            super::crypto_signature_shared_vm::prune(runtime);
-            super::crypto_secret_job_shared_vm::prune(runtime);
-            #[cfg(quench_openssl_provider)]
-            runtime.host_mut().shared_state().borrow().crypto.prune_if_initialized(runtime);
+            let hooks: Vec<_> = runtime.host_mut().shared_state().borrow().armed_hooks().collect();
+            for hooks in hooks {
+                (hooks.prune)(runtime);
+            }
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
-            super::tls_shared_vm::contexts::prune(runtime);
             #[cfg(quench_icu)]
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
@@ -3830,14 +3827,10 @@ fn cleanup_environment(
 fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     shared.borrow_mut().native_tasks.shutdown();
-    super::crypto_secret_job_shared_vm::cleanup(runtime);
-    super::crypto_key_material_shared_vm::cleanup(runtime);
-    #[cfg(quench_openssl_provider)]
-    super::crypto_signature_shared_vm::cleanup(runtime);
-    #[cfg(quench_openssl_provider)]
-    super::crypto_hash_shared_vm::cleanup(runtime);
-    #[cfg(quench_openssl_provider)]
-    runtime.host_mut().shared_state().borrow().crypto.cleanup_if_initialized(runtime);
+    let hooks: Vec<_> = shared.borrow().armed_hooks().collect();
+    for hooks in hooks {
+        (hooks.teardown)(runtime);
+    }
     super::cares_binding::cleanup(runtime);
     super::performance_binding_shared_vm::cleanup(runtime);
     super::pipe_binding::cleanup(runtime);
@@ -3870,7 +3863,6 @@ fn emit_exit(
     result
 }
 fn cleanup_after_exit(runtime: &mut quench_runtime::Runtime<NodeHost>) {
-    super::tls_shared_vm::contexts::cleanup(runtime);
     cleanup_native_work(runtime);
     super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]

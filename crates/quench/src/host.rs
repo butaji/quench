@@ -13,9 +13,9 @@ pub mod wasm_frontend;
 pub mod pollers;
 
 pub(crate) use crate::shared_run::EntryGoal;
-pub(crate) use node_host::SharedNodeState;
+pub(crate) use node_host::{SharedNodeState, Teardown};
 pub use node_host::{unlinked_operation, HostCapabilities, HostPoller, HostPollers, NodeHost, NodeOutputSink};
-pub use shared_vm::{OPERATION_CALLBACKS, OPERATION_CALLBACK_PATHS};
+pub use shared_vm::{enable_dynamic_source, enable_wasm, OPERATION_CALLBACKS, OPERATION_CALLBACK_PATHS};
 #[cfg(feature = "native-execution")]
 pub use node_host::NativeProgramResolver;
 

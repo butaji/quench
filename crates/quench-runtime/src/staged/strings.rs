@@ -271,6 +271,37 @@ pub fn code_point_at_row<S: Stage>(stage: &mut S, wide: bool, units: S::Word, le
     }, #[inline(always)] |_| first)
 }
 
+/// The UTF-16 units of the code point `point` (at most U+10FFFF): one unit, the point itself,
+/// for a point up to U+FFFF (a lone surrogate too), else the two units of its surrogate pair,
+/// the high one in the low 16 bits and the low one above it. Nonzero high bits mean two units,
+/// since a low surrogate is never zero. The inverse of `code_point_at_row`.
+#[inline(always)]
+pub fn code_point_units_row<S: Stage>(stage: &mut S, point: S::Word) -> S::Word {
+    let limit = stage.constant(0x10000);
+    let single = stage.ult(point, limit);
+    stage.choose(single, #[inline(always)] |_| point, #[inline(always)] |stage| {
+        let payload = stage.add_imm(point, 0x10000u64.wrapping_neg());
+        let top = stage.shr_imm(payload, 10u64);
+        let high = stage.add_imm(top, 0xD800u64);
+        let bottom = stage.and_imm(payload, 0x3FFu64);
+        let low = stage.add_imm(bottom, 0xDC00u64);
+        let shifted = stage.mul_imm(low, 0x10000u64);
+        stage.or(high, shifted)
+    })
+}
+
+/// `code_point_units_row` on `Concrete`: `point`'s units pushed to `units`.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn push_code_point_units(units: &mut Vec<u16>, point: u32) {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let packed = code_point_units_row(&mut stage, u64::from(point));
+    units.push(packed as u16);
+    if packed >> 16 != 0 {
+        units.push((packed >> 16) as u16);
+    }
+}
+
 /// `code_point_at_row` on `Concrete` over `units`; `None` past the end.
 #[cfg(not(stencil_build))]
 pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
@@ -426,6 +457,105 @@ pub fn repeat_into_row<S: Stage>(stage: &mut S, out: S::Word, length: S::Word, u
     stage.choose(some, #[inline(always)] |stage| {
         stage.copy_span(false, out, unit, unit_length);
         double_through(stage, false, out, length, unit_length);
+        stage.constant(0)
+    }, #[inline(always)] |stage| stage.constant(0));
+}
+
+/// One past the first surrogate unit at or after `from` (`from < length`) in the `length` wide
+/// units at `units`, or `length` where there is none: the hot scan of `lone_surrogate_row`, which
+/// tells the two apart by the unit before the answer.
+#[inline(always)]
+fn past_surrogate<S: Stage>(stage: &mut S, units: S::Word, length: S::Word, from: S::Word) -> S::Word {
+    let [past] = stage.loop_words([from], #[inline(always)] |stage, [index]| {
+        let surrogate = surrogate_at(stage, units, index);
+        let next = stage.add_imm(index, 1u64);
+        let room = stage.ult(next, length);
+        let plain = stage.not(surrogate);
+        (stage.all(plain, room), [next])
+    });
+    past
+}
+
+/// Whether the wide unit at `index` is a surrogate (0xD800..=0xDFFF).
+#[inline(always)]
+fn surrogate_at<S: Stage>(stage: &mut S, units: S::Word, index: S::Word) -> S::Cond {
+    let unit = super::code_units::code_unit(stage, true, units, index);
+    let from_high = stage.add_imm(unit, 0xD800u64.wrapping_neg());
+    let span = stage.constant(0x800);
+    stage.ult(from_high, span)
+}
+
+/// The index of the first lone surrogate at or after `from` in the `length` wide units at
+/// `units` (a high surrogate with no low one after it, or a low one with no high one before it),
+/// or `length` where there is none. A pair is stepped over whole. The one body of
+/// `isWellFormed` and `toWellFormed` for every tier; a narrow string holds no surrogate.
+#[inline(always)]
+pub fn lone_surrogate_row<S: Stage>(stage: &mut S, units: S::Word, length: S::Word, from: S::Word) -> S::Word {
+    let some = stage.ult(from, length);
+    stage.choose(some, #[inline(always)] |stage| {
+        // Each turn scans to the next surrogate; a pair resumes after it, a lone one or the end
+        // leaves with its index marked by the top bit.
+        let [found] = stage.loop_words([from], #[inline(always)] |stage, [start]| {
+            let past = past_surrogate(stage, units, length, start);
+            let index = stage.add_imm(past, u64::MAX);
+            let surrogate = surrogate_at(stage, units, index);
+            let step = stage.choose(surrogate, #[inline(always)] |stage| {
+                let unit = super::code_units::code_unit(stage, true, units, index);
+                let from_high = stage.add_imm(unit, 0xD800u64.wrapping_neg());
+                let quarter = stage.constant(0x400);
+                let high = stage.ult(from_high, quarter);
+                let room = stage.ult(past, length);
+                let pairable = stage.all(high, room);
+                let paired = stage.choose(pairable, #[inline(always)] |stage| {
+                    let low = super::code_units::code_unit(stage, true, units, past);
+                    let from_low = stage.add_imm(low, 0xDC00u64.wrapping_neg());
+                    let quarter = stage.constant(0x400);
+                    let is_low = stage.ult(from_low, quarter);
+                    let (one, none) = (stage.constant(1), stage.constant(0));
+                    stage.select(is_low, one, none)
+                }, #[inline(always)] |stage| stage.constant(0));
+                let pair = stage.ne_imm(paired, 0u64);
+                let after = stage.add_imm(past, 1u64);
+                let lone = stage.or_imm(index, 1u64 << 63);
+                stage.select(pair, after, lone)
+            }, #[inline(always)] |stage| stage.or_imm(length, 1u64 << 63));
+            let mark = stage.shr_imm(step, 63u64);
+            let lone = stage.ne_imm(mark, 0u64);
+            let room = stage.ult(step, length);
+            let clear = stage.not(lone);
+            (stage.all(clear, room), [step])
+        });
+        let mark = stage.shr_imm(found, 63u64);
+        let lone = stage.ne_imm(mark, 0u64);
+        let index = stage.and_imm(found, u64::MAX >> 1);
+        stage.select(lone, index, length)
+    }, #[inline(always)] |_| length)
+}
+
+/// `toWellFormed` of the `length` wide units at `units` written to the `length` units at `out`:
+/// each run up to a lone surrogate copied, the surrogate replaced by U+FFFD.
+#[inline(always)]
+pub fn to_well_formed_row<S: Stage>(stage: &mut S, units: S::Word, length: S::Word, out: S::Word) {
+    let some = stage.ne_imm(length, 0u64);
+    stage.choose(some, #[inline(always)] |stage| {
+        let zero = stage.constant(0);
+        let [_] = stage.loop_words([zero], #[inline(always)] |stage, [from]| {
+            let lone = lone_surrogate_row(stage, units, length, from);
+            let count = stage.sub(lone, from);
+            let offset = stage.mul_imm(from, 2u64);
+            let (source, target) = (stage.add(units, offset), stage.add(out, offset));
+            stage.copy_span(true, target, source, count);
+            let inside = stage.ult(lone, length);
+            stage.choose(inside, #[inline(always)] |stage| {
+                let offset = stage.mul_imm(lone, 2u64);
+                let at = stage.add(out, offset);
+                let replacement = stage.constant(0xFFFD);
+                stage.store_u16(Region::HeapMeta.mutable(), at, 0, replacement);
+                stage.constant(0)
+            }, #[inline(always)] |stage| stage.constant(0));
+            let next = stage.add_imm(lone, 1u64);
+            (stage.ult(next, length), [next])
+        });
         stage.constant(0)
     }, #[inline(always)] |stage| stage.constant(0));
 }

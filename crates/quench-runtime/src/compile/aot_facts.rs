@@ -76,7 +76,19 @@ impl<'a> FunctionFacts<'a> {
 
 /// The facts of `program`, or none where the program can add code at run time.
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
-    if !gate::closed_world(program) {
+    analyze_as(program, closed_world(program))
+}
+
+/// Whether `program` adds no code at run time, as its source says (`gate`): an image keeps the
+/// answer its compile found (`AotImage::closed`), so a binary without the source frontend
+/// derives the same facts again (`analyze_as`).
+pub fn closed_world(program: &ResidualProgram) -> bool {
+    gate::closed_world(program)
+}
+
+/// The facts of `program`, or none where it is not `closed`.
+pub fn analyze_as(program: &ResidualProgram, closed: bool) -> AotFacts {
+    if !closed {
         return AotFacts::default();
     }
     let scope = Scope::of(program);

@@ -64,6 +64,15 @@ fn only_trivia(source: &str) -> bool {
 impl Vm {
     #[inline(always)]
     pub(super) fn require_source_compilation(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        if crate::compile::source_routes::routes().is_none() {
+            // A binary whose program makes no code links no source frontend (`source_routes`):
+            // code generation from strings is disallowed, as under Node's
+            // `--disallow-code-generation-from-strings`.
+            let message = "Code generation from strings disallowed for this context";
+            let text = self.heap.alloc_string(JsString::from_str(message));
+            let error = self.construct_error_native(p, Native::EvalError, &[text]).unwrap_or(Value::UNDEFINED);
+            return Err(JsError::thrown(error, message.into()));
+        }
         if self.execution_mode.allows_dynamic_execution() {
             Ok(())
         } else {
@@ -291,6 +300,7 @@ impl Vm {
         p: &ResidualProgram,
         source: &str,
         strict: bool,
+        #[cfg_attr(not(feature = "jit"), allow(unused_variables))]
         source_name: &str,
         mut cache_source: Option<eval_source::EvalSource>,
         shared_text: Option<eval_source::SharedText>,
@@ -320,8 +330,10 @@ impl Vm {
         }
         // The eval string's own ASCII storage, which the program keeps when it compiled exactly
         // that text, so no copy of the text is made for it.
+        #[cfg_attr(not(feature = "jit"), allow(unused_variables))]
         let provided_text = shared_text.as_ref().and_then(eval_source::SharedText::whole_ascii).map(crate::bytecode::SourceText::Local);
-        let mut residual = crate::Engine::specialize_eval_with_context(
+        #[cfg(feature = "jit")]
+        let residual = crate::Engine::specialize_eval_with_context(
             source,
             source_name,
             &*self,
@@ -330,7 +342,11 @@ impl Vm {
             &facts.private_names,
             &facts.annex_b_forbidden_names,
             provided_text,
-        )
+        );
+        // An execution-only build (no `jit`) compiles no source at run time.
+        #[cfg(not(feature = "jit"))]
+        let residual: Result<crate::ResidualProgram, Vec<crate::compile::Diagnostic>> = Err(Vec::new());
+        let mut residual = residual
         .map_err(|diagnostics| {
             if diagnostics
                 .iter()

@@ -195,7 +195,7 @@ pub(crate) fn write_buffer(
         .ok_or_else(|| RootedError::host("writeBuffer requires an ArrayBufferView"))?;
     binding(c)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let admission = net::try_native_write(&mut shared.borrow_mut().tcp(), socket, &bytes);
+    let admission = net::try_native_write(&mut shared.borrow_mut().tcp, socket, &bytes);
     let (asynchronous, error) = match admission {
         Ok(net::NativeWriteAdmission::Synchronous) => (false, 0),
         Err(error) => (false, -error.raw_os_error().unwrap_or(libc::EIO)),
@@ -211,7 +211,7 @@ pub(crate) fn write_buffer(
                 }
             };
             let result = net::queue_native_write(
-                &mut shared.borrow_mut().tcp(),
+                &mut shared.borrow_mut().tcp,
                 socket,
                 request,
                 &bytes[written..],
@@ -276,7 +276,7 @@ pub(crate) fn read_start(
 ) -> Result<RootId, RootedError> {
     let id = super::net_reference_shared_vm::handle_id(c, receiver)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let r = net::start_read(&mut shared.borrow_mut().tcp(), id);
+    let r = net::start_read(&mut shared.borrow_mut().tcp, id);
     if r.is_ok() {
         retain_reader(c, id, receiver)?;
     }
@@ -291,7 +291,7 @@ pub(crate) fn read_stop(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = super::net_reference_shared_vm::handle_id(c, receiver)?;
-    net::stop_read(&mut c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp(), id);
+    net::stop_read(&mut c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp, id);
     release_reader(c, id);
     Ok(c.number(0.0))
 }
@@ -333,7 +333,7 @@ pub(crate) fn deliver_read(
     let count = c.to_number(args[1])? as i32;
     let socket = c.to_number(args[2])? as u64;
     let result = call_onread(c, handle, args[0], count, 0);
-    net::release_delivery(&mut c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp(), socket);
+    net::release_delivery(&mut c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp, socket);
     if count <= 0 {
         release_reader(c, socket);
     }
@@ -461,7 +461,7 @@ fn connect(
     };
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let result = net::native_tcp_connect(
-        &mut shared.borrow_mut().tcp(),
+        &mut shared.borrow_mut().tcp,
         socket,
         request,
         std::net::SocketAddr::new(ip, port as u16),
@@ -508,7 +508,7 @@ pub(crate) fn shutdown(
         }
     };
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = net::native_shutdown_request(&mut shared.borrow_mut().tcp(), socket, request);
+    let result = net::native_shutdown_request(&mut shared.borrow_mut().tcp, socket, request);
     finish_submission(
         c,
         socket,
@@ -683,5 +683,3 @@ impl State {
         Ok(())
     }
 }
-
-crate::host::shared_vm::binding_operation!(binding_operation, binding);

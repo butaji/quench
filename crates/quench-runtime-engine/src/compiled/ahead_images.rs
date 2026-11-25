@@ -141,12 +141,16 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let crosses = crosses_bodies(&unit);
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    // A lane body's call through the VM's call helper steps its callee's records, where the base
+    // body binds and enters the callee's body: richards' IdleTask.run (`this.scheduler.release(packet)`)
+    // cost 5x the whole run as a lane.
+    // A member of a global name (`Math.sqrt`) is left out: the helper runs a native in place.
+    if calls_through_helper(&code) && calls_script(&unit, &proven) { return Err("calls through the VM's helper"); }
     // A lane body that polls and calls enters its callee's body through the VM's call helper, where
     // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
     // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
-    if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
+    if fault_poll && crosses_bodies(&unit) { return Err("polls and calls through the VM's helper"); }
     Ok(LaneImage { code, fault_poll })
 }
 
@@ -163,6 +167,31 @@ pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &Clo
 fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
+}
+
+/// Whether `unit` makes a call `proven` does not name whose callee may be a script function: any
+/// but a member read of a global name (`Math.sqrt(x)`), which is a native wherever the program
+/// writes no such member (the base body would call it through the same helper).
+#[cfg(feature = "jit")]
+fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) -> bool {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    let defined = |register, before: usize| (0..before).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == register));
+    let global_member = |pc: usize, callee| defined(callee, pc).is_some_and(|read| {
+        let field = unit.instructions[read];
+        let base = super::meaning_compiled::is_get_field(field).then(|| field.field_lookup()).flatten();
+        let Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) = base else { return false };
+        base.register_index().and_then(|object| defined(object, read)).is_some_and(|load| unit.instructions[load].op().loads_name())
+    });
+    unit.instructions.iter().enumerate().any(|(pc, instruction)| (means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall))
+        && !proven.contains_key(&pc) && !global_member(pc, instruction.register_b()))
+}
+
+/// Whether `code` calls the VM's call helper (`LaneHelper::Call`), the lowering's own record of a
+/// call it neither proved nor made in place.
+#[cfg(feature = "jit")]
+fn calls_through_helper(code: &RelocatableCode) -> bool {
+    code.relocations.iter().any(|relocation| relocation.namespace == lane_region::relocs::RelocKind::Helper as u32
+        && relocation.key == LaneHelper::Call as u32)
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -224,7 +253,11 @@ impl AheadImages {
     /// Starts collecting the images of every program this thread stores (`finish_recording`).
     #[cfg(feature = "jit")]
     pub fn start_recording() {
-        *recorded() = Some(quench_runtime::vm::engine_types::Recording { lower: |program| AheadImages::compile(program), images: Vec::new() });
+        *recorded() = Some(quench_runtime::vm::engine_types::Recording {
+            lower: |program| AheadImages::compile(program),
+            lower_wasm: |vm, id, program, bindings| AheadImages::compile_wasm(vm, id, program, bindings),
+            images: Vec::new(),
+        });
     }
 
     /// An execution-only build records no images (it carries no lowering).
@@ -316,14 +349,14 @@ impl Vm {
 
     /// `function`'s lane body from `images`, linked at the address it will run.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
-        let refused = |why: &str| if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
+        let refused = |why: &str| refuse_lane(function, why);
         let Some(linked_live) = images.linked.as_ref() else { refused("the image did not link"); return None };
         let Some(lane) = images.image.functions.get(function as usize).and_then(|function| function.lane.as_ref()) else {
             refused("the image holds no lane body for it"); return None;
         };
         let fault_poll = lane.fault_poll;
-        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
-            refuse_lane(function, "no unit"); return None;
+        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.closed))) else {
+            refused("no unit"); return None;
         };
         // An image has no lowering to ask which registers a leave inside an inlined frame stores.
         if !unit.frames.is_empty() { refuse_lane(function, "inlined frames"); return None; }
@@ -383,7 +416,7 @@ impl Vm {
         let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
         let Some(live) = images.linked.as_ref() else { return "unlinked" };
         let Some(key) = live.calls.key((function, pc)) else { return "unproven-site" };
-        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program));
+        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.closed));
         if facts.function_facts(function).call_target(pc) != Some(target.function) { return "other-function" }
         let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
         let Some(view) = views.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return "no-view" };

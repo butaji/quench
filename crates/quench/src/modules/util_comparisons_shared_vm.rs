@@ -429,7 +429,7 @@ impl Comparison {
             }
             // Two CryptoKeys are the built crypto module's.
             #[cfg(quench_openssl_provider)]
-            let key_object = c.host_as::<crate::host::NodeHost>().shared_state().borrow().crypto.built_key_object_class();
+            let key_object = crate::modules::crypto_node::built_class(c, crate::modules::crypto_node::Class::KeyObject);
             #[cfg(not(quench_openssl_provider))]
             let key_object = None;
             let key_object = key_object.ok_or_else(|| RootedError::host("a CryptoKey without the crypto module"))?;

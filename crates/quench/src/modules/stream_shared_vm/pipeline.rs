@@ -132,6 +132,8 @@ fn stage_options(c: &mut Context<'_>, record: RootId) -> Outcome {
     let mut signal = get(c, record, "signal")?;
     if is_nullish(c, signal) {
         let global = c.global_root()?;
+        // A lazy global read by name: its initializer is linked with this read.
+        let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
         let class = get(c, global, "AbortController")?;
         let controller = c.construct_rooted(class, class, &[])?;
         put(c, record, "controller", controller)?;

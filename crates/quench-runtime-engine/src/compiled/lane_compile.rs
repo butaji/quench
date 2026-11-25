@@ -375,6 +375,10 @@ fn left_places(unit: &lane_unit::Unit, generic: &[LaneExit], first: usize) -> (V
     (left_at, entry_left)
 }
 
+/// A lane body's work (`body_work_in_lane`), the route `jit_routes` installs.
+pub(crate) type BodyWork = fn(&mut Vm, &ResidualProgram, u32, &dyn Fn(u32, u32) -> Vec<CallTarget>, &dyn Fn(u32, u32) -> Option<u64>,
+    &dyn Fn(Value) -> (usize, usize), &dyn Fn(&Vm) -> Vec<DirectCandidates>, LaneBodyWork<'_>, Option<u32>) -> LaneBodyOutcome;
+
 #[quench_macros::ext(CompiledLaneCompileVm)]
 impl Vm {
     /// The call targets a unit binds at `caller`'s `pc`. A call the body left at takes no
@@ -674,9 +678,17 @@ impl Vm {
     pub(crate) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        if !cfg!(feature = "jit") {
-            return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
+        // Without the JIT's routes (`jit_routes`) the body declines and the interpreter runs.
+        match crate::jit_routes::jit() {
+            Some(routes) => (routes.body)(self, program, function, targets, trips, captures, direct, work, entry),
+            None => LaneBodyOutcome::Declined,
         }
+    }
+
+    /// `body_work_in_lane`'s route, which `jit_routes` installs.
+    fn compile_body_work(&mut self, program: &ResidualProgram, function: u32,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
         let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());

@@ -317,9 +317,8 @@ pub(crate) fn method(
                 None
             };
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 if let Some(engine) = engine {
                     super::super::crypto_engine_shared_vm::set_key(configuration, &name, &engine)
                 } else {
@@ -336,9 +335,8 @@ let configuration = tls.configuration(index)?;
                 .ok_or_else(|| RootedError::host("TLS native configuration requires a string"))?;
             let value = super::super::crypto_strings::null_terminated_prefix(&value);
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 match action.as_str() {
                     "setCiphers" => configuration.set_cipher_list(value),
                     "setCipherSuites" => configuration.set_ciphersuites(value),
@@ -373,9 +371,8 @@ let configuration = tls.configuration(index)?;
                 .ok_or_else(|| RootedError::host("TLS version requires an integer"))?
                 as i32;
             let success = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 unsafe {
                     if action == "setMinProto" {
                         openssl_sys::SSL_CTX_set_min_proto_version(configuration.as_ptr(), version)
@@ -393,9 +390,8 @@ let configuration = tls.configuration(index)?;
         }
         "getCertificate" => {
             let bytes = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 let cert = unsafe { openssl_sys::SSL_CTX_get0_certificate(configuration.as_ptr()) };
                 if cert.is_null() {
                     None
@@ -418,7 +414,7 @@ let configuration = tls.configuration(index)?;
                 .into_bytes();
             let result = shared
                 .borrow_mut()
-                .tls()
+                .tls_contexts
                 .configuration(index)?
                 .set_session_id_context(&bytes);
             result
@@ -430,9 +426,8 @@ let configuration = tls.configuration(index)?;
                 .and_then(|value| value.as_number())
                 .ok_or_else(|| RootedError::host("TLS timeout requires an integer"))?
                 as std::ffi::c_long;
-            let state = shared.borrow_mut();
-            let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+            let mut state = shared.borrow_mut();
+            let configuration = state.tls_contexts.configuration(index)?;
             unsafe {
                 SSL_CTX_set_timeout(configuration.as_ptr(), timeout);
             }
@@ -456,9 +451,8 @@ let configuration = tls.configuration(index)?;
             const SSL_CTRL_SET_TLSEXT_TICKET_KEYS: i32 = 59;
             const SSL_CTRL_GET_TLSEXT_TICKET_KEYS: i32 = 58;
             let key_len = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 unsafe {
                     openssl_sys::SSL_CTX_ctrl(
                         configuration.as_ptr(),
@@ -482,9 +476,8 @@ let configuration = tls.configuration(index)?;
                 openssl_keys[48..64].copy_from_slice(&bytes[32..48]);
             }
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 unsafe {
                     openssl_sys::SSL_CTX_ctrl(
                         configuration.as_ptr(),
@@ -507,9 +500,8 @@ let configuration = tls.configuration(index)?;
             // the zero-extended tails when projecting its public key format.
             const SSL_CTRL_GET_TLSEXT_TICKET_KEYS: i32 = 58;
             let key_len = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 unsafe {
                     openssl_sys::SSL_CTX_ctrl(
                         configuration.as_ptr(),
@@ -526,9 +518,8 @@ let configuration = tls.configuration(index)?;
             }
             let mut openssl_keys = vec![0u8; key_len];
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 unsafe {
                     openssl_sys::SSL_CTX_ctrl(
                         configuration.as_ptr(),
@@ -570,9 +561,8 @@ let configuration = tls.configuration(index)?;
                 .and_then(|value| value.as_bool())
                 == Some(true)
             {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 let success =
                     unsafe { openssl_sys::SSL_CTX_set_dh_auto(configuration.as_ptr(), 1) };
                 if success != 1 {
@@ -598,7 +588,7 @@ let configuration = tls.configuration(index)?;
                 }
                 let result = shared
                     .borrow_mut()
-                    .tls()
+                    .tls_contexts
                     .configuration(index)?
                     .set_tmp_dh(&dh);
                 result.map_err(|_| {
@@ -618,9 +608,8 @@ let configuration = tls.configuration(index)?;
                 .next()
                 .ok_or_else(|| super::operation_error(context, "Failed to parse certificate"))?;
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 (|| {
                     configuration.set_certificate(&cert)?;
                     for cert in chain {
@@ -646,7 +635,7 @@ let configuration = tls.configuration(index)?;
             .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
             let result = shared
                 .borrow_mut()
-                .tls()
+                .tls_contexts
                 .configuration(index)?
                 .set_private_key(&key);
             result
@@ -659,7 +648,7 @@ let configuration = tls.configuration(index)?;
             for cert in certs {
                 let result = shared
                     .borrow_mut()
-                    .tls()
+                    .tls_contexts
                     .configuration(index)?
                     .cert_store_mut()
                     .add_cert(cert);
@@ -669,7 +658,7 @@ let configuration = tls.configuration(index)?;
             }
         }
         "addRootCerts" => {
-            let defaults = shared.borrow().tls().default_ca_certificates.clone();
+            let defaults = shared.borrow().tls_contexts.default_ca_certificates.clone();
             let roots: Vec<openssl::x509::X509> = if let Some(defaults) = defaults {
                 if defaults.is_empty() {
                     Vec::new()
@@ -692,7 +681,7 @@ let configuration = tls.configuration(index)?;
             for root in roots {
                 let result = shared
                     .borrow_mut()
-                    .tls()
+                    .tls_contexts
                     .configuration(index)?
                     .cert_store_mut()
                     .add_cert(root);
@@ -704,7 +693,7 @@ let configuration = tls.configuration(index)?;
         "setAllowPartialTrustChain" => {
             let result = shared
                 .borrow_mut()
-                .tls()
+                .tls_contexts
                 .configuration(index)?
                 .cert_store_mut()
                 .set_flags(openssl::x509::verify::X509VerifyFlags::PARTIAL_CHAIN);
@@ -716,9 +705,8 @@ let configuration = tls.configuration(index)?;
             let crl = openssl::x509::X509Crl::from_pem(&bytes)
                 .map_err(|_| super::operation_error(context, "Failed to parse CRL"))?;
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let store = tls.configuration(index)?.cert_store_mut();
+                let mut state = shared.borrow_mut();
+                let store = state.tls_contexts.configuration(index)?.cert_store_mut();
                 let success = unsafe { X509_STORE_add_crl(store.as_ptr(), crl.as_ptr()) };
                 if success == 1 {
                     store.set_flags(
@@ -736,9 +724,8 @@ let store = tls.configuration(index)?.cert_store_mut();
             let pass = args.get(1).copied().unwrap_or_else(|| context.undefined());
             let parsed = super::parsed_pfx(context, value, pass)?;
             let result = {
-                let state = shared.borrow_mut();
-                let mut tls = state.tls();
-let configuration = tls.configuration(index)?;
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
                 (|| {
                     configuration
                         .set_certificate(parsed.cert.as_ref().expect("validated certificate"))?;

@@ -378,4 +378,3 @@ pub(crate) fn mark_loop_exit(runtime: &mut Runtime<NodeHost>) -> Result<(), Stri
 
 crate::host::startup_snapshot::host_snap_state!(State { counts, milestones, uv_metrics, uv_metrics_bigint, api, timeline });
 
-crate::host::shared_vm::binding_operation!(binding_operation, binding);

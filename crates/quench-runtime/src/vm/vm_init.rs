@@ -14,6 +14,10 @@ impl Vm {
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
+        super::layer_hooks::enable_jit();
+        // A static image's support (no `source`) links no parser: its routes never install.
+        #[cfg(feature = "source")]
+        crate::compile::source_routes::enable();
         Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
     }
 

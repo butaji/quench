@@ -403,20 +403,15 @@ pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> R
     if !c.is_object_rooted(value)? {
         return Ok(false);
     }
-    let global = c.global_root()?;
-    let constructor = if class == "KeyObject" {
-        // A value is no key of a crypto module not yet built.
-        #[cfg(quench_openssl_provider)]
-        let key_object = c.host_as::<crate::host::NodeHost>().shared_state().borrow().crypto.built_key_object_class();
-        #[cfg(not(quench_openssl_provider))]
-        let key_object = None;
-        match key_object {
-            Some(key_object) => key_object,
-            None => return Ok(false),
-        }
-    } else {
-        get(c, global, class)?
+    // A value is no key of a crypto module not yet built.
+    #[cfg(quench_openssl_provider)]
+    let constructor = {
+        use crate::modules::crypto_node::{built_class, Class};
+        built_class(c, if class == "KeyObject" { Class::KeyObject } else { Class::CryptoKey })
     };
+    #[cfg(not(quench_openssl_provider))]
+    let constructor: Option<RootId> = None;
+    let Some(constructor) = constructor else { return Ok(false) };
     if !c.is_callable_rooted(constructor)? {
         return Ok(false);
     }
@@ -916,6 +911,8 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
     line.extend(message);
     let line = c.string_units_rooted(&line);
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("consoleGlobalInitialize");
     let console = get(c, global, "console")?;
     let log = get(c, console, "log")?;
     c.call_rooted(log, console, &[line])?;
@@ -926,6 +923,8 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
 pub(crate) fn transferable_abort_signal(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let signal = argument(c, args, 0);
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let class = get(c, global, "AbortSignal")?;
     if !c.is_object_rooted(signal)? || !c.instance_of_rooted(signal, class)? {
         return Err(super::util_shared_vm::argument_type_error(c, signal, "signal", "AbortSignal")?);
@@ -936,6 +935,8 @@ pub(crate) fn transferable_abort_signal(c: &mut Context<'_>, _: RootId, args: &[
 /// `util.transferableAbortController()`.
 pub(crate) fn transferable_abort_controller(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let class = get(c, global, "AbortController")?;
     c.construct_rooted(class, class, &[])
 }

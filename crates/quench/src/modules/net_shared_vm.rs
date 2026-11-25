@@ -119,7 +119,7 @@ impl Write for RawStream {
 
 enum SocketStream {
     Plain(RawStream),
-    Encrypted(encrypted::EncryptedStream),
+    Encrypted(Box<dyn encrypted::Encrypted + Send>),
 }
 impl SocketStream {
     fn raw(&self) -> &RawStream {
@@ -174,7 +174,7 @@ impl SocketStream {
     /// Announce the TLS sessions the peer issued, as `session` events of `socket`.
     fn announce_sessions(&self, socket: u64, events: &mut Vec<TransportEvent>) {
         if let Self::Encrypted(tls) = self {
-            let sessions = tls.take_announcements(|announcements| std::mem::take(&mut announcements.sessions));
+            let sessions = tls.take_sessions();
             events.extend(sessions.into_iter().map(|session| TransportEvent::Session { socket, session }));
         }
     }
@@ -1051,7 +1051,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         if let SocketStream::Encrypted(tls) = &mut socket.stream {
             let handshake = tls.handshake();
             // The handshake writes its key log lines as it runs, ahead of its outcome.
-            let lines = tls.take_announcements(|announcements| announcements.keylog.as_mut().map(std::mem::take).unwrap_or_default());
+            let lines = tls.take_keylog();
             events.extend(lines.into_iter().map(|line| TransportEvent::Keylog { socket: id, line }));
             match handshake {
                 Ok(true) => events.push(TransportEvent::Secure { socket: id }),
@@ -1507,7 +1507,7 @@ pub(crate) fn connect_operation(
     {
         let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let bind_path = resolve_local_path(&shared.borrow().cwd, &path);
-        let id = connect_local(&mut shared.borrow_mut().tcp(), bind_path, path)
+        let id = connect_local(&mut shared.borrow_mut().tcp, bind_path, path)
             .map_err(RootedError::host)?;
         return register_socket(context, socket, id);
     }
@@ -1530,13 +1530,13 @@ pub(crate) fn connect_operation(
         return super::net_lookup_shared_vm::start(context, socket, host_root, port_root, options);
     }
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let id = reserve_lookup(&mut shared.borrow_mut().tcp()).map_err(RootedError::host)?;
+    let id = reserve_lookup(&mut shared.borrow_mut().tcp).map_err(RootedError::host)?;
     register_socket(context, socket, id)?;
     super::net_options_shared_vm::connect_family_options(context, options)?;
     let (local_address, local_port) =
         super::net_options_shared_vm::connect_source(context, options)?;
     connect_resolved(
-        &mut shared.borrow_mut().tcp(),
+        &mut shared.borrow_mut().tcp,
         id,
         vec![host],
         port,
@@ -1672,7 +1672,8 @@ pub(crate) fn write_operation(
         .copied()
         .ok_or_else(|| RootedError::host("socket write callback is missing"))?;
     if !bytes.is_empty() {
-        crate::modules::tls_shared_vm::socket::start_for_write(context, socket)?;
+        // A TLS session's first write starts its handshake (`tlsStartForWrite`).
+        crate::host::shared_vm::call_linked(context, crate::host::shared_vm::static_operation("tlsStartForWrite"), &[socket])?;
     }
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
     if !state.borrow().net_sockets.contains_key(&id) {
@@ -1688,9 +1689,9 @@ pub(crate) fn write_operation(
         .push_back(callback);
     // The transport owns accepted writes from admission onwards. In particular
     // writeQueueSize excludes bytes synchronously accepted by the OS.
-    let connected = is_connected(&state.borrow().tcp(), id);
+    let connected = is_connected(&state.borrow().tcp, id);
     if connected {
-        write_with_completion(&mut state.borrow_mut().tcp(), id, &bytes, raw)
+        write_with_completion(&mut state.borrow_mut().tcp, id, &bytes, raw)
             .map_err(RootedError::host)?;
     } else {
         // Connecting sockets keep their existing deferred submission path.
@@ -1770,14 +1771,14 @@ pub(crate) fn destroy_operation(
         .net_pending_ends
         .retain(|(socket, _)| *socket != id);
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
-    let was_connected = is_connected(&state.borrow().tcp(), id);
+    let was_connected = is_connected(&state.borrow().tcp, id);
     let reset_key = context.string_rooted("resetAndClosing");
     let reset = context.get_property_rooted(socket, reset_key)?;
     if context.truthy_rooted(reset)? {
-        reset_socket(&state.borrow().tcp(), id)
+        reset_socket(&state.borrow().tcp, id)
             .map_err(|error| RootedError::host(error.to_string()))?;
     }
-    close_socket(&mut state.borrow_mut().tcp(), id);
+    close_socket(&mut state.borrow_mut().tcp, id);
     context
         .host_as::<crate::host::NodeHost>()
         .net_pending_destroys
@@ -1839,7 +1840,7 @@ pub(super) fn listen_local_server(
     let result = bind_path.and_then(|bind_path| {
         cleanup_path.and_then(|cleanup_path| {
             listen_local(
-                &mut shared.borrow_mut().tcp(),
+                &mut shared.borrow_mut().tcp,
                 bind_path,
                 path.to_owned(),
                 cleanup_path,
@@ -1865,11 +1866,11 @@ pub(crate) fn server_address_operation(
         return Ok(context.null());
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let local = listener_path(&shared.borrow().tcp(), id).map(str::to_owned);
+    let local = listener_path(&shared.borrow().tcp, id).map(str::to_owned);
     if let Some(path) = local {
         return Ok(context.string_rooted(&path));
     }
-    let address = address(&shared.borrow().tcp(), id);
+    let address = address(&shared.borrow().tcp, id);
     let Some(address) = address else {
         return Ok(context.null());
     };
@@ -1930,7 +1931,7 @@ pub(crate) fn child_stdio_socket_descriptor(
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
-    let fd = native_tcp_fd(&state.tcp(), id);
+    let fd = native_tcp_fd(&state.tcp, id);
     Ok((fd >= 0).then_some(fd))
 }
 
@@ -2083,8 +2084,7 @@ pub(crate) fn ipc_socket_handle(
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
-    let tcp = state.tcp();
-    let Some(socket) = tcp.sockets.get(&id) else {
+    let Some(socket) = state.tcp.sockets.get(&id) else {
         return Ok(None);
     };
     let SocketStream::Plain(RawStream::Tcp(stream)) = &socket.stream else {
@@ -2367,7 +2367,9 @@ pub(crate) fn encrypt(
     let referenced = socket.referenced;
     match encrypted::EncryptedStream::new(ssl, raw, role, started) {
         Ok(tls) => {
-            socket.stream = SocketStream::Encrypted(tls);
+            // Its transport errors reach the TLS socket (`transport_poll`).
+            let _ = crate::host::shared_vm::operation!("tlsSocketTransportError");
+            socket.stream = SocketStream::Encrypted(Box::new(tls));
             transport.sockets.insert(id, socket);
             Ok(())
         }
@@ -2462,7 +2464,7 @@ pub(crate) fn deliver_data(
         Ok(result)
     })();
     release_delivery(
-        &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp(),
+        &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp,
         socket,
     );
     result
@@ -2501,7 +2503,7 @@ fn complete_connection_delivery(
         as u64;
     {
         let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-        if let Some(socket) = shared.borrow_mut().tcp().sockets.get_mut(&socket) {
+        if let Some(socket) = shared.borrow_mut().tcp.sockets.get_mut(&socket) {
             socket.delivery = DeliveryPhase::DeliveringConnection;
         };
     }
@@ -2517,9 +2519,8 @@ fn complete_connection_delivery(
     })();
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     {
-        let state = shared.borrow_mut();
-        let mut tcp = state.tcp();
-        release_delivery(&mut tcp, socket);
+        let mut state = shared.borrow_mut();
+        release_delivery(&mut state.tcp, socket);
     }
     result
 }
@@ -3183,6 +3184,16 @@ impl Transport {
             && closing_sockets.is_empty()
             && pending_events.is_empty()
     }
+
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        require_quiescent(self.is_quiescent(), "a TCP socket")?;
+        self.next_id.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -3223,15 +3234,5 @@ mod tests {
         let elapsed = started.elapsed();
         notifier.join().expect("notifier thread");
         assert!(elapsed < Duration::from_secs(1), "wait_ready slept {elapsed:?}");
-    }
-}
-
-impl crate::host::node_host::LazyStateValue for Transport {
-    fn net_has_work(&self) -> bool { has_work(self) }
-    fn net_wait_ready(&mut self, extra: &[std::os::fd::RawFd], wait: std::time::Duration) { wait_ready(self, extra, wait); }
-    fn net_cleanup(&mut self) { cleanup(self); }
-    fn net_close_socket(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>, id: u64) {
-        native_tcp_close(self, id);
-        super::native_async_wrap::collect_tcp(runtime, id);
     }
 }

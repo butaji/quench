@@ -18,8 +18,8 @@ pub(crate) struct Announcements {
 
 pub(crate) type SharedAnnouncements = std::sync::Mutex<Announcements>;
 
-pub(crate) fn announcements_index()
--> Result<&'static openssl::ex_data::Index<Ssl, SharedAnnouncements>, openssl::error::ErrorStack> {
+pub(crate) fn announcements_index(
+) -> Result<&'static openssl::ex_data::Index<Ssl, SharedAnnouncements>, openssl::error::ErrorStack> {
     static INDEX: OnceLock<
         Result<openssl::ex_data::Index<Ssl, SharedAnnouncements>, openssl::error::ErrorStack>,
     > = OnceLock::new();
@@ -30,21 +30,14 @@ pub(crate) fn announcements_index()
 }
 
 /// `ssl`'s announcements, for a callback to record into or the event loop to drain.
-pub(crate) fn with_announcements<T>(
-    ssl: &openssl::ssl::SslRef,
-    use_them: impl FnOnce(&mut Announcements) -> T,
-) -> Option<T> {
+pub(crate) fn with_announcements<T>(ssl: &openssl::ssl::SslRef, use_them: impl FnOnce(&mut Announcements) -> T) -> Option<T> {
     let index = announcements_index().ok()?;
     let shared = ssl.ex_data(*index)?;
-    Some(use_them(
-        &mut shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    ))
+    Some(use_them(&mut shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner)))
 }
 
-pub(crate) fn alpn_protocols_index()
--> Result<&'static openssl::ex_data::Index<Ssl, AlpnProtocols>, openssl::error::ErrorStack> {
+pub(crate) fn alpn_protocols_index(
+) -> Result<&'static openssl::ex_data::Index<Ssl, AlpnProtocols>, openssl::error::ErrorStack> {
     static INDEX: OnceLock<
         Result<openssl::ex_data::Index<Ssl, AlpnProtocols>, openssl::error::ErrorStack>,
     > = OnceLock::new();
@@ -54,8 +47,8 @@ pub(crate) fn alpn_protocols_index()
         .map_err(Clone::clone)
 }
 
-pub(crate) fn server_names_index()
--> Result<&'static openssl::ex_data::Index<Ssl, ServerNames>, openssl::error::ErrorStack> {
+pub(crate) fn server_names_index(
+) -> Result<&'static openssl::ex_data::Index<Ssl, ServerNames>, openssl::error::ErrorStack> {
     static INDEX: OnceLock<
         Result<openssl::ex_data::Index<Ssl, ServerNames>, openssl::error::ErrorStack>,
     > = OnceLock::new();
@@ -65,8 +58,8 @@ pub(crate) fn server_names_index()
         .map_err(Clone::clone)
 }
 
-pub(crate) fn peer_servername_index()
--> Result<&'static openssl::ex_data::Index<Ssl, String>, openssl::error::ErrorStack> {
+pub(crate) fn peer_servername_index(
+) -> Result<&'static openssl::ex_data::Index<Ssl, String>, openssl::error::ErrorStack> {
     static INDEX: OnceLock<
         Result<openssl::ex_data::Index<Ssl, String>, openssl::error::ErrorStack>,
     > = OnceLock::new();
@@ -132,7 +125,7 @@ pub(crate) fn owner(
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
-        .tls()
+        .tls_contexts
         .entries
         .iter()
         .map(|entry| entry.identity)
@@ -147,13 +140,6 @@ pub(crate) fn owner(
     let error = context.type_error_rooted("Illegal invocation")?;
     Err(context.throw(error))
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::prune_lazy_state(runtime, |shared| &shared.tls_contexts);
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.tls_contexts);
-}
-
 
 pub(crate) fn register(
     context: &mut NativeContext<'_>,
@@ -166,7 +152,7 @@ pub(crate) fn register(
         .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
-        .tls()
+        .tls_contexts
         .register(identity);
     Ok(context.undefined())
 }
@@ -344,7 +330,7 @@ pub(crate) fn initialize(
         .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
-        .tls()
+        .tls_contexts
         .initialize(index, configuration);
     Ok(context.undefined())
 }
@@ -436,9 +422,8 @@ pub(crate) fn set_options(
         return Err(RootedError::host("TLS option binding requires a number"));
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let state = shared.borrow_mut();
-    let mut tls = state.tls();
-    let configuration = tls.configuration(index)?;
+    let mut state = shared.borrow_mut();
+    let configuration = state.tls_contexts.configuration(index)?;
     unsafe {
         openssl_sys::SSL_CTX_set_options(configuration.as_ptr(), (value as i64) as _);
     }
@@ -465,9 +450,8 @@ fn protocol_version(
 ) -> Result<RootId, RootedError> {
     let index = owner(context, receiver)?;
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let state = shared.borrow_mut();
-    let mut tls = state.tls();
-    let configuration = tls.configuration(index)?;
+    let mut state = shared.borrow_mut();
+    let configuration = state.tls_contexts.configuration(index)?;
     let version = unsafe {
         if minimum {
             openssl_sys::SSL_CTX_get_min_proto_version(configuration.as_ptr())
@@ -478,25 +462,54 @@ fn protocol_version(
     Ok(context.number(f64::from(version)))
 }
 
-impl crate::host::node_host::LazyStateValue for State {
-    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        let dead: Vec<usize> = self.sessions.entries.iter().enumerate()
-            .filter_map(|(index, entry)| (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)).collect();
-        for index in dead.into_iter().rev() {
-            let entry = self.sessions.entries.remove(index);
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { api, ciphers, transport_errors, sessions, entries, default_ca_certificates } = self;
+        require_quiescent(transport_errors.is_empty() && sessions.entries.is_empty() && entries.is_empty(), "a TLS context")?;
+        require_quiescent(default_ca_certificates.is_none(), "replaced default CA certificates")?;
+        api.write(writer)?;
+        ciphers.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.api = HostSnap::read(reader)?;
+        self.ciphers = HostSnap::read(reader)?;
+        Ok(())
+    }
+}
+
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        super::sessions::cleanup(runtime);
+        let shared = runtime.host_mut().shared_state();
+        let entries = std::mem::take(&mut shared.borrow_mut().tls_contexts.entries);
+        for entry in entries {
             runtime.release_host_weak_root(entry.identity);
         }
-        let dead: Vec<usize> = self.entries.iter().enumerate()
-            .filter_map(|(index, entry)| (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)).collect();
-        for index in dead.into_iter().rev() {
-            let entry = self.entries.remove(index);
-            runtime.release_host_weak_root(entry.identity);
+        shared.borrow_mut().tls_contexts.transport_errors.clear();
+        let api = shared.borrow_mut().tls_contexts.api.take();
+        if let Some(api) = api {
+            runtime.release_root(api);
         }
     }
-    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        for entry in std::mem::take(&mut self.sessions.entries) { runtime.release_host_weak_root(entry.identity); }
-        for entry in std::mem::take(&mut self.entries) { runtime.release_host_weak_root(entry.identity); }
-        self.transport_errors.clear();
-        if let Some(api) = self.api.take() { runtime.release_root(api); }
+
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        super::sessions::prune(runtime);
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared
+            .borrow()
+            .tls_contexts
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let entry = shared.borrow_mut().tls_contexts.entries.remove(index);
+            runtime.release_host_weak_root(entry.identity);
+        }
     }
 }

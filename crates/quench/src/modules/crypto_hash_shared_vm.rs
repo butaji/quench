@@ -126,8 +126,8 @@ fn register(c: &mut Context<'_>, receiver: RootId, value: Value) -> Result<RootI
     let identity = c.host_weak_root(receiver)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let index = {
-        let shared = shared.borrow_mut();
-        let mut state = shared.crypto_hashes();
+        let mut shared = shared.borrow_mut();
+        let state = &mut *shared.crypto_hashes;
         let handle = Some(Handle { identity, value });
         match state.free.pop() {
             Some(index) => {
@@ -144,8 +144,8 @@ fn register(c: &mut Context<'_>, receiver: RootId, value: Value) -> Result<RootI
     let key = c.host_function_data()?;
     let slot = c.number(index as f64);
     if let Err(error) = c.define_data_property_rooted(receiver, key, slot, false, false, false) {
-        shared.borrow_mut().crypto_hashes().handles[index] = None;
-        shared.borrow_mut().crypto_hashes().free.push(index);
+        shared.borrow_mut().crypto_hashes.handles[index] = None;
+        shared.borrow_mut().crypto_hashes.free.push(index);
         c.release_host_weak_root(identity);
         return Err(error);
     }
@@ -162,9 +162,8 @@ fn resolve(
         .and_then(|value| value.as_number())
         .filter(|n| n.fract() == 0.0 && *n >= i32::MIN as f64 && *n <= i32::MAX as f64)
         .map(|n| n as i32);
-    let state = shared.borrow_mut();
-    let mut jobs = state.crypto_secret_jobs();
-    jobs.digests.resolve_cached(
+    let mut state = shared.borrow_mut();
+    state.crypto_secret_jobs.digests.resolve_cached(
         name,
         id,
         super::crypto_provider_shared_vm::fips_generation,
@@ -200,7 +199,7 @@ pub(crate) fn create_hash(
     let state = if c.is_object_rooted(algorithm)? {
         let index = index(c, algorithm)?;
         let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-        let result = match &shared.borrow().crypto_hashes().handles[index].as_ref().expect("live hash slot").value {
+        let result = match &shared.borrow().crypto_hashes.handles[index].as_ref().expect("live hash slot").value {
             Value::Hash(state) => state.copy(output_length),
             _ => return Err(fail(c, "Invalid native hash copy source")),
         };
@@ -244,11 +243,9 @@ pub(crate) fn init_hmac(
     let result = HmacState::new(digest, &key);
     let state = result.map_err(|error| errors::throw(c, Operation::Hmac(&name), error))?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let state_ref = shared.borrow_mut();
-    let mut hashes = state_ref.crypto_hashes();
-    let handle = hashes.handles[index].as_mut().expect("live hash slot");
+    let mut state_ref = shared.borrow_mut();
+    let handle = state_ref.crypto_hashes.handles[index].as_mut().expect("live hash slot");
     if !matches!(handle.value, Value::Hmac(_)) {
-        drop(hashes);
         drop(state_ref);
         return Err(fail(c, "Invalid native Hmac receiver"));
     }
@@ -272,7 +269,7 @@ pub(crate) fn update(
     }
     let index = index(c, receiver)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = match &mut shared.borrow_mut().crypto_hashes().handles[index].as_mut().expect("live hash slot").value {
+    let result = match &mut shared.borrow_mut().crypto_hashes.handles[index].as_mut().expect("live hash slot").value {
         Value::Hash(state) => state.update(&bytes),
         Value::Hmac(Some(state)) => state.update(&bytes),
         Value::Hmac(None) => Ok(false),
@@ -287,7 +284,7 @@ pub(crate) fn digest(
 ) -> Result<RootId, RootedError> {
     let index = index(c, receiver)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = match &mut shared.borrow_mut().crypto_hashes().handles[index].as_mut().expect("live hash slot").value {
+    let result = match &mut shared.borrow_mut().crypto_hashes.handles[index].as_mut().expect("live hash slot").value {
         Value::Hash(state) => state.digest(),
         Value::Hmac(Some(state)) => state.digest(),
         Value::Hmac(None) => Ok(Vec::new()),
@@ -392,11 +389,31 @@ pub(crate) fn binding(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Ro
     })
 }
 
-pub(crate) fn prune(context: &mut CollectionContext<'_>) {
-    crate::host::node_host::prune_lazy_context(context, |shared| &shared.crypto_hashes);
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.crypto_hashes);
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let state = std::mem::take(&mut *shared.borrow_mut().crypto_hashes);
+        for handle in state.handles.into_iter().flatten() {
+            runtime.release_host_weak_root(handle.identity);
+        }
+    }
+
+    fn prune_at_collection(context: &mut CollectionContext<'_>) {
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
+        let mut shared = shared.borrow_mut();
+        let state = &mut *shared.crypto_hashes;
+        for (index, slot) in state.handles.iter_mut().enumerate() {
+            if slot.as_ref().is_some_and(|handle| !context.host_weak_root_is_live(handle.identity)) {
+                let handle = slot.take().expect("collected hash slot");
+                state.free.push(index);
+                context.release_host_weak_root(handle.identity);
+            }
+        }
+        if state.free.len() == state.handles.len() {
+            state.handles.clear();
+            state.free.clear();
+        }
+    }
 }
 
 crate::host::startup_snapshot::host_snap_empty!(State { handles, free } "a hash");
@@ -404,31 +421,3 @@ crate::host::startup_snapshot::host_snap_empty!(State { handles, free } "a hash"
 #[cfg(test)]
 #[path = "crypto_hash_shared_vm_tests.rs"]
 mod tests;
-
-impl crate::host::node_host::LazyStateValue for State {
-    fn snapshot_write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
-        self.write_snapshot(writer)
-    }
-    fn snapshot_read(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
-        self.read_snapshot(reader)
-    }
-
-    fn prune(&mut self, _: &mut quench_runtime::Runtime<crate::host::NodeHost>) {}
-    fn prune_context(&mut self, context: &mut quench_runtime::CollectionContext<'_>) {
-        let (handles, free) = (&mut self.handles, &mut self.free);
-        for (index, slot) in handles.iter_mut().enumerate() {
-            if slot.as_ref().is_some_and(|handle| !context.host_weak_root_is_live(handle.identity)) {
-                let handle = slot.take().expect("collected hash slot");
-                free.push(index);
-                context.release_host_weak_root(handle.identity);
-            }
-        }
-        if free.len() == handles.len() {
-            handles.clear();
-            free.clear();
-        }
-    }
-    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
-        for handle in std::mem::take(&mut self.handles).into_iter().flatten() { runtime.release_host_weak_root(handle.identity); }
-    }
-}

@@ -114,21 +114,6 @@ macro_rules! marked_operation {
 }
 pub(crate) use marked_operation;
 
-/// Declares `$name`, the callback of a module's binding host operation: the binding's own
-/// builder (`$build`) under the operation ABI's unused receiver and arguments.
-macro_rules! binding_operation {
-    ($name:ident, $build:path) => {
-        pub(crate) fn $name(
-            context: &mut quench_runtime::NativeContext<'_>,
-            _: quench_runtime::RootId,
-            _: &[quench_runtime::RootId],
-        ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-            $build(context)
-        }
-    };
-}
-pub(crate) use binding_operation;
-
 /// The operation registered as `name`, marked as one the enclosing code makes.
 macro_rules! literal_operation {
     ($name:expr $(,)?) => {
@@ -136,6 +121,44 @@ macro_rules! literal_operation {
     };
 }
 pub(crate) use literal_operation as operation;
+
+/// The host's routes to the source frontend (`enable_dynamic_source`).
+pub(crate) struct HostSourceRoutes {
+    /// A module's source from its file (`NodeHost::module_source`).
+    pub(crate) module_source: fn(&mut NodeHost, &std::path::Path, String, Vec<u8>) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError>,
+    /// The goal of a CommonJS file whose wrapper failed to compile (`commonjs::failed_wrapper_goal`).
+    pub(crate) failed_wrapper_goal: fn(&RootedError, &std::path::Path, &str) -> quench_runtime::SourceKind,
+    /// A module request the image does not embed, resolved on the file system (`NodeHost::resolve_filesystem_import`).
+    filesystem_import: fn(&mut NodeHost, &str, &str, bool) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError>,
+}
+static SOURCE_ROUTES: std::sync::OnceLock<HostSourceRoutes> = std::sync::OnceLock::new();
+
+/// The installed host route `pick` names, or `None` in a binary whose program makes no code.
+pub(crate) fn source_route<R>(pick: impl FnOnce(&HostSourceRoutes) -> R) -> Option<R> {
+    SOURCE_ROUTES.get().map(pick)
+}
+
+/// Lets this binary compile source after load: the runtime's source routes
+/// (`quench_runtime::enable_dynamic_source`) and the host's module sources. The CLI's host
+/// enables it (`NodeHost::new`); an image does only where its program can make code.
+pub fn enable_dynamic_source() {
+    quench_runtime::enable_dynamic_source();
+    SOURCE_ROUTES.get_or_init(|| HostSourceRoutes {
+        module_source: NodeHost::module_source_text,
+        failed_wrapper_goal: commonjs::failed_wrapper_goal_parsed,
+        filesystem_import: NodeHost::resolve_filesystem_import,
+    });
+}
+
+/// The WebAssembly frontend, once a host that can reach it installs one (`enable_wasm`).
+static WASM_ROUTES: std::sync::OnceLock<quench_runtime::WasmFrontend> = std::sync::OnceLock::new();
+
+/// Lets this binary decode, validate and lower WebAssembly. The CLI's host enables it
+/// (`NodeHost::new`); an image does only where its program can reach WebAssembly
+/// (`RUNS_WASM`). Without it, `WebAssembly` compiles nothing, as in a host without a frontend.
+pub fn enable_wasm() {
+    WASM_ROUTES.get_or_init(|| crate::host::wasm_frontend::FRONTEND);
+}
 
 node_bindings! {
         method "streamConstant" (0) => crate::modules::stream_shared_vm::constant,
@@ -1500,6 +1523,8 @@ node_bindings! {
         method "utilExternalValue" (0) => crate::modules::util_shared_vm::external_value,
         #[cfg(quench_openssl_provider)]
         method "cryptoStructuredClone" (1) => crate::modules::crypto_node::clone::structured_clone,
+        method "tlsReusableHandle" (1) => crate::modules::tls_shared_vm::handle::reusable_handle,
+        method "tlsStartForWrite" (1) => crate::modules::tls_shared_vm::socket::start_for_write_operation,
         #[cfg(quench_openssl_provider)]
         method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
         #[cfg(quench_openssl_provider)]
@@ -2323,7 +2348,8 @@ node_bindings! {
         method "stringDecoderEnd" (1) => crate::modules::string_decoder_shared_vm::end,
         method "stringDecoderText" (2) => crate::modules::string_decoder_shared_vm::text,
         method "stringDecoderField" (0) => crate::modules::string_decoder_shared_vm::field,
-        global "fetch" (1) => crate::modules::fetch_shared_vm::fetch::fetch,
+        method "fetch" (1) => crate::modules::fetch_shared_vm::fetch::fetch,
+        method "webFetchFunctionInitialize" (0) => crate::modules::fetch_shared_vm::initialize_fetch,
         global "queueMicrotask" (1) => crate::modules::timers_shared_vm::queue_microtask,
         global "setImmediate" (1) => crate::modules::timers_shared_vm::set_immediate,
         global "clearImmediate" (1) => crate::modules::timers_shared_vm::clear_immediate,
@@ -2458,6 +2484,53 @@ node_bindings! {
         method "traceInitialize" (2) => crate::modules::trace_shared_vm::initialize,
         method "traceInspect" (3) => crate::modules::trace_shared_vm::inspect,
         method "traceInternal" (1) => crate::modules::trace_shared_vm::internal_binding,
+        #[cfg(unix)]
+        method "binding:os" (0) => crate::modules::trace_shared_vm::binding_os,
+        #[cfg(unix)]
+        method "binding:credentials" (0) => crate::modules::trace_shared_vm::binding_credentials,
+        method "binding:fs" (0) => crate::modules::trace_shared_vm::binding_fs,
+        method "binding:errors" (0) => crate::modules::trace_shared_vm::binding_errors,
+        method "binding:report" (0) => crate::modules::trace_shared_vm::binding_report,
+        #[cfg(unix)]
+        method "binding:process_methods" (0) => crate::modules::trace_shared_vm::binding_process_methods,
+        method "binding:modules" (0) => crate::modules::trace_shared_vm::binding_modules,
+        method "binding:stream_wrap" (0) => crate::modules::trace_shared_vm::binding_stream_wrap,
+        method "binding:tty_wrap" (0) => crate::modules::trace_shared_vm::binding_tty_wrap,
+        method "binding:udp_wrap" (0) => crate::modules::trace_shared_vm::binding_udp_wrap,
+        method "binding:pipe_wrap" (0) => crate::modules::trace_shared_vm::binding_pipe_wrap,
+        method "binding:tcp_wrap" (0) => crate::modules::trace_shared_vm::binding_tcp_wrap,
+        method "binding:contextify" (0) => crate::modules::trace_shared_vm::binding_contextify,
+        method "binding:types" (0) => crate::modules::trace_shared_vm::binding_types,
+        method "binding:messaging" (0) => crate::modules::trace_shared_vm::binding_messaging,
+        method "binding:crypto_keys" (0) => crate::modules::trace_shared_vm::binding_crypto_keys,
+        method "binding:util" (0) => crate::modules::trace_shared_vm::binding_util,
+        method "binding:options" (0) => crate::modules::trace_shared_vm::binding_options,
+        method "binding:string_decoder" (0) => crate::modules::trace_shared_vm::binding_string_decoder,
+        method "binding:zlib" (0) => crate::modules::trace_shared_vm::binding_zlib,
+        method "binding:serdes" (0) => crate::modules::trace_shared_vm::binding_serdes,
+        method "binding:ipc_serdes" (0) => crate::modules::trace_shared_vm::binding_ipc_serdes,
+        method "binding:v8" (0) => crate::modules::trace_shared_vm::binding_v8,
+        method "binding:heap_utils" (0) => crate::modules::trace_shared_vm::binding_heap_utils,
+        method "binding:internal_only_v8" (0) => crate::modules::trace_shared_vm::binding_internal_only_v8,
+        method "binding:encoding_binding" (0) => crate::modules::trace_shared_vm::binding_encoding_binding,
+        #[cfg(quench_icu)]
+        method "binding:icu" (0) => crate::modules::trace_shared_vm::binding_icu,
+        method "binding:config" (0) => crate::modules::trace_shared_vm::binding_config,
+        method "binding:symbols" (0) => crate::modules::trace_shared_vm::binding_symbols,
+        method "binding:cares_wrap" (0) => crate::modules::trace_shared_vm::binding_cares_wrap,
+        method "binding:http_parser" (0) => crate::modules::trace_shared_vm::binding_http_parser,
+        method "binding:http2" (0) => crate::modules::trace_shared_vm::binding_http2,
+        method "binding:buffer" (0) => crate::modules::trace_shared_vm::binding_buffer,
+        method "binding:url" (0) => crate::modules::trace_shared_vm::binding_url,
+        method "binding:blob" (0) => crate::modules::trace_shared_vm::binding_blob,
+        method "binding:crypto" (0) => crate::modules::trace_shared_vm::binding_crypto,
+        method "binding:timers" (0) => crate::modules::trace_shared_vm::binding_timers,
+        method "binding:performance" (0) => crate::modules::trace_shared_vm::binding_performance,
+        method "binding:uv" (0) => crate::modules::trace_shared_vm::binding_uv,
+        method "binding:fs_event_wrap" (0) => crate::modules::trace_shared_vm::binding_fs_event_wrap,
+        method "binding:trace_events" (0) => crate::modules::trace_shared_vm::binding_trace_events,
+        method "binding:cjs_lexer" (0) => crate::modules::trace_shared_vm::binding_cjs_lexer,
+        method "binding:constants" (0) => crate::modules::trace_shared_vm::binding_constants,
         method "cjsLexerParse" (1) => crate::modules::trace_shared_vm::cjs_lexer_parse,
         method "traceRecord" (5) => crate::modules::trace_shared_vm::record,
         method "traceCategoryBuffer" (1) => crate::modules::trace_shared_vm::category_buffer,
@@ -2564,24 +2637,6 @@ node_bindings! {
         method "builtin:cluster" (0) => commonjs::builders::cluster,
         method "builtin:repl" (0) => commonjs::builders::repl,
         method "builtin:sea" (0) => commonjs::builders::sea,
-        method "internalBinding:crypto" (0) => crate::modules::crypto_node::binding::binding_operation,
-        method "cryptoGlobalInitialize" (0) => crate::modules::crypto_node::binding::install_global_operation,
-        method "internalBinding:crypto_keys" (0) => crate::modules::crypto_key_shared_vm::binding_operation,
-        method "internalBinding:zlib" (0) => crate::modules::zlib_native_shared_vm::binding_operation,
-        method "internalBinding:cares_wrap" (0) => crate::modules::cares_binding::binding_operation,
-        method "internalBinding:http_parser" (0) => crate::modules::http_common_shared_vm::binding_operation,
-        method "internalBinding:http2" (0) => crate::modules::http2_shared_vm::binding_operation,
-        method "internalBinding:udp_wrap" (0) => crate::modules::udp_binding::binding_operation,
-        method "internalBinding:tcp_wrap" (0) => crate::modules::tcp_binding::binding_operation,
-        method "internalBinding:pipe_wrap" (0) => crate::modules::pipe_binding::binding_operation,
-        method "internalBinding:stream_wrap" (0) => crate::modules::stream_binding::binding_operation,
-        method "internalBinding:contextify" (0) => crate::modules::contextify_shared_vm::binding_operation,
-        method "internalBinding:v8" (0) => crate::modules::v8_shared_vm::binding_operation,
-        method "internalBinding:heap_utils" (0) => crate::modules::v8_shared_vm::heap_utils_binding_operation,
-        method "internalBinding:internal_only_v8" (0) => crate::modules::v8_shared_vm::internal_only_binding_operation,
-        method "internalBinding:performance" (0) => crate::modules::performance_binding_shared_vm::binding_operation,
-        method "internalBinding:constants.zlib" (0) => crate::modules::zlib_constants::binding_operation,
-        method "internalBinding:constants.crypto" (0) => crate::modules::crypto_constants::binding_operation,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing
@@ -2640,10 +2695,11 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn after_collection(context: &mut quench_runtime::CollectionContext<'_>) {
-        #[cfg(quench_openssl_provider)]
-        crate::modules::crypto_hash_shared_vm::prune(context);
-        #[cfg(not(quench_openssl_provider))]
-        let _ = context;
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
+        let hooks: Vec<_> = shared.borrow().armed_hooks().collect();
+        for hooks in hooks {
+            (hooks.prune_at_collection)(context);
+        }
     }
 
     /// The pages the program touched leave the resident set before the code generator's join
@@ -2737,7 +2793,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn validate_wasm(&mut self, bytes: &[u8], mode: quench_runtime::ExecutionMode) -> bool {
-        self.capabilities.wasm.is_some_and(|frontend| (frontend.validate)(bytes, mode))
+        WASM_ROUTES.get().is_some_and(|routes| (routes.validate)(bytes, mode))
     }
 
     fn compile_wasm(
@@ -2745,8 +2801,8 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        let frontend = self.capabilities.wasm.ok_or("WebAssembly compilation is not available in this host")?;
-        (frontend.compile)(bytes, mode)
+        let routes = WASM_ROUTES.get().ok_or("WebAssembly compilation is not available in this host")?;
+        (routes.compile)(bytes, mode)
     }
 
     fn resolve_dynamic_import(
@@ -3097,7 +3153,11 @@ impl NodeHost {
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         #[cfg(feature = "native-execution")]
         if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
-        let module = self.resolve_filesystem_import(referrer, specifier, from_require)?;
+        // A binary whose program makes no code resolves only what it embeds (`enable_dynamic_source`).
+        let Some(filesystem_import) = source_route(|routes| routes.filesystem_import) else {
+            return Err(format!("module {specifier} cannot load: this executable compiles no source").into());
+        };
+        let module = filesystem_import(self, referrer, specifier, from_require)?;
         if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
         Ok(module)
     }
@@ -3194,6 +3254,16 @@ impl NodeHost {
     /// The module `name` compiles from `path`'s `bytes`: its text, or the facade over a
     /// CommonJS, JSON or WebAssembly file.
     pub(crate) fn module_source(
+        &mut self, path: &std::path::Path, name: String, bytes: Vec<u8>,
+    ) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError> {
+        // A binary whose program makes no code reads no module's source (`enable_dynamic_source`).
+        match source_route(|routes| routes.module_source) {
+            Some(module_source) => module_source(self, path, name, bytes),
+            None => Err(format!("module {} cannot load: this executable compiles no source", path.display()).into()),
+        }
+    }
+
+    fn module_source_text(
         &mut self, path: &std::path::Path, name: String, bytes: Vec<u8>,
     ) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError> {
         let extension = path

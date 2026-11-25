@@ -174,4 +174,3 @@ pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> 
     Ok(object)
 }
 
-crate::host::shared_vm::binding_operation!(binding_operation, binding);

@@ -182,7 +182,12 @@ impl Engine {
 
     /// Whether a standalone Script or Module may receive source first known at
     /// execution. Source that does not parse cannot be proved closed.
+    /// Without the source routes (`source_routes`) the answer is the conservative one.
     pub fn source_requires_dynamic_source(source: &str, kind: crate::SourceKind) -> bool {
+        crate::compile::source_routes::routes().is_none_or(|routes| (routes.requires_dynamic_source)(source, kind))
+    }
+
+    pub(crate) fn source_requires_dynamic_source_parsed(source: &str, kind: crate::SourceKind) -> bool {
         let allocator = oxc_allocator::Allocator::default();
         let source_type = match kind {
             crate::SourceKind::Module => oxc_span::SourceType::mjs(),

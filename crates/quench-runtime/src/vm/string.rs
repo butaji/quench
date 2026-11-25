@@ -508,14 +508,9 @@ impl Vm {
                 )?;
                 Ok(Value::number(collation.compare(receiver.host_string(), other.host_string())))
             }
-            Native::StringConcat => {
-                let mut text = receiver;
-                for value in args {
-                    let value = self.coerce_js_string(p, *value)?;
-                    text.push_js_string(&value);
-                }
-                Ok(self.heap.alloc_string(text))
-            }
+            // The receiver then each argument, converted in order: the one StringConcat step of
+            // `+` and template literals (`string_concat`).
+            Native::StringConcat => self.string_concat(p, 1 + args.len(), |_, part| if part == 0 { this } else { args[part - 1] }),
             Native::StringNormalize => {
                 use unicode_normalization::UnicodeNormalization;
                 let form = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;

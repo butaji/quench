@@ -53,16 +53,42 @@ pub(super) fn stage_image(
     }
     let saved = prepare_saved_waits(waits, work, native_entry, report);
     fs::OpenOptions::new().append(true).open(inputs.catalog())
-        .and_then(|mut catalog| catalog.write_all(resumes_at_rest(&saved).as_bytes())).map_err(|error| error.to_string())?;
+        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\n", resumes_at_rest(&saved), makes_code(graph), runs_wasm(graph)).as_bytes()))
+        .map_err(|error| error.to_string())?;
     let inputs = if saved.is_empty() { bootstrap_inputs(graph, work, native_entry, inputs, report)? } else { inputs };
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
     // global's module): every one the graph names.
     let held = (!saved.is_empty()).then(|| {
-        let named = graph.snapshot_builtins().into_iter()
-            .chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned));
+        // What the global object holds only for globals no loaded code names (a pending lazy
+        // global's initializer, an accessor's getter) runs only when code reads one of those
+        // names: code the program holds names it, code it loads may, and so may a computed read
+        // of the global object, which code reaches by an alias's name or a sloppy call's `this`.
+        let names_any = super::host_operations::loads_code(graph) || graph.script_reads_this
+            || graph.builtins.iter().any(|name| name.trim_start_matches("node:") == "vm")
+            || super::graph::GLOBAL_OBJECT_NAMES.iter().any(|alias| graph.global_names.contains(*alias));
+        // A compression stream builds `zlib` by name (`commonjs::zlib_module_named`): kept where
+        // the program can reach the class, by its global or `stream/web`.
+        let compresses = names_any || ["CompressionStream", "DecompressionStream"].iter().any(|name| graph.global_names.contains(*name))
+            || graph.builtins.iter().chain(&graph.esm_builtins).any(|name| name.trim_start_matches("node:") == "stream/web");
+        let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned))
+            .chain(compresses.then(|| "zlib".to_owned()));
         let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
-        saved.iter().flat_map(|wait| wait.held.iter().copied()).chain(builders).collect()
+        report["unnamed_globals"] = json!(saved.iter().flat_map(|wait| &wait.held.1).map(|(names, operations)| json!({
+            "names": names, "operations": operations.len(),
+            "kept": names_any || names.iter().any(|name| graph.global_names.contains(name)),
+        })).collect::<Vec<_>>());
+        let lazy = saved.iter().flat_map(|wait| &wait.held.1)
+            .filter(|(names, _)| names_any || names.iter().any(|name| graph.global_names.contains(name)))
+            .flat_map(|(_, operations)| operations.iter().copied());
+        // The internal bindings it may load as it runs: those it names, or every one where it
+        // reads a binding loader otherwise.
+        let bindings: Vec<_> = if graph.dynamic_bindings {
+            crate::host::shared_vm::commonjs::binding_operations().map(|operation| operation.0).collect()
+        } else {
+            graph.bindings.iter().filter_map(|name| crate::modules::trace_shared_vm::binding_operation(name)).map(|operation| operation.0).collect()
+        };
+        saved.iter().flat_map(|wait| wait.held.0.iter().copied()).chain(lazy).chain(builders).chain(bindings).collect()
     });
     Ok((inputs, held))
 }
@@ -100,8 +126,8 @@ struct SavedWait {
     answers: super::strict::Answers,
     effects: Vec<(i32, Vec<u8>)>,
     rest: PathBuf,
-    /// The host operations the saved runtime's host functions run.
-    held: Vec<u32>,
+    /// The host operations the saved runtime holds.
+    held: super::prefix::HeldOperations,
 }
 
 /// Saves, per answer set of `runs`, the native entry's run at its first wait (`--wait-worker`);
@@ -148,7 +174,15 @@ fn resumes_at_rest(saved: &[SavedWait]) -> String {
     }).collect::<Vec<_>>().join(", ");
     // The runs answer every yes-or-no input the build-time evaluation asked, each both ways
     // (`strict::specialize`), so one always holds: an image with saved runs links no other start.
-    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\n", !saved.is_empty())
+    // An image that only resumes them installs lane handlers for the opcodes their programs
+    // hold, any other running on the general path; one that also runs its entry, every one.
+    let mut opcodes: Vec<u16> = saved.iter().flat_map(|wait| wait.held.2.iter().copied()).collect();
+    opcodes.sort_unstable();
+    opcodes.dedup();
+    let group = crate::LANE_ROW_GROUP;
+    let rows = opcodes.iter().map(|op| format!("&quench::lane_rows::g{}::R{}", op / group, op % group)).collect::<Vec<_>>().join(", ");
+    let lanes = if saved.is_empty() { "quench::install_all_lane_rows()".to_owned() } else { format!("quench::install_lane_rows(&[{rows}])") };
+    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\nfn install_lanes() {{ {lanes} }}\n", !saved.is_empty())
 }
 
 /// The image's inputs with its startup snapshot (`--bootstrap-worker`), or without one when the
@@ -217,4 +251,24 @@ pub(super) fn native_dependencies(executable: &Path) -> Result<String, String> {
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     String::from_utf8(output).map_err(|error| error.to_string())
+}
+
+/// Whether the program can make code as it runs, so its image links the source frontend
+/// (`quench::host::enable_dynamic_source`): it loads code (`loads_code`), evaluates an
+/// `import()`, names eval, `Function` or `Reflect`, imports a module that compiles source, or
+/// reads the global object by a computed name. An image of any other program refuses code
+/// generation from strings, as Node does under `--disallow-code-generation-from-strings`.
+fn makes_code(graph: &DependencyGraph) -> bool {
+    const COMPILING_MODULES: &[&str] = &["vm", "repl", "module", "worker_threads", "inspector"];
+    const CODE_NAMES: &[&str] = &["eval", "Function", "Reflect", "WebAssembly", "Worker", "ShadowRealm"];
+    super::host_operations::loads_code(graph) || graph.imports_at_run_time || graph.script_reads_this
+        || graph.builtins.iter().chain(&graph.esm_builtins).any(|name| COMPILING_MODULES.contains(&name.trim_start_matches("node:")))
+        || CODE_NAMES.iter().chain(super::graph::GLOBAL_OBJECT_NAMES).any(|name| graph.global_names.contains(*name))
+}
+
+/// Whether the program can reach WebAssembly, so its image links the Wasm frontend
+/// (`quench::host::enable_wasm`): it can make code (`makes_code`, which a `WebAssembly` name
+/// implies) or imports a `.wasm` module.
+fn runs_wasm(graph: &DependencyGraph) -> bool {
+    makes_code(graph) || graph.requirements.iter().any(|requirement| matches!(requirement, super::GraphRequirement::Wasm { .. }))
 }

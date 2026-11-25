@@ -25,7 +25,7 @@ pub(crate) fn poll(
             && host.net_pending_ends.capacity() == 0
             && host.net_pending_destroys.capacity() == 0
             && state.net_servers.is_empty()
-            && state.tcp().is_quiescent()
+            && state.tcp.is_quiescent()
     };
     if quiescent {
         return Ok(false);
@@ -39,23 +39,19 @@ pub(crate) fn poll(
         )
     };
     if !pending_writes.is_empty() || !pending_ends.is_empty() {
-        let host = shared_state.borrow_mut();
+        let mut host = shared_state.borrow_mut();
         let mut deferred_writes = Vec::new();
         let mut deferred_ends = Vec::new();
         for (socket, bytes, raw) in pending_writes {
-            let connected = net_shared_vm::is_connected(&host.tcp(), socket);
-            if connected {
-                let mut tcp = host.tcp();
-                net_shared_vm::write_with_completion(&mut tcp, socket, &bytes, raw)?;
+            if net_shared_vm::is_connected(&host.tcp, socket) {
+                net_shared_vm::write_with_completion(&mut host.tcp, socket, &bytes, raw)?;
             } else if host.net_sockets.contains_key(&socket) {
                 deferred_writes.push((socket, bytes, raw));
             }
         }
         for (socket, raw) in pending_ends {
-            let connected = net_shared_vm::is_connected(&host.tcp(), socket);
-            if connected {
-                let mut tcp = host.tcp();
-                net_shared_vm::end(&mut tcp, socket, raw)?;
+            if net_shared_vm::is_connected(&host.tcp, socket) {
+                net_shared_vm::end(&mut host.tcp, socket, raw)?;
             } else if host.net_sockets.contains_key(&socket) {
                 deferred_ends.push((socket, raw));
             }
@@ -131,9 +127,8 @@ pub(crate) fn poll(
         }
     }
     let events = {
-        let host = shared_state.borrow_mut();
-        let mut tcp = host.tcp();
-        net_shared_vm::poll(&mut tcp)
+        let mut host = shared_state.borrow_mut();
+        net_shared_vm::poll(&mut host.tcp)
     };
     let mut progressed = emit_net_server_events(runtime, shared_state)?;
     for event in events {
@@ -202,7 +197,7 @@ pub(crate) fn poll(
                                     optional_callback:Some(key),id:resource.id,resource:resource_root,
                                 }),callback,receiver,args:vec![status,client],
                             });
-                        net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp(), socket);
+                        net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp, socket);
                         invoked?;
                     } else {
                         queue_net_method_completion(
@@ -219,7 +214,7 @@ pub(crate) fn poll(
                     runtime.release_root(server_handle);
                     progressed = true;
                 } else {
-                    net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp(), socket);
+                    net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                 }
             }
             net_shared_vm::TransportEvent::Secure { socket } => {
@@ -337,7 +332,7 @@ pub(crate) fn poll(
                     progressed = true;
                     continue;
                 }
-                net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp(), socket);
+                net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp, socket);
             }
             net_shared_vm::TransportEvent::End { socket } => {
                 if queue_native_read(
@@ -494,13 +489,14 @@ pub(crate) fn poll(
                     if let Some(stack) = ssl_error.and_then(|error| error.ssl_error()) {
                         shared_state
                             .borrow_mut()
-                            .tls()
+                            .tls_contexts
+                            .armed_mut()
                             .transport_errors
                             .push_back((socket, stack.clone()));
+                        // Only an encrypted socket fails with a TLS stack, and encrypting one
+                        // marks this operation (`net_shared_vm::encrypt`).
                         let callback = runtime
-                            .host_function(crate::host::shared_vm::operation!(
-                                "tlsSocketTransportError",
-                            ))
+                            .host_function(crate::host::shared_vm::static_operation("tlsSocketTransportError"))
                             .map_err(|error| error.to_string())?;
                         let receiver = runtime.root(
                             runtime
@@ -550,7 +546,7 @@ pub(crate) fn cleanup(
             roots.extend(socket.write_callbacks.drain(..));
         }
         roots.extend(host.net_closing_sockets.drain().map(|(_, root)| root));
-        host.tcp.net_cleanup();
+        net_shared_vm::cleanup(&mut host.tcp);
         roots
     };
     for root in roots {
@@ -1068,7 +1064,7 @@ fn complete_native_request(
         }
     };
     if connect {
-        net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp(), pending.socket);
+        net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp, pending.socket);
     }
     result.map(|()| true)
 }

@@ -115,14 +115,14 @@ fn reclaim_at_collection(binding: &mut Binding, handles: &[RootId], algorithm: R
     let hash = binding.hash;
     let runtime = &mut binding.runtime;
     let shared = runtime.host_mut().shared_state();
-    let allocated = shared.borrow().crypto_hashes().handles.len();
+    let allocated = shared.borrow().crypto_hashes.handles.len();
     for &handle in handles.iter().step_by(RELEASE_STRIDE) { runtime.release_root(handle); }
     runtime.collect(&binding.program).unwrap();
-    let vacancies = shared.borrow().crypto_hashes().free.len();
+    let vacancies = shared.borrow().crypto_hashes.free.len();
     assert_eq!(vacancies, handles.len() / RELEASE_STRIDE + ALGORITHMS.len() * 2);
     let replacements: Vec<_> = (0..vacancies).map(|_| runtime.construct_rooted(hash, hash, &[algorithm]).unwrap()).collect();
-    assert_eq!(shared.borrow().crypto_hashes().handles.len(), allocated);
-    assert!(shared.borrow().crypto_hashes().free.is_empty());
+    assert_eq!(shared.borrow().crypto_hashes.handles.len(), allocated);
+    assert!(shared.borrow().crypto_hashes.free.is_empty());
     replacements
 }
 
@@ -156,6 +156,6 @@ fn native_hash_slots_match_node_and_reclaim_at_collection() {
     for value in kept.chain(replacements).chain([survivor]) { runtime.release_root(value); }
     runtime.collect(&binding.program).unwrap();
     let shared = runtime.host_mut().shared_state();
-    assert!(shared.borrow().crypto_hashes().handles.is_empty());
-    assert!(shared.borrow().crypto_hashes().free.is_empty());
+    assert!(shared.borrow().crypto_hashes.handles.is_empty());
+    assert!(shared.borrow().crypto_hashes.free.is_empty());
 }

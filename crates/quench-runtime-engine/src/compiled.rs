@@ -115,7 +115,9 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{start_osr_region, RegionStart, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+#[cfg(feature = "jit")]
+pub(crate) use osr_compile::compile_osr_region;
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
@@ -2843,6 +2845,8 @@ fn compiled_reference_target(
         })
 }
 
+/// A Wasm program's compile (`compile_wasm_program`), the route `jit_routes` installs.
+pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, Option<usize>, bool, admission::CompiledUnit) -> Option<CompiledProgram>;
 pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
 use quench_runtime::vm::engine_types::WasmJitDiagnostics;
@@ -8102,6 +8106,20 @@ impl Vm {
     /// path. This is an opt-in diagnostic tier; normal root compilation keeps
     /// its current closure behavior.
     fn compile_program_with_diagnostics_and_root_mode(
+        &self,
+        program: ProgramId,
+        env: Value,
+        diagnostics_enabled: bool,
+        root: Option<usize>,
+        root_only: bool,
+        unit: admission::CompiledUnit,
+    ) -> Option<CompiledProgram> {
+        // Without the JIT's routes (`jit_routes`) the program runs in the interpreter.
+        (crate::jit_routes::jit()?.wasm)(self, program, env, diagnostics_enabled, root, root_only, unit)
+    }
+
+    /// `compile_program_with_diagnostics_and_root_mode`'s route, which `jit_routes` installs.
+    fn compile_wasm_program(
         &self,
         program: ProgramId,
         env: Value,

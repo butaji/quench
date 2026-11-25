@@ -96,6 +96,7 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
+pub mod source_routes;
 mod settled;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite; mod rest_alias;
@@ -431,6 +432,10 @@ impl Engine {
     /// V8 excludes tagged templates from eval's compilation cache because each
     /// evaluation owns distinct template objects, including nested function sites.
     pub(crate) fn eval_has_tagged_template(source: &str) -> bool {
+        source_routes::routes().map_or(false, |routes| (routes.eval_has_tagged_template)(source))
+    }
+
+    pub(crate) fn eval_has_tagged_template_source(source: &str) -> bool {
         use oxc_ast_visit::Visit;
         struct TaggedTemplate(bool);
         impl<'a> Visit<'a> for TaggedTemplate {
@@ -447,6 +452,10 @@ impl Engine {
     }
 
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
+        source_routes::routes().map_or(None, |routes| (routes.eval_single_regexp_literal)(source))
+    }
+
+    pub(crate) fn eval_single_regexp_literal_source(source: &str) -> Option<EvalRegExpLiteral> {
         if !may_begin_single_regexp_literal(source) {
             return None;
         }
@@ -484,6 +493,10 @@ impl Engine {
     }
 
     pub(crate) fn class_eval_references_arguments(source: &str) -> bool {
+        source_routes::routes().map_or(false, |routes| (routes.class_eval_references_arguments)(source))
+    }
+
+    pub(crate) fn class_eval_references_arguments_source(source: &str) -> bool {
         let context = eval_context_source(source, &[], true);
         let allocator = Allocator::with_capacity(context.len());
         let mut parsed = annex_b_targets::parse_program(&allocator, &context, SourceType::script());
@@ -536,6 +549,10 @@ impl Engine {
     }
 
     fn analyze_static_module(source: &str, module_name: &str, typescript: bool) -> StaticModuleAnalysis {
+        source_routes::routes().map_or(StaticModuleAnalysis { early_error: None, plan: None }, |routes| (routes.analyze_static_module)(source, module_name, typescript))
+    }
+
+    pub(crate) fn analyze_static_module_source(source: &str, module_name: &str, typescript: bool) -> StaticModuleAnalysis {
         let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
         // No source-derived proof is available in execution-only support.
         // Archived analysis may still satisfy static_module_analysis_with;
@@ -585,6 +602,10 @@ impl Engine {
     /// are declarations, not module syntax): a `.ts` file's goal when no package scope
     /// declares one. None when it does not parse.
     pub fn typescript_has_module_syntax(source: &str) -> Option<bool> {
+        source_routes::routes().map_or(None, |routes| (routes.typescript_has_module_syntax)(source))
+    }
+
+    pub(crate) fn typescript_has_module_syntax_source(source: &str) -> Option<bool> {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
         let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
@@ -597,6 +618,10 @@ impl Engine {
     /// The functions of TypeScript `source` a checker can give parameter types for, as UTF-8
     /// offsets into `source`; `None` when it does not parse.
     pub fn typescript_parameter_sites(source: &str) -> Option<Vec<typescript::ParameterSite>> {
+        source_routes::routes().map_or(None, |routes| (routes.typescript_parameter_sites)(source))
+    }
+
+    pub(crate) fn typescript_parameter_sites_source(source: &str) -> Option<Vec<typescript::ParameterSite>> {
         // Without the front end no source is parsed (a static image's support).
         if !cfg!(feature = "source") {
             return None;
@@ -689,6 +714,10 @@ impl Engine {
     /// What a static module's text evaluates to without running it: its exports, else the value
     /// its program throws.
     pub(crate) fn static_module_outcome(source: &str, module_name: &str) -> Option<StaticModuleOutcome> {
+        source_routes::routes().map_or(None, |routes| (routes.static_module_outcome)(source, module_name))
+    }
+
+    pub(crate) fn static_module_outcome_source(source: &str, module_name: &str) -> Option<StaticModuleOutcome> {
         Self::with_static_module(source, |program| {
             Self::static_module_exports_of(program, module_name)
                 .map(StaticModuleOutcome::Exports)
@@ -735,6 +764,13 @@ impl Engine {
     }
 
     pub(crate) fn static_module_exports(
+        source: &str,
+        module_name: &str,
+    ) -> Option<Vec<(String, Constant)>> {
+        source_routes::routes().and_then(|routes| (routes.static_module_exports)(source, module_name))
+    }
+
+    pub(crate) fn static_module_exports_source(
         source: &str,
         module_name: &str,
     ) -> Option<Vec<(String, Constant)>> {
@@ -817,6 +853,7 @@ impl Engine {
     /// Parse TypeScript directly: annotations remain available to analysis and
     /// replay. They do not establish runtime representation invariants.
     pub fn specialize_typescript(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        source_routes::enable();
         Self::specialize_with_mode(
             source, name, SpecializationMode::Enabled, &NoAtomPrefix,
             SourceType::script().with_typescript(true), false, false, false,
@@ -856,6 +893,7 @@ impl Engine {
     }
 
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        source_routes::enable();
         Self::specialize_with_mode(
             source,
             name,
@@ -906,6 +944,7 @@ impl Engine {
         source: &str,
         name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        source_routes::enable();
         Self::specialize_with_mode(
             source,
             name,
@@ -988,6 +1027,7 @@ impl Engine {
         source: &str,
         name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        source_routes::enable();
         Self::specialize_module_with_mode(source, name, SpecializationMode::Disabled)
     }
     /// Compile a module against an existing program's canonical atom prefix, specializing
@@ -1017,9 +1057,11 @@ impl Engine {
     }
     /// Compile a TypeScript module: the typed tree is the program, as for `.ts`/`.mts` files.
     pub fn specialize_typescript_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        source_routes::enable();
         Self::specialize_module_with_atom_prefix(source, name, true, &NoAtomPrefix, ReleasedRecords::Dropped)
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        source_routes::enable();
         Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
     }
     /// Compile a Function-constructor program's source through the same OXC script pipeline
@@ -1112,7 +1154,31 @@ impl Engine {
         )
     }
     #[allow(clippy::too_many_arguments)]
+    /// Without the source routes (`source_routes`) nothing compiles: the callers refused it first
+    /// (`Vm::require_source_compilation`).
     fn specialize_with_mode_and_private_names(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+        atom_prefix: &dyn AtomPrefix,
+        source_type: SourceType,
+        module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
+        private_name_overrides: &[(String, String)],
+        annex_b_forbidden_names: &[String],
+        expected_shape: ParsedProgramShape<'_>,
+        released: ReleasedRecords,
+        provided_text: Option<crate::bytecode::SourceText>,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        match source_routes::routes() {
+            Some(routes) => (routes.specialize)(source, name, mode, atom_prefix, source_type, module_goal, capture_script_completion,
+                inherited_strict, private_name_overrides, annex_b_forbidden_names, expected_shape, released, provided_text),
+            None => Err(vec![Diagnostic::unsupported(name, "native guest code required: source compilation is unavailable")]),
+        }
+    }
+
+    pub(crate) fn specialize_source(
         source: &str,
         name: &str,
         mode: SpecializationMode,

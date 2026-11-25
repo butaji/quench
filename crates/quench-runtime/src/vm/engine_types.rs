@@ -2805,6 +2805,9 @@ pub struct AotImage {
     /// The program the image is valid for (`ahead_images::fingerprint`) and the build it came from.
     pub fingerprint: u64,
     pub build_id: u64,
+    /// Whether the program adds no code at run time (`aot_facts::closed_world`) as its compile
+    /// found: its facts derive again from this (`aot_facts::analyze_as`).
+    pub closed: bool,
     /// By function id, ascending; every function of the program has one.
     pub functions: Vec<AotFunction>,
     /// The shapes the code folds, by `Symbol::Shape` key.
@@ -4132,11 +4135,8 @@ impl AheadImages {
     /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
     #[inline]
     pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
-        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
-        #[cfg(feature = "jit")]
-        if recorded().is_some() { Self::keep(program, Self::compile_wasm(vm, id, program, bindings)); }
-        #[cfg(not(feature = "jit"))]
-        let _ = (vm, id, program, bindings);
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower_wasm) else { return };
+        Self::keep(program, lower(vm, id, program, bindings));
     }
 
     /// Adds a lowering's image to the recording, or traces why `program` has none.
@@ -5482,6 +5482,8 @@ pub static RECORDED: std::sync::Mutex<Option<Recording>> = std::sync::Mutex::new
 /// A recording: the lowering that started it, which only a build links, and its images.
 pub struct Recording {
     pub lower: fn(&ResidualProgram) -> Result<AheadImages, String>,
+    /// The lowering of a Wasm program, from its module's binding types.
+    pub lower_wasm: fn(&Vm, ProgramId, &ResidualProgram, &[crate::WasmBindingType]) -> Result<AheadImages, String>,
     pub images: Vec<AotImage>,
 }
 

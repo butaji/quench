@@ -31,7 +31,7 @@ pub(super) fn start(
 ) -> Result<RootId, RootedError> {
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let id =
-        net_shared_vm::reserve_lookup(&mut state.borrow_mut().tcp()).map_err(RootedError::host)?;
+        net_shared_vm::reserve_lookup(&mut state.borrow_mut().tcp).map_err(RootedError::host)?;
     net_shared_vm::register_socket(context, socket, id)?;
     let undefined = context.undefined();
     let has_options = context.is_object_rooted(options)?;
@@ -124,7 +124,7 @@ fn active(
     id: u64,
 ) -> Result<bool, RootedError> {
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
-    if !net_shared_vm::is_looking_up(&state.borrow().tcp(), id) {
+    if !net_shared_vm::is_looking_up(&state.borrow().tcp, id) {
         return Ok(false);
     }
     let connecting = get(context, socket, "connecting")?;
@@ -347,7 +347,7 @@ pub(crate) fn result(
         super::net_options_shared_vm::connect_source(context, options)?;
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
     net_shared_vm::connect_resolved(
-        &mut state.borrow_mut().tcp(),
+        &mut state.borrow_mut().tcp,
         id,
         addresses,
         port,

@@ -55,7 +55,7 @@ const STATIC_OPERATIONS: &[&str] = &[
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Whether the entry's own code runs (`arm`): the host's start-up before it is the realm's.
 static ARMED: AtomicBool = AtomicBool::new(false);
-static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None, held: Vec::new() });
+static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None, held: (Vec::new(), Vec::new(), Vec::new()) });
 
 struct State {
     effects: Vec<(i32, Vec<u8>)>,
@@ -66,8 +66,8 @@ struct State {
     choice: Option<Question>,
     /// The runtime as the run left it at its first wait for input (`reach_wait`).
     rest: Option<Vec<u8>>,
-    /// The host operations the saved runtime's host functions run (`reach_wait`).
-    held: Vec<u32>,
+    /// The host operations the saved runtime holds (`reach_wait`).
+    held: HeldOperations,
 }
 
 /// A yes-or-no dynamic input: a run per answer specializes it, and the image asks it as it
@@ -111,13 +111,19 @@ impl Question {
     }
 }
 
+/// The host operations a saved runtime's host functions run, and apart, per set of globals no
+/// loaded code names, those only the global object holds for them
+/// (`quench_runtime::Runtime::held_host_operations`); then the opcodes its programs run
+/// (`quench_runtime::Runtime::held_opcodes`).
+pub(crate) type HeldOperations = (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>, Vec<u16>);
+
 /// What a build-time run left: its effects in order; a question it asked with no answer
 /// assumed, which a run per answer specializes; or the first other dynamic input it read.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
     /// The run's effects up to its first wait for input, the runtime there as a snapshot, and
     /// the host operations its host functions run.
-    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>, Vec<u32>),
+    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>, HeldOperations),
     Question(Question),
     Dynamic(String),
 }
@@ -272,7 +278,8 @@ pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>,
         Ok(rest) => {
             let mut state = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             state.rest = Some(rest);
-            state.held = runtime.held_host_operations();
+            let (operations, lazy) = runtime.held_host_operations();
+            state.held = (operations, lazy, runtime.held_opcodes());
             REACHED_WAIT.to_owned()
         }
         Err(error) => {

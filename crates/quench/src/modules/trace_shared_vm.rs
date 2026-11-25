@@ -7,10 +7,6 @@ use super::trace_state::EnabledTracing;
 use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-mod binding;
-pub(crate) use binding::{tty_wrap_constructor, tty_wrap_get_window_size, tty_wrap_set_raw_mode};
-use binding::build_internal_binding;
-
 const MAX_ENABLED_TRACING_WITHOUT_WARNING: usize = 10;
 const MAX_SAFE_HANDLE: u64 = (1u64 << 53) - 1;
 
@@ -374,6 +370,302 @@ pub(crate) fn internal_binding(
     Ok(binding)
 }
 
+/// The builder operation of the internal binding `name`, if any (`binding:NAME`): a binding is
+/// found by name, and an image links the builders of the bindings its program names
+/// (`aot::cli`).
+pub(crate) fn binding_operation(name: &str) -> Option<quench_runtime::HostFunctionId> {
+    crate::host::shared_vm::commonjs::named_operation(&format!("binding:{name}"))
+}
+
+fn build_internal_binding(
+    context: &mut NativeContext<'_>,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let built = match binding_operation(name) {
+        Some(operation) => crate::host::shared_vm::call_linked(context, operation, &[])?,
+        None => None,
+    };
+    match built {
+        Some(binding) => Ok(binding),
+        None => {
+            let error = context.error_rooted(&format!("No such binding: {name}"))?;
+            let code = context.string_rooted("ERR_INVALID_MODULE");
+            put(context, error, "code", code)?;
+            Err(context.throw(error))
+        }
+    }
+}
+
+/// The `os` binding.
+#[cfg(unix)]
+pub(crate) fn binding_os(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::os_binding_shared_vm::os_binding(context)
+}
+
+/// The `credentials` binding.
+/// Node's `lib/os.js` reads `getTempDir` from this binding at load time.
+#[cfg(unix)]
+pub(crate) fn binding_credentials(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::os_binding_shared_vm::credentials_binding(context)
+}
+
+/// The `fs` binding.
+pub(crate) fn binding_fs(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::fs_directory_shared_vm::binding(context)
+}
+
+/// The `errors` binding.
+pub(crate) fn binding_errors(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::node_errors_shared_vm::binding(context)
+}
+
+/// The `report` binding.
+pub(crate) fn binding_report(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::report_configuration_shared_vm::binding(context)
+}
+
+/// The `process_methods` binding.
+#[cfg(unix)]
+pub(crate) fn binding_process_methods(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::process_metrics_shared_vm::binding(context)
+}
+
+/// The `modules` binding.
+pub(crate) fn binding_modules(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        crate::host::shared_vm::commonjs::cached_native_binding(
+            context,
+            "\0binding:modules",
+            module_protocol_binding,
+        )
+}
+
+/// The `stream_wrap` binding.
+pub(crate) fn binding_stream_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::stream_binding::binding(context)
+}
+
+/// The `tty_wrap` binding.
+pub(crate) fn binding_tty_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    tty_binding(context)
+}
+
+/// The `udp_wrap` binding.
+pub(crate) fn binding_udp_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::udp_binding::binding(context)
+}
+
+/// The `pipe_wrap` binding.
+pub(crate) fn binding_pipe_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::pipe_binding::binding(context)
+}
+
+/// The `tcp_wrap` binding.
+pub(crate) fn binding_tcp_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::tcp_binding::binding(context)
+}
+
+/// The `contextify` binding.
+pub(crate) fn binding_contextify(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::contextify_shared_vm::binding(context)
+}
+
+/// The `types` binding.
+pub(crate) fn binding_types(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::util_shared_vm::types_binding(context)
+}
+
+/// The `messaging` binding.
+pub(crate) fn binding_messaging(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::messaging_binding_shared_vm::binding(context)
+}
+
+/// The `crypto_keys` binding.
+pub(crate) fn binding_crypto_keys(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::crypto_key_shared_vm::binding(context)
+}
+
+/// The `util` binding.
+pub(crate) fn binding_util(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::util_shared_vm::key_binding(context)
+}
+
+/// The `options` binding.
+pub(crate) fn binding_options(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::cli_options_shared_vm::binding(context)
+}
+
+/// The `string_decoder` binding.
+pub(crate) fn binding_string_decoder(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::string_decoder_shared_vm::binding(context)
+}
+
+/// The `zlib` binding.
+pub(crate) fn binding_zlib(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::zlib_native_shared_vm::binding(context)
+}
+
+/// The `serdes` binding.
+pub(crate) fn binding_serdes(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::serdes_shared_vm::binding(context)
+}
+
+/// The `ipc_serdes` binding.
+pub(crate) fn binding_ipc_serdes(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::ipc_serdes_shared_vm::binding(context)
+}
+
+/// The `v8` binding.
+pub(crate) fn binding_v8(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::v8_shared_vm::binding(context)
+}
+
+/// The `heap_utils` binding.
+pub(crate) fn binding_heap_utils(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::v8_shared_vm::heap_utils_binding(context)
+}
+
+/// The `internal_only_v8` binding.
+pub(crate) fn binding_internal_only_v8(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::v8_shared_vm::internal_only_binding(context)
+}
+
+/// The `encoding_binding` binding.
+pub(crate) fn binding_encoding_binding(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::encoding_binding_shared_vm::binding(context)
+}
+
+/// The `icu` binding.
+#[cfg(quench_icu)]
+pub(crate) fn binding_icu(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::icu_binding_shared_vm::binding(context)
+}
+
+/// The `config` binding.
+pub(crate) fn binding_config(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let binding = context.object_rooted()?;
+        let has_intl = context.boolean(cfg!(quench_icu));
+        put(context, binding, "hasIntl", has_intl)?;
+        Ok(binding)
+}
+
+/// The `symbols` binding.
+pub(crate) fn binding_symbols(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::util_shared_vm::symbols_binding(context)
+}
+
+/// The `cares_wrap` binding.
+pub(crate) fn binding_cares_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cares_binding(context)
+}
+
+/// The `http_parser` binding.
+pub(crate) fn binding_http_parser(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::http_common_shared_vm::module(context)
+}
+
+/// The `http2` binding.
+pub(crate) fn binding_http2(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::http2_binding(context)
+}
+
+/// The `buffer` binding.
+pub(crate) fn binding_buffer(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::buffer_binding_shared_vm::binding(context)
+}
+
+/// The `url` binding.
+pub(crate) fn binding_url(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::url_binding_shared_vm::binding(context)
+}
+
+/// The `blob` binding.
+pub(crate) fn binding_blob(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::blob_binding_shared_vm::binding(context)
+}
+
+/// The `crypto` binding.
+pub(crate) fn binding_crypto(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::tls_shared_vm::facade::binding(context)
+}
+
+/// The `timers` binding.
+pub(crate) fn binding_timers(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::timers_shared_vm::binding(context)
+}
+
+/// The `performance` binding.
+pub(crate) fn binding_performance(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::performance_binding_shared_vm::binding(context)
+}
+
+/// The `uv` binding.
+pub(crate) fn binding_uv(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::util_system_error_shared_vm::uv_binding(context)
+}
+
+/// The `fs_event_wrap` binding.
+pub(crate) fn binding_fs_event_wrap(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    super::fs_watch_shared_vm::event_binding(context)
+}
+
+/// The `trace_events` binding.
+pub(crate) fn binding_trace_events(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let binding = context.object_rooted()?;
+        for (name, operation) in [
+            ("getCategoryEnabledBuffer", crate::host::shared_vm::operation!("traceCategoryBuffer")),
+            ("trace", crate::host::shared_vm::operation!("traceRecord")),
+            ("isTraceCategoryEnabled", crate::host::shared_vm::operation!("traceCategoryEnabled")),
+            ("getEnabledCategories", crate::host::shared_vm::operation!("traceGetEnabledCategories")),
+        ] {
+            let function =
+                context.host_function(operation)?;
+            put(context, binding, name, function)?;
+        }
+        let perfetto = context.boolean(false);
+        put(context, binding, "usePerfetto", perfetto)?;
+        Ok(binding)
+}
+
+/// The `cjs_lexer` binding.
+pub(crate) fn binding_cjs_lexer(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let binding = context.object_rooted()?;
+        let parse =
+            context.host_function(crate::host::shared_vm::operation!("cjsLexerParse"))?;
+        put(context, binding, "parse", parse)?;
+        Ok(binding)
+}
+
+/// The `constants` binding.
+pub(crate) fn binding_constants(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let binding = context.object_rooted()?;
+        let fs = super::fs_shared_vm::fs_constants(context)?;
+        put(context, binding, "fs", fs)?;
+        #[cfg(unix)]
+        {
+            let os = super::os_binding_shared_vm::constants(context)?;
+            put(context, binding, "os", os)?;
+        }
+        let zlib = super::zlib_constants::constants(context)?;
+        put(context, binding, "zlib", zlib)?;
+        let crypto = super::crypto_constants::binding(context)?;
+        put(context, binding, "crypto", crypto)?;
+        let trace = context.object_rooted()?;
+        for (name, code) in [
+            ("TRACE_EVENT_PHASE_BEGIN", b'B'),
+            ("TRACE_EVENT_PHASE_END", b'E'),
+            ("TRACE_EVENT_PHASE_INSTANT", b'I'),
+            ("TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN", b'b'),
+            ("TRACE_EVENT_PHASE_NESTABLE_ASYNC_END", b'e'),
+            ("TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT", b'n'),
+            ("TRACE_EVENT_PHASE_COUNTER", b'C'),
+        ] {
+            let code = context.number(f64::from(code));
+            put(context, trace, name, code)?;
+        }
+        put(context, binding, "trace", trace)?;
+        Ok(binding)
+}
+
 pub(crate) fn cjs_lexer_parse(
     context: &mut NativeContext<'_>,
     _: RootId,
@@ -412,6 +704,49 @@ pub(crate) fn cjs_lexer_parse(
     let export_set =
         context.construct_rooted(set_constructor, set_constructor, &[export_values])?;
     context.array_rooted(&[export_set, reexport_values])
+}
+
+/// `tty_wrap`'s handle members: (name, operation, length).
+const TTY_METHODS: [(&str, MarkedOperation, f64); 2] = [("getWindowSize", marked_operation!("ttyWrapGetWindowSize"), 1.0), ("setRawMode", marked_operation!("ttyWrapSetRawMode"), 1.0)];
+/// The status libuv's tty calls report: success.
+const UV_OK: f64 = 0.0;
+
+/// Node's `tty_wrap` binding: `isTTY(fd)` as the `tty` module answers it, and a `TTY` handle
+/// with no terminal of its own, whose window has no size and whose mode changes succeed.
+fn tty_binding(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    let binding = context.object_rooted()?;
+    let is_tty = context.host_function_named(crate::host::shared_vm::operation!("ttyIsatty"), "isTTY")?;
+    put(context, binding, "isTTY", is_tty)?;
+    let class = context.host_constructor_named(crate::host::shared_vm::operation!("ttyWrapConstructor"), "TTY")?;
+    let prototype = get(context, class, "prototype")?;
+    for (name, operation, length) in TTY_METHODS {
+        let function = context.host_function_named(operation.id(), name)?;
+        let length = context.number(length);
+        context.define_named_data_property_rooted(function, "length", length, false, false, true)?;
+        context.define_named_data_property_rooted(prototype, name, function, true, false, true)?;
+    }
+    put(context, binding, "TTY", class)?;
+    Ok(binding)
+}
+
+pub(crate) fn tty_wrap_constructor(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
+/// `getWindowSize(size)`: `size` filled with no columns and no rows.
+pub(crate) fn tty_wrap_get_window_size(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    if let Some(&size) = args.first().filter(|&&size| context.is_object_rooted(size).unwrap_or(false)) {
+        for index in 0..2 {
+            let key = context.number(f64::from(index));
+            let zero = context.number(0.0);
+            context.set_property_rooted(size, key, zero, size)?;
+        }
+    }
+    Ok(context.number(UV_OK))
+}
+
+pub(crate) fn tty_wrap_set_raw_mode(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(context.number(UV_OK))
 }
 
 fn required_string(
@@ -563,4 +898,23 @@ fn refresh_category_buffers(context: &mut NativeContext<'_>) -> Result<(), Roote
     });
     shared.borrow_mut().trace.category_buffers = buffers;
     result
+}
+
+fn module_protocol_binding(
+    context: &mut NativeContext<'_>,
+) -> Result<RootId, RootedError> {
+    let binding = context.object_rooted()?;
+    let statuses = super::node_protocol_constants::COMPILE_CACHE_STATUS
+        .iter()
+        .map(|status| context.string_rooted(status))
+        .collect::<Vec<_>>();
+    let statuses = context.array_rooted(&statuses)?;
+    put(context, binding, "compileCacheStatus", statuses)?;
+    let types = context.null_object_rooted()?;
+    for &(name, value) in super::node_protocol_constants::CACHED_CODE_TYPES {
+        let value = context.number(f64::from(value));
+        put(context, types, name, value)?;
+    }
+    put(context, binding, "cachedCodeTypes", types)?;
+    Ok(binding)
 }
