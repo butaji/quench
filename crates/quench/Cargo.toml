@@ -13,7 +13,9 @@ name = "quench"
 path = "src/bin/quench.rs"
 
 [features]
-default = ["jit", "bundled-sources", "native-execution"]
+default = ["jit", "bundled-sources", "native-execution", "source"]
+# The front end (`quench-runtime/source`); a static image's support build leaves it out.
+source = ["quench-runtime/source"]
 # Test-only direct host-primitive measurements; contract/evidence: Linear TOD-123.
 bench-primitives = []
 jit = ["quench-runtime/jit", "quench-wasm/jit", "quench-layers/jit"]

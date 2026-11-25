@@ -26,6 +26,10 @@ impl Engine {
         function: u32,
         atom_prefix: &'a dyn AtomPrefix,
     ) -> Option<ChunkDelta> {
+        // Without the front end a stub's chunk does not compile (`Engine::specialize*` refuses too).
+        if !cfg!(feature = "source") {
+            return None;
+        }
         let source = program.source.as_ref().filter(|source| source.base == 0)?;
         let replay = program.replay.as_deref()?;
         let header = program.functions.get(function as usize)?.header();

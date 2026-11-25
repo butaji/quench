@@ -204,6 +204,10 @@ pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u3
 type CallSites = BTreeMap<(u32, bool), crate::bytecode::CallSiteDescription>;
 
 fn parse_call_sites(source: &str, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
+    // Without the front end no source is parsed: the call sites stay as found.
+    if !cfg!(feature = "source") {
+        return Err(found);
+    }
     // A data script's literal holds no call, and its tree takes several times its text: it
     // is parsed blank, as its compilation parses it (`data_literal`).
     let located = (!goal.is_typescript()).then(|| crate::compile::data_literal::locate(source)).flatten();
