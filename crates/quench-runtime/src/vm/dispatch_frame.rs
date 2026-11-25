@@ -1871,9 +1871,11 @@ impl Vm {
                 pc = step.next_pc;
                 native_step = Some(step);
             }
-            if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
+            // An execution-only build runs a record only where the lane may run its program: a
+            // linked image's body takes the record, or the record it left steps and the lane takes
+            // the next one (`Vm::lane_may_run`). Without such an image nothing may run it.
+            if native_step.is_none() && !self.lane_may_run(executing_program, p)
                 && !(STOPS && stop_pc == Some(pc))
-                && !(!resumed && Self::enters_in_lane(cursor.lane, pc, entering_after_lane_exit))
             {
                 return Err(self.native_execution_rejected(p, frame, pc));
             }

@@ -89,17 +89,39 @@ impl RelocatableCode {
 
     /// The code patched for `address`, each symbol resolved by `resolve`; an error names the
     /// first symbol it cannot resolve or relocation it cannot fill.
-    pub fn link(&self, address: u64, mut resolve: impl FnMut(u32, u32) -> Option<u64>) -> Result<Vec<u8>, String> {
+    pub fn link(&self, address: u64, resolve: impl FnMut(u32, u32) -> Option<u64>) -> Result<Vec<u8>, String> {
+        self.link_through(address, resolve, |target| target)
+    }
+
+    /// `link`, where an `Arm64Call` the branch cannot reach is re-pointed at `veneer(target)`, a
+    /// stub beside the code that reaches it (a 16-byte local veneer). A target in range keeps its
+    /// direct branch.
+    pub fn link_through(&self, address: u64, mut resolve: impl FnMut(u32, u32) -> Option<u64>,
+        mut veneer: impl FnMut(u64) -> u64) -> Result<Vec<u8>, String> {
         let mut linked = self.code.to_vec();
         for relocation in &*self.relocations {
-            let value = resolve(relocation.namespace, relocation.key)
+            let mut value = resolve(relocation.namespace, relocation.key)
                 .ok_or_else(|| format!("unresolved symbol ({}, {})", relocation.namespace, relocation.key))?;
+            // A branch into a code heap the loader placed away from the target takes its stub.
+            let target = value.wrapping_add(relocation.addend as u64);
+            if relocation.kind == Reloc::Arm64Call && !arm64_call_reaches(address + relocation.offset as u64, target) {
+                value = veneer(target).wrapping_sub(relocation.addend as u64);
+            }
             apply_relocation(&mut linked, address, (relocation.offset, relocation.kind, relocation.addend), value)
                 .map_err(|error| format!("symbol ({}, {}) at {value:#x} (relocation {:#x} of {:#x}): {error}",
                     relocation.namespace, relocation.key, relocation.offset, address))?;
         }
         Ok(linked)
     }
+}
+
+/// Whether an `Arm64Call` at `from` reaches `to` directly: an aligned displacement inside the
+/// branch's signed immediate, which a 16-byte veneer stands in for beyond it.
+pub(crate) fn arm64_call_reaches(from: u64, to: u64) -> bool {
+    let delta = to as i64 - from as i64;
+    let words = delta >> ARM64_INSTRUCTION_ALIGNMENT_BITS;
+    let limit = 1_i64 << (ARM64_BRANCH_IMMEDIATE_BITS - 1);
+    delta & ((1 << ARM64_INSTRUCTION_ALIGNMENT_BITS) - 1) == 0 && (-limit..limit).contains(&words)
 }
 
 /// Fills the field at `offset` of `code`, which will run at `address`, with `value` as

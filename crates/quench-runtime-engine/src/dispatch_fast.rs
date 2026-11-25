@@ -8671,8 +8671,11 @@ impl Vm {
         };
         // The bound is set last: `plain_frames_word` above voids it.
         stack.frames_below.set(stack.frames_below_plain());
-        // Once native headers are enabled, emitted pushes keep body_top equal to the total count between bindings.
-        debug_assert!(!native_frames_enabled() || stack.body_top.get() == stack.activation_count(), "body_top names the total frame count at binding");
+        // Once native headers are enabled, emitted pushes keep body_top at the total count between
+        // bindings. A record the general loop stepped may push an ordinary frame, which the lane's
+        // counter does not see (an image body steps records it cannot run), so the counter may trail
+        // the total; it never runs ahead of it.
+        debug_assert!(!native_frames_enabled() || stack.body_top.get() <= stack.activation_count(), "body_top names at most the total frame count at binding");
         stack.body_top.set(stack.activation_count());
         // A binding that admits no direct-call frames admits no native headers either: a run with a
         // pending activation (a cell body entered as the context's leaf, `enter_cell_body_in_lane`)
@@ -16796,8 +16799,7 @@ fn derive_lane_view<'live>(
             // step, which decodes them, so no row tests for them — whichever row this record's
             // opcode and accumulator chose, a specialized one included.
             let selected = selected.map(|chosen| {
-                let flagged = admits_row(op)
-                    && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+                let flagged = matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
                 if flagged && chosen.handler as *const () != general_step_in_lane as *const () {
                     LaneHandler { handler: general_step_in_lane, ..chosen }

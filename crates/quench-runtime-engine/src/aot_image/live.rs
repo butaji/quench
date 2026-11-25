@@ -23,6 +23,50 @@ use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 /// Every body starts at this alignment in the block.
 const CODE_ALIGNMENT: usize = 16;
 
+/// The bytes of one local veneer: `ldr x16, #8; br x16; .quad target`.
+const VENEER_BYTES: usize = 16;
+/// `ldr x16, #8`: the literal eight bytes on, the target.
+const VENEER_LDR_X16: u32 = 0x5800_0050;
+/// `br x16`.
+const VENEER_BR_X16: u32 = 0xD61F_0200;
+
+/// The stubs an `Arm64Call` the branch cannot reach takes: `ldr x16, #8; br x16; .quad target`,
+/// written beside the code in the same block, which the branch reaches however far the block is
+/// from the target (a code heap mmap'd ~885 MB from the executable's helpers on macOS arm64).
+struct Veneers<'a> {
+    base: u64,
+    next: usize,
+    out: &'a mut [u8],
+}
+
+impl Veneers<'_> {
+    /// The address of a stub branching to `target`, written on first use.
+    fn emit(&mut self, target: u64) -> u64 {
+        let at = self.next * VENEER_BYTES;
+        self.next += 1;
+        let words = [VENEER_LDR_X16, VENEER_BR_X16, target as u32, (target >> 32) as u32];
+        for (index, word) in words.iter().enumerate() {
+            let word = word.to_le_bytes();
+            self.out[at + index * 4..at + index * 4 + 4].copy_from_slice(&word);
+        }
+        self.base + at as u64
+    }
+}
+
+/// The stub space one lane body's placement may need (`link_lane_at`).
+pub(crate) fn lane_stub_bytes(code: &RelocatableCode) -> usize {
+    code.relocations.iter().filter(|relocation| relocation.kind == cranelift_codegen::binemit::Reloc::Arm64Call).count() * VENEER_BYTES
+}
+
+/// The stub space a block of `image` may need: one per `Arm64Call`, the costliest case.
+fn veneer_bytes(image: &AotImage) -> usize {
+    image.functions.iter().map(|function| {
+        std::iter::once(&function.base.code).chain(function.lane.as_ref().map(|lane| &lane.code))
+            .map(|code| code.relocations.iter().filter(|relocation| relocation.kind == cranelift_codegen::binemit::Reloc::Arm64Call).count())
+            .sum::<usize>()
+    }).sum::<usize>() * VENEER_BYTES
+}
+
 pub(crate) use quench_runtime::vm::engine_types::LiveImage;
 
 /// Where each body sits in the block (offsets), and the block's length.
@@ -53,16 +97,18 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
     let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
     let value_bytes = value_words(image) * std::mem::size_of::<u64>();
-    let code = CodeMemory::assemble(layout.length + value_bytes, |pointer, out| {
+    let code = CodeMemory::assemble(layout.length + value_bytes + veneer_bytes(image), |pointer, out| {
+        let (code_out, veneer_out) = out.split_at_mut(layout.length + value_bytes);
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
         let values = pointer.addr() + layout.length;
-        let unresolved = place_values(image, vm, out, layout.length)?;
+        let unresolved = place_values(image, vm, code_out, layout.length)?;
         // A base body names only what the image itself fixes; a lane body may name a heap value the
         // program has not made yet, which `place` leaves unplaced until it is published.
         for function in &image.functions { require_placed(&function.base.code, &unresolved)?; }
         let places = Places { bases: &bases, invalidation: invalidation.address(), calls: calls.records(),
             values: values as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
-        place(image, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()), &unresolved)
+        let mut veneers = Veneers { base: values as u64 + value_bytes as u64, next: 0, out: veneer_out };
+        place(image, &layout, (pointer.addr(), &places), (code_out, linked.as_mut_slice()), &unresolved, &mut veneers)
     })?;
     let start = code.pointer().addr();
     let bases: Box<[usize]> = layout.bases.iter().map(|at| start + at).collect();
@@ -125,26 +171,29 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
         .ok_or_else(|| "no lane body".to_owned())?;
     let code_len = lane.code.code.len();
     let value_bytes = value_words(image) * std::mem::size_of::<u64>();
-    if out.len() < code_len + value_bytes { return Err("lane body is larger than its placement".to_owned()) }
+    let stubs = lane.code.relocations.iter().filter(|relocation| relocation.kind == cranelift_codegen::binemit::Reloc::Arm64Call).count() * VENEER_BYTES;
+    if out.len() < code_len + value_bytes + stubs { return Err("lane body is larger than its placement".to_owned()) }
+    let (code_out, veneer_out) = out.split_at_mut(code_len + value_bytes);
     // The value table follows the code in the same block, so its `adrp` is in range.
-    let unresolved = place_values(image, vm, out, code_len)?;
+    let unresolved = place_values(image, vm, code_out, code_len)?;
     require_placed(&lane.code, &unresolved)?;
     // The symbols resolve to the table's slots, so a heap value's identity is the word it holds.
-    let heap_values = placed_heap_values(image, out, code_len);
+    let heap_values = placed_heap_values(image, code_out, code_len);
+    let mut veneers = Veneers { base: address + (code_len + value_bytes) as u64, next: 0, out: veneer_out };
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
     let places = Places { bases: &bases, invalidation: live.invalidation.address(), calls: live.calls.records(),
         values: address + code_len as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
     let mut roots = FoldedRoots::default();
     let mut symbol = None;
-    let code = lane.code.link(address, |namespace, key| {
+    let code = lane.code.link_through(address, |namespace, key| {
         symbol = SymbolTable::decode(image, namespace, key);
         let word = resolve(image, &places, namespace, key)?;
         if let Some(Symbol::HeapValue(heap)) = symbol {
             roots.embed_heap_identity(quench_runtime::Value::from_bits(heap_values[heap as usize]));
         }
         Some(word)
-    }).map_err(|error| format!("{error} [{symbol:?}]"))?;
-    out[..code_len].copy_from_slice(&code);
+    }, |target| veneers.emit(target)).map_err(|error| format!("{error} [{symbol:?}]"))?;
+    code_out[..code_len].copy_from_slice(&code);
     Ok(roots.settled())
 }
 
@@ -231,21 +280,22 @@ fn layout(image: &AotImage) -> Layout {
 /// program makes as it runs (`HeapValueRecipe::PrototypeOf`, a callee's entry cell), which
 /// resolves when it is published (`link_lane_at`), so one that does not link yet is left unplaced.
 fn place(image: &AotImage, layout: &Layout, (start, places): (usize, &Places<'_>),
-    (out, linked): (&mut [u8], &mut [bool]), unresolved: &[(u32, u32)]) -> Result<(), String> {
+    (out, linked): (&mut [u8], &mut [bool]), unresolved: &[(u32, u32)], veneers: &mut Veneers<'_>) -> Result<(), String> {
     let mut address = |namespace: u32, key: u32| resolve(image, places, namespace, key);
     for (function, body) in image.functions.iter().enumerate() {
-        link_into(out, start, layout.bases[function], &body.base.code, &mut address)?;
+        link_into(out, start, layout.bases[function], &body.base.code, &mut address, veneers)?;
         if let (Some(lane), Some(at)) = (&body.lane, layout.lanes[function]) {
             linked[function] = require_placed(&lane.code, unresolved).is_ok()
-                && link_into(out, start, at, &lane.code, &mut address).is_ok();
+                && link_into(out, start, at, &lane.code, &mut address, veneers).is_ok();
         }
     }
     Ok(())
 }
 
 /// Links `code` to run at `start + at` and copies it into `out` at `at`.
-fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, resolve: &mut impl FnMut(u32, u32) -> Option<u64>) -> Result<(), String> {
-    let linked = code.link((start + at) as u64, &mut *resolve)?;
+fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, resolve: &mut impl FnMut(u32, u32) -> Option<u64>,
+    veneers: &mut Veneers<'_>) -> Result<(), String> {
+    let linked = code.link_through((start + at) as u64, &mut *resolve, |target| veneers.emit(target))?;
     out.get_mut(at..at + linked.len()).ok_or("AOT image block is too small")?.copy_from_slice(&linked);
     Ok(())
 }

@@ -303,9 +303,10 @@ impl Vm {
         // address's, so the placement comes first (`live::link_lane_at`). The value table follows
         // the code in the same block.
         let value_bytes = live::value_words(&images.image) * std::mem::size_of::<u64>();
+        let stubs = live::lane_stub_bytes(&lane.code);
         let mut roots = None;
         let memory = super::code_heap::publishing("u-jit-lane", function as usize, || {
-            super::code_heap::CodeMemory::assemble(lane.code.code.len() + value_bytes, |address, out| {
+            super::code_heap::CodeMemory::assemble(lane.code.code.len() + value_bytes + stubs, |address, out| {
                 roots = Some(live::link_lane_at(&images.image, self, linked_live, function, address.addr() as u64, out)?);
                 Ok(())
             })

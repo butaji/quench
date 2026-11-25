@@ -3206,8 +3206,12 @@ pub const CODE_GRANULE: usize = 64;
 /// The AOT image the system linker placed in this executable for a program (`aot_image::object`):
 /// a VM that runs the program loads it as its ahead images (`Vm::load_linked_image`), and its
 /// functions run their bodies on the lane runner (`Vm::install_ahead_body`).
-pub struct NativeJsCode {
-    pub table: LinkedTable,
+pub enum NativeJsCode {
+    /// Code the system linker placed in this executable (`NativeJsProgram::from_linked_image`).
+    Placed(LinkedTable),
+    /// An image compiled into this process (`NativeJsProgram::compile_eager`): its file, linked
+    /// into each VM that attaches it (`aot_image::live::install`).
+    Eager(Vec<u8>),
 }
 
 pub type NativeProgramResolver = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;

@@ -10385,19 +10385,21 @@ mod tests {
 
     #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
-        let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
-        let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
-        let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
-        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
-            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-            vm.programs.enable_js_lane_methods();
-            vm.set_execution_mode(mode);
-            if mode == ExecutionMode::NativeOnly { vm.execute_native_program(&native, true).unwrap(); }
-            else { quench_runtime::test_support::execute(&mut vm, &program).unwrap(); }
-            let atom = vm.lookup_atom("answer").unwrap();
-            // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
-            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
-        }
+        quench_runtime::test_support::on_compile_stack(|| {
+            let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
+            let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
+            let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
+                let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+                vm.programs.enable_js_lane_methods();
+                vm.set_execution_mode(mode);
+                if mode == ExecutionMode::NativeOnly { vm.execute_native_program(&native, true).unwrap(); }
+                else { quench_runtime::test_support::execute(&mut vm, &program).unwrap(); }
+                let atom = vm.lookup_atom("answer").unwrap();
+                // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
+            }
+        });
     }
 
     #[test]
