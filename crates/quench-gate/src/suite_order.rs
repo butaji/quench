@@ -140,10 +140,10 @@ pub fn judge(file: &str, cells: &Cells, debt: &Debt) -> Judgement {
         for pair in LADDER.windows(2) {
             let (Some(lower), Some(upper)) = (cells.get(&(name.clone(), pair[0].to_owned())), cells.get(&(name.clone(), pair[1].to_owned()))) else { continue };
             let label = format!("{}-{}", pair[0], pair[1]);
-            if let (Some(low), Some(up)) = (lower.rss, upper.rss) {
-                if up > low {
-                    rss_inversions += 1;
-                }
+            if let (Some(low), Some(up)) = (lower.rss, upper.rss)
+                && up > low
+            {
+                rss_inversions += 1;
             }
             for metric in [Metric::Time, Metric::Ir] {
                 let (Some(low), Some(up)) = (value(lower, metric), value(upper, metric)) else { continue };
