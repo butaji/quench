@@ -70,6 +70,17 @@ fn start(plan: NativePlan) -> NativeBuild {
     })
 }
 
+/// The native search of `plan` for an ahead image (`aot_image::regexps`), compiled as a hot program's.
+pub(crate) fn ahead_code(plan: &NativePlan) -> Option<Vec<u8>> {
+    compile(plan, unit()?)
+}
+
+/// `code`, an ahead image's search (`ahead_code`), placed in executable memory: its entry, and the memory it keeps.
+pub(crate) fn place_ahead(code: &[u8]) -> Option<(NativeFn, std::rc::Rc<dyn std::any::Any>)> {
+    let NativeCode { entry, keep } = publish(code)?;
+    Some((entry, std::rc::Rc::from(keep)))
+}
+
 /// The machine code of `plan`, whose unit the specializer cleared.
 fn compile(plan: &NativePlan, unit: CompiledUnit) -> Option<Vec<u8>> {
     let isa = target_isa()?;

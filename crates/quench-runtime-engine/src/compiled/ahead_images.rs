@@ -96,7 +96,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
+        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;

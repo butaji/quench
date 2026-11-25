@@ -1791,7 +1791,7 @@ pub(crate) fn lower_body(
     generic: &[usize],
     direct: &DirectSites,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
-    number_reads: &[super::facts::ObservedRead],
+    number_reads: &[super::facts::ObservedRead], views: ElementViews,
     admitted: super::admission::CompiledUnit,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
@@ -1801,7 +1801,7 @@ pub(crate) fn lower_body(
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[], admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
-            completion: Completion::Body, views: ElementViews::Dense } };
+            completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
@@ -4431,7 +4431,7 @@ impl Lowering<'_, '_> {
                         self.builder.def_var(checked, clear);
                     }
                 }
-                ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
+                ElementViews::Typed(_) => self.hoist_typed_view(ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable }, bits, variables, exit),
                 ElementViews::Double => {
                     let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     self.builder.def_var(variables.values, values);
@@ -4457,8 +4457,7 @@ impl Lowering<'_, '_> {
     /// (`prove_typed_view`): a proof that leaves takes the slow arm, where the VM publishes the
     /// record (`LaneHelper::TypedArrayView`) and the proof is made again, leaving at the loop's
     /// entry where it fails still.
-    fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
-        let access = ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable };
+    fn hoist_typed_view(&mut self, access: ViewAccess, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
         let publish = cold_block(&mut self.builder);
         let done = self.builder.create_block();
         self.prove_typed_view_into(variables, bits, access, publish);

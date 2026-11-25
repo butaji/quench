@@ -92,8 +92,31 @@ struct Places<'a> {
     value_counts: (usize, usize, usize),
 }
 
+/// Registers the image's RegExp searches: placed from the image where the JIT links it, else
+/// linked into the executable (`linked_regexps`).
+#[cfg(not(feature = "jit"))]
+fn register_regexps(_: &AotImage) {}
+#[cfg(feature = "jit")]
+fn register_regexps(image: &AotImage) {
+    for regexp in &image.regexps {
+        if let Some((entry, keep)) = crate::regexp_native::place_ahead(&regexp.code) {
+            quench_regexp::backtrack::native::register_ahead(regexp.key.clone(), entry, keep);
+        }
+    }
+}
+
+/// Registers the searches the system linker placed for `image`'s RegExp literals (`object::regexp_data`), in image order.
+fn linked_regexps(image: &AotImage, table: &LinkedTable) {
+    for (regexp, &address) in image.regexps.iter().zip(table.regexps).filter(|(_, address)| **address != 0) {
+        // SAFETY: the linker bound the address to the literal's search, whose signature is `NativeFn` (`regexp_native::ahead_code`).
+        let entry = unsafe { std::mem::transmute::<usize, quench_regexp::backtrack::native::NativeFn>(address) };
+        quench_regexp::backtrack::native::register_ahead(regexp.key.clone(), entry, std::rc::Rc::new(()));
+    }
+}
+
 /// Links `image` into `vm`: its code and value table placed, every symbol resolved.
 pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String> {
+    register_regexps(image);
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let calls = BoundCalls::of(image);
@@ -126,7 +149,7 @@ pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
 impl LinkedTable {
     /// The table at `table` of an image of `count` functions (`object::entry_table`): the ABI
     /// header, `count` entries, `count` base bodies, then the file's address and length, the call
-    /// records' address, and the linked helpers' address and count.
+    /// records' address, the linked helpers' address and count, and the RegExp searches' address and count.
     ///
     /// # Safety
     /// `table` is the aligned entry table symbol of an image of exactly `count` functions, emitted by
@@ -144,7 +167,8 @@ impl LinkedTable {
             let tail = words.add(header + 2 * count);
             let file = std::slice::from_raw_parts(tail.read() as *const u8, tail.add(1).read());
             let helpers = std::slice::from_raw_parts(tail.add(3).read() as *const usize, tail.add(4).read());
-            Ok(Self { entries, bases, file, calls: tail.add(2).read() as *mut CallRecord, helpers })
+            let regexps = std::slice::from_raw_parts(tail.add(5).read() as *const usize, tail.add(6).read());
+            Ok(Self { entries, bases, file, calls: tail.add(2).read() as *mut CallRecord, helpers, regexps })
         }
     }
 }
@@ -153,6 +177,7 @@ impl LinkedTable {
 /// placed or linked; a lane body a VM publishes is relinked from the image against the placed base
 /// bodies and records (`link_lane`).
 pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage, String> {
+    linked_regexps(image, table);
     let count = image.functions.len();
     if table.entries.len() != count || table.bases.len() != count {
         return Err("native image table does not match its image".into());

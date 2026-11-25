@@ -2822,6 +2822,15 @@ pub struct AotImage {
     pub calls: Vec<CallSite>,
     /// A Wasm program's stitched rows, which the instance's Wasm tier links in place of stitching.
     pub wasm: Option<WasmRows>,
+    /// The native searches of the program's RegExp literals (`aot_image::regexps`).
+    pub regexps: Vec<AotRegexp>,
+}
+
+/// A RegExp literal's native search in an image: its pattern's key (`quench_regexp::backtrack::native::AheadKey`)
+/// and its code, which names no address (`regexp_native::compile`), so it runs wherever it is placed.
+pub struct AotRegexp {
+    pub key: quench_regexp::backtrack::native::AheadKey,
+    pub code: Box<[u8]>,
 }
 
 /// A Wasm program's rows in its image (`compiled::wasm_image`): the memory slot their entry reads
@@ -3251,6 +3260,8 @@ pub struct LinkedTable {
     pub calls: *mut CallRecord,
     /// The lane helpers the image names, by number (`LiveImage::helpers`).
     pub helpers: &'static [usize],
+    /// The native search of each of the image's RegExp literals (`AotImage::regexps`), by index.
+    pub regexps: &'static [usize],
 }
 
 /// Every body starts on a cache line, which also satisfies each target's function alignment.
