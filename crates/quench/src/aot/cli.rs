@@ -247,7 +247,9 @@ fn resumes_at_rest(saved: &[SavedWait]) -> String {
         let writes = wait.effects.iter().map(|(descriptor, bytes)| format!("({descriptor}, &{bytes:?})")).collect::<Vec<_>>().join(", ");
         format!("quench::aot::SavedWait {{ answers: &[{answers}], effects: &[{writes}], rest: include_bytes!({:?}) }}", wait.rest.display().to_string())
     }).collect::<Vec<_>>().join(", ");
-    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\n")
+    // The runs answer every yes-or-no input the build-time evaluation asked, each both ways
+    // (`strict::specialize`), so one always holds: an image with saved runs links no other start.
+    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\n", !saved.is_empty())
 }
 
 fn compile(options: Options) -> Result<(), String> {
@@ -364,12 +366,11 @@ fn compile(options: Options) -> Result<(), String> {
     report["unlinked_host_operations"] = json!(unlinked);
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
     // A program whose build-time runs wait for input before reading any resumes the run whose
-    // answers hold as it starts: no entry run and no installation. The startup snapshot stays
-    // for a start no saved run answers.
+    // answers hold as it starts: no entry run and no installation, so no startup snapshot.
     let saved_waits = prepare_saved_waits(&waits, &work.0, &native_entry, &mut report);
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(resumes_at_rest(&saved_waits).as_bytes())).map_err(|error| error.to_string())?;
-    let inputs = bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)?;
+    let inputs = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { inputs };
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?

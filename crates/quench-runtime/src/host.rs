@@ -273,6 +273,12 @@ pub trait Host: core::any::Any {
         self.functions().get(index).map(|binding| binding.call)
     }
 
+    /// Whether a runtime about to be saved at rest may run host function `index` to settle
+    /// a lazy global its program names (`Vm::materialize_named_lazy_globals`).
+    fn settles_at_rest(&self, _index: usize) -> bool {
+        true
+    }
+
     /// The staged row host function `index`'s calls run before its own steps
     /// (`staged::host_rows`), if it declares one.
     fn function_row(&self, _index: usize) -> Option<crate::staged::host_rows::HostRow> {

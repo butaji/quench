@@ -2754,6 +2754,12 @@ impl quench_runtime::Host for NodeHost {
         self.operations.get(index).copied()
     }
 
+    /// A build-time run saved at rest settles only the lazy globals whose initializers its
+    /// gate admits (`aot::prefix`): any other initializer is an input the image reads as it runs.
+    fn settles_at_rest(&self, index: usize) -> bool {
+        !crate::aot::prefix::armed() || OPERATION_DESCRIPTORS.get(index).is_some_and(|descriptor| crate::aot::prefix::admits(descriptor.name))
+    }
+
     fn function_row(&self, index: usize) -> Option<quench_runtime::staged::host_rows::HostRow> {
         OPERATION_ROWS.get(index).copied().flatten()
     }
