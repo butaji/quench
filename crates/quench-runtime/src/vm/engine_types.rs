@@ -472,7 +472,7 @@ pub struct CompiledJsFunction {
     pub result: NativeNumberResult,
     pub params: usize,
     pub mapped_bytes: usize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub native_entries: std::cell::Cell<u64>,
 }
 
@@ -785,9 +785,9 @@ pub struct CompiledFunction {
     pub entry: WasmEntry,
     pub params: Vec<crate::WasmType>,
     pub result: Option<crate::WasmType>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub native_entries: std::cell::Cell<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub direct_reference_entries: std::cell::Cell<u64>,
 }
 

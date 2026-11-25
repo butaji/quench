@@ -333,7 +333,7 @@ mod tests {
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
         let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None };
         assert!(field.valid());
-        for shape in [quench_runtime::NO_FIELD_RECEIVER,
+        for shape in [quench_runtime::vm::NO_FIELD_RECEIVER,
             quench_runtime::value_vec::DICTIONARY_STORAGE, quench_runtime::value_vec::DICTIONARY_STORAGE | 1] {
             assert!(!NativeFieldLoad { shape, ..field }.valid());
         }
@@ -342,7 +342,7 @@ mod tests {
     #[cfg(feature = "jit")]
     #[test]
     fn checked_table_admits_once_without_admitting_receiver_handles() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 3]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn direct_family_admission_tests_the_family_alone() {
         use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         // A direct object's id names a record of the reservation, whose base every native
         // entry reads: only the family needs a test, and none where a fact proves it.
@@ -403,7 +403,7 @@ mod tests {
             (Some(Type::DIRECT_OBJECT_FAMILY), 0),
             (Some(Type::direct_object(0)), 0),
             (Some(Type::direct_object(0).join(Type::language(quench_runtime::ValueType::Null))), 1),
-            (Some(Type::direct_object(0).join(Type::NULLISH)), 1),
+            (Some(Type::direct_object(0).join(Type::language(quench_runtime::ValueType::Null).join(Type::language(quench_runtime::ValueType::Undefined)))), 1),
         ] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 2]);

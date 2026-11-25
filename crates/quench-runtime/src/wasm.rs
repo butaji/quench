@@ -116,6 +116,7 @@ pub enum WasmReferenceInitializer {
     Expression(WasmConstantExpression),
 }
 
+#[quench_macros::test_visible]
 /// Shared immutable module facts; a module need not contain any function.
 #[derive(Clone)]
 pub struct WasmModule {

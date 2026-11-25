@@ -98,7 +98,7 @@ fn a_store_through_the_array_retires_the_length_proof_of_later_accesses() {
 fn an_osr_entered_loop_takes_its_counters_sign_from_the_entry() {
     let source = "function run(a){let s;for(let i=0;i<a.length;i++){s=a[i];}return s;}";
     let unknown = bounds_tests(&lowered_entered(source, "run", Some(IntRange::FULL)));
-    let guarded = bounds_tests(&lowered_entered(source, "run", Some(IntRange::NON_NEGATIVE)));
+    let guarded = bounds_tests(&lowered_entered(source, "run", Some(IntRange::entering(0))));
     assert_eq!(guarded + 1, unknown, "a non-negative entering `i` under `i < a.length` needs no bounds guard");
 }
 

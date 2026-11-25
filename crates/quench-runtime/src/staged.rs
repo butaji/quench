@@ -48,6 +48,10 @@ pub(crate) mod property_buffer;
 pub mod string_form;
 /// The typed-array kinds, one file for the runtime and the stencils (`heap/cell/typed_array_catalog.rs`).
 #[path = "heap/cell/typed_array_catalog.rs"]
+#[cfg(feature = "test-support")]
+pub mod typed_array_catalog;
+#[path = "heap/cell/typed_array_catalog.rs"]
+#[cfg(not(feature = "test-support"))]
 pub(crate) mod typed_array_catalog;
 /// The b-jit's shared words, as the stencils take them.
 pub(crate) use quench_bjit::shared_words;
@@ -125,6 +129,9 @@ pub(crate) mod ic_read;
 pub mod object;
 pub mod narrow;
 pub mod store;
+#[cfg(feature = "test-support")]
+pub mod slot_store;
+#[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
 pub mod strings;
 pub mod string_length;

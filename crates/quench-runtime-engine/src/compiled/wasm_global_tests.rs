@@ -49,7 +49,7 @@ fn run(compiled: bool, ty: quench_runtime::WasmType, initial: quench_runtime::Wa
         &[quench_runtime::WasmGlobal { initial: initial.into(), mutable: true }],
     )
     .unwrap();
-    let mut vm = Vm::new(quench_runtime::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     if compiled {
         vm.programs.compile_wasm_modules_at_first_entry();
         vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);

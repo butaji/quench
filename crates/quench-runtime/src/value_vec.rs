@@ -253,6 +253,7 @@ impl Reservation {
     }
 }
 
+#[quench_macros::test_visible]
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ValueVec {

@@ -45,6 +45,7 @@ fn integer_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     stage.select(fits, integer, refused)
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The narrow form of `value` (`Value::to_narrow`) where it has one: an integer in range, a
 /// reference whose index fits, or a constant; `NOT_NARROW` for any other value, which the
 /// store leaves to the general path. A `fact` that proves an int32 selects the integer arm

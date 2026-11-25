@@ -19,6 +19,9 @@ required-features = ["bench-primitives"]
 default = ["jit", "native-execution"]
 jit = []
 native-execution = []
+# What quench-runtime-engine's own tests reach of the core: `test_support` and the test-only
+# counters (the core's `cfg(test)` items, which a dependent crate's tests do not see).
+test-support = []
 # Compatibility alias: AOT code is always compiled, so this feature is a no-op.
 aot = []
 profile-aggregate = []

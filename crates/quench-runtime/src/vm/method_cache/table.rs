@@ -10,6 +10,7 @@ use super::super::site_table::CacheSiteTable;
 use super::super::{EMPTY_METHOD_CACHE, MethodCache};
 use super::METHOD_CACHE_WAYS;
 
+#[quench_macros::test_visible]
 pub(in crate::vm) type MethodWays = [MethodCache; METHOD_CACHE_WAYS];
 const EMPTY_WAYS: MethodWays = [EMPTY_METHOD_CACHE; METHOD_CACHE_WAYS];
 /// A site that recorded nothing.
@@ -17,6 +18,7 @@ const NO_SLOT: u32 = u32::MAX;
 /// A slot whose site has no megamorphic set.
 const NO_SET: u32 = u32::MAX;
 
+#[quench_macros::test_visible]
 #[derive(Default)]
 pub(in crate::vm) struct MethodCacheTable {
     slots: CacheSiteTable<u32>,
@@ -31,6 +33,7 @@ pub(in crate::vm) struct MethodCacheTable {
 }
 
 impl MethodCacheTable {
+    #[quench_macros::test_visible]
     /// Sites the table covers.
     pub(in crate::vm) fn len(&self) -> usize {
         self.slots.len()
@@ -174,7 +177,8 @@ impl MethodCacheTable {
     }
 
     /// Appends one site holding `ways`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
+    #[quench_macros::test_visible]
     pub(in crate::vm) fn push(&mut self, ways: MethodWays) {
         self.extend_empty(1);
         *self.ways_mut(self.len() - 1) = ways;

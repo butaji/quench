@@ -757,7 +757,7 @@ pub(crate) fn vector_regions(
 
 #[cfg(test)]
 mod tests {
-    use quench_runtime::Vm;
+    use quench_runtime::vm::Vm;
     use quench_runtime::{WasmTrap, WasmValue};
     use wasmparser::{MemArg, Operator, ValType};
 
@@ -959,9 +959,9 @@ mod tests {
             &[],
         )
         .unwrap();
-        let mut vm = Vm::new(quench_runtime::SystemHost);
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
         vm.programs.compile_wasm_modules_at_first_entry();
-        vm.set_execution_mode(mode);
+        quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, mode);
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         Fixture { vm, instance, module }
     }
@@ -987,7 +987,7 @@ mod tests {
         /// How many vector regions `function`'s lane view holds.
         fn regions(&self, function: u32) -> usize {
             let program = self.vm.programs.find_shared(&self.module.program).expect("the module's program");
-            let view = self.vm.view_any_in_lane(program, function).expect("a lane view");
+            let view = quench_runtime::vm::engine_calls::EngineVm::view_any_in_lane(&self.vm, program, function).expect("a lane view");
             // SAFETY: views live as long as their program entry.
             unsafe { &*view }.vector_regions.len()
         }

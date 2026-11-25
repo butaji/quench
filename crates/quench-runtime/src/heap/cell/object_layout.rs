@@ -61,6 +61,7 @@ impl Object {
         self.set_header(meta, auxiliary);
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)]
     pub(crate) fn new(proto: Value) -> Self {
         // `with_property_storage` of empty inline storage, written out as `with_inline_values`
@@ -182,6 +183,7 @@ impl Object {
         self.extras_mut().watch = watch;
     }
 
+    #[quench_macros::test_visible]
     /// This watched prototype's subject, if a heap's dependency table gave it one.
     pub(crate) fn watched_subject(&self) -> Option<u32> {
         self.extras().and_then(|extras| extras.watch.subject())
@@ -251,6 +253,7 @@ impl Object {
         u64::from(self.layout)
     }
 
+    #[quench_macros::test_visible]
     /// What a lane record's own-field hint and a call memo's step hold: the record's layout id
     /// (`layout_id`), so that one compare of the record's own word, with no table load, proves
     /// its exact shape, storage form, prototype link and flags. The auxiliary word a hint names
@@ -333,6 +336,7 @@ impl Object {
         plain.then_some(self.payload as usize)
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn plain_property_storage(&self) -> Option<PlainPropertyStorage> {
         if self.properties().is_dictionary() || self.extras_pointer().is_some() {
             return None;
@@ -344,6 +348,7 @@ impl Object {
         })
     }
 
+    #[quench_macros::test_visible]
     /// The storage start of an object whose values live in the arena behind extras, as a
     /// prototype's do (its `PrototypeLookupState` lives there): the start the extras hold
     /// (`storage_position`). `None` for inline storage or no extras.

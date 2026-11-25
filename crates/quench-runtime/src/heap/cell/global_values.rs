@@ -124,6 +124,7 @@ fn with_table<T>(table: u32, work: impl FnOnce(&mut Table) -> T) -> Option<T> {
 }
 
 /// A new table's id, never zero.
+#[quench_macros::test_visible]
 pub(crate) fn new_table() -> u32 {
     TABLES.with(|tables| {
         let mut tables = tables.borrow_mut();

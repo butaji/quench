@@ -103,6 +103,7 @@ pub(crate) fn gated_payload<S: Stage>(stage: &mut S, record: S::Word, record_id:
     Some(stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32))
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Stores `value`, a word in `rep`'s encoding, at `slot` of the flat run the plain `payload` word
 /// addresses; the slot is a per-site operand, so its byte offset is a hole.
 #[inline(always)]

@@ -108,6 +108,7 @@ static EMPTY: Header = Header {
 // narrows again (`may_narrow`), so an array narrows and widens at most once. Front removals may drop it.
 pub(super) use crate::staged::object_encoding::{BIASED, KEEP_WIDE};
 
+#[quench_macros::test_visible]
 /// The `Header::len` flag of a narrow backing: its values are 4-byte narrow forms
 /// (`Value::to_narrow`) from `VALUES_OFFSET`, read through `ArrayElements::get`. A
 /// replacement by a value with a narrow form stays narrow (`replace_in_place`); any other

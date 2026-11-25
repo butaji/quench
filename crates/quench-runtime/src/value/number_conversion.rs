@@ -30,6 +30,7 @@ pub(super) fn truncate_to_i32(value: f64) -> i32 {
     value as i32
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Magnitudes below 2^63 truncate exactly into an `i64`, whose low 32 bits are the value
 /// modulo 2^32.
 pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;

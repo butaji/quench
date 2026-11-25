@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::{heap::Heap, tier_surface::{Cell, Object, PlainPropertyStorage}};
+use quench_runtime::{library_surface::Heap, tier_surface::{Cell, Object, PlainPropertyStorage}};
 use quench_runtime::staged::ic;
 use quench_runtime::staged::object::{own_layout, read_slot, Form, PackedAccess};
 use quench_runtime::staged::slot_store::store_flat;

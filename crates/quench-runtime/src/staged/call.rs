@@ -115,6 +115,7 @@ pub fn concrete_fits(limit: u64, needed: u64) -> bool {
     admit_room(&mut super::Concrete::new(std::ptr::null()), limit, needed, ()).is_some()
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The facts word as fields: what a publish writes and a planner reads back (the packing above,
 /// once).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

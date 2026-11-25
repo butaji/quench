@@ -183,10 +183,10 @@ fn relation_capture_entry_preserves_noninteger_values_and_effects() {
                 let program = if typescript { quench_runtime::Engine::specialize_typescript(&source, "relation-capture.cts") }
                     else { quench_runtime::Engine::specialize(&source, "relation-capture.cjs") }.unwrap();
                 for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
-                    let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+                    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
                     vm.set_execution_mode(mode);
                     vm.programs.enable_js_lane_methods();
-                    let error = vm.execute(&program).unwrap_err();
+                    let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
                     assert_eq!(error.thrown_value(), Some(Value::integer(42)),
                         "{operator}, reverse={reversed}, TS={typescript}, {mode:?}: {error}");
                 }
@@ -259,7 +259,7 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
         {
             // Exercise the linked unit/inliner path too: execution through
             // the dynamic VM alone need not select the same region entries.
-            let module = quench_runtime::lower_native_js_module(&program, "capture_entry").unwrap();
+            let module = crate::api::lower_native_js_module(&program, "capture_entry").unwrap();
             let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
             for function in module.functions {
                 if let crate::native_object::NativeFunction::Definition { function, .. } = function {
@@ -268,12 +268,12 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
             }
         }
         for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
-            let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.set_execution_mode(mode);
             #[cfg(not(quench_profiled))]
             vm.programs.enable_js_jit_diagnostics();
             vm.programs.enable_js_lane_methods();
-            let error = vm.execute(&program).unwrap_err();
+            let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
         }
     }
@@ -292,7 +292,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
     let mut frame = super::super::BodyRunContext::new();
-    let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
     const FRAME: usize = quench_runtime::vm::register_file::FRAME_CONTEXT;
@@ -398,12 +398,12 @@ fn a_masked_index_reads_the_element_it_names_whatever_the_array_length() {
     let source = format!("(function(exports,require,module,__filename,__dirname){{{source}}})(undefined,undefined,undefined,undefined,undefined);");
     let program = quench_runtime::Engine::specialize(&source, "masked-index.cjs").unwrap();
     for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.set_execution_mode(mode);
         #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.programs.enable_js_lane_methods();
-        let error = vm.execute(&program).unwrap_err();
+        let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
     }
 }

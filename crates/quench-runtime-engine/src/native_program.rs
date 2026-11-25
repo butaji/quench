@@ -80,7 +80,7 @@ impl NativeJsProgram {
     /// Whether a replayed assumption retired the image's stable facts.
     #[cfg(test)]
     pub(crate) fn frozen_invalidated(&self) -> bool {
-        self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
+        self.frozen.as_ref().is_some_and(|frozen| quench_runtime::test_support::invalidation_is_set(&frozen.invalidation))
     }
     fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
         if !quench_runtime::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {

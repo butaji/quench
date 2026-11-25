@@ -20,6 +20,18 @@ pub(crate) mod engine_calls;
 pub(crate) mod engine_calls2;
 pub(crate) mod lifted;
 pub(crate) mod symbol_words;
+/// Links the intl layer's entry points the core names into the test binary.
+#[cfg(test)]
+extern crate quench_runtime_intl;
+/// Links the stencil tables the b-jit reads into the test binary.
+#[cfg(test)]
+extern crate quench_stencils;
+/// The core's staged forms, at the path the stencil layout files the tests mount name them by.
+#[cfg(test)]
+pub(crate) use quench_runtime::staged;
+/// The differential oracle the engine's tier tests run a program through.
+#[cfg(test)]
+pub(crate) mod test_oracle;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]
