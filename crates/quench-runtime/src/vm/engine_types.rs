@@ -4061,7 +4061,19 @@ impl AheadImages {
     #[inline]
     pub fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
-        let images = match Self::compile(program) {
+        Self::keep(program, Self::compile(program));
+    }
+
+    /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
+    #[inline]
+    pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
+        if recorded().is_none() { return; }
+        Self::keep(program, Self::compile_wasm(vm, id, program, bindings));
+    }
+
+    /// Adds a lowering's image to the recording, or traces why `program` has none.
+    fn keep(program: &ResidualProgram, compiled: Result<Self, String>) {
+        let images = match compiled {
             Ok(images) => images,
             Err(why) => {
                 if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} records no image: {why}", program.source_name); }

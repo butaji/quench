@@ -5,7 +5,7 @@ use super::{DynamicFunctionKind as Kind, NativeSourceKey};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_semantic::{Scoping, SymbolId};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Kinds([bool; Kind::ALL.len()]);
@@ -114,31 +114,55 @@ impl Discovery<'_> {
         });
         self.requests.push(Request { callee, source, offset });
     }
+    /// Each binding's flow: the join of every constraint's value over the bindings it reads, solved by the
+    /// one fixpoint driver (`dataflow::solve`) with each constraint a block.
     fn solve(&self) -> BTreeMap<SymbolId, Flow> {
-        let mut dependents: BTreeMap<SymbolId, Vec<usize>> = BTreeMap::new();
-        for (index, constraint) in self.constraints.iter().enumerate() {
-            let mut dependencies = BTreeSet::new();
-            constraint.value.dependencies(&mut dependencies);
-            for dependency in dependencies { dependents.entry(dependency).or_default().push(index); }
-        }
+        let mut problem = Constraints::of(&self.constraints);
+        let inputs = crate::dataflow::solve(&mut problem);
         let mut bindings = BTreeMap::new();
-        let mut work: VecDeque<_> = (0..self.constraints.len()).collect();
-        let mut queued = vec![true; self.constraints.len()];
-        while let Some(index) = work.pop_front() {
-            queued[index] = false;
-            let constraint = &self.constraints[index];
-            let value = constraint.value.value(&bindings);
-            if value == Flow::default() { continue; }
-            if bindings.entry(constraint.binding).or_default().merge(value)
-                && let Some(users) = dependents.get(&constraint.binding) {
-                for &user in users {
-                    if !queued[user] { queued[user] = true; work.push_back(user); }
-                }
+        for (constraint, input) in self.constraints.iter().zip(inputs) {
+            if let Some(input) = input {
+                crate::dataflow::Dataflow::join(&problem, &mut bindings, &constraint.output(&input));
             }
         }
         bindings
     }
 }
+
+impl Constraint {
+    /// The flow this constraint gives its binding, from the flows of the bindings it reads.
+    fn output(&self, input: &BTreeMap<SymbolId, Flow>) -> BTreeMap<SymbolId, Flow> {
+        let value = self.value.value(input);
+        if value == Flow::default() { BTreeMap::new() } else { BTreeMap::from([(self.binding, value)]) }
+    }
+}
+
+/// The constraints as a dataflow problem: a constraint's output (its binding's flow) reaches every
+/// constraint whose value reads that binding.
+struct Constraints<'c> { constraints: &'c [Constraint], dependents: Vec<Vec<usize>> }
+impl<'c> Constraints<'c> {
+    fn of(constraints: &'c [Constraint]) -> Self {
+        let mut readers: BTreeMap<SymbolId, Vec<usize>> = BTreeMap::new();
+        for (index, constraint) in constraints.iter().enumerate() {
+            let mut dependencies = BTreeSet::new();
+            constraint.value.dependencies(&mut dependencies);
+            for dependency in dependencies { readers.entry(dependency).or_default().push(index); }
+        }
+        let dependents = constraints.iter().map(|constraint| readers.get(&constraint.binding).cloned().unwrap_or_default()).collect();
+        Self { constraints, dependents }
+    }
+}
+impl crate::dataflow::Dataflow for Constraints<'_> {
+    type State = BTreeMap<SymbolId, Flow>;
+    fn blocks(&self) -> usize { self.constraints.len() }
+    fn edges(&self, block: usize) -> &[usize] { &self.dependents[block] }
+    fn entry_state(&self, _block: usize) -> Option<Self::State> { Some(BTreeMap::new()) }
+    fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool {
+        incoming.iter().fold(false, |changed, (&binding, &flow)| into.entry(binding).or_default().merge(flow) | changed)
+    }
+    fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State { self.constraints[block].output(state) }
+}
+
 impl<'a> Visit<'a> for Discovery<'_> {
     fn visit_variable_declarator(&mut self, declaration: &VariableDeclarator<'a>) {
         if let BindingPattern::BindingIdentifier(name) = &declaration.id

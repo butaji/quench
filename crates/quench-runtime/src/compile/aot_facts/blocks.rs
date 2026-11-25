@@ -14,12 +14,11 @@ pub(super) struct Blocks {
 }
 
 impl Blocks {
-    /// The blocks of a function of `len` instructions with control flow `successors`. A block
-    /// ends at every instruction that is not a single normal successor (a branch, a return, an
-    /// instruction a handler covers) and at every jump target.
+    /// The blocks of a function of `len` instructions with control flow `successors`, split at
+    /// the shared leaders (`Successors::leaders`).
     pub(super) fn of(successors: &Successors, len: usize) -> Self {
-        let leader = leaders(successors, len);
-        let starts: Vec<usize> = (0..len).filter(|&pc| leader[pc]).collect();
+        let leader = successors.leaders(len);
+        let starts: Vec<usize> = leader.iter().filter(|&pc| pc < len).collect();
         let ranges: Vec<Range<usize>> = starts
             .iter()
             .enumerate()
@@ -39,23 +38,4 @@ impl Blocks {
         let (targets, kinds): (Vec<Vec<usize>>, Vec<Vec<ControlEdge>>) = ranges.iter().map(edges_of).unzip();
         Self { ranges, targets, kinds }
     }
-}
-
-/// Whether each PC (and the end, at `len`) starts a block: the entry, every jump target, and the
-/// PC after each instruction that does not fall through to the next alone.
-fn leaders(successors: &Successors, len: usize) -> Vec<bool> {
-    let mut leader = vec![false; len + 1];
-    leader[0] = true;
-    for pc in 0..len {
-        let edges: Vec<_> = successors.at(pc).collect();
-        if edges != [(pc + 1, ControlEdge::Normal)] {
-            leader[pc + 1] = true;
-        }
-        for (target, _) in edges {
-            if let Some(entry) = leader.get_mut(target) {
-                *entry = true;
-            }
-        }
-    }
-    leader
 }

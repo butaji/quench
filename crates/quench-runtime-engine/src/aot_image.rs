@@ -86,6 +86,30 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
     })
 }
 
+/// The image of Wasm program `id`, every function planned from the module's binding types `bindings`. Its
+/// functions run on the lane's records (every record admitted where the image is the only code); each one's
+/// stitched rows (`compiled::wasm_image`), counted under `QUENCH_TRACE=aot-lanes`, become its body once the
+/// loader links them into the instance's Wasm tier.
+pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::ProgramId, program: &ResidualProgram,
+    bindings: &[quench_runtime::WasmBindingType]) -> Result<AotImage, String> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        let rows = crate::compiled::wasm_image::rows(vm, id, program, bindings);
+        let (stitched, symbols) = (rows.iter().flatten().count(), rows.iter().flatten().map(|rows| rows.symbols.len()).sum::<usize>());
+        eprintln!("aot-lanes: {} wasm: {stitched} of {} functions stitch, naming {symbols} symbols", program.source_name, rows.len());
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = (vm, id, bindings);
+    let functions = (0..program.function_count() as u32).map(|function| {
+        let records = program.function(function as usize).instructions().count() as u32;
+        let code = quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode { code: Box::default(), relocations: Box::default() };
+        let base = base::BaseImage { code, pc_offsets: vec![base::NO_ENTRY; records as usize].into(), generic: (0..records).collect(), scratch: 0 };
+        AotFunction { id: function, base, lane: None }
+    }).collect();
+    Ok(AotImage { fingerprint: crate::compiled::ahead_program_fingerprint(program), build_id: crate::compiled::AHEAD_BUILD_ID, functions,
+        shapes: Vec::new(), heap_values: Vec::new(), atoms: Vec::new(), labels: Vec::new(), calls: Vec::new() })
+}
+
 /// One function: its base body always, its lane body where it lowers native records, the
 /// lane's leaves bound to the base body's PC entries; its base body's proven calls join `sites`.
 fn lower_function(
