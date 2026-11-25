@@ -475,7 +475,7 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
                 kind: quench_runtime::SourceKind::Script,
             })
             .map_err(|error| format!("{error:?}"))?;
-        let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
+        let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
         let temporary = unfinished_write(path, std::process::id());
         let written = std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, path));
         if let Err(error) = written {

@@ -6,7 +6,10 @@ use crate::host::startup_snapshot::{require_quiescent, HostSnap};
 use quench_runtime::{SnapshotReader, SnapshotWriter};
 
 impl NodeHost {
-    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+    /// The host's part of a snapshot: of a startup snapshot, which the restoring host finishes
+    /// installing (`Host::resume`), or `at_rest`, of a run saved at its wait for input
+    /// (`aot::prefix::reach_wait`), whose installation is finished and whose run has begun.
+    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>, at_rest: bool) -> Result<(), String> {
         let Self {
             #[cfg(feature = "native-execution")]
             module_assets: _,
@@ -29,10 +32,9 @@ impl NodeHost {
             building_snapshot: _,
             // Read only while a snapshot is built.
             snapshot_builtins: _,
-            // False at a startup snapshot's point, which a restored host's `Host::resume` sets
-            // after finishing installation; true at a wait for input (`aot::prefix::reach_wait`),
-            // where installation is finished and the run has begun.
-            bootstrapped,
+            // Set again from `at_rest`: a startup snapshot is taken once bootstrap has set it,
+            // and its restoring host still finishes installing.
+            bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
             esm_required: _,
@@ -42,7 +44,7 @@ impl NodeHost {
             "socket writes",
         )?;
         writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI);
-        writer.u8(u8::from(*bootstrapped));
+        writer.u8(u8::from(at_rest));
         shared_state.borrow().write_snapshot(writer)
     }
 

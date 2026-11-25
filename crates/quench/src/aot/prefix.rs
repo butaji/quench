@@ -265,7 +265,7 @@ pub(crate) const REACHED_WAIT: &str = "build-time evaluation reached its first w
 /// run ends here, keeping the runtime as a snapshot (`Residual::Waiting`), which an image
 /// restores to wait for the same input.
 pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>, program: &quench_runtime::ResidualProgram) -> String {
-    match runtime.snapshot_at_rest(program, |host, writer| host.write_snapshot(writer)) {
+    match runtime.snapshot_at_rest(program, |host, writer| host.write_snapshot(writer, true)) {
         Ok(rest) => {
             STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).rest = Some(rest);
             REACHED_WAIT.to_owned()
