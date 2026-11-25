@@ -196,7 +196,7 @@ fn well_known_constructors(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let global = c.global_root()?;
         WELL_KNOWN_CONSTRUCTORS.iter().map(|name| get(c, global, name)).collect::<Result<Vec<_>, _>>()
     })?;
-    let buffer = crate::host::shared_vm::commonjs::builtin_require(c, "buffer")?;
+    let buffer = crate::host::shared_vm::commonjs::builtin!(c, "buffer")?;
     constructors.push(get(c, buffer, "Buffer")?);
     let list = c.array_rooted(&constructors)?;
     let list = c.retain(list)?;
@@ -427,7 +427,7 @@ impl Comparison {
                     return Ok(false);
                 }
             }
-            let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
+            let crypto = crate::host::shared_vm::commonjs::builtin!(c, "crypto")?;
             let key_object = get(c, crypto, "KeyObject")?;
             let from = get(c, key_object, "from")?;
             let left_key = c.call_rooted(from, key_object, &[left])?;

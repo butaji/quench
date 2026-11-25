@@ -177,7 +177,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outc
 
 /// A signal's number, as `convertToValidSignal` accepts it.
 fn signal_number(c: &mut Context<'_>, signal: RootId) -> Result<RootId, RootedError> {
-    let os = crate::host::shared_vm::commonjs::builtin_require(c, "os")?;
+    let os = crate::host::shared_vm::commonjs::builtin!(c, "os")?;
     let constants = get(c, os, "constants")?;
     let signals = get(c, constants, "signals")?;
     if let Some(number) = c.rooted_value(signal).and_then(|value| value.as_number()) {

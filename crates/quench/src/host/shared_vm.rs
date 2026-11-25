@@ -69,9 +69,10 @@ macro_rules! node_bindings {
     };
 }
 
-/// An operation marked as one the code that names it makes (`operation!`): a record in the
-/// `quench_operation_marks` section holding its index, which only that code refers to, so a
-/// linked image holds the mark exactly when it links the code (`aot::cli::operation_table`).
+/// An operation marked as one the code that names it makes (`operation!`): a static named
+/// `QUENCH_OPERATION_MARK` holding its index, which only that code refers to. Each static has a
+/// section of its own, so a linked image holds the mark exactly when it links the code
+/// (`aot::cli::link_with_reached_operations` reads the marks from the symbol table).
 #[derive(Clone, Copy)]
 pub(crate) struct MarkedOperation(pub(crate) &'static u32);
 
@@ -89,17 +90,16 @@ impl MarkedOperation {
 
 /// The operation registered as `name`, as a mark (`MarkedOperation`), for a table.
 macro_rules! marked_operation {
-    ($name:literal $(,)?) => {{
-        #[unsafe(link_section = "quench_operation_marks")]
-        static MARK: u32 = $crate::host::shared_vm::static_operation($name).0;
-        $crate::host::shared_vm::MarkedOperation(&MARK)
+    ($name:expr $(,)?) => {{
+        static QUENCH_OPERATION_MARK: u32 = $crate::host::shared_vm::static_operation($name).0;
+        $crate::host::shared_vm::MarkedOperation(&QUENCH_OPERATION_MARK)
     }};
 }
 pub(crate) use marked_operation;
 
 /// The operation registered as `name`, marked as one the enclosing code makes.
 macro_rules! literal_operation {
-    ($name:literal $(,)?) => {
+    ($name:expr $(,)?) => {
         $crate::host::shared_vm::marked_operation!($name).id()
     };
 }
@@ -2444,6 +2444,92 @@ node_bindings! {
         method "cliModuleEmbedder" (0) => crate::modules::cli_options_shared_vm::internal::get_embedder,
         method "cliModuleSchema" (0) => crate::modules::cli_options_shared_vm::internal::generate_schema,
         method "cliModuleRefresh" (0) => crate::modules::cli_options_shared_vm::internal::refresh,
+        // Each builtin module's builder (`commonjs::builtin!`).
+        method "builtin:internal/options" (0) => commonjs::builders::internal_options,
+        method "builtin:_http_agent" (0) => commonjs::builders::http_agent,
+        method "builtin:_http_client" (0) => commonjs::builders::http_client,
+        method "builtin:_http_incoming" (0) => commonjs::builders::http_incoming,
+        method "builtin:_http_outgoing" (0) => commonjs::builders::http_outgoing,
+        method "builtin:_http_server" (0) => commonjs::builders::http_server,
+        method "builtin:_tls_common" (0) => commonjs::builders::tls_common,
+        method "builtin:_tls_wrap" (0) => commonjs::builders::tls_wrap,
+        #[cfg(quench_openssl_provider)]
+        method "builtin:internal/crypto/keys" (0) => commonjs::builders::internal_crypto_keys,
+        method "builtin:internal/source_map/source_map_cache" (0) => commonjs::builders::internal_source_map_cache,
+        method "builtin:internal/worker/io" (0) => commonjs::builders::internal_worker_io,
+        method "builtin:internal/worker" (0) => commonjs::builders::internal_worker,
+        method "builtin:internal/abort_controller" (0) => commonjs::builders::internal_abort_controller,
+        method "builtin:internal/process/task_queues" (0) => commonjs::builders::internal_task_queues,
+        method "builtin:internal/streams/readable" (0) => commonjs::builders::internal_streams_readable,
+        method "builtin:internal/streams/writable" (0) => commonjs::builders::internal_streams_writable,
+        method "builtin:internal/streams/duplex" (0) => commonjs::builders::internal_streams_duplex,
+        method "builtin:internal/streams/transform" (0) => commonjs::builders::internal_streams_transform,
+        method "builtin:internal/streams/passthrough" (0) => commonjs::builders::internal_streams_passthrough,
+        method "builtin:internal/streams/end-of-stream" (0) => commonjs::builders::internal_streams_end_of_stream,
+        method "builtin:internal/streams/legacy" (0) => commonjs::builders::internal_streams_legacy,
+        method "builtin:internal/streams/state" (0) => commonjs::builders::internal_streams_state,
+        method "builtin:internal/streams/utils" (0) => commonjs::builders::internal_streams_utils,
+        method "builtin:internal/streams/destroy" (0) => commonjs::builders::internal_streams_destroy,
+        method "builtin:internal/streams/pipeline" (0) => commonjs::builders::internal_streams_pipeline,
+        method "builtin:internal/streams/add-abort-signal" (0) => commonjs::builders::internal_streams_add_abort_signal,
+        method "builtin:internal/net" (0) => commonjs::builders::internal_net,
+        method "builtin:_http_common" (0) => commonjs::builders::http_common,
+        method "builtin:punycode" (0) => commonjs::builders::punycode,
+        method "builtin:readline/promises" (0) => commonjs::builders::readline_promises,
+        method "builtin:constants" (0) => commonjs::builders::constants,
+        method "builtin:inspector/promises" (0) => commonjs::builders::inspector_promises,
+        method "builtin:inspector" (0) => commonjs::builders::inspector,
+        method "builtin:wasi" (0) => commonjs::builders::wasi,
+        method "builtin:sqlite" (0) => commonjs::builders::sqlite,
+        method "builtin:node:test/reporters" (0) => commonjs::builders::node_test_reporters,
+        method "builtin:_stream_wrap" (0) => commonjs::builders::stream_wrap,
+        method "builtin:fs" (0) => commonjs::builders::fs,
+        method "builtin:internal/url" (0) => commonjs::builders::internal_url,
+        method "builtin:util/types" (0) => commonjs::builders::util_types,
+        method "builtin:fs/promises" (0) => commonjs::builders::fs_promises,
+        method "builtin:net" (0) => commonjs::builders::net,
+        method "builtin:http" (0) => commonjs::builders::http,
+        method "builtin:os" (0) => commonjs::builders::os,
+        method "builtin:buffer" (0) => commonjs::builders::buffer,
+        method "builtin:stream" (0) => commonjs::builders::stream,
+        method "builtin:stream/promises" (0) => commonjs::builders::stream_promises,
+        method "builtin:stream/web" (0) => commonjs::builders::web_streams,
+        method "builtin:string_decoder" (0) => commonjs::builders::string_decoder,
+        method "builtin:timers" (0) => commonjs::builders::timers,
+        method "builtin:timers/promises" (0) => commonjs::builders::timers_promises,
+        method "builtin:internal/timers" (0) => commonjs::builders::internal_timers,
+        method "builtin:node:test" (0) => commonjs::builders::node_test,
+        method "builtin:vm" (0) => commonjs::builders::vm,
+        method "builtin:worker_threads" (0) => commonjs::builders::worker_threads,
+        method "builtin:url" (0) => commonjs::builders::url,
+        method "builtin:querystring" (0) => commonjs::builders::querystring,
+        method "builtin:readline" (0) => commonjs::builders::readline,
+        method "builtin:stream/consumers" (0) => commonjs::builders::stream_consumers,
+        method "builtin:events" (0) => commonjs::builders::events,
+        method "builtin:console" (0) => commonjs::builders::console,
+        method "builtin:tty" (0) => commonjs::builders::tty,
+        method "builtin:dns" (0) => commonjs::builders::dns,
+        method "builtin:dgram" (0) => commonjs::builders::dgram,
+        method "builtin:perf_hooks" (0) => commonjs::builders::perf_hooks,
+        method "builtin:zlib" (0) => commonjs::builders::zlib,
+        method "builtin:crypto" (0) => commonjs::builders::crypto,
+        method "builtin:domain" (0) => commonjs::builders::domain,
+        method "builtin:tls" (0) => commonjs::builders::tls,
+        method "builtin:v8" (0) => commonjs::builders::v8,
+        method "builtin:module" (0) => commonjs::builders::module,
+        method "builtin:util" (0) => commonjs::builders::util,
+        method "builtin:sys" (0) => commonjs::builders::sys,
+        method "builtin:child_process" (0) => commonjs::builders::child_process,
+        method "builtin:internal/child_process" (0) => commonjs::builders::internal_child_process,
+        method "builtin:https" (0) => commonjs::builders::https,
+        method "builtin:trace_events" (0) => commonjs::builders::trace_events,
+        method "builtin:dns/promises" (0) => commonjs::builders::dns_promises,
+        method "builtin:internalBinding/cares_wrap" (0) => commonjs::builders::cares_binding,
+        method "builtin:http2" (0) => commonjs::builders::http2,
+        method "builtin:internalBinding/http2" (0) => commonjs::builders::http2_binding,
+        method "builtin:cluster" (0) => commonjs::builders::cluster,
+        method "builtin:repl" (0) => commonjs::builders::repl,
+        method "builtin:sea" (0) => commonjs::builders::sea,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing

@@ -9,15 +9,22 @@ pub use link::{NativeLinkAudit, NativeSupport, checked_output};
 pub use footprint::NativeImageFootprint;
 pub use payload::{PayloadReduction, remove_offline_symbols};
 
-/// The little-endian 32-bit words of `executable`'s section `name`, none when it has no such
-/// section: records the linker kept because the code it kept refers to them.
-pub fn section_words(executable: &std::path::Path, name: &str) -> Result<Vec<u32>, String> {
-    use object::{Object, ObjectSection};
+/// The little-endian 32-bit word of each symbol of `executable` whose name holds `marker`:
+/// statics the linker kept because the code it kept refers to them.
+pub fn marked_words(executable: &std::path::Path, marker: &str) -> Result<Vec<u32>, String> {
+    use object::{Object, ObjectSection, ObjectSymbol};
     let bytes = std::fs::read(executable).map_err(|error| format!("{}: {error}", executable.display()))?;
     let file = object::File::parse(&*bytes).map_err(|error| error.to_string())?;
-    let Some(section) = file.section_by_name(name) else { return Ok(Vec::new()) };
-    let data = section.data().map_err(|error| error.to_string())?;
-    Ok(data.chunks_exact(4).map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])).collect())
+    let mut words = Vec::new();
+    for symbol in file.symbols().filter(|symbol| symbol.name().is_ok_and(|name| name.contains(marker))) {
+        let Some(index) = symbol.section_index() else { continue };
+        let section = file.section_by_index(index).map_err(|error| error.to_string())?;
+        let data = section.data().map_err(|error| error.to_string())?;
+        let offset = usize::try_from(symbol.address() - section.address()).map_err(|error| error.to_string())?;
+        let word = data.get(offset..offset + 4).ok_or_else(|| format!("mark {} lies outside its section", symbol.name().unwrap_or("?")))?;
+        words.push(u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
+    }
+    Ok(words)
 }
 
 use std::{collections::BTreeSet, path::{Path, PathBuf}};
