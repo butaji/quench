@@ -33,11 +33,7 @@ pub(super) fn resume(entry: &Path, rest: &Path, arguments: Vec<String>) -> Resul
 /// The worker: evaluates `entry` at build time under `assumptions` (`QUESTION=0|1`, a
 /// question by its key and its answer) and writes what it left to `journal`.
 pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> Result<(), String> {
-    let answers = assumptions.iter().map(|assumption| {
-        let (key, value) = assumption.rsplit_once('=').ok_or("evaluation assumption must be QUESTION=0|1")?;
-        Ok((super::prefix::Question::of_key(key)?, value == "1"))
-    }).collect::<Result<Vec<_>, String>>()?;
-    super::prefix::begin(answers);
+    super::prefix::begin(parse_assumptions(assumptions)?);
     let input = crate::shared_run::SharedInput::File {
         path: entry.to_owned(),
         exec_argv: Vec::new(),
@@ -67,24 +63,43 @@ pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> 
     fs::write(journal, report.to_string()).map_err(|error| format!("{}: {error}", journal.display()))
 }
 
+/// The input a run waits for, beside a run that completes under another answer.
+const WAITED_INPUT: &str = "standard input, after it waits for it";
+
+/// The answers a worker's `QUESTION=0|1` arguments assume.
+pub(super) fn parse_assumptions(assumptions: &[String]) -> Result<Answers, String> {
+    assumptions.iter().map(|assumption| {
+        let (key, value) = assumption.rsplit_once('=').ok_or("evaluation assumption must be QUESTION=0|1")?;
+        Ok((super::prefix::Question::of_key(key)?, value == "1"))
+    }).collect()
+}
+
 /// The most questions whose answers one image specializes on.
 const MOST_QUESTIONS: usize = 3;
 
 /// One specialization of the program: the answers it assumes, its effects in order and its
 /// exit status.
 struct Variant {
-    answers: Vec<(super::prefix::Question, bool)>,
+    answers: Answers,
+    /// Whether the run reached a wait for input instead of completing.
+    waits: bool,
     effects: Vec<(i32, Vec<u8>)>,
     exit: i32,
 }
 
-/// What a strict compile made: a strict image, or nothing, because a build-time run read the
-/// named dynamic input, which strict images do not yet keep code for; the compile then links
-/// the program's support variant (`aot::cli`).
+/// What a strict compile made: a strict image; nothing, because the build-time run waits for
+/// input before reading any, which an image linked with support resumes (`Waits`, `aot::cli`);
+/// or nothing, because a build-time run read the named dynamic input, which strict images do
+/// not yet keep code for, and the compile links the program's support variant.
 pub(super) enum Outcome {
     Image,
+    /// The answers each waiting run assumed, one run per set.
+    Waits(Vec<Answers>),
     Dynamic,
 }
+
+/// The answers a build-time run assumes, each a question and its answer.
+pub(super) type Answers = Vec<(super::prefix::Question, bool)>;
 
 /// Compiles `entry` to a strict image at `output`, in the build directory `work`; `report`
 /// gains what the evaluations left.
@@ -92,6 +107,17 @@ pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Val
     let mut variants = Vec::new();
     if let Some(input) = specialize(entry, work, Vec::new(), &mut variants)? {
         report["strict"] = json!({"status": "dynamic_input", "input": input});
+        return Ok(Outcome::Dynamic);
+    }
+    // Runs that wait for input resume in an image with support; one that waits beside one that
+    // completes would need both kinds of image.
+    if variants.iter().all(|variant| variant.waits) {
+        report["strict"] = json!({"status": "waits_for_input", "runs": variants.iter().map(|variant|
+            variant.answers.iter().map(|(question, answer)| (question.key(), *answer)).collect::<Vec<_>>()).collect::<Vec<_>>()});
+        return Ok(Outcome::Waits(variants.into_iter().map(|variant| variant.answers).collect()));
+    }
+    if variants.iter().any(|variant| variant.waits) {
+        report["strict"] = json!({"status": "dynamic_input", "input": WAITED_INPUT});
         return Ok(Outcome::Dynamic);
     }
     let source = work.join("strict_image.rs");
@@ -109,8 +135,9 @@ pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Val
 }
 
 /// Evaluates `entry` under `answers`, and once per answer of each question the run asks,
-/// adding each completed run to `variants`; or the first dynamic input a run read.
-fn specialize(entry: &Path, work: &Path, answers: Vec<(super::prefix::Question, bool)>, variants: &mut Vec<Variant>) -> Result<Option<String>, String> {
+/// adding each run that completes or waits for input to `variants`; or the first dynamic input
+/// a run read.
+fn specialize(entry: &Path, work: &Path, answers: Answers, variants: &mut Vec<Variant>) -> Result<Option<String>, String> {
     let journal = work.join(format!("evaluation-{}.json", variants.len()));
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", EVALUATION_WORKER_OPTION]).arg(entry).arg(&journal)
@@ -122,7 +149,7 @@ fn specialize(entry: &Path, work: &Path, answers: Vec<(super::prefix::Question, 
     match left["status"].as_str() {
         Some("effects") => {
             let effects = serde_json::from_value(left["effects"].clone()).map_err(|error| error.to_string())?;
-            variants.push(Variant { answers, effects, exit: left["exit"].as_i64().unwrap_or(0) as i32 });
+            variants.push(Variant { answers, waits: false, effects, exit: left["exit"].as_i64().unwrap_or(0) as i32 });
             Ok(None)
         }
         Some("question") if answers.len() < MOST_QUESTIONS => {
@@ -137,7 +164,10 @@ fn specialize(entry: &Path, work: &Path, answers: Vec<(super::prefix::Question, 
             Ok(None)
         }
         Some("question") => Ok(Some(format!("more than {MOST_QUESTIONS} yes-or-no inputs ({})", left["key"].as_str().unwrap_or("")))),
-        Some("waiting") => Ok(Some("standard input, after it waits for it".into())),
+        Some("waiting") => {
+            variants.push(Variant { answers, waits: true, effects: Vec::new(), exit: 0 });
+            Ok(None)
+        }
         Some("dynamic") => Ok(Some(left["input"].as_str().unwrap_or("an unnamed input").to_owned())),
         _ => Err(format!("build-time evaluation journal: unknown status {}", left["status"])),
     }

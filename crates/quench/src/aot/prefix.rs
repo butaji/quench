@@ -79,6 +79,15 @@ pub(crate) enum Question {
 }
 
 impl Question {
+    /// The question's answer in this process, as an image asks it as it starts.
+    pub(crate) fn holds(&self) -> bool {
+        match self {
+            // SAFETY: `isatty` reads only the descriptor number.
+            Self::Terminal(fd) => unsafe { libc::isatty(*fd) == 1 },
+            Self::Environment(name, value) => std::env::var_os(name).is_some_and(|set| set == value.as_str()),
+        }
+    }
+
     /// The question as its key: `tty:FD` or `env:NAME=VALUE`.
     pub(crate) fn key(&self) -> String {
         match self {
@@ -212,6 +221,20 @@ pub(crate) fn refused(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) 
 }
 
 /// Records a write of `bytes` to the process's descriptor `fd`, in place of making it.
+/// Makes again a write a build-time run recorded (`record`), as a strict image's replay makes it:
+/// a closed or failing descriptor ends it, as Node's stdio writes ignore such a failure.
+pub(crate) fn replay(fd: i32, bytes: &[u8]) {
+    let mut written = 0;
+    while written < bytes.len() {
+        // SAFETY: the range lies inside `bytes`.
+        let count = unsafe { libc::write(fd, bytes[written..].as_ptr().cast(), bytes.len() - written) };
+        if count <= 0 {
+            return;
+        }
+        written += count as usize;
+    }
+}
+
 pub(crate) fn record(fd: i32, bytes: Vec<u8>) {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).effects.push((fd, bytes));
 }

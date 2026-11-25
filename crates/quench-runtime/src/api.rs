@@ -317,6 +317,25 @@ impl<H: Host> Runtime<H> {
         Ok(restored)
     }
 
+    /// Continues a runtime `restore_snapshot` restored from a run saved at rest
+    /// (`snapshot_at_rest`): the host binds its process inputs again, and nothing runs until
+    /// its sources deliver.
+    pub fn resume_restored(&mut self) -> Result<(), JsError> {
+        self.vm.resume_restored()
+    }
+
+    /// `resume_restored` for a run saved at rest that `program`'s native image continues.
+    #[cfg(feature = "native-execution")]
+    pub fn resume_native_from_snapshot(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        program: &crate::NativeJsProgram,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), JsError> {
+        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
+        self.vm.resume_restored()
+    }
+
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
     pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.vm.execute_restored(program).map(drop)

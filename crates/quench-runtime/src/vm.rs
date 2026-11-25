@@ -2939,9 +2939,15 @@ impl Vm {
     /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
     /// `program`: the host resumes its installation where the snapshot left it.
     pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        self.check_execution_interrupt()?;
-        self.resume_host()?;
+        self.resume_restored()?;
         self.run_main(program, false)
+    }
+
+    /// Resumes the host of a VM restored from a run saved at rest (`snapshot_at_rest`), whose
+    /// main program has already run: the run continues from the host's own sources.
+    pub(crate) fn resume_restored(&mut self) -> Result<(), JsError> {
+        self.check_execution_interrupt()?;
+        self.resume_host()
     }
 
     /// Runs the main program of an installed realm: its module graph, its declarations and
