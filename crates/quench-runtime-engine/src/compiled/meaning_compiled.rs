@@ -83,9 +83,11 @@ pub(crate) fn is_binary(instruction: WideInstruction) -> bool {
 /// A binary arithmetic operation whose operator `binary_operator` names: the equality row or the
 /// VM's operator of a `Binary` record.
 pub(crate) fn is_binary_arithmetic(instruction: WideInstruction) -> bool {
-    // As `is_binary`: a completing record is one by the staged meaning (`Meaning::NumericBinary`).
+    // As `is_binary`: a completing record is one by the staged meaning (`Meaning::NumericBinary`), and so is
+    // a plain one that decodes to its Number operation (`numeric::binary_operation`): `a * b`, `x | 0`.
     match crate::compiled::decoded(instruction) {
         Some(Operation::Equality { .. } | Operation::Binary { .. }) => true,
+        Some(Operation::Number(_)) => quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary),
         Some(_) => false,
         None => quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary),
     }
@@ -392,4 +394,21 @@ const WASM_OPCODES: [u64; Op::COUNT.div_ceil(WASM_WORD)] = {
 pub(crate) fn is_wasm(instruction: WideInstruction) -> bool {
     let index = instruction.op() as usize;
     WASM_OPCODES[index / WASM_WORD] >> (index % WASM_WORD) & 1 != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use quench_runtime::bytecode::{Op, Operand, WideInstruction, RETURN_REGISTER};
+    use oxc_ast::ast::BinaryOperator;
+
+    #[test]
+    fn a_plain_numeric_binary_is_stitchable_as_its_completing_form_is() {
+        // `a * b` into a temporary decodes to its Number operation; a stitched inline admits it as it admits
+        // the same record returning (c_call_leaf's callee: `(a * b) | 0`).
+        let (b, c) = (Operand::register(0).0, Operand::register(1).0);
+        let plain = WideInstruction::new(Op::Binary, 2, b, c, BinaryOperator::Multiplication as u32);
+        let returning = WideInstruction::new(Op::Binary, RETURN_REGISTER | 2, b, c, BinaryOperator::BitwiseOR as u32);
+        assert!(super::is_binary_arithmetic(plain) && super::stitchable(plain));
+        assert!(super::is_binary_arithmetic(returning) && super::stitchable(returning));
+    }
 }
