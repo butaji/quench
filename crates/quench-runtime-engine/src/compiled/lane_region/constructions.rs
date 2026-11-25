@@ -34,7 +34,7 @@ impl Lowering<'_, '_> {
                 && instruction.result_flags() == quench_runtime::bytecode::RETURN_REGISTER => Some(record),
             _ => return None,
         };
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         let arguments = self.construct_arguments(state, window);
         let callee = self.tagged(state, instruction.register_b());
         let argc = self.raw_const(Lane::I64, i64::from(window.count));

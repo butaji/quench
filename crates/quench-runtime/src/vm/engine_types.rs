@@ -1522,7 +1522,7 @@ pub struct DirectCallee {
     pub forwarder: Option<SkippedForwarder>,
 }
 
-pub use super::fact_edge::{Fact, FactMissing};
+pub use super::fact_edge::{ExitFact, FactMissing};
 /// A unit's leaves, each place once, ordered by leave word, over its interned sigs, and per site its crossings
 /// (`FactMissing`). Built once per compile and kept by the body it publishes; its tables hold no spare capacity.
 #[derive(Default)]
@@ -2121,7 +2121,7 @@ pub struct ExitSig {
 pub struct ExitSite {
     /// The leave's word (`LaneExit::word`, read back by `decode`), the table's key; not a `LaneExit`, three words wide.
     pub word: u64,
-    pub sig: u32, pub id: u32, pub unit_pc: u32, pub fact: Fact,
+    pub sig: u32, pub id: u32, pub unit_pc: u32, pub fact: ExitFact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

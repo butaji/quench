@@ -112,7 +112,7 @@ pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
-pub(crate) use exit_protocol::{ExitTable, RegionRun};
+pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
 pub(crate) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
 pub(crate) use lane_compile::FactTables;
