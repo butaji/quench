@@ -1181,6 +1181,9 @@ lane_helper_inventory! {
     /// A local, capture or name access's step over the running window or frame (`dispatch_fast::owner_step`): the owner
     /// step alone, which a helper row or slow arm of such an instruction makes in place of the general step.
     OwnerStep => crate::dispatch_fast::owner_step,
+    /// A constant's load into its register (`base_body::constant_step`): the running program's materialized constant,
+    /// which an image body cannot fold (a string's address is the run's), in place of the general step.
+    ConstantStep => base_body::constant_step,
 }
 
 thread_local! {

@@ -174,14 +174,15 @@ pub(crate) struct Decoded {
     pub(crate) int_a: bool,
     /// Operand b's frame slot holds an int32 on every path into this row (`numbers::proven_int_operands`).
     pub(crate) int_b: bool,
-    /// Its instruction's general step is an owner step (`Op::steps_on_owner`: a local, capture or name access), which
-    /// its helper row and slow arm make by the owner step helper (`LaneHelper::OwnerStep`), not the general step.
-    pub(crate) owner: bool,
+    /// The typed helper that makes its instruction's step where one does, in place of the general step, for its helper
+    /// row and slow arm (`steps::step_helper`): the owner step of a local, capture or name access (`LaneHelper::OwnerStep`),
+    /// a constant's load (`LaneHelper::ConstantStep`).
+    pub(crate) own_step: Option<crate::compiled::LaneHelper>,
 }
 
 impl Decoded {
     pub(crate) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, owner: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
     }
 
     pub(crate) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

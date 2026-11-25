@@ -179,10 +179,10 @@ pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     }
 }
 
-/// The helper that makes the general step of `decoded`: an owner step's own helper (`LaneHelper::OwnerStep`, which
-/// runs the owner step alone over the running window or frame) where the table has it, else the general step.
+/// The helper that makes the step of `decoded`: its instruction's typed helper (`Decoded::own_step`) where the table has
+/// it, else the general step.
 fn step_helper(decoded: &Decoded, helpers: LaneHelpers) -> LaneHelper {
-    if decoded.owner && decoded.packed.is_none() && call_plan::helper_address(helpers, LaneHelper::OwnerStep).is_some() { LaneHelper::OwnerStep } else { LaneHelper::Step }
+    decoded.own_step.filter(|helper| decoded.packed.is_none() && call_plan::helper_address(helpers, *helper).is_some()).unwrap_or(LaneHelper::Step)
 }
 
 /// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest

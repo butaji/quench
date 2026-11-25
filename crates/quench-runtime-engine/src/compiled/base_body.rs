@@ -64,6 +64,25 @@ pub(super) unsafe extern "C" fn kernel_step_in_lane(_vm: u64, _residual: u64, co
     })
 }
 
+/// The `LoadConst` record at `call_pc` of the running body (`LaneHelper::ConstantStep`): the running program's constant as
+/// the VM materialized it (`ProgramStore::constant`), written to the record's register. `LANE_CALL_MISSED` for any other
+/// record, which nothing ran for. A body running as a native callee runs it in its own frame (`in_innermost_frame`).
+pub(super) unsafe extern "C" fn constant_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
+    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's program, records and registers are the running activation's (`in_innermost_frame`).
+        let (code, program, registers) = unsafe { (&*(*cx).code, (*cx).program, (*cx).registers) };
+        let body = code.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let instruction = body.widened(body.code[call_pc as usize]);
+        let loaded = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) && instruction.result_flags() == 0;
+        // SAFETY: the VM is the running lane's.
+        match loaded.then(|| unsafe { &*(*cx).vm }.programs.constant(program, instruction.constant_index())).flatten() {
+            Some(value) => { registers.set(instruction.result_register(), value); super::LANE_CALL_COMPLETED }
+            None => super::LANE_CALL_MISSED,
+        }
+    })
+}
+
 /// Whether a loop of `code` has an interpreter kernel (`LoopKernel::recurrence`) that `cheaper`
 /// says runs it in fewer instructions than the tier asking: its back jump lands before it, on a
 /// header whose loop the kernel takes.
