@@ -494,3 +494,5 @@ impl NumericStage for Emit<'_, '_> {
 
 #[cfg(all(test, feature = "jit"))]
 pub(crate) mod tests;
+#[cfg(all(test, feature = "jit"))]
+mod tier_homomorphism_tests;
