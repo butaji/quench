@@ -490,6 +490,7 @@ pub(crate) fn poll(
                         shared_state
                             .borrow_mut()
                             .tls_contexts
+                            .armed_mut()
                             .transport_errors
                             .push_back((socket, stack.clone()));
                         let callback = runtime

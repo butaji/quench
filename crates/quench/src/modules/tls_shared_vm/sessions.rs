@@ -29,6 +29,8 @@ pub(crate) fn register(
     ssl: Ssl,
     role: super::super::net_shared_vm::encrypted::Role,
 ) -> Result<(), RootedError> {
+    // A session's socket reuses its handle, which the transport finds unmarked (`create_handle`).
+    let _ = crate::host::shared_vm::operation!("tlsReusableHandle");
     let identity = context.host_weak_root(socket)?;
     context
         .host_as::<crate::host::NodeHost>()

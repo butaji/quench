@@ -11,7 +11,7 @@ pub(crate) mod ts_checker;
 pub(crate) mod startup_snapshot;
 
 pub(crate) use crate::shared_run::EntryGoal;
-pub(crate) use node_host::SharedNodeState;
+pub(crate) use node_host::{SharedNodeState, Teardown};
 pub use node_host::{unlinked_operation, NodeHost, NodeOutputSink};
 pub use shared_vm::{OPERATION_CALLBACKS, OPERATION_CALLBACK_PATHS};
 #[cfg(feature = "native-execution")]

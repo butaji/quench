@@ -140,37 +140,6 @@ pub(crate) fn owner(
     let error = context.type_error_rooted("Illegal invocation")?;
     Err(context.throw(error))
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    super::sessions::prune(runtime);
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared
-        .borrow()
-        .tls_contexts
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| {
-            (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let entry = shared.borrow_mut().tls_contexts.entries.remove(index);
-        runtime.release_host_weak_root(entry.identity);
-    }
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    super::sessions::cleanup(runtime);
-    let shared = runtime.host_mut().shared_state();
-    let entries = std::mem::take(&mut shared.borrow_mut().tls_contexts.entries);
-    for entry in entries {
-        runtime.release_host_weak_root(entry.identity);
-    }
-    shared.borrow_mut().tls_contexts.transport_errors.clear();
-    let api = shared.borrow_mut().tls_contexts.api.take();
-    if let Some(api) = api {
-        runtime.release_root(api);
-    }
-}
 
 pub(crate) fn register(
     context: &mut NativeContext<'_>,
@@ -507,5 +476,40 @@ impl State {
         self.api = HostSnap::read(reader)?;
         self.ciphers = HostSnap::read(reader)?;
         Ok(())
+    }
+}
+
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        super::sessions::cleanup(runtime);
+        let shared = runtime.host_mut().shared_state();
+        let entries = std::mem::take(&mut shared.borrow_mut().tls_contexts.entries);
+        for entry in entries {
+            runtime.release_host_weak_root(entry.identity);
+        }
+        shared.borrow_mut().tls_contexts.transport_errors.clear();
+        let api = shared.borrow_mut().tls_contexts.api.take();
+        if let Some(api) = api {
+            runtime.release_root(api);
+        }
+    }
+
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        super::sessions::prune(runtime);
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared
+            .borrow()
+            .tls_contexts
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let entry = shared.borrow_mut().tls_contexts.entries.remove(index);
+            runtime.release_host_weak_root(entry.identity);
+        }
     }
 }

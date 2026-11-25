@@ -1706,77 +1706,80 @@ pub(crate) fn complete(
     }
     Ok(undefined)
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    #[cfg(quench_openssl_provider)]
-    {
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        #[cfg(quench_openssl_provider)]
+        {
+            let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.configured);
+            for job in hashes {
+                runtime.release_host_weak_root(job.identity);
+            }
+            shared.borrow_mut().crypto_secret_jobs.digests = Default::default();
+        }
+        let entries = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.running);
+        for entry in entries {
+            runtime.release_host_weak_root(entry.identity);
+        }
+        let resources = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.resources);
+        for resource in resources {
+            runtime.release_host_weak_root(resource.identity);
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, resource.id);
+        }
+        // Dropping receivers causes late worker results to be dropped and cleansed.
+    }
+
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        #[cfg(quench_openssl_provider)]
+        {
+            let dead = shared
+                .borrow()
+                .crypto_secret_jobs
+                .configured
+                .iter()
+                .enumerate()
+                .filter_map(|(i, job)| (!runtime.host_weak_root_is_live(job.identity)).then_some(i))
+                .collect::<Vec<_>>();
+            for index in dead.into_iter().rev() {
+                let job = shared
+                    .borrow_mut()
+                    .crypto_secret_jobs
+                    .configured
+                    .remove(index);
+                runtime.release_host_weak_root(job.identity);
+            }
+        }
         let dead = shared
             .borrow()
             .crypto_secret_jobs
-            .configured
+            .resources
             .iter()
             .enumerate()
-            .filter_map(|(i, job)| (!runtime.host_weak_root_is_live(job.identity)).then_some(i))
+            .filter_map(|(i, r)| (!runtime.host_weak_root_is_live(r.identity)).then_some(i))
             .collect::<Vec<_>>();
         for index in dead.into_iter().rev() {
-            let job = shared
+            let resource = shared
                 .borrow_mut()
                 .crypto_secret_jobs
-                .configured
+                .resources
                 .remove(index);
-            runtime.release_host_weak_root(job.identity);
+            runtime.release_host_weak_root(resource.identity);
+            super::async_hooks_shared_vm::complete_runtime_context(runtime, resource.id);
         }
-    }
-    let dead = shared
-        .borrow()
-        .crypto_secret_jobs
-        .resources
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| (!runtime.host_weak_root_is_live(r.identity)).then_some(i))
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let resource = shared
-            .borrow_mut()
+        let dead = shared
+            .borrow()
             .crypto_secret_jobs
-            .resources
-            .remove(index);
-        runtime.release_host_weak_root(resource.identity);
-        super::async_hooks_shared_vm::complete_runtime_context(runtime, resource.id);
-    }
-    let dead = shared
-        .borrow()
-        .crypto_secret_jobs
-        .running
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| (!runtime.host_weak_root_is_live(r.identity)).then_some(i))
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let entry = shared.borrow_mut().crypto_secret_jobs.running.remove(index);
-        runtime.release_host_weak_root(entry.identity);
-    }
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    #[cfg(quench_openssl_provider)]
-    {
-        let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.configured);
-        for job in hashes {
-            runtime.release_host_weak_root(job.identity);
+            .running
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| (!runtime.host_weak_root_is_live(r.identity)).then_some(i))
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let entry = shared.borrow_mut().crypto_secret_jobs.running.remove(index);
+            runtime.release_host_weak_root(entry.identity);
         }
-        shared.borrow_mut().crypto_secret_jobs.digests = Default::default();
     }
-    let entries = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.running);
-    for entry in entries {
-        runtime.release_host_weak_root(entry.identity);
-    }
-    let resources = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.resources);
-    for resource in resources {
-        runtime.release_host_weak_root(resource.identity);
-        super::async_hooks_shared_vm::clear_context(runtime, &shared, resource.id);
-    }
-    // Dropping receivers causes late worker results to be dropped and cleansed.
 }
 
 #[cfg(quench_openssl_provider)]

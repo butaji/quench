@@ -403,20 +403,15 @@ pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> R
     if !c.is_object_rooted(value)? {
         return Ok(false);
     }
-    let global = c.global_root()?;
-    let constructor = if class == "KeyObject" {
-        // A value is no key of a crypto module not yet built.
-        #[cfg(quench_openssl_provider)]
-        let key_object = crate::modules::crypto_node::built_class(c, crate::modules::crypto_node::Class::KeyObject);
-        #[cfg(not(quench_openssl_provider))]
-        let key_object = None;
-        match key_object {
-            Some(key_object) => key_object,
-            None => return Ok(false),
-        }
-    } else {
-        get(c, global, class)?
+    // A value is no key of a crypto module not yet built.
+    #[cfg(quench_openssl_provider)]
+    let constructor = {
+        use crate::modules::crypto_node::{built_class, Class};
+        built_class(c, if class == "KeyObject" { Class::KeyObject } else { Class::CryptoKey })
     };
+    #[cfg(not(quench_openssl_provider))]
+    let constructor: Option<RootId> = None;
+    let Some(constructor) = constructor else { return Ok(false) };
     if !c.is_callable_rooted(constructor)? {
         return Ok(false);
     }

@@ -302,8 +302,10 @@ impl<H: Host> Runtime<H> {
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
     }
 
-    /// The host operations the heap's host functions run, ascending (`Vm::held_host_operations`).
-    pub fn held_host_operations(&self) -> Vec<u32> {
+    /// The host operations the heap's host functions run, ascending, and apart, per set of
+    /// globals no loaded code names, those only the global object holds for them
+    /// (`Vm::held_host_operations`).
+    pub fn held_host_operations(&self) -> (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>) {
         self.vm.held_host_operations()
     }
 
