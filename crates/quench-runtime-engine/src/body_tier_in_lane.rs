@@ -293,6 +293,11 @@ impl LaneView {
         late_calls == self.tiers.lane_body.late_call_calls
     }
 
+    /// Counts the late calls from none again: the callee had no entry yet (still compiling).
+    pub(crate) fn recount_late_calls(&self) {
+        self.tier().history.set(LaneBodyHistory { late_calls: 0, ..self.tier().history.get() });
+    }
+
     /// Whether the late calls counted past the threshold (`note_late_call`), which only a
     /// respecialization resets.
     #[inline]

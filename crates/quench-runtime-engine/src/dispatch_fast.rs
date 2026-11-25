@@ -12751,16 +12751,16 @@ fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, 
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
 /// `argc` arguments, where the lane would activate it in place.
 pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<crate::compiled::DirectCallee> {
-    // An arrow's body reads its environment's `this`: BaseJIT's direct row passes it none.
+    // Only BaseJIT's direct row binds an arrow's `this`; an arrow that never reads it calls as strict.
     let (sloppy, lexical) = match target.this_binding {
         ThisBinding::Sloppy => (Some(vm.realm.globals), false),
         ThisBinding::Strict => (None, false),
         ThisBinding::Lexical if crate::compiled::admission::stencil_only() => (None, true),
+        ThisBinding::Lexical => vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize))).map(|_| (None, false))?,
         _ => return None,
     };
     (target.admission.current(vm.lane_stack.admission)
-        && target.entry.activates() && !target.view.is_null() && argc <= target.params)
-        .then_some(())?;
+        && target.entry.activates() && !target.view.is_null() && argc <= target.params).then_some(())?;
     // SAFETY: a resolved target's view outlives its program.
     let view_of = unsafe { &*target.view };
     let (method, body) = view_of.pinned_callee(target.function == function);
