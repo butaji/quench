@@ -485,7 +485,9 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         return leave(start, Value::UNDEFINED);
     };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-    let captures = capture_reads(unsafe { (*cx).registers.capture() });
+    // The callee's capture word keeps its stores tag (`Vm::target_capture` took the barrier at the push): its body's
+    // capture stores run as rows (`capture_set_row`), not a general step per store. The run collects nothing.
+    let captures = unsafe { (*cx).registers.capture() };
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, body_this_in_lane(target, this), captures, cx.cast());
     // The common end: the body returned and left no native frame, so there is nothing to
     // resume, link or feed back (`body_left_in_lane` of a return), only the completion to count.
@@ -561,7 +563,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     }
     let receiver = entry_receiver_in_lane(cx, binds_this);
     // SAFETY: the activation just set the context to its own captures.
-    let captures = capture_reads(unsafe { (*cx).registers }.capture());
+    let captures = unsafe { (*cx).registers }.capture();
     // A frame entered while another body runs keeps that body's entry words (`run_nested_lane_method`).
     let left = if crate::compiled::body_running_in_lane() {
         vm.run_nested_lane_method(&method, program, code, r.0, receiver, captures, cx.cast())
