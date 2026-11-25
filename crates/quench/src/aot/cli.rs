@@ -189,8 +189,9 @@ fn build_rest(program: &Path, output: &Path, assumptions: &[String]) -> Result<(
     let execution = runtime.execute_deferred_jobs(&program);
     let completion = crate::shared_run::finish_shared_execution(&mut runtime, &program, execution);
     match super::prefix::finish() {
-        super::prefix::Residual::Waiting(effects, rest) => {
+        super::prefix::Residual::Waiting(effects, rest, held) => {
             fs::write(output, rest).map_err(|error| error.to_string())?;
+            fs::write(output.with_extension("operations"), serde_json::to_vec(&held).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
             fs::write(output.with_extension("effects"), serde_json::to_vec(&effects).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
         }
         super::prefix::Residual::Dynamic(input) => Err(format!("the native entry's build-time run read {input} before its first wait")),
@@ -205,6 +206,8 @@ struct SavedWait {
     answers: super::strict::Answers,
     effects: Vec<(i32, Vec<u8>)>,
     rest: PathBuf,
+    /// The host operations the saved runtime's host functions run.
+    held: Vec<u32>,
 }
 
 /// Saves, per answer set of `runs`, the native entry's run at its first wait (`--wait-worker`);
@@ -219,11 +222,13 @@ fn prepare_saved_waits(runs: &[super::strict::Answers], work: &Path, native_entr
                 .args(answers.iter().map(|(question, answer)| format!("{}={}", question.key(), u8::from(*answer))));
             crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
             quench_runtime::native_link::checked_output(&mut worker, "native wait preparation")?;
-            let effects = fs::read(rest.with_extension("effects")).map_err(|error| error.to_string())?;
-            serde_json::from_slice(&effects).map_err(|error| error.to_string())
+            let read = |extension: &str| fs::read(rest.with_extension(extension)).map_err(|error| error.to_string());
+            let effects = serde_json::from_slice(&read("effects")?).map_err(|error| error.to_string())?;
+            let held = serde_json::from_slice(&read("operations")?).map_err(|error| error.to_string())?;
+            Ok((effects, held))
         });
         match prepared {
-            Ok(effects) => saved.push(SavedWait { answers: answers.clone(), effects, rest }),
+            Ok((effects, held)) => saved.push(SavedWait { answers: answers.clone(), effects, rest, held }),
             Err(error) => {
                 report["resume"] = json!({"status": "unavailable", "diagnostic": error});
                 return Vec::new();
@@ -361,9 +366,6 @@ fn compile(options: Options) -> Result<(), String> {
         inputs.self_contained()
     };
     report["self_contained"] = json!(inputs.is_self_contained());
-    let (table, unlinked) = operation_table(&graph);
-    fs::OpenOptions::new().append(true).open(inputs.catalog()).and_then(|mut catalog| catalog.write_all(table.as_bytes())).map_err(|error| error.to_string())?;
-    report["unlinked_host_operations"] = json!(unlinked);
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
     // A program whose build-time runs wait for input before reading any resumes the run whose
     // answers hold as it starts: no entry run and no installation, so no startup snapshot.
@@ -371,6 +373,8 @@ fn compile(options: Options) -> Result<(), String> {
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(resumes_at_rest(&saved_waits).as_bytes())).map_err(|error| error.to_string())?;
     let inputs = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { inputs };
+    // An image that only resumes saved runs starts from the operations their heaps hold.
+    let held: Option<std::collections::BTreeSet<u32>> = (!saved_waits.is_empty()).then(|| saved_waits.iter().flat_map(|wait| wait.held.iter().copied()).collect());
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -400,7 +404,7 @@ fn compile(options: Options) -> Result<(), String> {
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
     let staged = work.0.join("native-image");
-    let audit = support.link_audited(&inputs, &driver, &staged)?;
+    let audit = link_with_reached_operations(&support, &inputs, &driver, &staged, &graph, held, &mut report)?;
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
@@ -598,16 +602,57 @@ mod tests {
     }
 }
 
+/// Links the image with the host operations it reaches. Its table starts from `held`, the
+/// operations the saved runtimes' heaps hold, and gains each operation the linked code marks
+/// as one it makes (`shared_vm::MarkedOperation`), linking again until the marks name nothing
+/// new: a closure the linker computes over the code it keeps. Code names an operation only
+/// by its mark, never by a name it computes, so the closure is whole. Without saved runs, or
+/// for a program that loads code as it runs, the table keeps every operation.
+fn link_with_reached_operations(
+    support: &NativeSupport, inputs: &quench_runtime::native_link::NativeImageInputs, driver: &Path, staged: &Path,
+    graph: &super::graph::DependencyGraph, held: Option<std::collections::BTreeSet<u32>>, report: &mut Value,
+) -> Result<quench_runtime::native_link::NativeLinkAudit, String> {
+    let catalog = fs::read_to_string(inputs.catalog()).map_err(|error| error.to_string())?;
+    let mut kept = held.filter(|_| !loads_code(graph));
+    report["held_host_operations"] = json!(kept.as_ref().map(std::collections::BTreeSet::len));
+    let mut links = 0;
+    loop {
+        let (table, unlinked) = operation_table(graph, kept.as_ref());
+        fs::write(inputs.catalog(), format!("{catalog}{table}")).map_err(|error| error.to_string())?;
+        let audit = support.link_audited(inputs, driver, staged)?;
+        links += 1;
+        let Some(operations) = &mut kept else {
+            report["unlinked_host_operations"] = json!(unlinked);
+            report["operation_links"] = json!(links);
+            return Ok(audit);
+        };
+        let marks = quench_runtime::native_link::section_words(staged, "quench_operation_marks")?;
+        let before = operations.len();
+        operations.extend(marks);
+        if operations.len() == before {
+            report["unlinked_host_operations"] = json!(unlinked);
+            report["operation_links"] = json!(links);
+            return Ok(audit);
+        }
+    }
+}
+
+/// Whether the program may load code as it runs, which may name any module.
+fn loads_code(graph: &super::graph::DependencyGraph) -> bool {
+    graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. }))
+        || !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty()
+}
+
 /// The modules whose host operations an image links only when its program imports them by
 /// name: each holds a heavy dependency (`node:sqlite` the SQL engine).
 const IMPORTED_OPERATION_FAMILIES: &[(&str, &str)] = &[("sqlite", "sqlite_shared_vm")];
 
 /// The image's host operation table (`NodeHost::with_operations`), with the number of
-/// operations it leaves unlinked: every operation, except those of a family whose module the
-/// program cannot import. A program that loads anything at run time keeps them all.
-fn operation_table(graph: &super::graph::DependencyGraph) -> (String, usize) {
-    let dynamic = graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. }))
-        || !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty() || !graph.dynamic_reflective_sites.is_empty();
+/// operations it leaves unlinked: the operations `kept`, or else every operation except those
+/// of a family whose module the program cannot import. A program that loads anything at run
+/// time keeps them all.
+fn operation_table(graph: &super::graph::DependencyGraph, kept: Option<&std::collections::BTreeSet<u32>>) -> (String, usize) {
+    let dynamic = loads_code(graph) || !graph.dynamic_reflective_sites.is_empty();
     let builtins = graph.snapshot_builtins();
     let excluded: Vec<&str> = IMPORTED_OPERATION_FAMILIES.iter()
         .filter(|(builtin, _)| !dynamic && !builtins.iter().any(|name| name == builtin))
@@ -615,11 +660,15 @@ fn operation_table(graph: &super::graph::DependencyGraph) -> (String, usize) {
     let paths = crate::host::OPERATION_CALLBACK_PATHS;
     let mut unlinked = 0;
     let entries = paths.iter().enumerate().map(|(index, path)| {
-        if excluded.iter().any(|module| path.contains(module)) {
+        let linked = match kept {
+            Some(kept) => kept.contains(&(index as u32)),
+            None => !excluded.iter().any(|module| path.contains(module)),
+        };
+        if linked {
+            format!("quench::host::OPERATION_CALLBACKS[{index}]")
+        } else {
             unlinked += 1;
             "quench::host::unlinked_operation".to_owned()
-        } else {
-            format!("quench::host::OPERATION_CALLBACKS[{index}]")
         }
     }).collect::<Vec<_>>().join(", ");
     let table = format!("static OPERATIONS: [quench_runtime::HostCallback; {n}] = [{entries}];\n\

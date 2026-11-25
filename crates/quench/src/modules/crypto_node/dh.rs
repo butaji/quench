@@ -7,6 +7,7 @@ use openssl::bn::{BigNum, BigNumContext, BigNumRef};
 use openssl::ec::{EcGroup, EcKey, EcPoint, PointConversionForm};
 use openssl::nid::Nid;
 use openssl::pkey::Private;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{RootId, RootedError};
 use std::ffi::{c_char, c_int, CStr};
 
@@ -480,17 +481,17 @@ pub(crate) fn dh_compute_secret(c: &mut Context<'_>, this: RootId, args: &[RootI
 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
     let shared = [
-        ("generateKeys", "cryptoDhGenerateKeys", "dhGenerateKeys"),
-        ("computeSecret", "cryptoDhComputeSecret", "dhComputeSecret"),
-        ("getPrime", "cryptoDhGetPrime", "dhGetPrime"),
-        ("getGenerator", "cryptoDhGetGenerator", "dhGetGenerator"),
-        ("getPublicKey", "cryptoDhGetPublicKey", "dhGetPublicKey"),
-        ("getPrivateKey", "cryptoDhGetPrivateKey", "dhGetPrivateKey"),
+        ("generateKeys", marked_operation!("cryptoDhGenerateKeys"), "dhGenerateKeys"),
+        ("computeSecret", marked_operation!("cryptoDhComputeSecret"), "dhComputeSecret"),
+        ("getPrime", marked_operation!("cryptoDhGetPrime"), "dhGetPrime"),
+        ("getGenerator", marked_operation!("cryptoDhGetGenerator"), "dhGetGenerator"),
+        ("getPublicKey", marked_operation!("cryptoDhGetPublicKey"), "dhGetPublicKey"),
+        ("getPrivateKey", marked_operation!("cryptoDhGetPrivateKey"), "dhGetPrivateKey"),
     ];
     let diffie_hellman = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoDiffieHellmanConstructor"), "DiffieHellman")?;
     let prototype = get(c, diffie_hellman, "prototype")?;
     define_named_methods(c, prototype, &shared)?;
-    define_methods(c, prototype, &[("setPublicKey", "cryptoDhSetPublicKey"), ("setPrivateKey", "cryptoDhSetPrivateKey")], Members::Assigned)?;
+    define_methods(c, prototype, &[("setPublicKey", crate::host::shared_vm::marked_operation!("cryptoDhSetPublicKey")), ("setPrivateKey", crate::host::shared_vm::marked_operation!("cryptoDhSetPrivateKey"))], Members::Assigned)?;
     let group = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoDiffieHellmanGroupConstructor"), "DiffieHellmanGroup")?;
     let prototype = get(c, group, "prototype")?;
     define_named_methods(c, prototype, &shared)?;
@@ -500,23 +501,23 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
         c,
         prototype,
         &[
-            ("computeSecret", "cryptoEcdhComputeSecret", "dhComputeSecret"),
-            ("setPrivateKey", "cryptoEcdhSetPrivateKey", "setPrivateKey"),
-            ("setPublicKey", "cryptoEcdhSetPublicKey", "setPublicKey"),
-            ("getPrivateKey", "cryptoEcdhGetPrivateKey", "dhGetPrivateKey"),
-            ("generateKeys", "cryptoEcdhGenerateKeys", "generateKeys"),
-            ("getPublicKey", "cryptoEcdhGetPublicKey", "getPublicKey"),
+            ("computeSecret", marked_operation!("cryptoEcdhComputeSecret"), "dhComputeSecret"),
+            ("setPrivateKey", marked_operation!("cryptoEcdhSetPrivateKey"), "setPrivateKey"),
+            ("setPublicKey", marked_operation!("cryptoEcdhSetPublicKey"), "setPublicKey"),
+            ("getPrivateKey", marked_operation!("cryptoEcdhGetPrivateKey"), "dhGetPrivateKey"),
+            ("generateKeys", marked_operation!("cryptoEcdhGenerateKeys"), "generateKeys"),
+            ("getPublicKey", marked_operation!("cryptoEcdhGetPublicKey"), "getPublicKey"),
         ],
     )?;
-    define_methods(c, ecdh, &[("convertKey", "cryptoEcdhConvertKey")], Members::Assigned)?;
+    define_methods(c, ecdh, &[("convertKey", crate::host::shared_vm::marked_operation!("cryptoEcdhConvertKey"))], Members::Assigned)?;
     Ok(vec![(Class::DiffieHellman, diffie_hellman), (Class::DiffieHellmanGroup, group), (Class::Ecdh, ecdh)])
 }
 
 /// Prototype methods Node shares between classes under their first owner's name:
 /// `(member, host operation, function name)`.
-fn define_named_methods(c: &mut Context<'_>, target: RootId, methods: &[(&str, &str, &str)]) -> Result<(), RootedError> {
+fn define_named_methods(c: &mut Context<'_>, target: RootId, methods: &[(&str, MarkedOperation, &str)]) -> Result<(), RootedError> {
     for &(member, operation, name) in methods {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, target, member, function)?;
     }
     Ok(())

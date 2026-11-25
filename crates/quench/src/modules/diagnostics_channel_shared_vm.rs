@@ -8,6 +8,7 @@
 //! it to `ActiveChannel`, the last removal back to `Channel`; `_subscribers` projects the
 //! registry list and `_stores` holds its bound stores.
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, put, queue_uncaught, require_new};
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError, ValueType};
 use std::collections::HashMap;
 
@@ -66,42 +67,42 @@ impl SharedDiagnosticsState {
 }
 
 /// A class member: (name, operation, length).
-type Method = (&'static str, &'static str, f64);
+type Method = (&'static str, MarkedOperation, f64);
 
 /// `Channel.prototype` and `ActiveChannel.prototype` share one operation per member (each
 /// state is the other with nothing subscribed or bound), with Node's per-class lengths.
 const CHANNEL_METHODS: [Method; 6] = [
-    ("subscribe", "diagnosticsChannelSubscribe", 1.0),
-    ("unsubscribe", "diagnosticsChannelUnsubscribe", 0.0),
-    ("bindStore", "diagnosticsChannelBindStore", 2.0),
-    ("unbindStore", "diagnosticsChannelUnbindStore", 0.0),
-    ("publish", "diagnosticsChannelPublish", 0.0),
-    ("runStores", "diagnosticsChannelRunStores", 3.0),
+    ("subscribe", marked_operation!("diagnosticsChannelSubscribe"), 1.0),
+    ("unsubscribe", marked_operation!("diagnosticsChannelUnsubscribe"), 0.0),
+    ("bindStore", marked_operation!("diagnosticsChannelBindStore"), 2.0),
+    ("unbindStore", marked_operation!("diagnosticsChannelUnbindStore"), 0.0),
+    ("publish", marked_operation!("diagnosticsChannelPublish"), 0.0),
+    ("runStores", marked_operation!("diagnosticsChannelRunStores"), 3.0),
 ];
 const ACTIVE_CHANNEL_METHODS: [Method; 6] = [
-    ("subscribe", "diagnosticsChannelSubscribe", 1.0),
-    ("unsubscribe", "diagnosticsChannelUnsubscribe", 1.0),
-    ("bindStore", "diagnosticsChannelBindStore", 2.0),
-    ("unbindStore", "diagnosticsChannelUnbindStore", 1.0),
-    ("publish", "diagnosticsChannelPublish", 1.0),
-    ("runStores", "diagnosticsChannelRunStores", 3.0),
+    ("subscribe", marked_operation!("diagnosticsChannelSubscribe"), 1.0),
+    ("unsubscribe", marked_operation!("diagnosticsChannelUnsubscribe"), 1.0),
+    ("bindStore", marked_operation!("diagnosticsChannelBindStore"), 2.0),
+    ("unbindStore", marked_operation!("diagnosticsChannelUnbindStore"), 1.0),
+    ("publish", marked_operation!("diagnosticsChannelPublish"), 1.0),
+    ("runStores", marked_operation!("diagnosticsChannelRunStores"), 3.0),
 ];
 /// The members before `hasSubscribers` in each channel prototype's key order.
 const MEMBERS_BEFORE_HAS_SUBSCRIBERS: usize = 4;
 const TRACING_METHODS: [Method; 5] = [
-    ("subscribe", "diagnosticsTracingSubscribe", 1.0),
-    ("unsubscribe", "diagnosticsTracingUnsubscribe", 1.0),
-    ("traceSync", "diagnosticsTraceSync", 1.0),
-    ("tracePromise", "diagnosticsTracePromise", 1.0),
-    ("traceCallback", "diagnosticsTraceCallback", 1.0),
+    ("subscribe", marked_operation!("diagnosticsTracingSubscribe"), 1.0),
+    ("unsubscribe", marked_operation!("diagnosticsTracingUnsubscribe"), 1.0),
+    ("traceSync", marked_operation!("diagnosticsTraceSync"), 1.0),
+    ("tracePromise", marked_operation!("diagnosticsTracePromise"), 1.0),
+    ("traceCallback", marked_operation!("diagnosticsTraceCallback"), 1.0),
 ];
 /// The module's functions after `channel`, in Node's export order.
 const FUNCTIONS: [Method; 5] = [
-    ("channel", "diagnosticsChannel", 1.0),
-    ("hasSubscribers", "diagnosticsHasSubscribers", 1.0),
-    ("subscribe", "diagnosticsSubscribe", 2.0),
-    ("tracingChannel", "diagnosticsTracingChannel", 1.0),
-    ("unsubscribe", "diagnosticsUnsubscribe", 2.0),
+    ("channel", marked_operation!("diagnosticsChannel"), 1.0),
+    ("hasSubscribers", marked_operation!("diagnosticsHasSubscribers"), 1.0),
+    ("subscribe", marked_operation!("diagnosticsSubscribe"), 2.0),
+    ("tracingChannel", marked_operation!("diagnosticsTracingChannel"), 1.0),
+    ("unsubscribe", marked_operation!("diagnosticsUnsubscribe"), 2.0),
 ];
 
 /// A channel's own fields, in Node's definition order.
@@ -148,10 +149,6 @@ const LAST_ARGUMENT: f64 = -1.0;
 /// A bound store's entry in a `Map` preview: the store, then its transform.
 const STORE_ENTRY_WIDTH: usize = 2;
 
-fn operation(name: &str) -> quench_runtime::HostFunctionId {
-    crate::host::shared_vm::operation(name)
-}
-
 fn shared_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let api = c.host_as::<crate::host::NodeHost>().shared_state().borrow().diagnostics.api;
     match api {
@@ -179,7 +176,7 @@ fn api_member(c: &mut Context<'_>, name: &str) -> Outcome {
 
 fn define_methods(c: &mut Context<'_>, holder: RootId, methods: &[Method]) -> Result<(), RootedError> {
     for &(name, op, length) in methods {
-        let function = c.host_function_named(operation(op), name)?;
+        let function = c.host_function_named(op.id(), name)?;
         let length = c.number(length);
         c.define_named_data_property_rooted(function, "length", length, false, false, true)?;
         c.define_named_data_property_rooted(holder, name, function, true, false, true)?;
@@ -187,8 +184,8 @@ fn define_methods(c: &mut Context<'_>, holder: RootId, methods: &[Method]) -> Re
     Ok(())
 }
 
-fn define_getter(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data: RootId) -> Result<(), RootedError> {
-    let getter = c.host_function_named_with_data(operation(op), &format!("get {name}"), data)?;
+fn define_getter(c: &mut Context<'_>, holder: RootId, name: &str, op: quench_runtime::HostFunctionId, data: RootId) -> Result<(), RootedError> {
+    let getter = c.host_function_named_with_data(op, &format!("get {name}"), data)?;
     let key = c.string_rooted(name);
     let undefined = c.undefined();
     let fields = DescriptorFields {
@@ -204,8 +201,8 @@ fn define_getter(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data
 
 /// A class as a declaration makes it: its prototype's methods non-enumerable, `prototype`
 /// read-only.
-fn class(c: &mut Context<'_>, name: &str, constructor: &str, length: f64) -> Outcome {
-    let class = c.host_constructor_named(operation(constructor), name)?;
+fn class(c: &mut Context<'_>, name: &str, constructor: quench_runtime::HostFunctionId, length: f64) -> Outcome {
+    let class = c.host_constructor_named(constructor, name)?;
     let length = c.number(length);
     c.define_named_data_property_rooted(class, "length", length, false, false, true)?;
     let prototype = get(c, class, "prototype")?;
@@ -219,7 +216,7 @@ fn channel_prototype(c: &mut Context<'_>, class: RootId, methods: &[Method], act
     let (before, after) = methods.split_at(MEMBERS_BEFORE_HAS_SUBSCRIBERS);
     define_methods(c, prototype, before)?;
     let active = c.boolean(active);
-    define_getter(c, prototype, "hasSubscribers", "diagnosticsChannelHasSubscribers", active)?;
+    define_getter(c, prototype, "hasSubscribers", crate::host::shared_vm::operation!("diagnosticsChannelHasSubscribers"), active)?;
     define_methods(c, prototype, after)?;
     Ok(prototype)
 }
@@ -251,7 +248,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let channels = c.construct_rooted(map, map, &[])?;
     put(c, api, api::CHANNELS, channels)?;
     // Node keeps bound stores in a `SafeMap`, a `Map` its inspection names so.
-    let store_map = class(c, "SafeMap", "diagnosticsInertConstructor", 0.0)?;
+    let store_map = class(c, "SafeMap", crate::host::shared_vm::operation!("diagnosticsInertConstructor"), 0.0)?;
     let store_map_prototype = get(c, store_map, "prototype")?;
     c.set_prototype_rooted(store_map_prototype, map_prototype)?;
     put(c, api, api::STORE_MAP_PROTOTYPE, store_map_prototype)?;
@@ -267,7 +264,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         put(c, api, member, function)?;
     }
 
-    let channel_class = class(c, "Channel", "diagnosticsChannelConstructor", 1.0)?;
+    let channel_class = class(c, "Channel", crate::host::shared_vm::operation!("diagnosticsChannelConstructor"), 1.0)?;
     let prototype = channel_prototype(c, channel_class, &CHANNEL_METHODS, false)?;
     put(c, api, api::CHANNEL_PROTOTYPE, prototype)?;
     put(c, api, api::CHANNEL_CLASS, channel_class)?;
@@ -275,14 +272,14 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let has_instance = intrinsic(c, symbol, "hasInstance")?;
     let is_channel = c.host_function_named(crate::host::shared_vm::operation!("diagnosticsChannelHasInstance"), "[Symbol.hasInstance]")?;
     c.define_data_property_rooted(channel_class, has_instance, is_channel, true, false, true)?;
-    let active_class = class(c, "ActiveChannel", "diagnosticsInertConstructor", 0.0)?;
+    let active_class = class(c, "ActiveChannel", crate::host::shared_vm::operation!("diagnosticsInertConstructor"), 0.0)?;
     let active = channel_prototype(c, active_class, &ACTIVE_CHANNEL_METHODS, true)?;
     put(c, api, api::ACTIVE_PROTOTYPE, active)?;
 
-    let tracing_class = class(c, "TracingChannel", "diagnosticsTracingConstructor", 1.0)?;
+    let tracing_class = class(c, "TracingChannel", crate::host::shared_vm::operation!("diagnosticsTracingConstructor"), 1.0)?;
     let tracing_prototype = get(c, tracing_class, "prototype")?;
     let undefined = c.undefined();
-    define_getter(c, tracing_prototype, "hasSubscribers", "diagnosticsTracingHasSubscribers", undefined)?;
+    define_getter(c, tracing_prototype, "hasSubscribers", crate::host::shared_vm::operation!("diagnosticsTracingHasSubscribers"), undefined)?;
     define_methods(c, tracing_prototype, &TRACING_METHODS)?;
     put(c, api, api::TRACING_CLASS, tracing_class)?;
 
@@ -298,7 +295,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
 
 fn define_functions(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     for &(name, op, length) in &FUNCTIONS {
-        let function = c.host_function_named(operation(op), name)?;
+        let function = c.host_function_named(op.id(), name)?;
         let length = c.number(length);
         c.define_named_data_property_rooted(function, "length", length, false, false, true)?;
         put(c, module, name, function)?;
@@ -810,8 +807,8 @@ fn publish_event(c: &mut Context<'_>, frame: RootId, event: &str) -> Result<(), 
 }
 
 /// `start.runStores(context, body)` for a traced call whose body is `op`.
-fn run_traced(c: &mut Context<'_>, frame: RootId, op: &str) -> Outcome {
-    let body = c.host_function_named_with_data(operation(op), "", frame)?;
+fn run_traced(c: &mut Context<'_>, frame: RootId, op: quench_runtime::HostFunctionId) -> Outcome {
+    let body = c.host_function_named_with_data(op, "", frame)?;
     let start = get(c, frame, "start")?;
     let context = get(c, frame, "context")?;
     call_method(c, start, "runStores", &[context, body])
@@ -858,7 +855,7 @@ pub(crate) fn trace_sync(c: &mut Context<'_>, receiver: RootId, args: &[RootId])
     }
     let context = argument(c, args, 1);
     let frame = trace_frame(c, receiver, function, context, this, rest)?;
-    run_traced(c, frame, "diagnosticsTraceSyncBody")
+    run_traced(c, frame, crate::host::shared_vm::operation!("diagnosticsTraceSyncBody"))
 }
 
 /// `traceSync`'s body: the call, its result stored as `context.result`.
@@ -882,7 +879,7 @@ pub(crate) fn trace_promise(c: &mut Context<'_>, receiver: RootId, args: &[RootI
     }
     let context = argument(c, args, 1);
     let frame = trace_frame(c, receiver, function, context, this, rest)?;
-    run_traced(c, frame, "diagnosticsTracePromiseBody")
+    run_traced(c, frame, crate::host::shared_vm::operation!("diagnosticsTracePromiseBody"))
 }
 
 /// `tracePromise`'s body: the call's result as a native promise, settled through the
@@ -960,7 +957,7 @@ pub(crate) fn trace_callback(c: &mut Context<'_>, receiver: RootId, args: &[Root
     rest[index] = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceWrappedCallback"), "wrappedCallback", wrapper_data)?;
     let rest = c.array_rooted(&rest)?;
     put(c, frame, "arguments", rest)?;
-    run_traced(c, frame, "diagnosticsTraceCallbackBody")
+    run_traced(c, frame, crate::host::shared_vm::operation!("diagnosticsTraceCallbackBody"))
 }
 
 /// `traceCallback`'s body: the call, with the wrapped callback.

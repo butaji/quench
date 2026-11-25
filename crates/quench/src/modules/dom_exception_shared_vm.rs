@@ -63,9 +63,9 @@ impl View {
 }
 
 const MEMBERS: [Member; 3] = [
-    Member::Accessor(NAME, "domExceptionGet", None, View::Name as u8 as f64),
-    Member::Accessor(MESSAGE, "domExceptionGet", None, View::Message as u8 as f64),
-    Member::Accessor("code", "domExceptionGet", None, View::Code as u8 as f64),
+    Member::Accessor(NAME, crate::host::shared_vm::marked_operation!("domExceptionGet"), None, View::Name as u8 as f64),
+    Member::Accessor(MESSAGE, crate::host::shared_vm::marked_operation!("domExceptionGet"), None, View::Message as u8 as f64),
+    Member::Accessor("code", crate::host::shared_vm::marked_operation!("domExceptionGet"), None, View::Code as u8 as f64),
 ];
 
 /// The class, built once into the event group's data.

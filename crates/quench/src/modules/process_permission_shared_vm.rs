@@ -1,7 +1,6 @@
 //! `process.permission`, Node's Permission Model API: present only under `--permission`
 //! or `--permission-audit`, answering from the grants of Node's normalized startup options.
 use super::event_constructor_shared_vm::get;
-use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::RefCell;
 
@@ -107,8 +106,8 @@ pub(crate) fn define(c: &mut Context<'_>, process: RootId) -> Result<(), RootedE
     }
     MODEL.set(model);
     let api = c.object_rooted()?;
-    for (name, operation_name) in [("has", "permissionHas"), ("drop", "permissionDrop")] {
-        let function = c.host_function_named(operation(operation_name), name)?;
+    for (name, operation_name) in [("has", crate::host::shared_vm::operation!("permissionHas")), ("drop", crate::host::shared_vm::operation!("permissionDrop"))] {
+        let function = c.host_function_named(operation_name, name)?;
         c.assign_named_property_rooted(api, name, function)?;
     }
     let object = c.with_startup_intrinsics(|c| {

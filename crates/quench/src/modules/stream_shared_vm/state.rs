@@ -313,7 +313,7 @@ pub(crate) fn build_readable_state(c: &mut Context<'_>) -> Outcome {
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamReadableState"), "ReadableState")?;
     let prototype = get(c, constructor, "prototype")?;
     define_fields(c, prototype, READABLE_FIELDS, 0)?;
-    define_methods(c, prototype, &[(Key::Symbol(Slot::OnConstructed), "streamReadableOnConstructed", "onConstructed")])?;
+    define_methods(c, prototype, &[(Key::Symbol(Slot::OnConstructed), crate::host::shared_vm::marked_operation!("streamReadableOnConstructed"), "onConstructed")])?;
     Ok(constructor)
 }
 
@@ -321,9 +321,9 @@ pub(crate) fn build_writable_state(c: &mut Context<'_>) -> Outcome {
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamWritableState"), "WritableState")?;
     let prototype = get(c, constructor, "prototype")?;
     define_fields(c, prototype, WRITABLE_FIELDS, READABLE_FIELDS.len())?;
-    define_methods(c, prototype, &[(Key::Name("getBuffer"), "streamWritableGetBuffer", "getBuffer")])?;
+    define_methods(c, prototype, &[(Key::Name("getBuffer"), crate::host::shared_vm::marked_operation!("streamWritableGetBuffer"), "getBuffer")])?;
     define_field(c, prototype, "bufferedRequestCount", READABLE_FIELDS.len() + WRITABLE_FIELDS.len(), true)?;
-    define_methods(c, prototype, &[(Key::Symbol(Slot::OnConstructed), "streamWritableOnConstructed", "onConstructed")])?;
+    define_methods(c, prototype, &[(Key::Symbol(Slot::OnConstructed), crate::host::shared_vm::marked_operation!("streamWritableOnConstructed"), "onConstructed")])?;
     Ok(constructor)
 }
 
@@ -550,7 +550,7 @@ pub(crate) fn writable_state(c: &mut Context<'_>, this: RootId, args: &[RootId])
     }
     put_number(c, this, "length", 0.0)?;
     put_number(c, this, "corked", 0.0)?;
-    let onwrite = super::closure(c, "streamOnWrite", "bound onwrite", &[stream])?;
+    let onwrite = super::closure(c, crate::host::shared_vm::operation!("streamOnWrite"), "bound onwrite", &[stream])?;
     put(c, this, "onwrite", onwrite)?;
     put_number(c, this, "writelen", 0.0)?;
     reset_buffer(c, this)?;

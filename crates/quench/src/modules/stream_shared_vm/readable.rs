@@ -747,15 +747,15 @@ pub(crate) fn default_read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outc
     Err(errors::throw(c, StreamError::MethodNotImplemented("_read()")))
 }
 
-const PIPE_LISTENERS: &[(&str, &str)] = &[
-    ("onunpipe", "streamPipeOnUnpipe"),
-    ("onend", "streamPipeOnEnd"),
-    ("cleanup", "streamPipeCleanup"),
-    ("ondata", "streamPipeOnData"),
-    ("onerror", "streamPipeOnError"),
-    ("onclose", "streamPipeOnClose"),
-    ("onfinish", "streamPipeOnFinish"),
-    ("unpipe", "streamPipeUnpipe"),
+const PIPE_LISTENERS: &[(&str, crate::host::shared_vm::MarkedOperation)] = &[
+    ("onunpipe", crate::host::shared_vm::marked_operation!("streamPipeOnUnpipe")),
+    ("onend", crate::host::shared_vm::marked_operation!("streamPipeOnEnd")),
+    ("cleanup", crate::host::shared_vm::marked_operation!("streamPipeCleanup")),
+    ("ondata", crate::host::shared_vm::marked_operation!("streamPipeOnData")),
+    ("onerror", crate::host::shared_vm::marked_operation!("streamPipeOnError")),
+    ("onclose", crate::host::shared_vm::marked_operation!("streamPipeOnClose")),
+    ("onfinish", crate::host::shared_vm::marked_operation!("streamPipeOnFinish")),
+    ("unpipe", crate::host::shared_vm::marked_operation!("streamPipeUnpipe")),
 ];
 
 pub(crate) fn pipe(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
@@ -784,7 +784,7 @@ pub(crate) fn pipe(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     put(c, record, "state", state)?;
     put_bool(c, record, "cleanedUp", false)?;
     for &(name, operation) in PIPE_LISTENERS {
-        let listener = closure(c, operation, name, &[record])?;
+        let listener = closure(c, operation.id(), name, &[record])?;
         put(c, record, name, listener)?;
     }
     let end_listener = get(c, record, if do_end { "onend" } else { "unpipe" })?;
@@ -924,7 +924,7 @@ fn pipe_pause(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
     }
     let drain = get(c, record, "ondrain")?;
     if !c.truthy_rooted(drain)? {
-        let drain = closure(c, "streamPipeOnDrain", "pipeOnDrainFunctionResult", &[src, dest])?;
+        let drain = closure(c, crate::host::shared_vm::operation!("streamPipeOnDrain"), "pipeOnDrainFunctionResult", &[src, dest])?;
         put(c, record, "ondrain", drain)?;
         on(c, dest, "drain", drain)?;
     }
@@ -1256,16 +1256,16 @@ pub(crate) fn wrap(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     put(c, record, "source", source)?;
     put(c, record, "paused", paused)?;
     for (event, operation) in [
-        ("data", "streamWrapOnData"),
-        ("end", "streamWrapOnEnd"),
-        ("error", "streamWrapOnError"),
-        ("close", "streamWrapOnClose"),
-        ("destroy", "streamWrapOnClose"),
+        ("data", crate::host::shared_vm::operation!("streamWrapOnData")),
+        ("end", crate::host::shared_vm::operation!("streamWrapOnEnd")),
+        ("error", crate::host::shared_vm::operation!("streamWrapOnError")),
+        ("close", crate::host::shared_vm::operation!("streamWrapOnClose")),
+        ("destroy", crate::host::shared_vm::operation!("streamWrapOnClose")),
     ] {
         let listener = closure(c, operation, "", &[record])?;
         on(c, source, event, listener)?;
     }
-    let read = closure(c, "streamWrapRead", "", &[record])?;
+    let read = closure(c, crate::host::shared_vm::operation!("streamWrapRead"), "", &[record])?;
     put(c, this, "_read", read)?;
     let global = c.global_root()?;
     let object = get(c, global, "Object")?;
@@ -1354,7 +1354,7 @@ pub(crate) fn wrap_static(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
         let object = get(c, global, "Object")?;
         call_method(c, object, "assign", &[settings, options])?;
     }
-    let destroy = closure(c, "streamWrapDestroy", "destroy", &[source])?;
+    let destroy = closure(c, crate::host::shared_vm::operation!("streamWrapDestroy"), "destroy", &[source])?;
     put(c, settings, "destroy", destroy)?;
     let readable = intrinsic(c, |i| i.class(Class::Readable))?;
     let wrapper = c.construct_rooted(readable, readable, &[settings])?;
@@ -1415,33 +1415,33 @@ pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) ->
         c,
         constructor,
         &[
-            (Key::Name("_fromList"), "streamReadableFromList", "fromList"),
-            (Key::Name("from"), "streamReadableFrom", ""),
-            (Key::Name("wrap"), "streamReadableWrapStatic", ""),
+            (Key::Name("_fromList"), crate::host::shared_vm::marked_operation!("streamReadableFromList"), "fromList"),
+            (Key::Name("from"), crate::host::shared_vm::marked_operation!("streamReadableFrom"), ""),
+            (Key::Name("wrap"), crate::host::shared_vm::marked_operation!("streamReadableWrapStatic"), ""),
         ],
     )?;
     define_methods(
         c,
         prototype,
         &[
-            (Key::Name("destroy"), "streamDestroy", "destroy"),
-            (Key::Name("_undestroy"), "streamUndestroy", "undestroy"),
-            (Key::Name("_destroy"), "streamDefaultDestroy", ""),
-            (Key::Name("push"), "streamReadablePush", ""),
-            (Key::Name("unshift"), "streamReadableUnshift", ""),
-            (Key::Name("isPaused"), "streamReadableIsPaused", ""),
-            (Key::Name("setEncoding"), "streamReadableSetEncoding", ""),
-            (Key::Name("read"), "streamReadableRead", ""),
-            (Key::Name("_read"), "streamReadableDefaultRead", ""),
-            (Key::Name("pipe"), "streamReadablePipe", ""),
-            (Key::Name("unpipe"), "streamReadableUnpipe", ""),
-            (Key::Name("on"), "streamReadableOn", ""),
+            (Key::Name("destroy"), crate::host::shared_vm::marked_operation!("streamDestroy"), "destroy"),
+            (Key::Name("_undestroy"), crate::host::shared_vm::marked_operation!("streamUndestroy"), "undestroy"),
+            (Key::Name("_destroy"), crate::host::shared_vm::marked_operation!("streamDefaultDestroy"), ""),
+            (Key::Name("push"), crate::host::shared_vm::marked_operation!("streamReadablePush"), ""),
+            (Key::Name("unshift"), crate::host::shared_vm::marked_operation!("streamReadableUnshift"), ""),
+            (Key::Name("isPaused"), crate::host::shared_vm::marked_operation!("streamReadableIsPaused"), ""),
+            (Key::Name("setEncoding"), crate::host::shared_vm::marked_operation!("streamReadableSetEncoding"), ""),
+            (Key::Name("read"), crate::host::shared_vm::marked_operation!("streamReadableRead"), ""),
+            (Key::Name("_read"), crate::host::shared_vm::marked_operation!("streamReadableDefaultRead"), ""),
+            (Key::Name("pipe"), crate::host::shared_vm::marked_operation!("streamReadablePipe"), ""),
+            (Key::Name("unpipe"), crate::host::shared_vm::marked_operation!("streamReadableUnpipe"), ""),
+            (Key::Name("on"), crate::host::shared_vm::marked_operation!("streamReadableOn"), ""),
         ],
     )?;
     let on = get(c, prototype, "on")?;
     let key = c.string_rooted("addListener");
     c.define_data_property_rooted(prototype, key, on, true, true, true)?;
-    define_methods(c, prototype, &[(Key::Name("removeListener"), "streamReadableRemoveListener", "")])?;
+    define_methods(c, prototype, &[(Key::Name("removeListener"), crate::host::shared_vm::marked_operation!("streamReadableRemoveListener"), "")])?;
     let remove = get(c, prototype, "removeListener")?;
     let key = c.string_rooted("off");
     c.define_data_property_rooted(prototype, key, remove, true, true, true)?;
@@ -1449,11 +1449,11 @@ pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) ->
         c,
         prototype,
         &[
-            (Key::Name("removeAllListeners"), "streamReadableRemoveAllListeners", ""),
-            (Key::Name("resume"), "streamReadableResume", ""),
-            (Key::Name("pause"), "streamReadablePause", ""),
-            (Key::Name("wrap"), "streamReadableWrap", ""),
-            (Key::Name("iterator"), "streamReadableIterator", ""),
+            (Key::Name("removeAllListeners"), crate::host::shared_vm::marked_operation!("streamReadableRemoveAllListeners"), ""),
+            (Key::Name("resume"), crate::host::shared_vm::marked_operation!("streamReadableResume"), ""),
+            (Key::Name("pause"), crate::host::shared_vm::marked_operation!("streamReadablePause"), ""),
+            (Key::Name("wrap"), crate::host::shared_vm::marked_operation!("streamReadableWrap"), ""),
+            (Key::Name("iterator"), crate::host::shared_vm::marked_operation!("streamReadableIterator"), ""),
         ],
     )?;
     super::utils::define_stream_accessors(c, prototype, super::utils::READABLE_ACCESSORS)?;
@@ -1461,9 +1461,9 @@ pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) ->
         c,
         prototype,
         &[
-            (Key::Symbol(Slot::Rejection), "streamCaptureRejection", ""),
-            (Key::Symbol(Slot::AsyncDispose), "streamReadableAsyncDispose", ""),
-            (Key::Symbol(Slot::AsyncIterator), "streamReadableAsyncIterator", ""),
+            (Key::Symbol(Slot::Rejection), crate::host::shared_vm::marked_operation!("streamCaptureRejection"), ""),
+            (Key::Symbol(Slot::AsyncDispose), crate::host::shared_vm::marked_operation!("streamReadableAsyncDispose"), ""),
+            (Key::Symbol(Slot::AsyncIterator), crate::host::shared_vm::marked_operation!("streamReadableAsyncIterator"), ""),
         ],
     )?;
     Ok(constructor)

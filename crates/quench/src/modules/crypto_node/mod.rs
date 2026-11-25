@@ -486,11 +486,11 @@ pub(crate) enum Members {
 pub(crate) fn define_methods(
     c: &mut Context<'_>,
     target: RootId,
-    methods: &[(&str, &str)],
+    methods: &[(&str, crate::host::shared_vm::MarkedOperation)],
     members: Members,
 ) -> Result<(), RootedError> {
     for &(name, operation) in methods {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(target, key, function, true, members == Members::Assigned, true)?;
     }
@@ -500,11 +500,11 @@ pub(crate) fn define_methods(
 pub(crate) fn define_getters(
     c: &mut Context<'_>,
     target: RootId,
-    getters: &[(&str, &str)],
+    getters: &[(&str, crate::host::shared_vm::MarkedOperation)],
     members: Members,
 ) -> Result<(), RootedError> {
     for &(name, operation) in getters {
-        let getter = c.host_function_named(crate::host::shared_vm::operation(operation), &format!("get {name}"))?;
+        let getter = c.host_function_named(operation.id(), &format!("get {name}"))?;
         let key = c.string_rooted(name);
         let fields = DescriptorFields {
             get: Some(getter),
@@ -519,8 +519,8 @@ pub(crate) fn define_getters(
 }
 
 /// A constructor whose prototype inherits from `parent`'s (and the constructor from it).
-pub(crate) fn subclass(c: &mut Context<'_>, operation: &str, name: &str, parent: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+pub(crate) fn subclass(c: &mut Context<'_>, operation: crate::host::shared_vm::MarkedOperation, name: &str, parent: RootId) -> Outcome {
+    let constructor = c.host_constructor_named(operation.id(), name)?;
     inherit(c, constructor, parent)?;
     Ok(constructor)
 }

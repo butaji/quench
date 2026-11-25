@@ -400,10 +400,10 @@ pub(crate) fn not_building_snapshot(c: &mut Context<'_>, _: RootId, _: &[RootId]
     Err(coded_error(c, NOT_BUILDING_SNAPSHOT, "ERR_NOT_BUILDING_SNAPSHOT"))
 }
 
-fn object_with_methods(c: &mut Context<'_>, methods: &[(&str, &str)]) -> Result<RootId, RootedError> {
+fn object_with_methods(c: &mut Context<'_>, methods: &[(&str, crate::host::shared_vm::MarkedOperation)]) -> Result<RootId, RootedError> {
     let object = c.object_rooted()?;
     for (name, operation) in methods {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, object, name, function)?;
     }
     Ok(object)
@@ -522,7 +522,7 @@ pub(crate) fn stop_all_promise_hooks(c: &mut Context<'_>, _: RootId, _: &[RootId
 }
 
 fn promise_hooks(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let object = object_with_methods(c, &[("createHook", "v8CreatePromiseHook")])?;
+    let object = object_with_methods(c, &[("createHook", crate::host::shared_vm::marked_operation!("v8CreatePromiseHook"))])?;
     for (kind, (_, name, _)) in PROMISE_HOOKS.iter().enumerate() {
         let kind = c.number(kind as f64);
         let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("v8AddPromiseHook"), name, kind)?;
@@ -676,12 +676,12 @@ fn classes(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let read = c.host_function_named(crate::host::shared_vm::operation!("v8ReadRawBytes"), "readRawBytes")?;
         put(c, prototype, "readRawBytes", read)?;
         for (name, operation, base, method, method_operation) in [
-            ("DefaultSerializer", "v8DefaultSerializer", serializer, "_writeHostObject", "v8WriteHostObject"),
-            ("DefaultDeserializer", "v8DefaultDeserializer", deserializer, "_readHostObject", "v8ReadHostObject"),
+            ("DefaultSerializer", crate::host::shared_vm::operation!("v8DefaultSerializer"), serializer, "_writeHostObject", crate::host::shared_vm::operation!("v8WriteHostObject")),
+            ("DefaultDeserializer", crate::host::shared_vm::operation!("v8DefaultDeserializer"), deserializer, "_readHostObject", crate::host::shared_vm::operation!("v8ReadHostObject")),
         ] {
-            let class = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+            let class = c.host_constructor_named(operation, name)?;
             let prototype = extend(c, class, base)?;
-            let function = c.host_function_named(crate::host::shared_vm::operation(method_operation), method)?;
+            let function = c.host_function_named(method_operation, method)?;
             let key = c.string_rooted(method);
             c.define_data_property_rooted(prototype, key, function, true, false, true)?;
             put(c, classes, name, class)?;
@@ -717,18 +717,18 @@ pub(crate) fn deserialize(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Re
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let module = c.object_rooted()?;
     let classes = classes(c)?;
-    let function = |c: &mut Context<'_>, module: RootId, name: &str, operation: &str| -> Result<(), RootedError> {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    let function = |c: &mut Context<'_>, module: RootId, name: &str, operation: crate::host::shared_vm::MarkedOperation| -> Result<(), RootedError> {
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, module, name, function)
     };
     for (name, operation) in [
-        ("cachedDataVersionTag", "v8CachedDataVersionTag"),
-        ("getHeapSnapshot", "v8GetHeapSnapshot"),
-        ("getHeapStatistics", "v8GetHeapStatistics"),
-        ("getHeapSpaceStatistics", "v8GetHeapSpaceStatistics"),
-        ("getHeapCodeStatistics", "v8GetHeapCodeStatistics"),
-        ("getCppHeapStatistics", "v8GetCppHeapStatistics"),
-        ("setFlagsFromString", "v8SetFlagsFromString"),
+        ("cachedDataVersionTag", crate::host::shared_vm::marked_operation!("v8CachedDataVersionTag")),
+        ("getHeapSnapshot", crate::host::shared_vm::marked_operation!("v8GetHeapSnapshot")),
+        ("getHeapStatistics", crate::host::shared_vm::marked_operation!("v8GetHeapStatistics")),
+        ("getHeapSpaceStatistics", crate::host::shared_vm::marked_operation!("v8GetHeapSpaceStatistics")),
+        ("getHeapCodeStatistics", crate::host::shared_vm::marked_operation!("v8GetHeapCodeStatistics")),
+        ("getCppHeapStatistics", crate::host::shared_vm::marked_operation!("v8GetCppHeapStatistics")),
+        ("setFlagsFromString", crate::host::shared_vm::marked_operation!("v8SetFlagsFromString")),
     ] {
         function(c, module, name, operation)?;
     }
@@ -737,37 +737,37 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         put(c, module, name, class)?;
     }
     for (name, operation) in [
-        ("deserialize", "v8Deserialize"),
-        ("takeCoverage", "v8Coverage"),
-        ("stopCoverage", "v8Coverage"),
-        ("serialize", "v8Serialize"),
-        ("writeHeapSnapshot", "v8WriteHeapSnapshot"),
+        ("deserialize", crate::host::shared_vm::marked_operation!("v8Deserialize")),
+        ("takeCoverage", crate::host::shared_vm::marked_operation!("v8Coverage")),
+        ("stopCoverage", crate::host::shared_vm::marked_operation!("v8Coverage")),
+        ("serialize", crate::host::shared_vm::marked_operation!("v8Serialize")),
+        ("writeHeapSnapshot", crate::host::shared_vm::marked_operation!("v8WriteHeapSnapshot")),
     ] {
         function(c, module, name, operation)?;
     }
     let hooks = promise_hooks(c)?;
     put(c, module, "promiseHooks", hooks)?;
-    function(c, module, "queryObjects", "v8QueryObjectsPublic")?;
+    function(c, module, "queryObjects", crate::host::shared_vm::marked_operation!("v8QueryObjectsPublic"))?;
     let snapshot = object_with_methods(
         c,
         &[
-            ("addDeserializeCallback", "v8NotBuildingSnapshot"),
-            ("addSerializeCallback", "v8NotBuildingSnapshot"),
-            ("setDeserializeMainFunction", "v8NotBuildingSnapshot"),
-            ("isBuildingSnapshot", "v8IsBuildingSnapshot"),
+            ("addDeserializeCallback", crate::host::shared_vm::marked_operation!("v8NotBuildingSnapshot")),
+            ("addSerializeCallback", crate::host::shared_vm::marked_operation!("v8NotBuildingSnapshot")),
+            ("setDeserializeMainFunction", crate::host::shared_vm::marked_operation!("v8NotBuildingSnapshot")),
+            ("isBuildingSnapshot", crate::host::shared_vm::marked_operation!("v8IsBuildingSnapshot")),
         ],
     )?;
     put(c, module, "startupSnapshot", snapshot)?;
-    function(c, module, "setHeapSnapshotNearHeapLimit", "v8SetHeapSnapshotNearHeapLimit")?;
+    function(c, module, "setHeapSnapshotNearHeapLimit", crate::host::shared_vm::marked_operation!("v8SetHeapSnapshotNearHeapLimit"))?;
     let profiler = c.host_constructor_named(crate::host::shared_vm::operation!("v8GcProfiler"), "GCProfiler")?;
     let prototype = get(c, profiler, "prototype")?;
-    for (name, operation) in [("start", "v8GcProfilerStart"), ("stop", "v8GcProfilerStop")] {
-        let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for (name, operation) in [("start", crate::host::shared_vm::operation!("v8GcProfilerStart")), ("stop", crate::host::shared_vm::operation!("v8GcProfilerStop"))] {
+        let method = c.host_function_named(operation, name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, method, true, false, true)?;
     }
     put(c, module, "GCProfiler", profiler)?;
-    function(c, module, "isStringOneByteRepresentation", "v8IsStringOneByteRepresentation")?;
+    function(c, module, "isStringOneByteRepresentation", crate::host::shared_vm::marked_operation!("v8IsStringOneByteRepresentation"))?;
     Ok(module)
 }
 
@@ -777,10 +777,10 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         object_with_methods(
             c,
             &[
-                ("cachedDataVersionTag", "v8CachedDataVersionTag"),
-                ("setFlagsFromString", "v8SetFlagsFromString"),
-                ("setHeapSnapshotNearHeapLimit", "v8SetHeapSnapshotNearHeapLimit"),
-                ("isStringOneByteRepresentation", "v8IsStringOneByteRepresentation"),
+                ("cachedDataVersionTag", crate::host::shared_vm::marked_operation!("v8CachedDataVersionTag")),
+                ("setFlagsFromString", crate::host::shared_vm::marked_operation!("v8SetFlagsFromString")),
+                ("setHeapSnapshotNearHeapLimit", crate::host::shared_vm::marked_operation!("v8SetHeapSnapshotNearHeapLimit")),
+                ("isStringOneByteRepresentation", crate::host::shared_vm::marked_operation!("v8IsStringOneByteRepresentation")),
             ],
         )
     })
@@ -789,14 +789,14 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// `internalBinding('heap_utils')`.
 pub(crate) fn heap_utils_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:heap_utils", |c| {
-        object_with_methods(c, &[("triggerHeapSnapshot", "v8WriteHeapSnapshot"), ("createHeapSnapshotStream", "v8GetHeapSnapshot")])
+        object_with_methods(c, &[("triggerHeapSnapshot", crate::host::shared_vm::marked_operation!("v8WriteHeapSnapshot")), ("createHeapSnapshotStream", crate::host::shared_vm::marked_operation!("v8GetHeapSnapshot"))])
     })
 }
 
 /// `internalBinding('internal_only_v8')`.
 pub(crate) fn internal_only_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:internal_only_v8", |c| {
-        object_with_methods(c, &[("queryObjects", "v8QueryObjects")])
+        object_with_methods(c, &[("queryObjects", crate::host::shared_vm::marked_operation!("v8QueryObjects"))])
     })
 }
 

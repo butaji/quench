@@ -525,31 +525,31 @@ pub(crate) fn create_crypto(c: &mut Context<'_>) -> Outcome {
 }
 
 /// The SubtleCrypto methods: `(name, operation, required arguments)`.
-const SUBTLE_METHODS: [(&str, &str, usize); 12] = [
-    ("encrypt", "cryptoSubtleEncrypt", 3),
-    ("decrypt", "cryptoSubtleDecrypt", 3),
-    ("sign", "cryptoSubtleSign", 3),
-    ("verify", "cryptoSubtleVerify", 4),
-    ("digest", "cryptoSubtleDigest", 2),
-    ("generateKey", "cryptoSubtleGenerateKey", 3),
-    ("deriveKey", "cryptoSubtleDeriveKey", 5),
-    ("deriveBits", "cryptoSubtleDeriveBits", 2),
-    ("importKey", "cryptoSubtleImportKey", 5),
-    ("exportKey", "cryptoSubtleExportKey", 2),
-    ("wrapKey", "cryptoSubtleWrapKey", 4),
-    ("unwrapKey", "cryptoSubtleUnwrapKey", 7),
+const SUBTLE_METHODS: [(&str, crate::host::shared_vm::MarkedOperation, usize); 12] = [
+    ("encrypt", crate::host::shared_vm::marked_operation!("cryptoSubtleEncrypt"), 3),
+    ("decrypt", crate::host::shared_vm::marked_operation!("cryptoSubtleDecrypt"), 3),
+    ("sign", crate::host::shared_vm::marked_operation!("cryptoSubtleSign"), 3),
+    ("verify", crate::host::shared_vm::marked_operation!("cryptoSubtleVerify"), 4),
+    ("digest", crate::host::shared_vm::marked_operation!("cryptoSubtleDigest"), 2),
+    ("generateKey", crate::host::shared_vm::marked_operation!("cryptoSubtleGenerateKey"), 3),
+    ("deriveKey", crate::host::shared_vm::marked_operation!("cryptoSubtleDeriveKey"), 5),
+    ("deriveBits", crate::host::shared_vm::marked_operation!("cryptoSubtleDeriveBits"), 2),
+    ("importKey", crate::host::shared_vm::marked_operation!("cryptoSubtleImportKey"), 5),
+    ("exportKey", crate::host::shared_vm::marked_operation!("cryptoSubtleExportKey"), 2),
+    ("wrapKey", crate::host::shared_vm::marked_operation!("cryptoSubtleWrapKey"), 4),
+    ("unwrapKey", crate::host::shared_vm::marked_operation!("cryptoSubtleUnwrapKey"), 7),
 ];
 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
     let crypto = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoWebIllegalConstructor"), "Crypto")?;
     let prototype = get(c, crypto, "prototype")?;
-    define_getters(c, prototype, &[("subtle", "cryptoWebSubtle")], Members::Assigned)?;
-    define_methods(c, prototype, &[("getRandomValues", "cryptoWebGetRandomValues"), ("randomUUID", "cryptoWebRandomUuid")], Members::Assigned)?;
+    define_getters(c, prototype, &[("subtle", crate::host::shared_vm::marked_operation!("cryptoWebSubtle"))], Members::Assigned)?;
+    define_methods(c, prototype, &[("getRandomValues", crate::host::shared_vm::marked_operation!("cryptoWebGetRandomValues")), ("randomUUID", crate::host::shared_vm::marked_operation!("cryptoWebRandomUuid"))], Members::Assigned)?;
     super::to_string_tag(c, prototype, "Crypto")?;
 
     let subtle = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoWebIllegalConstructor"), "SubtleCrypto")?;
     let prototype = get(c, subtle, "prototype")?;
-    let methods: Vec<(&str, &str)> = SUBTLE_METHODS.iter().map(|(name, operation, _)| (*name, *operation)).collect();
+    let methods: Vec<(&str, crate::host::shared_vm::MarkedOperation)> = SUBTLE_METHODS.iter().map(|(name, operation, _)| (*name, *operation)).collect();
     define_methods(c, prototype, &methods, Members::Assigned)?;
     super::to_string_tag(c, prototype, "SubtleCrypto")?;
 
@@ -558,7 +558,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
     define_getters(
         c,
         prototype,
-        &[("type", "cryptoKeyType"), ("extractable", "cryptoKeyExtractable"), ("algorithm", "cryptoKeyAlgorithm"), ("usages", "cryptoKeyUsages")],
+        &[("type", crate::host::shared_vm::marked_operation!("cryptoKeyType")), ("extractable", crate::host::shared_vm::marked_operation!("cryptoKeyExtractable")), ("algorithm", crate::host::shared_vm::marked_operation!("cryptoKeyAlgorithm")), ("usages", crate::host::shared_vm::marked_operation!("cryptoKeyUsages"))],
         Members::Assigned,
     )?;
     super::to_string_tag(c, prototype, "CryptoKey")?;

@@ -3,7 +3,7 @@
 //! set, the cache of the source maps loaded modules name, and `module.SourceMap`.
 use super::event_constructor_shared_vm::get;
 use super::util_shared_vm::validate_boolean;
-use crate::host::shared_vm::{commonjs, operation};
+use crate::host::shared_vm::{commonjs, marked_operation, MarkedOperation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 use std::cell::Cell;
 
@@ -106,17 +106,17 @@ pub(crate) fn set_support_operation(c: &mut Context<'_>, _: RootId, args: &[Root
 }
 
 /// The support functions `node:module` and `internal/source_map/source_map_cache` export.
-const SUPPORT_FUNCTIONS: [(&str, &str); 3] = [
-    ("findSourceMap", "sourceMapFind"),
-    ("getSourceMapsSupport", "sourceMapsSupportGet"),
-    ("setSourceMapsSupport", "sourceMapsSupportSet"),
+const SUPPORT_FUNCTIONS: [(&str, MarkedOperation); 3] = [
+    ("findSourceMap", marked_operation!("sourceMapFind")),
+    ("getSourceMapsSupport", marked_operation!("sourceMapsSupportGet")),
+    ("setSourceMapsSupport", marked_operation!("sourceMapsSupportSet")),
 ];
 
 /// Defines `findSourceMap`, `getSourceMapsSupport`, `setSourceMapsSupport` and, for
 /// `node:module`, `SourceMap` on `target`.
 pub(crate) fn install(c: &mut Context<'_>, target: RootId, with_class: bool) -> Result<(), RootedError> {
-    for (name, operation_name) in SUPPORT_FUNCTIONS {
-        let function = c.host_function_named(operation(operation_name), name)?;
+    for (name, operation) in SUPPORT_FUNCTIONS {
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, target, name, function)?;
     }
     if with_class {
@@ -285,8 +285,8 @@ pub(crate) fn source_map_class(c: &mut Context<'_>) -> Result<RootId, RootedErro
     commonjs::cached_native_binding(c, "\0native:SourceMap", |c| {
         let class = c.host_constructor_named(crate::host::shared_vm::operation!("sourceMapConstruct"), "SourceMap")?;
         let prototype = get(c, class, "prototype")?;
-        for (name, operation_name) in [("payload", "sourceMapPayload"), ("lineLengths", "sourceMapLineLengths")] {
-            let getter = c.host_function_named(operation(operation_name), &format!("get {name}"))?;
+        for (name, operation) in [("payload", marked_operation!("sourceMapPayload")), ("lineLengths", marked_operation!("sourceMapLineLengths"))] {
+            let getter = c.host_function_named(operation.id(), &format!("get {name}"))?;
             let key = c.string_rooted(name);
             let undefined = c.undefined();
             let fields = DescriptorFields {
@@ -298,8 +298,8 @@ pub(crate) fn source_map_class(c: &mut Context<'_>) -> Result<RootId, RootedErro
             };
             c.define_property_fields_rooted(prototype, key, fields)?;
         }
-        for (name, operation_name) in [("findEntry", "sourceMapFindEntry"), ("findOrigin", "sourceMapFindOrigin")] {
-            let function = c.host_function_named(operation(operation_name), name)?;
+        for (name, operation) in [("findEntry", marked_operation!("sourceMapFindEntry")), ("findOrigin", marked_operation!("sourceMapFindOrigin"))] {
+            let function = c.host_function_named(operation.id(), name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(prototype, key, function, true, false, true)?;
         }

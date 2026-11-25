@@ -85,6 +85,9 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
+    /// A runtime only ever restored from one saved at rest (`resume_native_from_snapshot` of a
+    /// `snapshot_at_rest`): it never installs its host.
+    pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
@@ -297,6 +300,11 @@ impl<H: Host> Runtime<H> {
         self.vm.materialize_named_lazy_globals(program).map_err(|error| error.to_string())?;
         self.vm.collect_now(program);
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
+    }
+
+    /// The host operations the heap's host functions run, ascending (`Vm::held_host_operations`).
+    pub fn held_host_operations(&self) -> Vec<u32> {
+        self.vm.held_host_operations()
     }
 
     /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`

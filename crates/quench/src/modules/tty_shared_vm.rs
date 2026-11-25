@@ -557,19 +557,19 @@ pub(crate) fn cursor_helper(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
 /// The cursor helpers, each `readline`'s function of that name.
 const CURSOR_HELPERS: [&str; 4] = ["cursorTo", "moveCursor", "clearLine", "clearScreenDown"];
 
-fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, data: Option<RootId>) -> Result<(), RootedError> {
+fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, data: Option<RootId>) -> Result<(), RootedError> {
     let function = match data {
-        Some(data) => c.host_function_named_with_data(crate::host::shared_vm::operation(operation), "", data)?,
-        None => c.host_function_named(crate::host::shared_vm::operation(operation), "")?,
+        Some(data) => c.host_function_named_with_data(operation, "", data)?,
+        None => c.host_function_named(operation, "")?,
     };
     let key = c.string_rooted(name);
     c.define_data_property_rooted(target, key, function, true, true, true)?;
     Ok(())
 }
 
-fn class(c: &mut Context<'_>, name: &str, operation: &str, parent: RootId) -> Outcome {
+fn class(c: &mut Context<'_>, name: &str, operation: quench_runtime::HostFunctionId, parent: RootId) -> Outcome {
     let data = c.array_rooted(&[])?;
-    let constructor = c.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+    let constructor = c.host_constructor_named_with_data(operation, name, data)?;
     put(c, data, "0", constructor)?;
     inherit(c, constructor, parent)?;
     Ok(constructor)
@@ -581,10 +581,10 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         return Ok(module);
     }
     let parent = duplex(c)?;
-    let read_class = class(c, "ReadStream", "ttyReadStream", parent)?;
-    let write_class = class(c, "WriteStream", "ttyWriteStream", parent)?;
+    let read_class = class(c, "ReadStream", crate::host::shared_vm::operation!("ttyReadStream"), parent)?;
+    let write_class = class(c, "WriteStream", crate::host::shared_vm::operation!("ttyWriteStream"), parent)?;
     let read_prototype = get(c, read_class, "prototype")?;
-    method(c, read_prototype, "setRawMode", "ttySetRawMode", None)?;
+    method(c, read_prototype, "setRawMode", crate::host::shared_vm::operation!("ttySetRawMode"), None)?;
     let key = c.string_rooted("_read");
     let reader = c.host_function_named(crate::host::shared_vm::operation!("ttyRead"), "_read")?;
     c.define_data_property_rooted(read_prototype, key, reader, true, false, true)?;
@@ -592,14 +592,14 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let yes = c.boolean(true);
     let key = c.string_rooted("isTTY");
     c.define_data_property_rooted(write_prototype, key, yes, true, true, true)?;
-    method(c, write_prototype, "getColorDepth", "ttyGetColorDepth", None)?;
-    method(c, write_prototype, "hasColors", "ttyHasColors", None)?;
-    method(c, write_prototype, "_refreshSize", "ttyRefreshSize", None)?;
+    method(c, write_prototype, "getColorDepth", crate::host::shared_vm::operation!("ttyGetColorDepth"), None)?;
+    method(c, write_prototype, "hasColors", crate::host::shared_vm::operation!("ttyHasColors"), None)?;
+    method(c, write_prototype, "_refreshSize", crate::host::shared_vm::operation!("ttyRefreshSize"), None)?;
     for name in CURSOR_HELPERS {
         let data = c.string_rooted(name);
-        method(c, write_prototype, name, "ttyCursorHelper", Some(data))?;
+        method(c, write_prototype, name, crate::host::shared_vm::operation!("ttyCursorHelper"), Some(data))?;
     }
-    method(c, write_prototype, "getWindowSize", "ttyGetWindowSize", None)?;
+    method(c, write_prototype, "getWindowSize", crate::host::shared_vm::operation!("ttyGetWindowSize"), None)?;
     let key = c.string_rooted("_write");
     let writer = c.host_function_named(crate::host::shared_vm::operation!("ttyWrite"), "_write")?;
     c.define_data_property_rooted(write_prototype, key, writer, true, false, true)?;

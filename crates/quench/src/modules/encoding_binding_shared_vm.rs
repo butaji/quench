@@ -1,4 +1,5 @@
 //! Native UTF-8 operations used by Node's encoding algorithms.
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 use crate::modules::util_shared_vm::named_get as get;
@@ -28,14 +29,14 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let binding = c.object_rooted()?;
         put(c, binding, "encodeIntoResults", results)?;
         for (name, operation) in [
-            ("encodeUtf8String", "encodingUtf8"),
-            ("encodeInto", "encodingInto"),
-            ("decodeUTF8", "encodingDecodeUtf8"),
-            ("toASCII", "encodingToAscii"),
-            ("toUnicode", "encodingToUnicode"),
+            ("encodeUtf8String", marked_operation!("encodingUtf8")),
+            ("encodeInto", marked_operation!("encodingInto")),
+            ("decodeUTF8", marked_operation!("encodingDecodeUtf8")),
+            ("toASCII", marked_operation!("encodingToAscii")),
+            ("toUnicode", marked_operation!("encodingToUnicode")),
         ] {
             let function =
-                c.host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
+                c.host_function_with_data(operation.id(), data)?;
             let key = c.string_rooted("name");
             let value = c.string_rooted(name);
             c.define_data_property_rooted(function, key, value, false, false, true)?;

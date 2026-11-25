@@ -92,7 +92,7 @@ pub(crate) fn destroy_with(c: &mut Context<'_>, stream: RootId, error: RootId, c
     if constructed {
         return run_destroy(c, stream, error, callback);
     }
-    let after = closure(c, "streamDestroyAfterConstruct", "", &[error, callback])?;
+    let after = closure(c, crate::host::shared_vm::operation!("streamDestroyAfterConstruct"), "", &[error, callback])?;
     let key = intrinsic(c, |i| i.slot(Slot::Destroy))?;
     call_method(c, stream, "once", &[key, after])?;
     Ok(())
@@ -110,7 +110,7 @@ pub(crate) fn destroy_after_construct(c: &mut Context<'_>, this: RootId, args: &
 /// `_destroy(self, err, cb)`.
 fn run_destroy(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId) -> Result<(), RootedError> {
     let no = c.boolean(false);
-    let on_destroy = closure(c, "streamOnDestroy", "onDestroy", &[stream, callback, no])?;
+    let on_destroy = closure(c, crate::host::shared_vm::operation!("streamOnDestroy"), "onDestroy", &[stream, callback, no])?;
     let error = if c.truthy_rooted(error)? { error } else { c.null() };
     let result = call_method(c, stream, "_destroy", &[error, on_destroy]);
     if let Err(thrown) = attempt(result)? {
@@ -287,8 +287,8 @@ pub(crate) fn construct_export(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
 pub(crate) fn construct_tick(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let stream = arg(c, args, 0);
     let no = c.boolean(false);
-    let on_construct = closure(c, "streamOnConstruct", "onConstruct", &[stream, no])?;
-    let done = closure(c, "streamConstructDone", "", &[on_construct])?;
+    let on_construct = closure(c, crate::host::shared_vm::operation!("streamOnConstruct"), "onConstruct", &[stream, no])?;
+    let done = closure(c, crate::host::shared_vm::operation!("streamConstructDone"), "", &[on_construct])?;
     let result = call_method(c, stream, "_construct", &[done]);
     if let Err(thrown) = attempt(result)? {
         super::next_tick(c, on_construct, &[thrown])?;
@@ -352,7 +352,7 @@ pub(crate) fn construct_if_defined(c: &mut Context<'_>, stream: RootId) -> Resul
     if is_nullish(c, method) {
         return Ok(());
     }
-    let callback = closure(c, "streamOnConstructed", "", &[stream])?;
+    let callback = closure(c, crate::host::shared_vm::operation!("streamOnConstructed"), "", &[stream])?;
     construct(c, stream, callback)
 }
 

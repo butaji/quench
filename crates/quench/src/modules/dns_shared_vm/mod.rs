@@ -11,6 +11,7 @@ mod wire;
 
 use crate::host::NodeHost;
 use answers::{Answer, Field, Item, QueryKind, Reply, Status, QUERIES};
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -87,7 +88,7 @@ pub(crate) fn poll(
     if !ready {
         return Ok(false);
     }
-    crate::modules::process_shared_vm::deliver_each(runtime, program, "caresDrain")
+    crate::modules::process_shared_vm::deliver_each(runtime, program, crate::host::shared_vm::operation!("caresDrain"))
 }
 
 /// `caresDrain()`: call one finished request's `oncomplete`; `false` when none is ready.
@@ -188,11 +189,11 @@ fn text(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<String, Ro
 /// channel id in a private slot and release the channel when collected.
 pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     for (name, operation) in [
-        ("canonicalizeIP", "caresCanonicalizeIp"),
-        ("convertIpv6StringToBuffer", "caresIpv6Buffer"),
-        ("strerror", "caresStrerror"),
+        ("canonicalizeIP", marked_operation!("caresCanonicalizeIp")),
+        ("convertIpv6StringToBuffer", marked_operation!("caresIpv6Buffer")),
+        ("strerror", marked_operation!("caresStrerror")),
     ] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, binding, name, function)?;
     }
     let request = c.host_constructor_named(crate::host::shared_vm::operation!("dnsRequestConstruct"), "QueryReqWrap")?;
@@ -206,12 +207,12 @@ pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<()
         put(c, prototype, name, function)?;
     }
     for (name, operation) in [
-        ("getServers", "caresChannelGetServers"),
-        ("setServers", "caresChannelSetServers"),
-        ("setLocalAddress", "caresChannelSetLocalAddress"),
-        ("cancel", "caresChannelCancel"),
+        ("getServers", marked_operation!("caresChannelGetServers")),
+        ("setServers", marked_operation!("caresChannelSetServers")),
+        ("setLocalAddress", marked_operation!("caresChannelSetLocalAddress")),
+        ("cancel", marked_operation!("caresChannelCancel")),
     ] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, prototype, name, function)?;
     }
     put(c, binding, "ChannelWrap", channel)?;

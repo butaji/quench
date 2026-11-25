@@ -54,22 +54,22 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let ap = super::native_async_wrap::prototype(c)?;
         c.set_prototype_rooted(hp, ap)?;
         for (p, n, op) in [
-            (tp, "connect", "nativeStreamConnect"),
-            (tp, "connect6", "nativeStreamConnect6"),
-            (lp, "shutdown", "nativeStreamShutdown"),
-            (lp, "writeBuffer", "nativeStreamWriteBuffer"),
-            (lp, "readStart", "nativeStreamReadStart"),
-            (lp, "readStop", "nativeStreamReadStop"),
-            (tp, "bind", "nativeTcpBind"),
-            (tp, "bind6", "nativeTcpBind6"),
-            (tp, "listen", "nativeTcpListen"),
-            (tp, "getsockname", "nativeTcpName"),
-            (hp, "close", "nativeTcpClose"),
-            (hp, "ref", "nativeTcpRef"),
-            (hp, "unref", "nativeTcpUnref"),
-            (hp, "hasRef", "nativeTcpHasRef"),
+            (tp, "connect", crate::host::shared_vm::marked_operation!("nativeStreamConnect")),
+            (tp, "connect6", crate::host::shared_vm::marked_operation!("nativeStreamConnect6")),
+            (lp, "shutdown", crate::host::shared_vm::marked_operation!("nativeStreamShutdown")),
+            (lp, "writeBuffer", crate::host::shared_vm::marked_operation!("nativeStreamWriteBuffer")),
+            (lp, "readStart", crate::host::shared_vm::marked_operation!("nativeStreamReadStart")),
+            (lp, "readStop", crate::host::shared_vm::marked_operation!("nativeStreamReadStop")),
+            (tp, "bind", crate::host::shared_vm::marked_operation!("nativeTcpBind")),
+            (tp, "bind6", crate::host::shared_vm::marked_operation!("nativeTcpBind6")),
+            (tp, "listen", crate::host::shared_vm::marked_operation!("nativeTcpListen")),
+            (tp, "getsockname", crate::host::shared_vm::marked_operation!("nativeTcpName")),
+            (hp, "close", crate::host::shared_vm::marked_operation!("nativeTcpClose")),
+            (hp, "ref", crate::host::shared_vm::marked_operation!("nativeTcpRef")),
+            (hp, "unref", crate::host::shared_vm::marked_operation!("nativeTcpUnref")),
+            (hp, "hasRef", crate::host::shared_vm::marked_operation!("nativeTcpHasRef")),
         ] {
-            let f = c.host_function_named(crate::host::shared_vm::operation(op), n)?;
+            let f = c.host_function_named(op.id(), n)?;
             put(c, p, n, f)?;
         }
         let getter = c.host_function(crate::host::shared_vm::operation!("nativeTcpFd"))?;

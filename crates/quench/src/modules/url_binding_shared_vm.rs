@@ -112,15 +112,15 @@ fn components(url: &Url) -> [u32; COMPONENTS] {
     values
 }
 
-const NATIVES: &[(&str, &str)] = &[
-    ("domainToASCII", "urlBindingDomainToAscii"),
-    ("domainToUnicode", "urlBindingDomainToUnicode"),
-    ("format", "urlBindingFormat"),
-    ("getOrigin", "urlBindingGetOrigin"),
-    ("parse", "urlBindingParse"),
-    ("pathToFileURL", "urlBindingPathToFileUrl"),
-    ("update", "urlBindingUpdate"),
-    ("canParse", "urlBindingCanParse"),
+const NATIVES: &[(&str, crate::host::shared_vm::MarkedOperation)] = &[
+    ("domainToASCII", crate::host::shared_vm::marked_operation!("urlBindingDomainToAscii")),
+    ("domainToUnicode", crate::host::shared_vm::marked_operation!("urlBindingDomainToUnicode")),
+    ("format", crate::host::shared_vm::marked_operation!("urlBindingFormat")),
+    ("getOrigin", crate::host::shared_vm::marked_operation!("urlBindingGetOrigin")),
+    ("parse", crate::host::shared_vm::marked_operation!("urlBindingParse")),
+    ("pathToFileURL", crate::host::shared_vm::marked_operation!("urlBindingPathToFileUrl")),
+    ("update", crate::host::shared_vm::marked_operation!("urlBindingUpdate")),
+    ("canParse", crate::host::shared_vm::marked_operation!("urlBindingCanParse")),
 ];
 
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -133,7 +133,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let components = c.construct_rooted(constructor, constructor, &[length])?;
             put(c, binding, "urlComponents", components)?;
             for &(name, operation) in NATIVES {
-                let operation = crate::host::shared_vm::operation(operation);
+                let operation = operation.id();
                 let function = c.host_function_named_with_data(operation, name, components)?;
                 put(c, binding, name, function)?;
             }

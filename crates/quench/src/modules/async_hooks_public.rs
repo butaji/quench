@@ -1,19 +1,23 @@
 //! Public async-hooks classes over the shared context and hook engines.
 use super::async_hooks_shared_vm as engine;
 use super::host_members::leading;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 pub(super) type Context<'a> = NativeContext<'a>;
 
 /// The function data's private keys of an instance's fields.
 const PRIVATE_FIELDS: [&str; 4] = ["localId", "defaultValue", "name", "scopeState"];
 /// The hook engine's operations the AsyncHook class calls, by their data names.
-const HOOK_OPERATIONS: [(&str, &str); 3] =
-    [("initializeHook", "asyncHookInit"), ("enableHook", "asyncHookEnable"), ("disableHook", "asyncHookDisable")];
+const HOOK_OPERATIONS: [(&str, MarkedOperation); 3] = [
+    ("initializeHook", marked_operation!("asyncHookInit")),
+    ("enableHook", marked_operation!("asyncHookEnable")),
+    ("disableHook", marked_operation!("asyncHookDisable")),
+];
 
 /// A prototype member: a method's operation, or the `name` accessor.
 #[derive(Clone, Copy)]
 enum Member {
-    Method(&'static str),
+    Method(MarkedOperation),
     NameGetter,
 }
 
@@ -21,7 +25,7 @@ enum Member {
 /// module exports it.
 struct Class {
     name: &'static str,
-    operation: &'static str,
+    operation: MarkedOperation,
     members: &'static [(&'static str, Member)],
     exported: bool,
 }
@@ -29,65 +33,65 @@ struct Class {
 const CLASSES: [Class; 4] = [
     Class {
         name: "AsyncResource",
-        operation: "asyncPublicResource",
+        operation: marked_operation!("asyncPublicResource"),
         members: &[
-            ("runInAsyncScope", Member::Method("asyncPublicResourceRun")),
-            ("emitDestroy", Member::Method("asyncPublicResourceDestroy")),
-            ("asyncId", Member::Method("asyncPublicResourceId")),
-            ("triggerAsyncId", Member::Method("asyncPublicResourceTrigger")),
-            ("bind", Member::Method("asyncPublicResourceBind")),
+            ("runInAsyncScope", Member::Method(marked_operation!("asyncPublicResourceRun"))),
+            ("emitDestroy", Member::Method(marked_operation!("asyncPublicResourceDestroy"))),
+            ("asyncId", Member::Method(marked_operation!("asyncPublicResourceId"))),
+            ("triggerAsyncId", Member::Method(marked_operation!("asyncPublicResourceTrigger"))),
+            ("bind", Member::Method(marked_operation!("asyncPublicResourceBind"))),
         ],
         exported: true,
     },
     Class {
         name: "AsyncLocalStorage",
-        operation: "asyncPublicStorage",
+        operation: marked_operation!("asyncPublicStorage"),
         members: &[
             ("name", Member::NameGetter),
-            ("disable", Member::Method("asyncLocalStorageDisable")),
-            ("enterWith", Member::Method("asyncLocalStorageEnterWith")),
-            ("run", Member::Method("asyncPublicStorageRun")),
-            ("exit", Member::Method("asyncPublicStorageExit")),
-            ("getStore", Member::Method("asyncPublicStorageGet")),
-            ("withScope", Member::Method("asyncPublicStorageScope")),
+            ("disable", Member::Method(marked_operation!("asyncLocalStorageDisable"))),
+            ("enterWith", Member::Method(marked_operation!("asyncLocalStorageEnterWith"))),
+            ("run", Member::Method(marked_operation!("asyncPublicStorageRun"))),
+            ("exit", Member::Method(marked_operation!("asyncPublicStorageExit"))),
+            ("getStore", Member::Method(marked_operation!("asyncPublicStorageGet"))),
+            ("withScope", Member::Method(marked_operation!("asyncPublicStorageScope"))),
         ],
         exported: true,
     },
     Class {
         name: "AsyncHook",
-        operation: "asyncPublicHook",
-        members: &[("enable", Member::Method("asyncPublicHookEnable")), ("disable", Member::Method("asyncPublicHookDisable"))],
+        operation: marked_operation!("asyncPublicHook"),
+        members: &[("enable", Member::Method(marked_operation!("asyncPublicHookEnable"))), ("disable", Member::Method(marked_operation!("asyncPublicHookDisable")))],
         exported: false,
     },
     Class {
         name: "RunScope",
-        operation: "asyncPublicScope",
-        members: &[("dispose", Member::Method("asyncPublicScopeDispose"))],
+        operation: marked_operation!("asyncPublicScope"),
+        members: &[("dispose", Member::Method(marked_operation!("asyncPublicScopeDispose")))],
         exported: false,
     },
 ];
 
 /// Static methods: class, name and operation.
-const STATICS: [(&str, &str, &str); 3] = [
-    ("AsyncResource", "bind", "asyncPublicResourceStaticBind"),
-    ("AsyncLocalStorage", "bind", "asyncPublicStorageBind"),
-    ("AsyncLocalStorage", "snapshot", "asyncPublicStorageSnapshot"),
+const STATICS: [(&str, &str, MarkedOperation); 3] = [
+    ("AsyncResource", "bind", marked_operation!("asyncPublicResourceStaticBind")),
+    ("AsyncLocalStorage", "bind", marked_operation!("asyncPublicStorageBind")),
+    ("AsyncLocalStorage", "snapshot", marked_operation!("asyncPublicStorageSnapshot")),
 ];
 
 /// Module functions over the public classes' data.
-const PUBLIC_FUNCTIONS: [(&str, &str); 4] = [
-    ("createHook", "asyncPublicCreateHook"),
-    ("executionAsyncId", "asyncExecutionId"),
-    ("triggerAsyncId", "asyncTriggerId"),
-    ("executionAsyncResource", "asyncExecutionResource"),
+const PUBLIC_FUNCTIONS: [(&str, MarkedOperation); 4] = [
+    ("createHook", marked_operation!("asyncPublicCreateHook")),
+    ("executionAsyncId", marked_operation!("asyncExecutionId")),
+    ("triggerAsyncId", marked_operation!("asyncTriggerId")),
+    ("executionAsyncResource", marked_operation!("asyncExecutionResource")),
 ];
 
 /// Module functions over the engine's API, including the host's private entries.
-const ENGINE_FUNCTIONS: [(&str, &str); 4] = [
-    ("enabledHooksExist", "asyncHooksEnabled"),
-    ("\0quench:async_hooks:emit_init", "asyncExternalInit"),
-    ("\0quench:async_hooks:defaultTriggerScope", "asyncDefaultTriggerScope"),
-    ("\0quench:async_hooks:getDefaultTriggerAsyncId", "asyncGetDefaultTrigger"),
+const ENGINE_FUNCTIONS: [(&str, MarkedOperation); 4] = [
+    ("enabledHooksExist", marked_operation!("asyncHooksEnabled")),
+    ("\0quench:async_hooks:emit_init", marked_operation!("asyncExternalInit")),
+    ("\0quench:async_hooks:defaultTriggerScope", marked_operation!("asyncDefaultTriggerScope")),
+    ("\0quench:async_hooks:getDefaultTriggerAsyncId", marked_operation!("asyncGetDefaultTrigger")),
 ];
 
 pub(super) fn arg(c: &mut Context<'_>, args: &[RootId], n: usize) -> RootId {
@@ -137,15 +141,15 @@ pub(crate) fn microtask_carries_context(c: &mut Context<'_>) -> Result<bool, Roo
     let store = c.host_as::<crate::host::NodeHost>().shared_state().borrow().async_hooks.has_visible_store();
     Ok(store || super::async_hook_registry_shared_vm::hooks_exist(c)?)
 }
-fn method(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data: RootId) -> Result<(), RootedError> {
-    let value = c.host_function_named_with_data(crate::host::shared_vm::operation(op), name, data)?;
+fn method(c: &mut Context<'_>, holder: RootId, name: &str, op: MarkedOperation, data: RootId) -> Result<(), RootedError> {
+    let value = c.host_function_named_with_data(op.id(), name, data)?;
     c.define_named_data_property_rooted(holder, name, value, true, false, true)?;
     Ok(())
 }
 /// Module functions, enumerable, each with `data`.
-fn module_functions(c: &mut Context<'_>, module: RootId, functions: &[(&str, &str)], data: RootId) -> Result<(), RootedError> {
+fn module_functions(c: &mut Context<'_>, module: RootId, functions: &[(&str, MarkedOperation)], data: RootId) -> Result<(), RootedError> {
     for &(name, op) in functions {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(op), name, data)?;
+        let function = c.host_function_named_with_data(op.id(), name, data)?;
         c.define_named_data_property_rooted(module, name, function, true, true, true)?;
     }
     Ok(())
@@ -177,14 +181,14 @@ fn class_data(c: &mut Context<'_>, api: RootId) -> Result<RootId, RootedError> {
         put(c, data, field, key)?;
     }
     for (name, op) in HOOK_OPERATIONS {
-        let function = c.host_function_with_data(crate::host::shared_vm::operation(op), api)?;
+        let function = c.host_function_with_data(op.id(), api)?;
         put(c, data, name, function)?;
     }
     Ok(data)
 }
 
 fn install_class(c: &mut Context<'_>, module: RootId, data: RootId, class: &Class) -> Result<(), RootedError> {
-    let constructor = c.host_constructor_named_with_data(crate::host::shared_vm::operation(class.operation), class.name, data)?;
+    let constructor = c.host_constructor_named_with_data(class.operation.id(), class.name, data)?;
     let prototype = get(c, constructor, "prototype")?;
     c.define_named_data_property_rooted(constructor, "prototype", prototype, false, false, false)?;
     put(c, data, class.name, constructor)?;
@@ -195,7 +199,7 @@ fn install_class(c: &mut Context<'_>, module: RootId, data: RootId, class: &Clas
         match member {
             Member::Method(op) => method(c, prototype, name, op, data)?,
             Member::NameGetter => {
-                let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("asyncPublicStorageName"), "get name", data)?;
+                let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("asyncPublicStorageName"), "get name", data)?;
                 let key = c.string_rooted(name);
                 let fields = DescriptorFields { get: Some(getter), enumerable: Some(false), configurable: Some(true), ..Default::default() };
                 c.define_property_fields_rooted(prototype, key, fields)?;
@@ -213,7 +217,7 @@ fn install_scope_dispose(c: &mut Context<'_>, data: RootId) -> Result<(), Rooted
     let symbol = get(c, global, "Symbol")?;
     let dispose = get(c, symbol, "dispose")?;
     let callback = c.host_function_named_with_data(
-        crate::host::shared_vm::operation("asyncPublicScopeSymbolDispose"),
+        crate::host::shared_vm::operation!("asyncPublicScopeSymbolDispose"),
         "[Symbol.dispose]",
         data,
     )?;
@@ -223,7 +227,7 @@ fn install_scope_dispose(c: &mut Context<'_>, data: RootId) -> Result<(), Rooted
 
 /// The FinalizationRegistry that destroys collected AsyncResources, shared with the engine.
 fn install_finalizer(c: &mut Context<'_>, api: RootId, data: RootId) -> Result<(), RootedError> {
-    let finalize = c.host_function_with_data(crate::host::shared_vm::operation("asyncPublicResourceFinalize"), data)?;
+    let finalize = c.host_function_with_data(crate::host::shared_vm::operation!("asyncPublicResourceFinalize"), data)?;
     let global = c.global_root()?;
     let registry = get(c, global, "FinalizationRegistry")?;
     let registry = c.construct_rooted(registry, registry, &[finalize])?;
@@ -292,13 +296,13 @@ pub(crate) fn resource_bind(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
     let bound_data = c.record_rooted(false, &["resource", "function", "receiver"], &[this, function, receiver])?;
     let dynamic = c.rooted_value(receiver).is_some_and(|v| v.is_undefined());
     let (op, name) = if dynamic {
-        ("asyncBoundDynamic", "bound")
+        (crate::host::shared_vm::operation!("asyncBoundDynamic"), "bound")
     } else {
         let scope = get(c, this, "runInAsyncScope")?;
         put(c, bound_data, "scope", scope)?;
-        ("asyncBoundFixed", "bound runInAsyncScope")
+        (crate::host::shared_vm::operation!("asyncBoundFixed"), "bound runInAsyncScope")
     };
-    let bound = c.host_function_named_with_data(crate::host::shared_vm::operation(op), name, bound_data)?;
+    let bound = c.host_function_named_with_data(op, name, bound_data)?;
     let length = get(c, function, "length")?;
     c.define_named_data_property_rooted(bound, "length", length, false, false, true)?;
     Ok(bound)

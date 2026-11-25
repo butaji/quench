@@ -1,14 +1,15 @@
 //! The primary side (Node's `internal/cluster/primary`): `fork`, the workers map, worker
 //! lifecycle events, and the servers it listens on for its workers.
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use super::{
     assign, call, function, get, next_tick, number, process, put, route, send, text, with_state, Context, Pending,
     SharedServer, SCHED_NONE, SCHED_RR,
 };
 use quench_runtime::{RootId, RootedError};
 
-pub(super) const WORKER_METHODS: [(&str, &str); 2] = [
-    ("disconnect", "clusterPrimaryWorkerDisconnect"),
-    ("destroy", "clusterPrimaryWorkerDestroy"),
+pub(super) const WORKER_METHODS: [(&str, MarkedOperation); 2] = [
+    ("disconnect", marked_operation!("clusterPrimaryWorkerDisconnect")),
+    ("destroy", marked_operation!("clusterPrimaryWorkerDestroy")),
 ];
 const DEFAULT_SIGNAL: &str = "SIGTERM";
 /// Node's `UV_TCP_IPV6ONLY` bind flag.
@@ -31,11 +32,11 @@ pub(super) fn install(c: &mut Context<'_>, cluster: RootId) -> Result<(), Rooted
     let policy = c.number(super::default_policy());
     put(c, cluster, "schedulingPolicy", policy)?;
     let undefined = c.undefined();
-    let setup = function(c, "clusterSetupPrimary", "setupPrimary", undefined)?;
+    let setup = function(c, crate::host::shared_vm::operation!("clusterSetupPrimary"), "setupPrimary", undefined)?;
     put(c, cluster, "setupPrimary", setup)?;
     put(c, cluster, "setupMaster", setup)?;
-    for (name, operation) in [("fork", "clusterFork"), ("disconnect", "clusterDisconnect")] {
-        let method = function(c, operation, name, undefined)?;
+    for (name, operation) in [("fork", marked_operation!("clusterFork")), ("disconnect", marked_operation!("clusterDisconnect"))] {
+        let method = function(c, operation.id(), name, undefined)?;
         put(c, cluster, name, method)?;
     }
     Ok(())
@@ -120,12 +121,12 @@ pub(crate) fn fork(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Ro
     put(c, worker_options, "process", child)?;
     let worker = c.construct_rooted(constructor, constructor, &[worker_options])?;
     for (target, event, operation, method) in [
-        (worker, "message", "clusterPrimaryWorkerMessage", "on"),
-        (child, "exit", "clusterPrimaryWorkerExit", "once"),
-        (child, "disconnect", "clusterPrimaryWorkerDisconnected", "once"),
-        (child, "internalMessage", "clusterPrimaryInternalMessage", "on"),
+        (worker, "message", marked_operation!("clusterPrimaryWorkerMessage"), "on"),
+        (child, "exit", marked_operation!("clusterPrimaryWorkerExit"), "once"),
+        (child, "disconnect", marked_operation!("clusterPrimaryWorkerDisconnected"), "once"),
+        (child, "internalMessage", marked_operation!("clusterPrimaryInternalMessage"), "on"),
     ] {
-        let listener = function(c, operation, "", worker)?;
+        let listener = function(c, operation.id(), "", worker)?;
         let event = c.string_rooted(event);
         call(c, target, method, &[event, listener])?;
     }
@@ -246,7 +247,7 @@ pub(crate) fn disconnect(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Res
     let workers = with_state(c, |state| state.workers.values().copied().collect::<Vec<_>>());
     let undefined = c.undefined();
     if workers.is_empty() {
-        let fire = function(c, "clusterDisconnectedAll", "", undefined)?;
+        let fire = function(c, crate::host::shared_vm::operation!("clusterDisconnectedAll"), "", undefined)?;
         next_tick(c, fire, undefined, &[])?;
     }
     for worker in workers {
@@ -414,7 +415,7 @@ fn listen_round_robin(c: &mut Context<'_>, key: &str, message: RootId) -> Result
     let yes = c.boolean(true);
     put(c, options, "pauseOnConnect", yes)?;
     let data = c.string_rooted(key);
-    let on_connection = function(c, "clusterRoundRobinConnection", "", data)?;
+    let on_connection = function(c, crate::host::shared_vm::operation!("clusterRoundRobinConnection"), "", data)?;
     let server = call(c, net, "createServer", &[options, on_connection])?;
     let listen = c.object_rooted()?;
     let port = get(c, message, "port")?;
@@ -429,8 +430,8 @@ fn listen_round_robin(c: &mut Context<'_>, key: &str, message: RootId) -> Result
     let ipv6_only = number(c, flags).is_some_and(|flags| (flags as u32) & (TCP_IPV6_ONLY as u32) != 0);
     let ipv6_only = c.boolean(ipv6_only);
     put(c, listen, "ipv6Only", ipv6_only)?;
-    for (event, operation) in [("listening", "clusterRoundRobinListening"), ("error", "clusterRoundRobinError")] {
-        let listener = function(c, operation, "", data)?;
+    for (event, operation) in [("listening", marked_operation!("clusterRoundRobinListening")), ("error", marked_operation!("clusterRoundRobinError"))] {
+        let listener = function(c, operation.id(), "", data)?;
         let event = c.string_rooted(event);
         call(c, server, "once", &[event, listener])?;
     }

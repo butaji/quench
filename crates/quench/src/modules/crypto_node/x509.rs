@@ -380,28 +380,28 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
     for index in 0..CA_FIELD {
         define_field(c, index)?;
     }
-    define_methods(c, prototype, &[("toString", "cryptoX509ToString"), ("toJSON", "cryptoX509ToString")], Members::Declared)?;
+    define_methods(c, prototype, &[("toString", crate::host::shared_vm::marked_operation!("cryptoX509ToString")), ("toJSON", crate::host::shared_vm::marked_operation!("cryptoX509ToString"))], Members::Declared)?;
     define_field(c, CA_FIELD)?;
     define_methods(
         c,
         prototype,
         &[
-            ("checkHost", "cryptoX509CheckHostApi"),
-            ("checkEmail", "cryptoX509CheckEmail"),
-            ("checkIP", "cryptoX509CheckIp"),
-            ("checkIssued", "cryptoX509CheckIssued"),
-            ("checkPrivateKey", "cryptoX509CheckPrivateKey"),
-            ("verify", "cryptoX509Verify"),
-            ("toLegacyObject", "cryptoX509ToLegacyObject"),
+            ("checkHost", crate::host::shared_vm::marked_operation!("cryptoX509CheckHostApi")),
+            ("checkEmail", crate::host::shared_vm::marked_operation!("cryptoX509CheckEmail")),
+            ("checkIP", crate::host::shared_vm::marked_operation!("cryptoX509CheckIp")),
+            ("checkIssued", crate::host::shared_vm::marked_operation!("cryptoX509CheckIssued")),
+            ("checkPrivateKey", crate::host::shared_vm::marked_operation!("cryptoX509CheckPrivateKey")),
+            ("verify", crate::host::shared_vm::marked_operation!("cryptoX509Verify")),
+            ("toLegacyObject", crate::host::shared_vm::marked_operation!("cryptoX509ToLegacyObject")),
         ],
         Members::Declared,
     )?;
     let certificate = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoCertificate"), "Certificate")?;
     let prototype = get(c, certificate, "prototype")?;
     let spkac = [
-        ("verifySpkac", "cryptoSpkacVerify"),
-        ("exportPublicKey", "cryptoSpkacExportPublicKey"),
-        ("exportChallenge", "cryptoSpkacExportChallenge"),
+        ("verifySpkac", crate::host::shared_vm::marked_operation!("cryptoSpkacVerify")),
+        ("exportPublicKey", crate::host::shared_vm::marked_operation!("cryptoSpkacExportPublicKey")),
+        ("exportChallenge", crate::host::shared_vm::marked_operation!("cryptoSpkacExportChallenge")),
     ];
     define_methods(c, prototype, &spkac, Members::Assigned)?;
     let mut statics = spkac;

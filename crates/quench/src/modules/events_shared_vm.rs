@@ -2,18 +2,19 @@
 //! event group's shared data (`SharedNodeState::event_targets_api`) that builds the DOM event
 //! family on first use.
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
 
 /// The `events` module's static functions: (property, function name, operation, length).
 /// Node assigns `listenerCount` an anonymous function.
-const STATICS: [(&str, &str, &str, f64); 5] = [
-    ("once", "once", "eventsOnce", 2.0),
-    ("on", "on", "eventsOn", 2.0),
-    ("getEventListeners", "getEventListeners", "eventsGetEventListeners", 2.0),
-    ("addAbortListener", "addAbortListener", "eventsAddAbortListener", 2.0),
-    ("listenerCount", "", "eventsListenerCount", 2.0),
+const STATICS: [(&str, &str, MarkedOperation, f64); 5] = [
+    ("once", "once", marked_operation!("eventsOnce"), 2.0),
+    ("on", "on", marked_operation!("eventsOn"), 2.0),
+    ("getEventListeners", "getEventListeners", marked_operation!("eventsGetEventListeners"), 2.0),
+    ("addAbortListener", "addAbortListener", marked_operation!("eventsAddAbortListener"), 2.0),
+    ("listenerCount", "", marked_operation!("eventsListenerCount"), 2.0),
 ];
 
 pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -21,7 +22,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let module = get(context, global, "__nodeEventEmitter")?;
     set(context, module, "EventEmitter", module)?;
     for (property, name, operation, length) in STATICS {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         let length = context.number(length);
         context.define_named_data_property_rooted(function, "length", length, false, false, true)?;
         set(context, module, property, function)?;

@@ -113,8 +113,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let binding = c.object_rooted()?;
         let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("contextifyScript"), "ContextifyScript")?;
         let prototype = get(c, constructor, "prototype")?;
-        for (name, operation) in [("createCachedData", "contextifyCreateCachedData"), ("runInContext", "contextifyRunInContext")] {
-            let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        for (name, operation) in [("createCachedData", crate::host::shared_vm::operation!("contextifyCreateCachedData")), ("runInContext", crate::host::shared_vm::operation!("contextifyRunInContext"))] {
+            let method = c.host_function_named(operation, name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(prototype, key, method, true, true, true)?;
         }
@@ -125,11 +125,11 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let key = c.string_rooted("ContextifyScript");
         c.define_data_property_rooted(binding, key, constructor, true, true, true)?;
         for (name, operation) in [
-            ("compileFunction", "contextifyCompileFunction"),
-            ("makeContext", "contextifyMakeContext"),
-            ("isContext", "contextifyIsContext"),
+            ("compileFunction", crate::host::shared_vm::operation!("contextifyCompileFunction")),
+            ("makeContext", crate::host::shared_vm::operation!("contextifyMakeContext")),
+            ("isContext", crate::host::shared_vm::operation!("contextifyIsContext")),
         ] {
-            let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            let function = c.host_function_named(operation, name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(binding, key, function, true, true, true)?;
         }
@@ -470,8 +470,8 @@ fn sandbox_scope(c: &mut Context<'_>, record: RootId, global: RootId) -> Result<
     let prototype = c.prototype_rooted(global)?;
     let target = c.call_rooted(create, object, &[prototype])?;
     let handler = c.null_object_rooted()?;
-    for (trap, operation) in [("get", "contextifyScopeGet"), ("set", "contextifyScopeSet"), ("has", "contextifyScopeHas")] {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), trap, record)?;
+    for (trap, operation) in [("get", crate::host::shared_vm::operation!("contextifyScopeGet")), ("set", crate::host::shared_vm::operation!("contextifyScopeSet")), ("has", crate::host::shared_vm::operation!("contextifyScopeHas"))] {
+        let function = c.host_function_named_with_data(operation, trap, record)?;
         c.assign_named_property_rooted(handler, trap, function)?;
     }
     let proxy = get(c, main, "Proxy")?;

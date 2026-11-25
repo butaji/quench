@@ -1,13 +1,14 @@
 //! The worker side (Node's `internal/cluster/child`): `cluster.worker`, and servers that
 //! listen through the primary — on the listening handle it sends (shared) or on the
 //! connections it hands off (round-robin).
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use super::{call, function, get, number, process, put, route, send, text, with_state, Context, Pending};
 use crate::modules::private_slots;
 use quench_runtime::{RootId, RootedError};
 
-pub(super) const WORKER_METHODS: [(&str, &str); 2] = [
-    ("disconnect", "clusterChildWorkerDisconnect"),
-    ("destroy", "clusterChildWorkerDestroy"),
+pub(super) const WORKER_METHODS: [(&str, MarkedOperation); 2] = [
+    ("disconnect", marked_operation!("clusterChildWorkerDisconnect")),
+    ("destroy", marked_operation!("clusterChildWorkerDestroy")),
 ];
 /// The primary's key for a server this worker listens on through it.
 const SERVER_KEY: &str = "\0quench:cluster:key";
@@ -28,7 +29,7 @@ pub(super) fn install(c: &mut Context<'_>, cluster: RootId) -> Result<(), Rooted
     let null = c.null();
     put(c, cluster, "worker", null)?;
     let undefined = c.undefined();
-    let setup = function(c, "clusterSetupWorker", "_setupWorker", undefined)?;
+    let setup = function(c, crate::host::shared_vm::operation!("clusterSetupWorker"), "_setupWorker", undefined)?;
     put(c, cluster, "_setupWorker", setup)?;
     Ok(())
 }
@@ -53,10 +54,10 @@ pub(crate) fn setup_worker(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Resu
     with_state(c, |state| state.worker = Some(retained));
     let undefined = c.undefined();
     for (event, operation, method) in [
-        ("disconnect", "clusterChildDisconnected", "once"),
-        ("internalMessage", "clusterChildInternalMessage", "on"),
+        ("disconnect", marked_operation!("clusterChildDisconnected"), "once"),
+        ("internalMessage", marked_operation!("clusterChildInternalMessage"), "on"),
     ] {
-        let listener = function(c, operation, "", undefined)?;
+        let listener = function(c, operation.id(), "", undefined)?;
         let event = c.string_rooted(event);
         call(c, process, method, &[event, listener])?;
     }
@@ -158,7 +159,7 @@ pub(crate) fn listen(
     }
     let pending = Pending::QueryServer { server: c.retain(server)?, message: c.retain(message)? };
     send_query(c, message, Some(pending))?;
-    let announce = function(c, "clusterChildServerListening", "", message)?;
+    let announce = function(c, crate::host::shared_vm::operation!("clusterChildServerListening"), "", message)?;
     let event = c.string_rooted("listening");
     call(c, server, "once", &[event, announce])?;
     Ok(server)
@@ -214,7 +215,7 @@ fn listen_on_reply(
     let fake = c.object_rooted()?;
     let undefined = c.undefined();
     for name in FAKE_HANDLE_METHODS {
-        let method = function(c, "clusterFakeHandleNoop", name, undefined)?;
+        let method = function(c, crate::host::shared_vm::operation!("clusterFakeHandleNoop"), name, undefined)?;
         put(c, fake, name, method)?;
     }
     let owner = crate::modules::net_reference_shared_vm::owner_symbol(c)?;
@@ -332,7 +333,7 @@ fn close_servers(c: &mut Context<'_>, primary_initiated: bool) -> Result<(), Roo
     put(c, counter, "remaining", remaining)?;
     let primary = c.boolean(primary_initiated);
     put(c, counter, "primary", primary)?;
-    let closed = function(c, "clusterChildServerClosed", "", counter)?;
+    let closed = function(c, crate::host::shared_vm::operation!("clusterChildServerClosed"), "", counter)?;
     for server in servers {
         call(c, server, "close", &[closed])?;
     }
@@ -389,7 +390,7 @@ pub(crate) fn worker_destroy(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
     put(c, this, "state", destroying)?;
     let act = c.string_rooted("exitedAfterDisconnect");
     send(c, process, &[("act", act)], None, Some(Pending::Disconnect))?;
-    let leave = function(c, "clusterChildExit", "", undefined)?;
+    let leave = function(c, crate::host::shared_vm::operation!("clusterChildExit"), "", undefined)?;
     let event = c.string_rooted("disconnect");
     call(c, process, "once", &[event, leave])?;
     Ok(undefined)
