@@ -42,6 +42,10 @@ fn run() -> Result<std::process::ExitCode, String> {
     if MAKES_CODE || !RESUME_ONLY {
         quench::host::enable_dynamic_source();
     }
+    // The WebAssembly frontend links only where the program can reach it (`RUNS_WASM`).
+    if RUNS_WASM || !RESUME_ONLY {
+        quench::host::enable_wasm();
+    }
     let result = match quench::aot::saved_wait(RESUMES_AT_REST) {
         Some(wait) => quench::aot::resume_native_process_entry(host, &entry, SUPPORT, wait),
         None if RESUME_ONLY => Err("no saved run answers this start".into()),

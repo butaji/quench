@@ -394,6 +394,9 @@ fn execute_shared_on_worker(
 
     let memory_policy = select_memory_policy();
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
+        // The CLI compiles what it loads: the source and WebAssembly frontends.
+        crate::host::enable_dynamic_source();
+        crate::host::enable_wasm();
         let mut host = NodeHost::with_operations(argv.clone(), operations).with_exec_argv(exec_argv.clone())?;
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
