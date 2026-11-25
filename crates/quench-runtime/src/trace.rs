@@ -81,8 +81,7 @@ setting! {
         Shapes = "shapes",
         Rewrite = "rewrite",
         /// Every loaded program's finished bytecode, printed at exit; `bytecode=lanes` prints
-        /// each function's lane view instead (`Vm::report_lane_plan`), the static input of the
-        /// instruction-count predictor (`quench-gate --only ir-predict`).
+        /// each function's lane view instead (`Vm::report_lane_plan`): which handler each record runs.
         Bytecode = "bytecode",
         JsJit = "js-jit",
         /// BaseJIT region exits by instruction, most frequent first (printed at exit).

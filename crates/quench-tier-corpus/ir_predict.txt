@@ -1,0 +1,18 @@
+# Static u-jit instruction prediction per staged Number row (S1.12, TOD-2153): `row insns facts`, insns the
+# machine instructions of the row's fast path (no leave) on its common operand facts, the harness subtracted, or
+# `row - reason`. Generated from the code: QUENCH_IR_PREDICT_WRITE=1 cargo test -p quench-runtime-engine --lib
+# ir_predict. Read by quench-gate (step ir-predict; ir-budget section c-bound). Never edit by hand.
+# isa: x86_64-unknown-linux-gnu has_sse3,has_ssse3,has_cmpxchg16b,has_sse41,has_sse42,has_avx,has_avx2,has_fma,has_avx_vnni,has_avx512bitalg,has_avx512dq,has_avx512vl,has_avx512vbmi,has_avx512f,has_avx512vnni,has_popcnt,has_bmi1,has_bmi2,has_lzcnt
+NumberOperation::Arithmetic 4 Add int32, overflow and -0 leave
+NumberOperation::Relation 2 LessThan int32
+NumberOperation::RelationValue 3 LessThan binary64, Boolean value
+NumberOperation::Bitwise 1 And int32
+NumberOperation::Remainder 16 int32, divisor unproven, -0 leaves
+NumberOperation::Extreme 3 max binary64
+NumberOperation::Imul 1 int32
+NumberOperation::IncDec 4 increment int32, overflow leaves
+NumberOperation::Unary 7 Negate int32
+NumberOperation::BitwiseNot 5 int32
+NumberOperation::ToNumeric 0 int32
+NumberOperation::Math 2 Sqrt binary64
+NumberOperation::IntCase 10 int32, labels 0..=7

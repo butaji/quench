@@ -35,6 +35,9 @@
 //! ceilings toward their budgets, C parity: max(C + 1, 1.25x C) (`QUENCH_IR_BUDGET_TIERS=off` skips the ceilings).
 //! Every row above its floor names the thread that owns its largest handler.
 //!
+//! The tiers run also holds every staged row to its C twin (`c_bound`, S1.17): default <= 3C + 6,
+//! held by the shrink-only `c_bound_allowance.txt`.
+//!
 //! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops.
 //! `QUENCH_IR_BUDGET_MODE=no-jit` runs the interpreter alone (its ceilings, floor and debt, with
 //! no tier verdict); `b-jit`, `default` or `u-jit` (a diagnostic only) measures one mode against the
@@ -42,7 +45,7 @@
 
 use std::{collections::{BTreeMap, BTreeSet}, env, fs, path::Path};
 
-use crate::{build::NODE, config::Config, ir_floor, op_budget, process, step::Verdict, tiers::INTERPRETER};
+use crate::{build::NODE, c_bound, config::Config, ir_floor, op_budget, process, step::Verdict, tiers::INTERPRETER};
 
 const BUDGETS: &str = "crates/quench-tier-corpus/ir_budget.txt";
 const HANDLERS: &str = "crates/quench-tier-corpus/ir_budget_handlers.txt";
@@ -84,13 +87,13 @@ const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
 const TIERS: &str = "tiers";
 const LINE_PREFIX: &str = "IRBUDGET ";
 /// A count within this many instructions per iteration of its ceiling is the same count...
-const SAME_COUNT: f64 = 0.5;
+pub(crate) const SAME_COUNT: f64 = 0.5;
 /// ...or within this fraction of it: ops that run library code (`parseInt`, string builders)
 /// drift by an instruction or so with code layout, which is not a regression.
 const SAME_FRACTION: f64 = 0.001;
 
 /// The count difference that still counts as the same at `ceiling`.
-fn tolerance(ceiling: f64) -> f64 {
+pub(crate) fn tolerance(ceiling: f64) -> f64 {
     SAME_COUNT.max(ceiling * SAME_FRACTION)
 }
 
@@ -511,8 +514,22 @@ fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>, runs: [&
     failures.extend(hold_debt(config, DEFAULT_INVERSIONS, &default_inversions, &measured, write)?);
     failures.extend(hold_debt(config, DEFAULT_OVER, &over_budget, &measured, write)?);
     failures.extend(hold_debt(config, DEFAULT_OVER_NODE, &over_node, &measured, write)?);
-    let report = format!("tiers: {broken} of {} ops out of order, {} with default past its budget (C parity: max(C + 1, 1.25x C)), {} with default past Node JIT\n{table}", counts.len(), over_budget.len(), over_node.len());
+    let default = counts.iter().map(|(name, &[.., optimized])| (name.clone(), optimized)).collect();
+    let (bound_failures, bound_report) = c_bound::hold(config, &c_counts(rows), &default, write)?;
+    failures.extend(bound_failures);
+    let report = format!("tiers: {broken} of {} ops out of order, {} with default past its budget (C parity: max(C + 1, 1.25x C)), {} with default past Node JIT\n{table}\n\n{bound_report}", counts.len(), over_budget.len(), over_node.len());
     Ok((failures, report))
+}
+
+/// Each op's C twin count (`ir_budget.txt`, column C).
+fn c_counts(rows: &BTreeMap<String, Row>) -> BTreeMap<String, f64> {
+    rows.iter().map(|(name, row)| (name.clone(), row.c)).collect()
+}
+
+/// Each op's C twin count as the checked-in budget file holds it (the ir-predict step's join).
+pub fn checked_in_c_counts(config: &Config) -> Result<BTreeMap<String, f64>, String> {
+    let text = fs::read_to_string(config.root.join(BUDGETS)).map_err(|error| format!("{BUDGETS}: {error}"))?;
+    Ok(c_counts(&parse(&text)))
 }
 
 /// Node JIT's count per op (`NODE_JIT`); empty where the file is missing.
@@ -533,7 +550,7 @@ const TIERS_VARIABLE: &str = "QUENCH_IR_BUDGET_TIERS";
 /// which the caller writes only on a passing run.
 fn c_floor(config: &Config, ops: &[String], measured: &[Measured], jit: Option<[&[Measured]; 2]>, rows: &BTreeMap<String, Row>) -> (String, Vec<String>, String, BTreeMap<String, ir_floor::Floor>) {
     let (before, mut floors) = ir_floor::read(config);
-    let c: BTreeMap<String, f64> = rows.iter().map(|(name, row)| (name.clone(), row.c)).collect();
+    let c = c_counts(rows);
     let budgets: BTreeMap<String, f64> = rows.iter().map(|(name, row)| (name.clone(), row.budget)).collect();
     let interpreted: Vec<ir_floor::Op> = measured.iter().map(|(name, count, split, records)| ir_floor::Op { name, count: *count, split, records: *records }).collect();
     let (mut report, mut grown) = ir_floor::interpreter(&interpreted, &c, &mut floors, ops.is_empty());

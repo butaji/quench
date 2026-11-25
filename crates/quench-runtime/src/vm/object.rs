@@ -1961,6 +1961,15 @@ impl Vm {
         (!raw_double || (holder.is_none() && depended)).then_some((ty, raw_double))
     }
 
+    /// The global object's own data field a by-name load's hint (an own entry) names, its
+    /// values flat or behind extras (`Heap::global_field_hit`).
+    #[inline(always)]
+    pub fn global_field_hint_hit(&self, hint: FieldCache) -> Option<Value> {
+        let receiver = self.heap.object_record_by_id(self.realm.globals.direct_object_index()?);
+        // SAFETY: as for `own_field_entry_hit`; the hint is an own entry of the global object.
+        unsafe { self.heap.global_field_hit(receiver, hint.receiver, hint.slot) }
+    }
+
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
     /// data field where the entry names no holder, else that of its prototype, an object
     /// record; `None` where either shape differs. The primary own and record-holder reads
