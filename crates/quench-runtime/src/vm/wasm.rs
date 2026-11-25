@@ -151,51 +151,43 @@ impl Vm {
         // The rooted environment precedes initializer evaluation so ref.func
         // captures this instance. Undefined slots are uninitialized bindings,
         // never guest globals; each declaration installs its real cell in order.
-        let mut values: Vec<_> = imported_globals
-            .into_iter()
-            .map(|binding| binding.unwrap_or(Value::UNDEFINED))
-            .collect();
-        for (memory, imported) in module.memories.iter().zip(memories) {
-            if let Some(value) = imported {
-                values.push(value);
-                continue;
-            }
-            values.push(self.alloc_wasm_memory(memory.ty)?);
+        // Each slot in the module's one layout (`WasmLayout`).
+        let mut values = Vec::new();
+        for binding in module.layout().bindings() {
+            values.push(match binding {
+                crate::WasmBinding::Global(index) => imported_globals[index].unwrap_or(Value::UNDEFINED),
+                crate::WasmBinding::Memory(index) => match memories[index] {
+                    Some(value) => value,
+                    None => self.alloc_wasm_memory(module.memories[index].ty)?,
+                },
+                // All segments are available before initialization effects. A later
+                // trap can leave functions reachable through an imported table.
+                crate::WasmBinding::Data(index) => {
+                    let segment = &module.data[index];
+                    self.heap.alloc(Cell::ArrayBuffer {
+                        object: Box::new(Self::empty_object(Value::NULL)),
+                        bytes: segment.bytes.clone().into(),
+                        shared: false,
+                        detached: false,
+                        max_byte_length: segment.bytes.len(),
+                        resizable: false,
+                        immutable: true,
+                    })
+                }
+                crate::WasmBinding::Table(index) => match tables[index] {
+                    Some(value) => value,
+                    None => self.alloc_wasm_table(module.tables[index].ty, module.signatures.declarations.clone(), Value::NULL)?,
+                },
+                crate::WasmBinding::Element(_) => Value::UNDEFINED,
+                crate::WasmBinding::Tag(index) => tags[index].unwrap_or_else(|| {
+                    let object = Box::new(Self::empty_object(self.wasm_js.tag));
+                    self.heap.alloc(Cell::WasmTag { object, declarations: module.signatures.declarations.clone(), ty: module.tags[index].ty })
+                }),
+                // The instance's record (`install_wasm_instance`) takes the slot before the imported
+                // function slots, which end the resource layout; ref.func derives their base.
+                crate::WasmBinding::Instance => Value::UNDEFINED,
+            });
         }
-        for segment in module.data.iter() {
-            // All segments are available before initialization effects. A later
-            // trap can leave functions reachable through an imported table.
-            values.push(self.heap.alloc(Cell::ArrayBuffer {
-                object: Box::new(Self::empty_object(Value::NULL)),
-                bytes: segment.bytes.clone().into(),
-                shared: false,
-                detached: false,
-                max_byte_length: segment.bytes.len(),
-                resizable: false,
-                immutable: true,
-            }));
-        }
-        for (table, imported) in module.tables.iter().zip(tables) {
-            if let Some(value) = imported {
-                values.push(value);
-                continue;
-            }
-            values.push(self.alloc_wasm_table(
-                table.ty,
-                module.signatures.declarations.clone(),
-                Value::NULL,
-            )?);
-        }
-        values.extend(std::iter::repeat_n(Value::UNDEFINED, module.elements.len()));
-        for (tag, imported) in module.tags.iter().zip(tags) {
-            values.push(imported.unwrap_or_else(|| {
-                let object = Box::new(Self::empty_object(self.wasm_js.tag));
-                self.heap.alloc(Cell::WasmTag { object, declarations: module.signatures.declarations.clone(), ty: tag.ty })
-            }));
-        }
-        // The instance's record (`install_wasm_instance`) takes the slot before the imported
-        // function slots, which end the resource layout; ref.func derives their base.
-        values.push(Value::UNDEFINED);
         values.extend(functions);
         let environment = self.heap.alloc_environment(
             Value::NULL,
@@ -371,8 +363,8 @@ impl Vm {
         module: &crate::WasmModule,
         environment: Value,
     ) -> Result<(), JsError> {
-        let table_base = module.globals.len() + module.memories.len() + module.data.len();
-        let element_base = table_base + module.tables.len();
+        let table_base = module.layout().slot(crate::WasmBinding::Table(0));
+        let element_base = module.layout().slot(crate::WasmBinding::Element(0));
         self.fill_wasm_reference_tables(module, environment, table_base)?;
         self.allocate_wasm_element_segments(module, environment, element_base)?;
         for (index, segment) in module.elements.iter().enumerate() {
@@ -399,14 +391,14 @@ impl Vm {
         module: &crate::WasmModule,
         environment: Value,
     ) -> Result<(), JsError> {
-        let data_base = module.globals.len() + module.memories.len();
+        let data_base = module.layout().slot(crate::WasmBinding::Data(0));
         for (index, segment) in module.data.iter().enumerate() {
             let crate::WasmDataMode::Active { memory, offset } = &segment.mode else {
                 continue;
             };
             let memory = self
                 .heap
-                .environment_slot(environment, module.globals.len() + *memory as usize)
+                .environment_slot(environment, module.layout().slot(crate::WasmBinding::Memory(*memory as usize)))
                 .unwrap();
             let source = self
                 .heap
@@ -742,7 +734,7 @@ impl Vm {
             .root_value(instance.environment)
             .ok_or_else(|| JsError::wasm_link("invalid Wasm instance root"))?;
         self.heap
-            .environment_slot(environment, instance.module.globals.len() + index as usize)
+            .environment_slot(environment, instance.module.layout().slot(crate::WasmBinding::Memory(index as usize)))
             .ok_or_else(|| JsError::wasm_link("invalid Wasm memory export binding"))
     }
 

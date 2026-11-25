@@ -58,11 +58,9 @@ lane_handler! {
             sibling!(crate::dispatch_fast::row_set_field_classify::<OP, false>, r, ip, Carried::script_in(script, view))
         }} }
         if property && !store {
-            // Other result flags than a returning site's return go to the general step.
+            // A returning site's result carries its return; no other read's carries a flag: a record with
+            // other flags holds the general step from its edge on (`derive_lane_view`, `requicken`).
             let flags = if const { crate::dispatch_fast::returning_field_site(FLAG) } { quench_runtime::bytecode::RETURN_REGISTER } else { 0 };
-            if const { !crate::dispatch_fast::sink_site(FLAG) } && i.a & !quench_runtime::bytecode::REGISTER_MASK & !flags != 0 {
-                sibling!(general_step_in_lane, r, ip, view)
-            }
             // The site fact names the base (`own_site`), `this` or a register: stated so the decode folds.
             unsafe {
                 if const { !crate::dispatch_fast::sink_site(FLAG) } {
@@ -113,10 +111,11 @@ lane_handler! {
                 None => property_miss!(),
             }
         }
-        // A record whose result carries flags is the general step's.
+        // A record whose result carries flags holds the general step from its edge on (`derive_lane_view`,
+        // `requicken`): this row's result is a register, stated so the decode's tests fold.
         if const { LaneFields::<OP, FLAG>::OPCODE.result_layout().allowed_flags() != 0 && !crate::dispatch_fast::sink_site(FLAG)
-            && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } && i.a > quench_runtime::bytecode::REGISTER_MASK {
-            sibling!(general_step_in_lane, r, ip, view)
+            && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } {
+            unsafe { std::hint::assert_unchecked(i.a <= quench_runtime::bytecode::REGISTER_MASK) }
         }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);

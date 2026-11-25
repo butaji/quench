@@ -194,6 +194,8 @@ pub(crate) mod wasm_specializer;
 // An AOT image's Wasm functions: their stitched rows, planned from the module's declarations.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_image;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) mod wasm_world;
 use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
@@ -2692,98 +2694,43 @@ enum CompiledArgs<'a> {
 }
 
 /// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
-/// for every instruction: the `WasmEntry` ABI the compiled entry has.
+/// for every instruction: the `WasmEntry` ABI the compiled entry has. Its World is the shared one
+/// (`Analysis::with_world`), naming this process's cells and callouts.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn stitched_entry(
-    vm: &Vm,
-    program: ProgramId,
-    code: &quench_runtime::bytecode::ResidualProgram,
+    analysis: &Analysis<'_>,
     index: usize,
-    (plans, cells, callable, grows_memory): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool], &quench_runtime::bitset::BitSet),
+    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
     memory_slot: Option<u32>,
-    (full_plan, sites, env): (&Plan, &[(usize, usize)], Value),
+    (full_plan, sites): (&Plan, &[(usize, usize)]),
 ) -> Option<Vec<u8>> {
+    let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
     // The indirect call row calls the non-diagnostic reference callout.
     if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
         return None;
     }
-    let function = code.function_get(index)?;
-    let constant = |at: usize| {
-        let value = vm.programs.constant(program, at)?;
-        if vm.heap_reads().v128(value).is_some() {
-            return None;
-        }
-        Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
-    };
+    // The program's image may hold the rows already (`wasm_image::linked`).
+    if let Some(rows) = wasm_image::linked(analysis, index, memory_slot, (cells, callable)) {
+        return Some(rows);
+    }
+    let function = analysis.code.function_get(index)?;
     // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
     // the cell holds the entry once placed. A callee that is not callable is called through the
     // VM (`CALL_VM`), so its callers stitch all the same.
     let callee = |callee: usize| callable.get(callee).copied()?.then(|| cells[callee].as_ptr() as u64);
-    // A global access names its environment slot in the full plan; the row reads the cell from
-    // the context, since a program's code serves every instance.
-    let global = |pc: usize| -> Option<(u32, quench_runtime::staged::wasm_instance::Storage)> {
-        if !full_plan.reachable(pc) {
-            return None;
-        }
-        let Slot::Binding(slot) = full_plan.operand(pc) else { return None };
-        let binding = vm.heap_reads().environment_slot(env, slot as usize)?;
-        let Some(Cell::WasmGlobal { ty, .. }) = vm.heap_reads().get(binding) else { return None };
-        Some((slot, quench_runtime::staged::wasm_instance::Storage::of(*ty)))
-    };
     let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
     let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
-    let vector_constant = |at: usize| vm.heap_reads().v128(vm.programs.constant(program, at)?);
-    let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
     // A growth leaves the base in place only for a reserved (guarded) memory.
     let memory_stable = memory_slot.is_none_or(|slot| {
         vm.heap_reads().environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
     });
-    // A table or segment operation names its bindings in the full plan, as the u-jit reads them.
-    let table_bindings = |pc: usize| -> Option<(Option<u32>, Option<u32>)> {
-        if !full_plan.reachable(pc) {
-            return None;
-        }
-        let first = match full_plan.operand(pc) {
-            Slot::Binding(slot) => Some(slot),
-            _ => None,
-        };
-        let second = match full_plan.seconds[pc] {
-            Some(Slot::Binding(slot)) => Some(slot),
-            _ => None,
-        };
-        Some((first, second))
-    };
-    // A call holds the reference registers its state names (`wasm_roots`), and an allocating step
-    // reads the operands its plan gives their kinds (`wasm_gc_allocate`).
-    let references = |pc: usize| -> Vec<u16> { full_plan.references.get(pc).cloned().unwrap_or_default() };
-    let gc_reads = |pc: usize| -> Vec<(u16, u64)> {
-        full_plan.gc_reads.get(pc).map_or_else(Vec::new, |reads| reads.iter().map(|(register, kind)| (*register, *kind as u64)).collect())
-    };
-    let world = wasm_stitch::World {
-        constant: &constant,
-        memory_slot,
-        memory_stable,
-        callee: &callee,
-        grows_memory,
-        vm_call: wasm_call_vm::vm_call_callout as *const () as u64,
-        global: &global,
-        globals_offset: CONTEXT_GLOBALS as u64,
-        indirect: &indirect,
-        table_callout: wasm_table_ops_stage::table_op_callout as *const () as u64,
-        gc_callout: wasm_gc_callout::wasm_gc_callout as *const () as u64,
-        allocate_callout: wasm_gc_allocate::allocate_frame as *const () as u64,
-        references: &references,
-        gc_reads: &gc_reads,
-        table_bindings: &table_bindings,
-        registers: function.registers,
-        vector_constant: &vector_constant,
-        vector_move: &vector_move,
-    };
-    wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
+    let naming = wasm_world::Naming { constant: &|_| true, callee: &callee, indirect: &indirect, memory_stable, callouts: wasm_world::Callouts::live() };
+    let returns = plans[index].as_ref()?.result.is_some();
+    analysis.with_world(function, full_plan, memory_slot, naming, |world| wasm_stitch::stitch(function, usize::from(function.params), returns, world))
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn stitched_entry(_: &Vm, _: ProgramId, _: &quench_runtime::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool], &quench_runtime::bitset::BitSet), _: Option<u32>, _: (&Plan, &[(usize, usize)], Value)) -> Option<Vec<u8>> {
+fn stitched_entry(_: &Analysis<'_>, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)])) -> Option<Vec<u8>> {
     None
 }
 
@@ -5208,6 +5155,17 @@ struct Analysis<'a> {
     /// The module's binding types by environment slot where the plan has no instance (an image's), which
     /// the plan then reads in place of `env`'s cells (`binding`).
     declared: Option<&'a [quench_runtime::WasmBindingType]>,
+}
+
+impl<'a> Analysis<'a> {
+    /// The plan of program `program` (`code`) over the instance environment `env`: callouts compile, no
+    /// root experiment, no diagnostics, no unrolling, growth unknown, bindings read from `env`.
+    fn new(vm: &'a Vm, program: ProgramId, code: &'a ResidualProgram, env: Value) -> Self {
+        Self {
+            vm, program, code, env, callouts: true, experimental_root_compilation: false, root_only: false,
+            compile_rejections: None, unrolls: false, grows_memory: quench_runtime::bitset::BitSet::default(), declared: None,
+        }
+    }
 }
 
 impl Analysis<'_> {
@@ -8208,17 +8166,10 @@ impl Vm {
             vec![true; count]
         };
         let mut analysis = Analysis {
-            vm: self,
-            program,
-            code: &code,
-            env,
-            callouts: true,
             experimental_root_compilation: root.is_some(),
             root_only,
             compile_rejections: compile_rejections.as_ref(),
-            unrolls: false,
-            grows_memory: quench_runtime::bitset::BitSet::default(),
-            declared: None,
+            ..Analysis::new(self, program, &code, env)
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
@@ -8389,13 +8340,10 @@ impl Vm {
                             reference_site_ids: &reference_site_ids[index],
                             admitted,
                             tier: WasmTierChoice::Baseline {
-                                vm: self,
-                                program_id: program,
-                                env,
+                                analysis: &analysis,
                                 memory_slot,
                                 entry_cells: &entry_cells,
                                 callable: &callable,
-                                grows_memory: &analysis.grows_memory,
                             },
                         }
                         .specialize(&code);
