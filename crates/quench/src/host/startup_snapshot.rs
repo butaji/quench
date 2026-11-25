@@ -11,7 +11,7 @@
 mod entry_graph;
 
 /// Bump when the serialized host state or its bootstrap/resume invariants change.
-pub(crate) const BOOTSTRAP_SCHEMA_VERSION: u64 = 2;
+pub(crate) const BOOTSTRAP_SCHEMA_VERSION: u64 = 4;
 
 use quench_runtime::{HostWeakRoot, RootId, SnapshotReader, SnapshotWriter};
 use std::collections::HashMap;

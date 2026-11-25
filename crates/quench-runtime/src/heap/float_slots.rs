@@ -37,6 +37,23 @@ impl Heap {
         }
     }
 
+    /// The arena runs of every live object's tracked slots (`arena_run_of`).
+    pub(super) fn tracked_runs(&self) -> Vec<(usize, u32, usize)> {
+        let properties = &self.properties;
+        let mut runs = Vec::new();
+        let mut visit = |object: &Object| runs.extend(arena_run_of(properties, object));
+        self.object_records.for_each_live(|_, object| visit(object));
+        self.array_records.for_each_live(|_, array| visit(array));
+        self.function_records.for_each_live(|_, function| visit(&function.object));
+        self.promise_records.for_each_live(|_, promise| visit(&promise.object));
+        self.iterator_records.for_each_live(|_, iterator| visit(&iterator.object));
+        self.collection_records.for_each_live(|_, collection| visit(&collection.object));
+        for slot in self.slots.iter() {
+            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) { visit(object); }
+        }
+        runs
+    }
+
     /// Recodes the words of the slots whose owners entered or left the Number type, in every live
     /// object: a store that widened an owner, or a join of new values, does it before it returns.
     #[inline(always)]

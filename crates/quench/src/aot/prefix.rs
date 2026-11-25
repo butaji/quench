@@ -22,10 +22,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const STATIC_OPERATIONS: &[&str] = &[
     // `require` and its builtin views load the program's own modules and builtins, which
     // a strict graph names statically: the sources the image is compiled from.
+    "asyncTickInvoke",
+    "bufferFrom",
     "builtinExportValues",
     "consoleGlobalInitialize",
     "consoleWrite",
-    "emitterProtoEmit",
     "moduleParentSet",
     "moduleRunMain",
     "processEmitExitEvent",
@@ -35,6 +36,14 @@ const STATIC_OPERATIONS: &[&str] = &[
     "processExitCodeSet",
     "processGlobalGet",
     "processGlobalSet",
+    // process.stdin is a plain Readable whose operations keep host state: asking for input
+    // (`processStdinRead`) only marks a read wanted, and the event loop's wait for it is
+    // where the evaluation ends (`process_stdin_shared_vm::poll`).
+    "processStdin",
+    "processStdinDestroy",
+    "processStdinPause",
+    "processStdinRead",
+    "processStdinRef",
     "processStreamTerminal",
     "processStreamWrite",
     "reallyExit",
@@ -45,7 +54,7 @@ const STATIC_OPERATIONS: &[&str] = &[
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Whether the entry's own code runs (`arm`): the host's start-up before it is the realm's.
 static ARMED: AtomicBool = AtomicBool::new(false);
-static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, terminals: Vec::new(), choice: None });
+static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, terminals: Vec::new(), choice: None, rest: None });
 
 struct State {
     effects: Vec<(i32, Vec<u8>)>,
@@ -54,6 +63,8 @@ struct State {
     terminals: Vec<(i32, bool)>,
     /// A descriptor whose terminal answer the run read with none assumed.
     choice: Option<i32>,
+    /// The runtime as the run left it at its first wait for input (`reach_wait`).
+    rest: Option<Vec<u8>>,
 }
 
 /// What a build-time run left: its effects in order; a finite dynamic input it read, which a
@@ -61,6 +72,8 @@ struct State {
 /// them as it starts; or the first other dynamic input it read.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
+    /// The run's effects up to its first wait for input, and the runtime there as a snapshot.
+    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>),
     Terminal(i32),
     Dynamic(String),
 }
@@ -127,9 +140,15 @@ pub(crate) fn arm(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     Ok(())
 }
 
+/// The host modules whose every operation reads and writes only the realm and the host's own
+/// state, by operation name prefix: events, streams and readline (`readline_shared_vm`
+/// notes its clock reads as inputs). What they reach outside the realm they reach through
+/// other host operations, which pass the gate themselves.
+const STATIC_MODULES: &[&str] = &["emitter", "readline", "stream"];
+
 /// Whether the gate lets host operation `name` run.
 pub(crate) fn admits(name: &str) -> bool {
-    STATIC_OPERATIONS.contains(&name)
+    STATIC_OPERATIONS.contains(&name) || STATIC_MODULES.iter().any(|module| name.starts_with(module))
 }
 
 /// Notes the first dynamic input of the run.
@@ -160,5 +179,28 @@ pub(crate) fn finish() -> Residual {
     if let Some(input) = quench_runtime::clock::first_input() {
         return Residual::Dynamic(input.to_owned());
     }
-    Residual::Effects(std::mem::take(&mut state.effects))
+    let effects = std::mem::take(&mut state.effects);
+    match state.rest.take() {
+        Some(rest) => Residual::Waiting(effects, rest),
+        None => Residual::Effects(effects),
+    }
+}
+
+/// The error a build-time run ends its event loop with at its first wait for input.
+pub(crate) const REACHED_WAIT: &str = "build-time evaluation reached its first wait for input";
+
+/// The event loop is about to wait for input, with nothing running and no job pending: the
+/// run ends here, keeping the runtime as a snapshot (`Residual::Waiting`), which an image
+/// restores to wait for the same input.
+pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>, program: &quench_runtime::ResidualProgram) -> String {
+    match runtime.snapshot_at_rest(program, |host, writer| host.write_snapshot(writer)) {
+        Ok(rest) => {
+            STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).rest = Some(rest);
+            REACHED_WAIT.to_owned()
+        }
+        Err(error) => {
+            refuse(format!("a wait for input whose state cannot be saved ({error})"));
+            error
+        }
+    }
 }

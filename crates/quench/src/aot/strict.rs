@@ -8,6 +8,28 @@ use std::{fs, path::Path, process::Command};
 /// The compile worker option that evaluates an entry at build time.
 pub(super) const EVALUATION_WORKER_OPTION: &str = "--evaluation-worker";
 
+/// The compile worker option that resumes an entry from the wait a build-time evaluation saved.
+pub(super) const RESUMPTION_WORKER_OPTION: &str = "--resumption-worker";
+
+/// The worker: resumes `entry` from `rest`, the runtime its build-time evaluation saved at its
+/// first wait for input (`Residual::Waiting`), with `arguments` as the process's own, and exits
+/// with the run's status. It checks a saved wait against the entry run from its start, before
+/// an image keeps one.
+pub(super) fn resume(entry: &Path, rest: &Path, arguments: Vec<String>) -> Result<(), String> {
+    let rest = fs::read(rest).map_err(|error| format!("{}: {error}", rest.display()))?;
+    let input = crate::shared_run::SharedInput::File {
+        path: entry.to_owned(),
+        exec_argv: Vec::new(),
+        goal: crate::shared_run::EntryGoal::Node,
+    };
+    let mut argv = vec!["quench".to_owned(), entry.to_string_lossy().into_owned()];
+    argv.extend(arguments);
+    match crate::shared_run::resume_shared(input, argv, rest)? {
+        crate::shared_run::SharedCompletion::GuestExit { code } => std::process::exit(code),
+        _ => Ok(()),
+    }
+}
+
 /// The worker: evaluates `entry` at build time under `assumptions` (`FD=0|1`: whether
 /// descriptor FD is a terminal) and writes what it left to `journal`.
 pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> Result<(), String> {
@@ -27,6 +49,11 @@ pub(super) fn evaluate(entry: &Path, journal: &Path, assumptions: &[String]) -> 
     let report = match (completion, super::prefix::finish()) {
         (_, Residual::Dynamic(input)) => dynamic(input),
         (_, Residual::Terminal(fd)) => json!({"status": "terminal", "fd": fd}),
+        (_, Residual::Waiting(effects, rest)) => {
+            let path = journal.with_extension("rest");
+            fs::write(&path, &rest).map_err(|error| format!("{}: {error}", path.display()))?;
+            json!({"status": "waiting", "effects": effects, "rest": path, "rest_bytes": rest.len()})
+        }
         (Err(error), _) => dynamic(format!("an uncaught error ({error})")),
         (Ok(crate::shared_run::SharedCompletion::PendingTopLevelAwait), _) => dynamic("a top-level await that never settles".into()),
         (Ok(completion), Residual::Effects(effects)) => {
@@ -96,6 +123,12 @@ fn specialize(entry: &Path, work: &Path, terminals: Vec<(i32, bool)>, variants: 
             }
             Ok(())
         }
+        Some("waiting") => Err(format!(
+            "strict AOT: {} waits for input after {} write(s), and strict images do not yet resume from the saved wait ({} bytes)",
+            entry.display(),
+            left["effects"].as_array().map_or(0, Vec::len),
+            left["rest_bytes"].as_u64().unwrap_or(0),
+        )),
         _ => Err(format!(
             "strict AOT: {} reads {} at build time, and strict images do not yet keep code for dynamic inputs",
             entry.display(),

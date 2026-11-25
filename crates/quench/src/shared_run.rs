@@ -230,7 +230,14 @@ fn execute_shared_with_teardown(
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
 ) -> Result<SharedCompletion, String> {
-    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown))
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown, None))
+}
+
+/// Resumes `input`'s entry from `rest`, the runtime a build-time evaluation saved at its first
+/// wait for input (`aot::prefix::reach_wait`): the entry does not run again, and the event loop
+/// waits for that input as the evaluated run would have.
+pub(crate) fn resume_shared(input: SharedInput, argv: Vec<String>, rest: Vec<u8>) -> Result<SharedCompletion, String> {
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, DEFAULT_MODE, Teardown::ProcessExit, Some(rest)))
 }
 
 /// Node entry worker lifecycle, including the platform signal-mask transition.
@@ -269,6 +276,7 @@ pub(crate) fn execute_worker(
         Some(worker),
         mode,
         Teardown::Free,
+        None,
     )
 }
 
@@ -278,6 +286,7 @@ fn execute_shared_on_worker(
     worker: Option<crate::modules::worker_shared_vm::WorkerContext>,
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
+    rest: Option<Vec<u8>>,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty =
@@ -420,8 +429,12 @@ fn execute_shared_on_worker(
         None if eval_builtin_globals => Some(crate::host::startup_snapshot::SnapshotEntry::Inline(&source)),
         None => None,
     };
-    let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, snapshot_entry, in_worker);
-    let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
+    let resuming = rest.is_some();
+    let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, snapshot_entry, in_worker).filter(|_| !resuming);
+    let snapshot = match rest {
+        Some(rest) => Some(std::rc::Rc::new(rest) as quench_runtime::KeptBytes),
+        None => snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule),
+    };
     let mut runtime = EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(mode);
     runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
@@ -439,6 +452,7 @@ fn execute_shared_on_worker(
                 program = entry;
                 restored = true;
             }
+            Err(error) if resuming => return Err(format!("resuming the saved wait for input: {error}")),
             Err(error) => {
                 crate::host::startup_snapshot::report(snapshot_path.as_deref(), Err(&error));
                 // The restore may have left the runtime half replaced: boot a fresh one.
@@ -453,7 +467,9 @@ fn execute_shared_on_worker(
     if let Some(worker) = &shared_state.borrow().messaging.context {
         worker.control.set_online();
     }
-    let execution = if restored {
+    let execution = if resuming {
+        Ok(())
+    } else if restored {
         runtime.execute_restored(&program)
     } else {
         runtime.execute_deferred_jobs(&program)

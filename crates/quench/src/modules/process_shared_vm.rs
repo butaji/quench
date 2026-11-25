@@ -2643,6 +2643,10 @@ fn poll_io(
         }
         Ok(())
     };
+    // A build-time evaluation ends where the run would first wait for stdin (`aot::prefix`).
+    if crate::aot::prefix::armed() && crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin) {
+        return Err(crate::aot::prefix::reach_wait(runtime, program));
+    }
     let ran = crate::modules::process_stdin_shared_vm::poll(runtime)?;
     settle(runtime, ran)?;
     let ran = poll_process_signals(runtime, program, shared_state)?;
