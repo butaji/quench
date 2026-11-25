@@ -5,8 +5,9 @@
 //! the catalog's heap rows and Number kinds (`row_catalog.rs`, a line without `twin:` matches no arm of any
 //! consumer) and the staged `Operation` (`quench-runtime` `staged::c_twins`, an exhaustive match).
 //!
-//! TODO(TOD-2193 step 3): gate the build on `default Ir/iter <= 3 * C + 6` for every `CTwin::Kernel` row,
-//! C being the kernel's callgrind count (`quench-gate --only ir-budget`); `CTwin::None` rows are reported only.
+//! The bound, `default Ir/iter <= 3 * C + 6` for every `CTwin::Kernel` row (C the kernel's callgrind count), is
+//! section `c-bound` of `quench-gate --only ir-budget`, held by `quench-tier-corpus/c_bound_allowance.txt`;
+//! `CTwin::None` rows are listed there as unmeasured.
 
 /// The kernel a row is measured against, or why it has none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
