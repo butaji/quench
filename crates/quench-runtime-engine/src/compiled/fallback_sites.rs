@@ -42,6 +42,22 @@ pub(crate) fn loop_left(cx: *mut LaneContext, site: &LoopSite, continuation: &Lo
         quench_runtime::fallback::Site::new(code, site.function, pc));
 }
 
+/// A loop region run that entered nothing (`reason`), counted on the site; one whose entry contract refused is noted
+/// as an expensive fallback (`quench_runtime::fallback`) where the switch is on: the loop interprets this trip.
+#[inline(always)]
+pub(crate) fn entry_refused(cx: *mut LaneContext, site: &LoopSite, reason: crate::dispatch_fast::RegionDecline) -> LoopContinuation {
+    if quench_runtime::fallback::on() && reason == crate::dispatch_fast::RegionDecline::EntryContract { loop_refused(cx, site); }
+    site.declined(reason)
+}
+
+#[cold]
+fn loop_refused(cx: *mut LaneContext, site: &LoopSite) {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    quench_runtime::fallback::note(quench_runtime::fallback::Fallback::Deopt, format_args!("loop region refused at entry"),
+        quench_runtime::fallback::Site::new(code, site.function, site.header));
+}
+
 /// A run of a body that ended at `exit`: traced (`Channel::BodyLeave`) unless it returned, and
 /// noted as an expensive fallback (`body_left`) where the switch is on.
 #[inline(always)]
