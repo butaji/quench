@@ -59,7 +59,7 @@ impl Lowering<'_, '_> {
     /// entry state relies on, of each bound tighter than int32's.
     pub(crate) fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
         for (register, range) in self.entering.clone() {
-            let exit = self.guard_exit(state, pc as u32);
+            let exit = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
             let value = self.int(state, register, exit);
             if range.min > IntRange::FULL.min {
                 let min = i32::try_from(range.min).expect("an entering range's bound is an int32");

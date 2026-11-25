@@ -2,7 +2,7 @@
 //! names.
 
 use super::flow::FunctionFlow;
-use super::value::{Fact, Key};
+use super::value::{Fact, Key, Origin};
 use std::collections::BTreeMap;
 
 /// Every binding write of the program, counted.
@@ -30,7 +30,7 @@ impl Census {
         let mut members: BTreeMap<u32, Option<u32>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let Key::Member(atom) = key else { continue };
-            let stored = match fact { Fact::Closure(function) => Some(function), _ => None };
+            let stored = fact.ty.body_index();
             let entry = members.entry(atom).or_insert(stored);
             if *entry != stored { *entry = None; }
         }
@@ -52,21 +52,22 @@ impl Census {
             Key::Member(_) => self.member_wild,
         };
         match self.writes.get(&key) {
-            Some(&(1, Fact::Closure(function))) if !wild => Some(function),
+            Some(&(1, fact)) if !wild => fact.ty.body_index(),
             _ => None,
         }
     }
 
     /// The function a callee fact names: a closure, or the single closure of a binding.
     pub(super) fn target(&self, callee: Fact) -> Option<u32> {
-        match callee {
-            Fact::Closure(function) => Some(function),
-            Fact::Binding(key) => self.single(key),
+        if let Some(function) = callee.ty.body_index() {
+            return Some(function);
+        }
+        match callee.origin? {
+            Origin::Binding(key) => self.single(key),
             // A method read: the one closure every store of its name writes. The call's record still guards the
             // callee it reaches (a builtin's property of that name, a closure made again, a store through a computed
             // key, `member_wild`), so the proof only picks the callee its direct row tries first.
-            Fact::Member(atom) => self.members.get(&atom).copied().flatten(),
-            _ => None,
+            Origin::Member(atom) => self.members.get(&atom).copied().flatten(),
         }
     }
 }

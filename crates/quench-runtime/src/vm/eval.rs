@@ -263,7 +263,7 @@ impl Vm {
             return Ok(Value::UNDEFINED);
         }
         let source_name = format!("<Eval:{}>", self.programs.len());
-        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, eval_source::shared_text(source, &source_text, text))
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, eval_source::shared_text(source, &source_text, text))
     }
 
     pub(super) fn eval_global_script(
@@ -283,18 +283,7 @@ impl Vm {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, strict, source_name, None, false, None)
-    }
-
-    /// A host's script, which is sloppy global code no guest frame calls: its compilation goes
-    /// through the host's compile cache (`Host::kept_compiled_program`).
-    pub(super) fn eval_host_script(
-        &mut self,
-        p: &ResidualProgram,
-        source: &str,
-        source_name: &str,
-    ) -> Result<Value, JsError> {
-        self.eval_global_script_with_cache(p, source, false, source_name, None, true, None)
+        self.eval_global_script_with_cache(p, source, strict, source_name, None, None)
     }
 
     fn eval_global_script_with_cache(
@@ -304,21 +293,8 @@ impl Vm {
         strict: bool,
         source_name: &str,
         mut cache_source: Option<eval_source::EvalSource>,
-        host_script: bool,
         shared_text: Option<eval_source::SharedText>,
     ) -> Result<Value, JsError> {
-        let host_script = host_script && !self.direct_eval;
-        let mode = self.specialization_part();
-        #[cfg(feature = "native-execution")]
-        if host_script
-            && let Some(native) = self.resolve_native_program(source_name, &[mode, source]).map_err(|error| JsError::validation(error.to_string()))?
-        {
-            let prepared = self.prepare_native_script(native)?;
-            let Some(id) = self.store_prepared_script(&prepared)? else {
-                return Err(self.type_error(p, "dynamic program store is full".into()));
-            };
-            return self.run_global_eval_instance(p, id, cache_source, None);
-        }
         self.require_source_compilation(p)?;
         let mut facts = self.eval_caller_facts(p, source, strict, cache_source.as_ref())?;
         let cached = match &facts.key {
@@ -342,14 +318,10 @@ impl Vm {
             self.programs.cache_strict_direct_eval_code(key, program_id);
             return self.run_global_eval_instance(p, program_id, None, Some(caller));
         }
-        let kept = host_script.then(|| self.kept_host_script(source_name, mode, source)).flatten();
-        let compiled = kept.is_none();
         // The eval string's own ASCII storage, which the program keeps when it compiled exactly
         // that text, so no copy of the text is made for it.
         let provided_text = shared_text.as_ref().and_then(eval_source::SharedText::whole_ascii).map(crate::bytecode::SourceText::Local);
-        let mut residual = match kept {
-            Some(residual) => Ok(residual),
-            None => crate::Engine::specialize_eval_with_context(
+        let mut residual = crate::Engine::specialize_eval_with_context(
             source,
             source_name,
             &*self,
@@ -358,8 +330,7 @@ impl Vm {
             &facts.private_names,
             &facts.annex_b_forbidden_names,
             provided_text,
-        ),
-        }
+        )
         .map_err(|diagnostics| {
             if diagnostics
                 .iter()
@@ -382,15 +353,6 @@ impl Vm {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
-        if host_script && compiled
-            && let Some(program) = self.programs.get(program_id)
-            && let Some(mut bytes) = self.encode_cached_program(&program)
-        {
-            // The kept entry carries its source, so a later run reads it in place
-            // (`kept_host_script`) instead of copying the host's text into the program.
-            crate::bytecode::append_kept_source(&mut bytes, source);
-            self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
-        }
         if let Some(key) = direct_key {
             self.programs.cache_direct_eval(key, program_id);
         }

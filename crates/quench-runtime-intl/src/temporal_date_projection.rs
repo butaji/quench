@@ -7,10 +7,6 @@ use crate::temporal_date_parse::DEFAULT_REFERENCE_ISO_YEAR;
 const DEFAULT_REFERENCE_ISO_DAY: u32 = 1;
 const MIN_SUPPORTED_ISO_MONTH: i32 = 4;
 const MAX_SUPPORTED_ISO_MONTH: i32 = 9;
-const BASIC_ISO_YEAR_MONTH_LENGTH: usize = 6;
-const BASIC_ISO_DATE_LENGTH: usize = BASIC_ISO_YEAR_MONTH_LENGTH + 2;
-const SIGNED_COMPACT_YEAR_MONTH_LENGTH: usize = 9;
-const SIGNED_COMPACT_DATE_LENGTH: usize = SIGNED_COMPACT_YEAR_MONTH_LENGTH + 2;
 const BASIC_ISO_YEAR_LENGTH: usize = 4;
 const EXTENDED_ISO_YEAR_LENGTH: usize = 7;
 const BASIC_ISO_TIME_MINUTES_LENGTH: usize = 4;
@@ -1690,10 +1686,10 @@ fn normalize_iso_offset(offset: &str) -> Option<String> {
 
 fn year_month_components(date: &str) -> Option<(&str, &str)> {
     if date.bytes().all(|byte| byte.is_ascii_digit()) {
-        return compact_year_month_components(date);
+        return compact_year_month_components(date, BASIC_ISO_YEAR_LENGTH);
     }
     if date.starts_with(['+', '-']) && date[1..].bytes().all(|byte| byte.is_ascii_digit()) {
-        return signed_compact_year_month_components(date);
+        return compact_year_month_components(date, EXTENDED_ISO_YEAR_LENGTH);
     }
     let fields = date.split('-').collect::<Vec<_>>();
     match fields.as_slice() {
@@ -1715,32 +1711,12 @@ fn valid_iso_day(value: &str) -> bool {
     valid_iso_month(value)
 }
 
-fn compact_year_month_components(date: &str) -> Option<(&str, &str)> {
-    match date.len() {
-        BASIC_ISO_YEAR_MONTH_LENGTH => Some((
-            &date[..BASIC_ISO_YEAR_LENGTH],
-            &date[BASIC_ISO_YEAR_LENGTH..],
-        )),
-        BASIC_ISO_DATE_LENGTH => Some((
-            &date[..BASIC_ISO_YEAR_LENGTH],
-            &date[BASIC_ISO_YEAR_LENGTH..BASIC_ISO_YEAR_LENGTH + 2],
-        )),
-        _ => None,
-    }
-}
-
-fn signed_compact_year_month_components(date: &str) -> Option<(&str, &str)> {
-    match date.len() {
-        SIGNED_COMPACT_YEAR_MONTH_LENGTH => Some((
-            &date[..EXTENDED_ISO_YEAR_LENGTH],
-            &date[EXTENDED_ISO_YEAR_LENGTH..],
-        )),
-        SIGNED_COMPACT_DATE_LENGTH => Some((
-            &date[..EXTENDED_ISO_YEAR_LENGTH],
-            &date[EXTENDED_ISO_YEAR_LENGTH..EXTENDED_ISO_YEAR_LENGTH + 2],
-        )),
-        _ => None,
-    }
+/// The year and month of a compact `YYYYMM[DD]` or `±YYYYYYMM[DD]` date whose year is `year_length`
+/// characters: the month is the two digits after the year, and an optional day follows.
+fn compact_year_month_components(date: &str, year_length: usize) -> Option<(&str, &str)> {
+    let month_end = year_length + ISO_MONTH_CODE_DIGITS;
+    (date.len() == month_end || date.len() == month_end + ISO_MONTH_CODE_DIGITS)
+        .then(|| (&date[..year_length], &date[year_length..month_end]))
 }
 
 fn parse_plain_year_month_boundary(

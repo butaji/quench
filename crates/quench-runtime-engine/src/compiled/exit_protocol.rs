@@ -151,13 +151,13 @@ pub(crate) use quench_runtime::vm::engine_types::ExitSite;
 
 pub(crate) use quench_runtime::vm::engine_types::ExitTable;
 
-pub(crate) use quench_runtime::vm::engine_types::{Fact, FactMissing};
+pub(crate) use quench_runtime::vm::engine_types::{ExitFact, FactMissing};
 
 #[quench_macros::ext(ExitTableOps1)]
 impl ExitTable {
     /// The table of the places `unit`'s PCs leave at. `stored` is the emitter's store set of a
     /// leave at an inlined PC (`unit_pc`, its `frame`), so the table records what the leave writes.
-    pub(crate) fn of_unit(unit: &lane_unit::Unit, stored: impl Fn(usize, usize) -> Vec<LiveValue>) -> Self {
+    pub(crate) fn of_unit(unit: &lane_unit::Unit, stored: impl Fn(usize, usize) -> Vec<LiveValue>, named: impl Fn(usize) -> Option<ExitFact>) -> Self {
         let mut table = Self::default();
         let mut known: HashMap<ExitSig, usize> = HashMap::new();
         for (unit_pc, origin) in unit.origins.iter().enumerate() {
@@ -168,7 +168,7 @@ impl ExitTable {
                 }
             };
             let sig = table.intern(&mut known, sig);
-            let fact = unit.instructions.get(unit_pc).map_or(Fact::Unclassified, Fact::of);
+            let fact = named(unit_pc).unwrap_or_else(|| unit.instructions.get(unit_pc).map_or(ExitFact::Unclassified, ExitFact::of));
             table.add(exit, sig, unit_pc, fact);
         }
         table.sigs.shrink_to_fit();
@@ -181,7 +181,7 @@ impl ExitTable {
     /// instruction's there. Leaves inside an inlined callee have no site yet (TOD-2195 step 4b).
     pub(crate) fn of_code(code: &[quench_runtime::bytecode::WideInstruction]) -> Self {
         let mut table = Self { sigs: vec![ExitSig { kind: ExitKind::At, live: Box::default() }], ..Self::default() };
-        for (pc, instruction) in code.iter().enumerate() { table.add(LaneExit::At(pc), 0, pc, Fact::of(instruction)); }
+        for (pc, instruction) in code.iter().enumerate() { table.add(LaneExit::At(pc), 0, pc, ExitFact::of(instruction)); }
         table.crossings = (0..table.sites.len()).map(|_| std::cell::Cell::new(0)).collect();
         table
     }
@@ -204,7 +204,7 @@ impl ExitTable {
     }
 
     /// Adds the leave `exit` unless an earlier unit PC already leaves there.
-    fn add(&mut self, exit: LaneExit, sig: usize, unit_pc: usize, fact: Fact) {
+    fn add(&mut self, exit: LaneExit, sig: usize, unit_pc: usize, fact: ExitFact) {
         let word = exit.word();
         let Err(at) = self.sites.binary_search_by_key(&word, |site| site.word) else { return };
         let id = self.sites.len() as u32;
@@ -224,7 +224,7 @@ impl ExitTable {
     pub(crate) fn describe(&self, exit: LaneExit) -> String {
         let Some(site) = self.site(exit) else { return String::new() };
         let sig = &self.sigs[site.sig as usize];
-        let fact = Fact::NAMES[site.fact as usize];
+        let fact = ExitFact::NAMES[site.fact as usize];
         if sig.kind != ExitKind::Inlined { return format!(" s{} {fact}", site.id); }
         let stores = sig.live.iter().map(|value| match value.source {
             Source::Scratch(at) => format!("{}>{at}", value.slot),
@@ -300,3 +300,4 @@ mod tests {
         assert_eq!(LaneExit::read(0, LaneExit::Entry.word(), || unreachable!()), LaneExit::At(0), "status 0 is no leave");
     }
 }
+

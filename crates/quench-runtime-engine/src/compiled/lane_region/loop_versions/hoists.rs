@@ -84,7 +84,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn hoist_pure(&mut self, state: &mut State, header: usize) {
         let pcs: Vec<usize> = self.ranges.hoisted().iter().filter(|hoist| hoist.header == header).map(|hoist| hoist.pc).collect();
         if pcs.is_empty() { return; }
-        let exit = self.guard_exit(state, header as u32);
+        let exit = self.guard_exit_for(state, header as u32, ExitFact::Element);
         for pc in pcs {
             let instruction = self.unit.instructions[pc];
             let operation = arithmetic_of(instruction).expect("a hoisted operation is Number arithmetic");
@@ -107,7 +107,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn hoist_decisions(&mut self, state: &mut State, header: usize) {
         let decisions: Vec<Decision> = self.ranges.decisions().iter().filter(|decision| decision.header == header).copied().collect();
         if decisions.is_empty() { return; }
-        let exit = self.guard_exit(state, header as u32);
+        let exit = self.guard_exit_for(state, header as u32, ExitFact::Element);
         for Decision { pc, sources, .. } in decisions {
             let instruction = self.unit.instructions[pc];
             let [left, right] = sources.map(|register| self.tagged(state, register));
@@ -130,7 +130,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn hoist_bounds(&mut self, state: &mut State, header: usize) {
         let registers: Vec<Register> = self.ranges.bounds().iter().filter(|bound| bound.header == header).map(|bound| bound.register).collect();
         if registers.is_empty() { return; }
-        let exit = self.guard_exit(state, header as u32);
+        let exit = self.guard_exit_for(state, header as u32, ExitFact::Element);
         for register in registers {
             self.int(state, register, exit);
         }

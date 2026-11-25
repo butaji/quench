@@ -257,6 +257,31 @@ impl Successors {
     pub(crate) fn targets(&self) -> &[u32] {
         &self.targets
     }
+
+    /// Whether each pc of a function of `len` instructions (and its end, at `len`) starts a basic block:
+    /// the entry, every successor other than an instruction's own sole fall-through, and the pc after
+    /// every instruction that does not only fall through. Control enters a block only at its start, and
+    /// an instruction a handler covers ends its block. The one leader rule every block analysis reads.
+    pub(crate) fn leaders(&self, len: usize) -> crate::bitset::BitSet {
+        let mut leader = crate::bitset::BitSet::new(len + 1);
+        leader.insert(0);
+        for pc in 0..len {
+            let mut only_falls_through = true;
+            let mut falls_through = false;
+            self.at(pc).for_each(|(successor, edge)| {
+                if successor == pc + 1 && edge == ControlEdge::Normal {
+                    falls_through = true;
+                } else {
+                    only_falls_through = false;
+                    leader.checked_insert(successor);
+                }
+            });
+            if !(only_falls_through && falls_through) {
+                leader.insert(pc + 1);
+            }
+        }
+        leader
+    }
 }
 
 fn pc_index(pc: usize) -> u32 {
