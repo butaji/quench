@@ -181,7 +181,7 @@ pub(super) fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>,
 pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
     miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let shaped = at.shaped.expect("a slot read follows the guard of its shape");
-    if let Some(layout) = at.formed.and_then(|bits| super::object::proved_own_layout(stage, shaped, bits, storage_len)) {
+    if let Some(bits) = at.formed && let Some(layout) = super::object::proved_own_layout(stage, shaped, bits, storage_len) {
         return Some(layout);
     }
     let inline = at.inline.unwrap_or_else(#[inline(always)] || inline_storage(stage, shaped.record()));

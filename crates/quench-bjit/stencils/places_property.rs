@@ -12,7 +12,7 @@
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 use crate::codes::CHAIN_SECOND_AT;
 use crate::heap_rows::{context_word, payload, stage_site, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE};
+use crate::layout::{CONTEXT_THIS, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE};
 use crate::typed_ir::Representation;
 use crate::places::{DEST, LEFT, Places};
 use crate::staged::ic::IcOp;
@@ -263,8 +263,10 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     fn field_get_host(&mut self, stage: &mut Concrete, object: u64, _atom: u32, _site: u16, miss: ()) -> Option<u64> {
         let Callout::SiteRead { chained } = self.callout else { return None };
         let (entries, records) = field_tables(&self.places.s);
-        // A read also answers a function's own fields (`entry::readable_record`).
-        let tables = (entries, records, word_at(payload(&self.places.s), JS_STEP_FUNCTION_RECORD_BASE));
+        // No function record table (`entry::readable_record`): a read of a function's own field misses, so
+        // the call that follows runs the interpreter's builtin row (265 Ir) and not a body's native call
+        // (`region_call_in_lane`, 1,250 Ir); it takes the table once a body's native call costs no more.
+        let tables = (entries, records, 0);
         if chained {
             let offsets = hole64::<HOLE_B>();
             entry::site_chain(stage, tables, object, (offsets & u64::from(u32::MAX), offsets >> CHAIN_SECOND_AT), miss)
