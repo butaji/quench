@@ -183,9 +183,8 @@ pub(crate) enum UnitKind {
 /// request so proven facts can flow through the same path.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitFacts {
-    /// The body's rows cover the stencil tier (`base_region::covers`), and no loop of it has an
-    /// interpreter kernel (`base_body::kernel_loop`), which runs the loop in fewer instructions
-    /// than the loop's stencil rows: the stencil tier leaves such a body to the kernel.
+    /// The body's rows cover the stencil tier (`base_region::covers`). A loop with an interpreter
+    /// kernel runs the kernel on its entry edge (`base_region::kernel_entries`).
     pub(crate) covers: bool,
     /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
     pub(crate) amortizes: bool,

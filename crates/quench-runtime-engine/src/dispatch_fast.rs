@@ -17232,9 +17232,9 @@ fn install_loop_sites<'live>(
         })
         .collect();
     let mut sites = sites;
-    // The tiers run a loop the interpreter's kernel takes slower than the kernel does: in every
-    // mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
-    sites.retain(|(pc, site)| loop_kernel::LoopKernel::recurrence(decoded, constants, function, site.header as usize, *pc).is_none());
+    // The tiers run a loop the interpreter's kernel takes slower than the kernel does (`Recurrence::beats_rows`): in
+    // every mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
+    sites.retain(|(pc, site)| !loop_kernel::LoopKernel::beats_rows(decoded, constants, function, (site.header as usize, *pc), live().map(|masks| &**masks)));
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
         // The header names its site by the distance to the site's jump (`header_site_in_lane`).
