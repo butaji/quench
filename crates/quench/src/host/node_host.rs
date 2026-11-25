@@ -477,6 +477,7 @@ impl NodeHost {
     /// A host whose every operation is linked.
     pub fn new(argv: Vec<String>) -> Self {
         crate::host::shared_vm::enable_dynamic_source();
+        crate::host::shared_vm::enable_wasm();
         Self::with_operations(argv, crate::host::shared_vm::OPERATION_CALLBACKS)
     }
 

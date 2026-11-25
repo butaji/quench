@@ -371,7 +371,7 @@ fn compile(options: Options) -> Result<(), String> {
     // answers hold as it starts: no entry run and no installation, so no startup snapshot.
     let saved_waits = prepare_saved_waits(&waits, &work.0, &native_entry, &mut report);
     fs::OpenOptions::new().append(true).open(inputs.catalog())
-        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\n", resumes_at_rest(&saved_waits), makes_code(&graph)).as_bytes())).map_err(|error| error.to_string())?;
+        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\n", resumes_at_rest(&saved_waits), makes_code(&graph), runs_wasm(&graph)).as_bytes())).map_err(|error| error.to_string())?;
     let inputs = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { inputs };
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
@@ -690,6 +690,13 @@ fn makes_code(graph: &super::graph::DependencyGraph) -> bool {
     loads_code(graph) || graph.imports_at_run_time || graph.script_reads_this
         || graph.builtins.iter().chain(&graph.esm_builtins).any(|name| COMPILING_MODULES.contains(&name.trim_start_matches("node:")))
         || CODE_NAMES.iter().chain(super::graph::GLOBAL_OBJECT_NAMES).any(|name| graph.global_names.contains(*name))
+}
+
+/// Whether the program can reach WebAssembly, so its image links the Wasm frontend
+/// (`quench::host::enable_wasm`): it can make code (`makes_code`, which a `WebAssembly` name
+/// implies) or imports a `.wasm` module.
+fn runs_wasm(graph: &super::graph::DependencyGraph) -> bool {
+    makes_code(graph) || graph.requirements.iter().any(|requirement| matches!(requirement, super::GraphRequirement::Wasm { .. }))
 }
 
 /// The modules whose host operations an image links only when its program imports them by

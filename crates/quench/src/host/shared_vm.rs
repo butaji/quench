@@ -147,6 +147,36 @@ pub fn enable_dynamic_source() {
     });
 }
 
+/// The host's routes to the WebAssembly frontend (`enable_wasm`).
+struct HostWasmRoutes {
+    /// `NodeHost::validate_wasm`.
+    validate: fn(&[u8]) -> bool,
+    /// `NodeHost::compile_wasm`.
+    compile: fn(&[u8], quench_runtime::ExecutionMode) -> Result<quench_runtime::WasmModule, String>,
+}
+static WASM_ROUTES: std::sync::OnceLock<HostWasmRoutes> = std::sync::OnceLock::new();
+
+/// Lets this binary decode, validate and lower WebAssembly. The CLI's host enables it
+/// (`NodeHost::new`); an image does only where its program can reach WebAssembly
+/// (`RUNS_WASM`). Without it, `WebAssembly` compiles nothing, as in a host without a frontend.
+pub fn enable_wasm() {
+    WASM_ROUTES.get_or_init(|| HostWasmRoutes { validate: quench_wasm::validate_binary, compile: compile_wasm_module });
+}
+
+fn compile_wasm_module(bytes: &[u8], mode: quench_runtime::ExecutionMode) -> Result<quench_runtime::WasmModule, String> {
+    // Decoding with validation, and lowering, each run once per module and touch code
+    // the other does not, nor what ran before them: each phase's pages leave the
+    // resident set before the next phase, and the module runs.
+    crate::host::resident_pages::release_read_only_pages();
+    let module = quench_wasm::Engine::new().compile(bytes);
+    crate::host::resident_pages::release_read_only_pages();
+    let module = module
+        .and_then(|module| module.lower_shared_module_for(mode))
+        .map_err(|error| error.to_string());
+    crate::host::resident_pages::release_read_only_pages();
+    module
+}
+
 node_bindings! {
         method "streamConstant" (0) => crate::modules::stream_shared_vm::constant,
         method "streamNop" (0) => crate::modules::stream_shared_vm::nop,
@@ -2780,7 +2810,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn validate_wasm(&mut self, bytes: &[u8], _mode: quench_runtime::ExecutionMode) -> bool {
-        quench_wasm::validate_binary(bytes)
+        WASM_ROUTES.get().is_some_and(|routes| (routes.validate)(bytes))
     }
 
     fn compile_wasm(
@@ -2788,17 +2818,8 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        // Decoding with validation, and lowering, each run once per module and touch code
-        // the other does not, nor what ran before them: each phase's pages leave the
-        // resident set before the next phase, and the module runs.
-        crate::host::resident_pages::release_read_only_pages();
-        let module = quench_wasm::Engine::new().compile(bytes);
-        crate::host::resident_pages::release_read_only_pages();
-        let module = module
-            .and_then(|module| module.lower_shared_module_for(mode))
-            .map_err(|error| error.to_string());
-        crate::host::resident_pages::release_read_only_pages();
-        module
+        let routes = WASM_ROUTES.get().ok_or("WebAssembly compilation is not available in this host")?;
+        (routes.compile)(bytes, mode)
     }
 
     fn resolve_dynamic_import(
