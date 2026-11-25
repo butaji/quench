@@ -27,6 +27,7 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/string_length.rs"] pub(crate) mod string_length;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/code_units.rs"] pub(crate) mod code_units;
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/spans.rs"] pub(crate) mod spans;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/parse_int.rs"] pub(crate) mod parse_int;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/typed_elements.rs"] pub(crate) mod typed_elements;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;

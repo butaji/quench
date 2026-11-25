@@ -141,6 +141,8 @@ pub mod native_row_table;
 pub mod native_row;
 pub mod string_length;
 pub(crate) mod code_units;
+/// The span primitives string rows call (find, rfind, equal at).
+pub mod spans;
 /// The rows host operations declare (`Host::function_row`).
 #[cfg(not(stencil_build))]
 pub mod host_rows;
