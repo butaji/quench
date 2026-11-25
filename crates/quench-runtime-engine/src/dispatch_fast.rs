@@ -3535,10 +3535,10 @@ fn site_keyed_get_in_lane(vm: &mut Vm, ip: Ip, base: Value, key: Value) -> Optio
     Some(value)
 }
 
-/// A string's element in the lane (`Vm::string_element`), which allocates its one-unit string.
+/// An element whose lane `read` allocates: a one-unit string (`Vm::string_element`) or a BigInt (`Vm::bigint_typed_element`).
 #[inline(never)]
-fn string_element_in_lane(vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
-    let value = vm.string_element(base, key)?;
+fn allocated_element_in_lane(vm: &mut Vm, base: Value, key: Value, read: fn(&mut Vm, Value, Value) -> Option<Value>) -> Option<Value> {
+    let value = read(vm, base, key)?;
     note_allocation(vm);
     Some(value)
 }
@@ -3561,9 +3561,9 @@ lane_handler! {
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
-            .or_else(|| string_element_in_lane(vm, base, key))
+            .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
             .or_else(|| vm.absent_array_element(base, key))
-            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_keyed_get(base, key)).or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
             .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
@@ -3649,11 +3649,11 @@ fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) -> Option<V
     // which would only decline them.
     vm.dense_array_element(base, key)
         .or_else(|| named_key_element(vm, base, key))
-        // merge: theirs' `lane_typed_array_element` is undefined; HEAD's `row_typed_element` serves the typed read.
         .or_else(|| row_typed_element(ip, vm, base, key))
-        .or_else(|| string_element_in_lane(vm, base, key))
+        .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| site_keyed_get_in_lane(vm, ip, base, key))
+        .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
         .or_else(|| vm.keyed_array_length(base, key))
 }
 
@@ -4378,10 +4378,10 @@ const FIELD_LEAF_READ: u16 = {
 pub(crate) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
 
 /// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
-const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
+pub(crate) const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
 
 /// The generated typed keyed write (`generated_row` of `ELEMENT_WRITE`, `TYPED_SITE`).
-const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
+pub(crate) const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
 /// whose generated row (`generated_row`) a store record runs: its hint as a layout store.

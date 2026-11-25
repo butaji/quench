@@ -37,7 +37,7 @@ pub enum ViewKind<W> {
 /// A kind whose elements native code reads and writes in place, with what its element is.
 #[derive(Clone, Copy)]
 pub struct NativeKind {
-    pub(crate) kind: TypedArrayKind,
+    pub kind: TypedArrayKind,
     element: Element,
 }
 
@@ -326,7 +326,7 @@ fn element_of(kind: TypedArrayKind) -> Option<Element> {
 /// they fill: `field` reversed where `little_endian` is not the host's order (the byte swap a
 /// DataView field needs; the Stage rows have no swap).
 #[inline(always)]
-fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
+pub fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
     let mut word = [0; 8];
     let width = field.len();
     if little_endian == NATIVE_LITTLE_ENDIAN {

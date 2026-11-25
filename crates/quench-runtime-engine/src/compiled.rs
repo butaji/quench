@@ -181,7 +181,7 @@ pub(crate) mod wasm_gc_allocate;
 use self::wasm_gc_allocate::allocating_reads;
 pub(crate) mod wasm_exception_stage;
 pub(crate) mod wasm_catch;
-pub(crate) mod plan_report;
+pub(crate) mod plan_report; pub(crate) mod body_views;
 pub(crate) mod wasm_gc_callout;
 pub(crate) mod wasm_instance_switch;
 pub(crate) mod wasm_roots;
