@@ -38,12 +38,16 @@ macro_rules! kernels {
 }
 
 kernels! {
-    alloc_literal, arr_length, arr_load_int, arr_push, arr_store_int, bitwise, c_bit_test, c_closure_read,
-    c_switch_dense, call_direct, call_spread, cmp_dbl, cmp_int, dbl_div, empty, eq_int, eq_undef_null,
-    field_read, field_store, inc_local, int_add, int_add_noor, int_mod, int_mul, int_sub, math_abs,
-    math_floor, math_imul, math_minmax, math_round, math_sqrt, neg_op, not_op, parse_int, shl_shr,
-    str_charcodeat, str_compare, truthy_int, typed_load, typed_store_f64, typeof_op, ushr,
-    v_arguments_length, v_for_in, v_for_of_array, v_instanceof, v_super_call, v_throw_catch,
+    alloc_literal, arr_length, arr_load_int, arr_push, arr_store_int, bit_not, bitwise, c_bit_test,
+    c_bool_flag, c_class_ctor_fields, c_class_method, c_closure_read, c_locals_rotate, c_switch_dense,
+    call_direct, call_spread, cmp_dbl, cmp_int, dbl_div, empty, eq_int, eq_undef_null, field_read,
+    field_store, inc_local, int_add, int_add_noor, int_mod, int_mul, int_sub, int_sub_noor, math_abs,
+    math_ceil, math_clz32, math_floor, math_fround, math_imul, math_minmax, math_round, math_sign,
+    math_sqrt, math_trunc, neg_op, not_op, parse_int, shl_shr, str_charcodeat, str_compare, truthy_int,
+    typed_length, typed_load, typed_store_f64, typeof_op, ushr, v_alloc_array4, v_alloc_closure,
+    v_arguments_length, v_array_push_grow, v_closure_counter, v_destructure_obj, v_for_in, v_for_of_array,
+    v_global_var, v_instanceof, v_let_block, v_new_point, v_obj_add, v_proto_chain3_field, v_super_call,
+    v_throw_catch,
 }
 
 /// A row's `twin:` field as its `CTwin`: `kernel(name)` or `none("reason")`. Any other spelling matches no arm.

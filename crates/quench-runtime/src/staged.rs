@@ -141,6 +141,7 @@ pub(crate) mod code_units;
 pub(crate) mod parse_int;
 /// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
 pub(crate) mod string_text;
+pub use string_text::is_ecma_whitespace_char;
 /// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
 pub(crate) mod string_search;
 /// String.prototype.split with a string separator: the cut offsets, once.

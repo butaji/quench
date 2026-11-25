@@ -7,19 +7,23 @@ use crate::bytecode::WideInstruction;
 /// names its own fact refines it (TOD-2195 step 4c).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum Fact {
+pub enum ExitFact {
     /// An operand's number kind (int32, double) or primitive kind: arithmetic, compares, branches.
     NumberKind,
     /// A receiver's shape or layout: a named field read or store.
     Shape,
     /// A call's callee identity or admission: a call, a method call or a construction.
     Callee,
+    /// An element access's array kind, bounds or holes.
+    Element,
+    /// A global binding's cell or the realm's globals.
+    Global,
     /// Anything the leaving instruction does not class.
     Unclassified,
 }
 
-impl Fact {
-    pub const NAMES: [&'static str; 4] = ["number-kind", "shape", "callee", "unclassified"];
+impl ExitFact {
+    pub const NAMES: [&'static str; 6] = ["number-kind", "shape", "callee", "element", "global", "unclassified"];
 
     /// The fact a leave at `instruction` was missing, by the instruction's meaning.
     pub fn of(instruction: &WideInstruction) -> Self {
@@ -41,6 +45,6 @@ impl Fact {
 /// it left at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FactMissing {
-    pub fact: Fact,
+    pub fact: ExitFact,
     pub site: u32,
 }

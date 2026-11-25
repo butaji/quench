@@ -164,3 +164,47 @@ impl Lowering<'_, '_> {
         }
     }
 }
+
+impl Lowering<'_, '_> {
+    /// A guard's failure block: it leaves at `pc` from the state where the guard sits. It is
+    /// filled after the region, since the current block is still open.
+    #[track_caller]
+    pub(super) fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
+        self.guard_exit_for(state, pc, ExitFact::Unclassified)
+    }
+
+    /// `guard_exit` of a guard that tests `fact`, which names its leave's site (`ExitTable::of_unit`).
+    #[track_caller]
+    pub(super) fn guard_exit_for(&mut self, state: &State, pc: u32, fact: ExitFact) -> ir::Block {
+        if self.proving_entry {
+            let builder = &mut self.builder;
+            return *self.entry_exit.get_or_insert_with(|| cold_block(builder));
+        }
+        // A guard after another that leaves at the same PC from the same facts shares its
+        // block: the leave it builds is the same, and SSA joins the variables' values.
+        if !self.vm.diagnostics && let Some(last) = self.pending.last()
+            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed && last.virtuals == state.virtuals {
+            return last.block;
+        }
+        let block = cold_block(&mut self.builder);
+        self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(), virtuals: state.virtuals.clone(),
+            pc, line: std::panic::Location::caller().line(), fact });
+        block
+    }
+
+    /// The fact each leaving unit PC's first classed guard tests, which names its site there.
+    pub(super) fn named_leaves(&self) -> Vec<Option<ExitFact>> {
+        let mut named = vec![None; self.unit.origins.len()];
+        for leave in self.pending.iter().filter(|leave| leave.fact != ExitFact::Unclassified) {
+            if let Some(slot @ None) = named.get_mut(leave.pc as usize) { *slot = Some(leave.fact); }
+        }
+        named
+    }
+
+    /// Records, for a diagnostics run, the lowering line that made a leave (`take_lane_exit_line`).
+    pub(super) fn record_line(&mut self, line: u32) {
+        if !self.vm.diagnostics { return; }
+        let line = self.raw_const(Lane::I64, i64::from(line));
+        self.store_word(regions::dispatch(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+    }
+}

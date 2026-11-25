@@ -57,6 +57,7 @@ bi_tmpl 253.2 317 1174.7
 bi_trim 240 300 683
 bi_u8_fill 14 18 2131.1
 bi_upper 186 233 750
+bit_not 5 7
 bitwise 8 10 75.1
 c_abs_int 8.9 12
 c_arr_2d 10.9 14
@@ -156,6 +157,7 @@ int_mod_var 7 9 67.2
 int_mul 5 7 108.1
 int_mul_ovf 18 23 118.8
 int_sub 4 5 39.2
+int_sub_noor 8 10
 k01_sum_or 4 5 39.1
 k02_fib 1440 1800 42494.1
 k03_call_add 4 5 211.1
@@ -187,11 +189,16 @@ k_str_build 14.1 18 1369.7
 k_struct_sum 8 10 178.1
 k_vec_local 8.9 12 193.8
 math_abs 8 10 163.1
+math_ceil 22 28
+math_clz32 6 8
 math_floor 22 28 186.2
+math_fround 9 12
 math_imul 7 9 147.1
 math_minmax 15 19 286.1
 math_round 23 29 206.7
+math_sign 10 13
 math_sqrt 9 12 154.1
+math_trunc 19 24
 mixed_int_dbl 7 9 71.1
 neg_op 6 8 87.1
 not_op 5.5 7 42.1
@@ -218,6 +225,7 @@ to_uint32 20 25 197.2
 truthy_int 5.8 8 45.6
 truthy_obj 4 5 62.1
 truthy_str 4 5 117.1
+typed_length 4 5
 typed_load 5 7 82.1
 typed_store_f64 8 10 98.6
 typed_store_u8c 24 30 155.9
@@ -263,11 +271,13 @@ v_for_of_array 4.3 6
 v_gaussian_blur 34 43
 v_generator_next 10 13
 v_getter 8 10
+v_global_var 4 5
 v_instanceof 18.9 24
 v_int53_arith 19.9 25
 v_int_to_double 13 17
 v_json_parse 199 249
 v_json_stringify 579.7 725
+v_let_block 6 8
 v_linked_list_walk 4.9 7
 v_map_get_int 14 18
 v_map_get_str 67.5 85
@@ -280,6 +290,7 @@ v_nbody_step 66 83
 v_new_point 13 17
 v_nullish 7 9
 v_num_tostring 511.7 640
+v_obj_add 19 24
 v_obj_keys_loop 199 249
 v_obj_literal 17 22
 v_object_assign 28 35
