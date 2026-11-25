@@ -130,12 +130,15 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         Application(Options),
         Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
         Evaluation { entry: PathBuf, journal: PathBuf, assumptions: Vec<String> },
+        Resumption { entry: PathBuf, rest: PathBuf, arguments: Vec<String> },
     }
     let work = match arguments.as_slice() {
         [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
             Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
         [option, entry, journal, assumptions @ ..] if option == super::strict::EVALUATION_WORKER_OPTION =>
             Work::Evaluation { entry: entry.into(), journal: journal.into(), assumptions: assumptions.to_vec() },
+        [option, entry, rest, arguments @ ..] if option == super::strict::RESUMPTION_WORKER_OPTION =>
+            Work::Resumption { entry: entry.into(), rest: rest.into(), arguments: arguments.to_vec() },
         _ => Work::Application(Options::parse(arguments)?),
     };
     std::thread::Builder::new()
@@ -145,6 +148,7 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
             Work::Application(options) => compile(options),
             Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
             Work::Evaluation { entry, journal, assumptions } => super::strict::evaluate(&entry, &journal, &assumptions),
+            Work::Resumption { entry, rest, arguments } => super::strict::resume(&entry, &rest, arguments),
         })
         .map_err(|error| error.to_string())?
         .join()

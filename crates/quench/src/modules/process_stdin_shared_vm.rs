@@ -18,15 +18,24 @@ mod platform {
     }
 
     impl State {
-        /// A snapshot is taken before anything reads stdin, which is the process's own.
-        pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        /// A snapshot keeps the stream and whether a read is wanted, but nothing read: a
+        /// startup snapshot is taken before anything reads stdin, and a build-time evaluation
+        /// stops where the event loop would first wait for it (`aot::prefix::reach_wait`).
+        pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+            use crate::host::startup_snapshot::HostSnap;
             let Self { stream, pump, requested, ended, referenced, pending } = self;
-            crate::host::startup_snapshot::require_quiescent(
-                stream.is_none() && pump.is_none() && !requested && !ended && !referenced && pending.is_none(),
-                "stdin",
-            )
+            crate::host::startup_snapshot::require_quiescent(!ended && pending.is_none(), "stdin input")?;
+            stream.write(writer)?;
+            pump.write(writer)?;
+            requested.write(writer)?;
+            referenced.write(writer)
         }
-        pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+            use crate::host::startup_snapshot::HostSnap;
+            self.stream = HostSnap::read(reader)?;
+            self.pump = HostSnap::read(reader)?;
+            self.requested = HostSnap::read(reader)?;
+            self.referenced = HostSnap::read(reader)?;
             Ok(())
         }
     }
