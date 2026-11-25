@@ -12,6 +12,8 @@ impl NodeHost {
             module_assets: _,
             // The installation and the process's own entry and environment.
             compile_cache: _,
+            // The image's own linked operations.
+            operations: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             shared_state,
@@ -146,7 +148,7 @@ impl SharedNodeState {
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
         require_quiescent(fs.snapshot_quiescent(), "open file descriptors")?;
         require_quiescent(process_signals.snapshot_quiescent(), "signal listeners")?;
-        require_quiescent(sqlite.snapshot_quiescent(), "open sqlite handles")?;
+        require_quiescent(sqlite.get::<crate::modules::sqlite_shared_vm::State>().is_none_or(crate::modules::sqlite_shared_vm::State::snapshot_quiescent), "open sqlite handles")?;
         require_quiescent(active_esm_requires.is_empty(), "an ESM require")?;
         require_quiescent(
             net_sockets.is_empty()

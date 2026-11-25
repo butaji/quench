@@ -273,6 +273,12 @@ pub trait Host: core::any::Any {
         self.functions().get(index).map(|binding| binding.call)
     }
 
+    /// The staged row host function `index`'s calls run before its own steps
+    /// (`staged::host_rows`), if it declares one.
+    fn function_row(&self, _index: usize) -> Option<crate::staged::host_rows::HostRow> {
+        None
+    }
+
     /// Install host-owned objects after shared intrinsics and native globals,
     /// before guest execution. Context roots expire when installation returns.
     fn initialize(_context: &mut crate::NativeContext<'_>) -> Result<(), crate::RootedError>

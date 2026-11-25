@@ -76,9 +76,30 @@ fn main() {
     export_link_arguments(&link_layout::link_binaries(env::var_os(LINK_ORDER_ENV).is_none_or(|value| value != LINK_ORDER_OFF)));
 }
 
-/// `quench compile` links native images as this crate's binaries are linked (`aot/link.rs`).
+/// The functions a compiled image's start executes (`tools/image-link-order.sh`): the bootstrap
+/// restore and the native entry, which the CLI's corpus never runs.
+const IMAGE_ORDER: &str = "link/x86_64-linux-image.order";
+
+/// The linker option that names a symbol order.
+const ORDER_OPTION: &str = "-Wl,--symbol-ordering-file=";
+
+/// `quench compile` links native images as this crate's binaries are linked (`aot/link.rs`),
+/// with the image start's functions laid ahead of the run order (the linker takes one order).
 fn export_link_arguments(arguments: &[String]) {
+    println!("cargo::rerun-if-changed={IMAGE_ORDER}");
     let out = PathBuf::from(env::var("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    let image_order = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join(IMAGE_ORDER);
+    let arguments: Vec<String> = arguments.iter().map(|argument| {
+        let (Some(run_order), Ok(start)) = (argument.strip_prefix(ORDER_OPTION), std::fs::read_to_string(&image_order)) else {
+            return argument.clone();
+        };
+        let run = std::fs::read_to_string(run_order).expect("read the run link order");
+        let mut seen = std::collections::HashSet::new();
+        let combined: String = start.lines().chain(run.lines()).filter(|symbol| seen.insert(*symbol)).map(|symbol| format!("{symbol}\n")).collect();
+        let path = out.join("image.order");
+        std::fs::write(&path, combined).expect("write the image link order");
+        format!("{ORDER_OPTION}{}", path.display())
+    }).collect();
     std::fs::write(out.join("executable_link_args.rs"), format!("&{arguments:?}")).expect("write executable link arguments");
 }
 

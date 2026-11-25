@@ -27,6 +27,7 @@ const STATIC_OPERATIONS: &[&str] = &[
     "builtinExportValues",
     "consoleGlobalInitialize",
     "consoleWrite",
+    "consoleWritePlain",
     "moduleParentSet",
     "moduleRunMain",
     "processEmitExitEvent",

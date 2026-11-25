@@ -270,6 +270,9 @@ fn compile(options: Options) -> Result<(), String> {
         inputs.self_contained()
     };
     report["self_contained"] = json!(inputs.is_self_contained());
+    let (table, unlinked) = operation_table(&graph);
+    fs::OpenOptions::new().append(true).open(inputs.catalog()).and_then(|mut catalog| catalog.write_all(table.as_bytes())).map_err(|error| error.to_string())?;
+    report["unlinked_host_operations"] = json!(unlinked);
     let bootstrap = work.0.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
@@ -522,4 +525,33 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(output).unwrap(), "previous artifact");
     }
+}
+
+/// The modules whose host operations an image links only when its program imports them by
+/// name: each holds a heavy dependency (`node:sqlite` the SQL engine).
+const IMPORTED_OPERATION_FAMILIES: &[(&str, &str)] = &[("sqlite", "sqlite_shared_vm")];
+
+/// The image's host operation table (`NodeHost::with_operations`), with the number of
+/// operations it leaves unlinked: every operation, except those of a family whose module the
+/// program cannot import. A program that loads anything at run time keeps them all.
+fn operation_table(graph: &super::graph::DependencyGraph) -> (String, usize) {
+    let dynamic = graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. }))
+        || !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty() || !graph.dynamic_reflective_sites.is_empty();
+    let builtins = graph.snapshot_builtins();
+    let excluded: Vec<&str> = IMPORTED_OPERATION_FAMILIES.iter()
+        .filter(|(builtin, _)| !dynamic && !builtins.iter().any(|name| name == builtin))
+        .map(|(_, module)| *module).collect();
+    let paths = crate::host::OPERATION_CALLBACK_PATHS;
+    let mut unlinked = 0;
+    let entries = paths.iter().enumerate().map(|(index, path)| {
+        if excluded.iter().any(|module| path.contains(module)) {
+            unlinked += 1;
+            "quench::host::unlinked_operation".to_owned()
+        } else {
+            format!("quench::host::OPERATION_CALLBACKS[{index}]")
+        }
+    }).collect::<Vec<_>>().join(", ");
+    let table = format!("static OPERATIONS: [quench_runtime::HostCallback; {n}] = [{entries}];\n\
+        const _: () = assert!(quench::host::OPERATION_CALLBACKS.len() == {n}, \"native image host operation table mismatch\");\n", n = paths.len());
+    (table, unlinked)
 }
