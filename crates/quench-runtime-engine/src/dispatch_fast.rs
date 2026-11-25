@@ -8692,7 +8692,7 @@ impl Vm {
     /// Prints every loaded function's lane view, derived afresh from its bytecode (no loop
     /// tier), when `QUENCH_TRACE=bytecode=lanes` is set: per record `LANEPLAN program function pc
     /// width handler settled | instruction`, handlers as run-time addresses (symbolized against
-    /// the symbol table by `quench-gate --only ir-predict`, less the anchor's bias), `settled`
+    /// the binary's symbol table, less the anchor's bias), `settled`
     /// the handler the stored view holds after the run (`-` where no run derived one).
     pub(crate) fn report_lane_plan(&mut self) {
         if quench_runtime::trace::Channel::Bytecode.value() != Some(quench_runtime::vm::inspection::LANE_PLAN) {

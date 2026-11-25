@@ -526,6 +526,12 @@ fn c_counts(rows: &BTreeMap<String, Row>) -> BTreeMap<String, f64> {
     rows.iter().map(|(name, row)| (name.clone(), row.c)).collect()
 }
 
+/// Each op's C twin count as the checked-in budget file holds it (the ir-predict step's join).
+pub fn checked_in_c_counts(config: &Config) -> Result<BTreeMap<String, f64>, String> {
+    let text = fs::read_to_string(config.root.join(BUDGETS)).map_err(|error| format!("{BUDGETS}: {error}"))?;
+    Ok(c_counts(&parse(&text)))
+}
+
 /// Node JIT's count per op (`NODE_JIT`); empty where the file is missing.
 fn node_jit_counts(config: &Config) -> BTreeMap<String, f64> {
     let text = fs::read_to_string(config.root.join(NODE_JIT)).unwrap_or_default();
