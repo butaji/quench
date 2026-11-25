@@ -237,6 +237,8 @@ fn loop_shapes(region: &LoopRegion, observation: &Observation<'_>) -> Vec<super:
     for (&offset, &index) in region.field_reads() {
         let Some(FieldLookup::Atom { base, .. }) = code[offset as usize].field_lookup() else { continue };
         let (Some(register), Some(loads)) = (base.register_index(), observation.native_field_loads.get(index)) else { continue };
+        // A string's reads are its prototype's: the register holds no object of any shape, and a shape guard would refuse every entry.
+        if observation.string_entries.contains(&register) { continue; }
         let Some(shape) = loads.first().map(|load| load.shape).filter(|shape| loads.iter().all(|load| load.shape == *shape)) else { continue };
         let flat = loads.iter().all(|load| quench_runtime::staged::object::Form::of(load.storage, load.storage_len) == quench_runtime::staged::object::Form::Arena);
         let merged = shapes.entry(register).or_insert(Some((shape, flat)));
@@ -353,7 +355,8 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }
-    let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
+    let held = calls.callees.captured_identities(region.header as usize..=region.backedge as usize).map(|(_, callee)| callee).collect();
+    let calls = CallCode { held, ..CallCode::of((frames, calls.callees.owned, records), registers, invalidation) };
     let facts = OsrFacts { stable: StableFacts { globals: stable, holders, chains, instanceofs, atoms, layouts, slots: slot_types, ..Default::default() },
         calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
@@ -441,6 +444,9 @@ pub(crate) fn start_osr_region_compiled(
     admitted: super::admission::CompiledUnit,
     mut online: Option<OsrOnline<'_>>,
 ) -> Option<PendingOsrRegion> {
+    if !cfg!(feature = "jit") {
+        return None; // no run-time compile without the JIT: only image bodies run natively
+    }
     let isa = quench_runtime::vm::jit_backend::target_isa()?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
     let invalidation = Invalidation::default();

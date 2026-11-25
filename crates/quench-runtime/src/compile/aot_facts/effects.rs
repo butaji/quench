@@ -1,9 +1,10 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Fact, Key};
+use super::value::{Fact, Key, Origin};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::staged::protocol_literals::LiteralStep;
+use crate::typed_ir::Type;
 use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
@@ -46,7 +47,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     writes(ctx, pc, instruction, operation, state, &mut events);
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
-        state[usize::from(register)] = if Some(register) == defined { value } else { Fact::Unknown };
+        state[usize::from(register)] = if Some(register) == defined { value } else { Fact::UNKNOWN };
     }
     events
 }
@@ -59,7 +60,7 @@ fn is_global_load(instruction: WideInstruction) -> bool {
 
 /// The fact of a load from `key`: the closure the census proved there, else the binding.
 fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
-    ctx.resolved.get(&key).copied().map_or(Fact::Binding(key), Fact::Closure)
+    ctx.resolved.get(&key).copied().map_or_else(|| Fact::from(Origin::Binding(key)), Fact::closure)
 }
 
 /// The fact of the value `instruction` defines, read from the facts before it.
@@ -71,23 +72,25 @@ fn value_of(
     events: &mut Events,
 ) -> Fact {
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
-        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::Atom(atom); }
-        return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::Unknown, Fact::number);
+        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::atom(atom); }
+        return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::UNKNOWN, Fact::number);
     }
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() == 0 && !instruction.writes_current_this()
         && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
     {
         let owner = base.register_index().map(|register| state[usize::from(register)]);
-        return match owner {
-            Some(Fact::Closure(class)) if ctx.scope.prototype == Some(atom) => Fact::Prototype(class),
-            Some(Fact::Closure(class)) => Fact::MemberOn { class, instance: false, atom },
-            Some(Fact::Prototype(class) | Fact::Instance(class)) => Fact::MemberOn { class, instance: true, atom },
-            _ => Fact::Member(atom),
+        return match owner.and_then(|fact| fact.ty.body_index()) {
+            // `Class.prototype`: the class's prototype object.
+            Some(class) if ctx.scope.prototype == Some(atom) => Fact::prototype(class),
+            _ => match owner.and_then(Fact::class_site) {
+                Some((class, instance)) => Fact::member_on(class, instance, atom),
+                None => Fact::from(Origin::Member(atom)),
+            },
         };
     }
     if instruction.op() == crate::bytecode::Op::Construct {
-        let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::Unknown);
-        if let Fact::Closure(class) = callee { return Fact::Instance(class); }
+        let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::UNKNOWN);
+        if let Some(class) = callee.ty.body_index() { return Fact::instance(class); }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
@@ -104,11 +107,11 @@ fn value_of(
         Some(Operation::LoadCapture { depth, slot, .. }) => ctx
             .scope
             .owner(ctx.id, depth)
-            .map_or(Fact::Unknown, |owner| resolved(ctx, Key::Slot { owner, slot })),
-        Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::Closure(function),
-        Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => Fact::Closure(function),
+            .map_or(Fact::UNKNOWN, |owner| resolved(ctx, Key::Slot { owner, slot })),
+        Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::closure(function),
+        Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => Fact::closure(function),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
-        _ => Fact::Unknown,
+        _ => Fact::UNKNOWN,
     }
 }
 
@@ -117,9 +120,9 @@ fn operand_fact(scope: &Scope, state: &[Fact], operand: Operand) -> Fact {
     match (operand.register_index(), operand.kind()) {
         (Some(register), _) => state[usize::from(register)],
         (None, Some(OperandKind::Constant)) => {
-            scope.constants.get(usize::from(operand.payload())).copied().flatten().map_or(Fact::Unknown, Fact::number)
+            scope.constants.get(usize::from(operand.payload())).copied().flatten().map_or(Fact::UNKNOWN, Fact::number)
         }
-        _ => Fact::Unknown,
+        _ => Fact::UNKNOWN,
     }
 }
 
@@ -136,18 +139,18 @@ fn number_value(scope: &Scope, state: &[Fact], number: NumberOperation) -> Fact 
         | NumberOperation::Extreme { left, right, .. }
             if both(left, right) =>
         {
-            Fact::Float64
+            Fact::of(Type::NUMBER)
         }
         NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. }
             if both(left, right) =>
         {
-            Fact::Int32
+            Fact::of(Type::INT32)
         }
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Fact::Float64,
-        NumberOperation::BitwiseNot { source, .. } if one(source) => Fact::Int32,
-        NumberOperation::IncDec { source, .. } if register(source).is_number() => Fact::Float64,
+        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Fact::of(Type::NUMBER),
+        NumberOperation::BitwiseNot { source, .. } if one(source) => Fact::of(Type::INT32),
+        NumberOperation::IncDec { source, .. } if register(source).is_number() => Fact::of(Type::NUMBER),
         NumberOperation::ToNumeric { source, .. } if register(source).is_number() => register(source),
-        _ => Fact::Unknown,
+        _ => Fact::UNKNOWN,
     }
 }
 
@@ -172,25 +175,19 @@ fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), (
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
-        if let Fact::Atom(atom) = key {
-            if let Some((class, instance)) = match target {
-                Fact::Closure(class) => Some((class, false)),
-                Fact::Prototype(class) | Fact::Instance(class) => Some((class, true)),
-                _ => None,
-            } {
-                events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
-            }
+        if let (Some(atom), Some((class, instance))) = (key.atom_key(), target.class_site()) {
+            events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
         }
     }
     match operation {
         Some(Operation::SetField { value, atom, .. }) => events.writes.push((Key::Member(atom), state[usize::from(value)])),
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
-            events.writes.push((Key::Member(atom), Fact::Unknown));
+            events.writes.push((Key::Member(atom), Fact::UNKNOWN));
         }
         Some(Operation::ElementWrite { key, .. }) if !state[usize::from(key)].is_number() => events.wild_member = true,
         Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => events.wild_member = true,
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
-            events.writes.push((Key::Member(instruction.atom_index()), Fact::Unknown));
+            events.writes.push((Key::Member(instruction.atom_index()), Fact::UNKNOWN));
         }
         _ => {}
     }
@@ -244,7 +241,7 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
             }
         },
         Some(Operation::IncDecLocal { local, .. }) => {
-            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Fact::Unknown);
+            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Fact::UNKNOWN);
         }
         Some(Operation::GlobalWrite { source, atom, .. }) => {
             write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
@@ -254,13 +251,13 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
             | Operation::StoreField { atom, .. }
             | Operation::FieldStoreMiss { atom, .. }
             | Operation::FieldAdd { atom, .. },
-        ) => write(ctx, pc, true, events, Key::Global(atom), Fact::Unknown),
+        ) => write(ctx, pc, true, events, Key::Global(atom), Fact::UNKNOWN),
         _ => {}
     }
 }
 
 /// Records a write of `fact` to `key` at `pc`; a store before the parameters end binds an argument.
 fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, fact: Fact) {
-    let fact = if !stable && pc < ctx.parameter_end { Fact::Unknown } else { fact };
+    let fact = if !stable && pc < ctx.parameter_end { Fact::UNKNOWN } else { fact };
     events.writes.push((key, fact));
 }

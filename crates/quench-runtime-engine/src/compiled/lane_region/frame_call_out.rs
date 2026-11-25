@@ -156,6 +156,14 @@ fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fact): 
     Some((CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?, bits))
 }
 
+/// The tagged word of the global's slot `held` names, read live under the layout the lowering holds.
+pub(crate) fn global_slot_read(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
+    -> Option<ir::Value> {
+    let (layout, _) = global_layout(frame, stage, held, miss)?;
+    let address = layout.arena_address(stage.builder, held.0.slot, miss)?;
+    Some(stage.load_u64(quench_runtime::staged::Region::ObjectSlots.mutable(), address, 0))
+}
+
 /// A global-name store of the tagged `value` in `source` straight to the global's slot, which
 /// the slot's observed type admits without a test (`GlobalSlot::dependency` retires the code
 /// where a wider value is written); a heap value a marked owner would log, or a value this

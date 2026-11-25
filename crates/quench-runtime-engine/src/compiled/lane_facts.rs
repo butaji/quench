@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 /// The unit PCs of a previous body's leaves: the specialization's feedback. Only the table's
 /// places are read here, so no leave's stored values are asked for.
 pub(crate) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
-    let exits = ExitTable::of_unit(unit, |_, _| Vec::new());
+    let exits = ExitTable::of_unit(unit, |_, _| Vec::new(), |_| None);
     generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
 }
 

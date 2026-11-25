@@ -16,6 +16,7 @@ use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
 use quench_bjit::call_record::{CallRecord, LaneStatus};
+use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;
 use super::super::lane_body_abi::body_signature_in_lane;
 use quench_runtime::staged::call::admit_room;
@@ -166,6 +167,13 @@ impl EmitFrame<'_> {
         stage.load_u64(CALL_RECORD, record, field(offset))
     }
 
+    /// The word at `offset` of an owned callee's bound closure (`DirectCallee::bound`), which the site's helper call
+    /// rebinds: a mutable word, read again after each call out.
+    fn bound_word(&self, stage: &mut Emit<'_, '_>, owned: &DirectCallee, offset: usize) -> ir::Value {
+        let at = stage.constant(std::ptr::from_ref(&owned.bound).addr() as u64);
+        stage.load_u64(ENTRY_CELL, at, field(offset))
+    }
+
     /// A word of the dispatch: the addresses of the lane stack's tops and its ends.
     fn stack_word(&self, stage: &mut Emit<'_, '_>, offset: usize) -> ir::Value {
         stage.load_u64(DISPATCH, self.payload, field(offset))
@@ -252,7 +260,7 @@ impl EmitFrame<'_> {
     /// descriptor go in the tables at its index, the plain depth is bumped and the window set as the innermost.
     /// The link (`native_frames::link_header`) fills the call record, caller base, argc and side record.
     fn push_native(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, this: ir::Value, caller_registers: ir::Value, room: Room<ir::Value>) {
-        use quench_runtime::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED, CONTEXT_THIS};
+        use quench_runtime::staged::{frame::CONTEXT_THIS, protocol};
         let window = room.top;
         let at = Region::Frame.mutable();
         // The words the callee's identity fixes are constants (its function's packed word); the words the binding
@@ -262,7 +270,7 @@ impl EmitFrame<'_> {
                 address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64),
                 stage.constant(owned.call as u64),
                 stage.constant(owned.caller_base as u64),
-                stage.constant(owned.callee.to_bits()),
+                if self.rebinds.get() { self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee)) } else { stage.constant(owned.callee.to_bits()) },
             ),
             DirectSite::Proven(proven) => (
                 self.record_word(stage, proven, std::mem::offset_of!(CallRecord, descriptor)),
@@ -277,63 +285,29 @@ impl EmitFrame<'_> {
         // reads `this`, this writes it always: loading that word here would add a load and a branch to the
         // emitted header, and an unread receiver word is harmless.
         stage.store_u64(at, window, context_at(CONTEXT_THIS), this);
-        stage.store_u64(at, window, context_at(CONTEXT_CALL), call);
-        stage.store_u64(at, window, context_at(CONTEXT_CALLER_REGISTERS), caller_registers);
-        stage.store_u64(at, window, context_at(CONTEXT_CALLER_BASE), caller_base);
-        stage.store_u64(at, window, context_at(CONTEXT_PACKED), packed);
-        stage.store_u64(at, window, context_at(CONTEXT_CALLEE), callee_word);
-        // The index's entries: the body and the descriptor, one word each.
-        let offset = stage.mul_imm(room.shadow, std::mem::size_of::<usize>() as u64);
-        let bodies = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_table));
-        let body_at = stage.add(bodies, offset);
-        stage.store_u64(at, body_at, 0, body);
-        let descriptors = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.native_table));
-        let descriptor_at = stage.add(descriptors, offset);
-        stage.store_u64(at, descriptor_at, 0, descriptor);
-        // The plain frames: one more header, with the window as the innermost.
-        let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
-        let depth = stage.load_u64(Region::Payload.mutable(), plain, quench_runtime::staged::frame::PLAIN_DEPTH_AT as i32);
-        let depth = stage.add_imm(depth, 1_u64);
-        stage.store_u64(Region::Payload.mutable(), plain, quench_runtime::staged::frame::PLAIN_DEPTH_AT as i32, depth);
-        stage.store_u64(Region::Payload.mutable(), plain, quench_runtime::staged::frame::PLAIN_REGISTERS_AT as i32, window);
-        let count_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_top));
-        let index = stage.add_imm(room.shadow, 1_u64);
-        stage.store_u64(DISPATCH, count_at, 0, index);
-        self.set_values_top(stage, room.next);
+        // The header, the index's entries and the plain frames: the native frame every tier pushes. Its
+        // places load after the header's stores, so their addresses are not live across them.
+        let header = protocol::BodyHeader { call, caller_registers, caller_base, packed, callee: callee_word };
+        let tops = protocol::PayloadTops { payload: self.payload };
+        protocol::push_native_frame(stage, &tops, protocol::NativeFrame { window, header, body, descriptor, index: room.shadow, next: room.next }, |stage| {
+            let bodies = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_table));
+            let descriptors = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.native_table));
+            let plain_at = protocol::LaneWords::plain_at(&tops, stage);
+            let depth = stage.load_u64(Region::Payload.mutable(), plain_at, quench_runtime::staged::frame::PLAIN_DEPTH_AT as i32);
+            protocol::NativePlaces { bodies, descriptors, plain_at, depth }
+        });
     }
 
     /// Pops the callee's native header, where the call began (`Room`): the plain depth drops, the innermost
     /// window becomes the header's caller registers, the body top returns to the index, and the values' top
     /// returns to the window.
     fn pop_native(&self, stage: &mut Emit<'_, '_>, room: Room<ir::Value>) {
-        use quench_runtime::staged::frame::{CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED, NATIVE_FLAG, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
-        let caller = stage.load_u64(Region::Frame.mutable(), room.top, context_at(CONTEXT_CALLER_REGISTERS));
-        let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
-        let depth = stage.load_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32);
-        // Where Rust observed the frame, the activation pops where Rust keeps it (`LaneStack::pop_observed_header`):
-        // a nested entry to emitted code under the callee (`Vm::stack_words_in_lane`) made the header a record
-        // (`LaneStack::spill_plain`), or a helper linked it (`native_frames::link_header`), which cleared its
-        // NATIVE flag and gave it a side record that pops with it.
-        let packed = stage.load_u64(Region::Frame.mutable(), room.top, context_at(CONTEXT_PACKED));
-        let native = stage.builder.ins().band_imm_u(packed, NATIVE_FLAG as i64);
-        let (observed, check_flag, plain_header, popped) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
-        stage.builder.set_cold_block(observed);
-        stage.builder.ins().brif(depth, check_flag, &[], observed, &[]);
-        stage.builder.switch_to_block(check_flag);
-        stage.builder.ins().brif(native, plain_header, &[], observed, &[]);
-        stage.builder.switch_to_block(observed);
-        let helper = self.helpers.target(&mut stage.builder, LaneHelper::PopObservedHeader);
-        emit_lane_helper_call(stage.builder, self.payload, helper, &[]);
-        stage.builder.ins().jump(popped, &[]);
-        stage.builder.switch_to_block(plain_header);
-        let depth = stage.add_imm(depth, u64::MAX);
-        stage.store_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32, depth);
-        stage.store_u64(Region::Payload.mutable(), plain, PLAIN_REGISTERS_AT as i32, caller);
-        stage.builder.ins().jump(popped, &[]);
-        stage.builder.switch_to_block(popped);
-        let count_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_top));
-        stage.store_u64(DISPATCH, count_at, 0, room.shadow);
-        self.set_values_top(stage, room.top);
+        use quench_runtime::staged::protocol;
+        let tops = protocol::PayloadTops { payload: self.payload };
+        protocol::pop_native_frame(stage, &tops, room.top, room.shadow, None, |stage| {
+            let helper = self.helpers.target(&mut stage.builder, LaneHelper::PopObservedHeader);
+            emit_lane_helper_call(stage.builder, self.payload, helper, &[]);
+        });
     }
 }
 
@@ -343,6 +317,7 @@ const fn context_at(index: usize) -> i32 { -((index * std::mem::size_of::<u64>()
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         self.proven_arguments.set(false);
+        self.rebinds.set(false);
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         self.proven_arguments.set(self.arguments_proven(site, callee));
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
@@ -354,6 +329,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
                 let proven = matches!(site.callee, quench_runtime::staged::forms::Callee::Register(register)
                     if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
                 let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
+                // A guarded call of a JIT plan reads the closure it calls and its captures from the bound words, which
+                // its helper call rebinds to another closure of the function (`DirectCallee::bound`).
+                self.rebinds.set(!proven && !self.helpers.links() && !site.constructs() && owned.forwarder.is_none());
+                if self.rebinds.get() { owned.bound.read.set(true); }
                 (identity, owned.sloppy.map(Value::to_bits))
             }
             // The identity and the global are the record's words (`call_identity`, `call_global`): the plan's
@@ -404,7 +383,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_identity(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
             DirectSite::Proven(proven) => Some(self.record_word(stage, proven, std::mem::offset_of!(CallRecord, callee))),
-            DirectSite::Owned(_) => None,
+            DirectSite::Owned(owned) => self.rebinds.get().then(|| self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
         }
     }
 
@@ -437,6 +416,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = match callee {
+            DirectSite::Owned(owned) if self.rebinds.get() => self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, captures)),
             DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
             DirectSite::Proven(proven) => self.record_word(stage, proven, std::mem::offset_of!(CallRecord, captures)),
         };

@@ -345,7 +345,7 @@ impl Vm {
         };
         let roots = roots.unwrap_or_default();
         // The heap values the code names are its roots, which its publication keeps alive.
-        let exits = ExitTable::of_unit(&unit, |_, _| Vec::new());
+        let exits = ExitTable::of_unit(&unit, |_, _| Vec::new(), |_| None);
         let facts = lane_compile::LaneMethodFacts {
             unit, stable: lane_region::StableFacts { roots, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(),

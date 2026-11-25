@@ -983,10 +983,9 @@ pub struct ProtoLink(u32);
 impl ProtoLink {
     pub(crate) const NULL: Self = Self(PROTO_NULL);
 
-    #[quench_macros::test_visible]
     /// The link naming `prototype`, an object or null (`Object::encode_proto`).
     #[inline(always)]
-    pub(crate) fn of(prototype: Value) -> Self {
+    pub fn of(prototype: Value) -> Self {
         Self(Object::encode_proto(prototype))
     }
 

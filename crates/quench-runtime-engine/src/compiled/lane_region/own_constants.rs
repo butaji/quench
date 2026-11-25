@@ -20,7 +20,7 @@ impl Lowering<'_, '_> {
         let &[(atom, _)] = parts.as_slice() else { return None };
         if sink.is_some() { return None; }
         let own = (online.own_constant)(atom)?;
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Shape);
         let bits = self.tagged(state, register);
         let is_object = self.is_identity(bits, own.object);
         emit_js_guard(&mut self.builder, is_object, exit);

@@ -17,6 +17,7 @@ mod config;
 mod conformance;
 mod cparity;
 mod debug;
+mod fallbacks;
 mod ir_budget;
 mod ir_floor;
 mod ir_predict;
@@ -43,11 +44,12 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 14] = [
+const STEPS: [Step; 15] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "known-lists", quick: true, blocking: false, run: known_lists::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
+    Step { name: "fallbacks", quick: false, blocking: false, run: fallbacks::run },
     Step { name: "library", quick: false, blocking: false, run: oracle::run },
     Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },

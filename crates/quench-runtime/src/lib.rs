@@ -42,6 +42,23 @@ pub mod units {
 /// JavaScript property names the runtime and its hosts both spell.
 pub mod property_names {
     pub const LENGTH: &str = "length";
+
+    /// Whether `left` and `right` spell the same text, usable in constant evaluation (where
+    /// `str == str` is not). The one home for const string equality of the runtime and its hosts.
+    pub const fn same_text(left: &str, right: &str) -> bool {
+        let (left, right) = (left.as_bytes(), right.as_bytes());
+        if left.len() != right.len() {
+            return false;
+        }
+        let mut index = 0;
+        while index < left.len() {
+            if left[index] != right[index] {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
 }
 
 pub use vm::value_serializer::DESERIALIZATION_ERROR;
@@ -105,6 +122,7 @@ pub mod number_inputs;
 #[doc(hidden)]
 pub mod profile;
 pub mod trace;
+pub mod fallback;
 pub mod clock;
 #[doc(hidden)]
 pub mod snapshot;
@@ -130,7 +148,7 @@ pub use wasm::{
     WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
     WasmI32Function, WasmImportName, WasmInstance, WasmLazyBody, WasmLazyCode, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
-    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
+    WasmBinding, WasmBindingType, WasmLayout, WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
 };
 
 pub use vm::AheadImages;

@@ -16,7 +16,10 @@ name = "number_primitives"
 required-features = ["bench-primitives"]
 
 [features]
-default = ["jit", "native-execution", "intl", "tzdb", "wasm"]
+default = ["jit", "native-execution", "source", "intl", "tzdb", "wasm"]
+# The front end: parsing and compiling JS/TS source (`Engine::specialize*`). A static image's support
+# build leaves it out, so no parser or compiler is linked; source compilation then refuses.
+source = []
 jit = []
 native-execution = []
 # Intl and Temporal: the runtime core's `Collation` and locale case mapping, and the

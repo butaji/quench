@@ -263,6 +263,9 @@ pub(crate) fn loop_compile_in_lane(
     typed_captures: &[u16],
     int_captures: &[u16],
 ) {
+    if !cfg!(feature = "jit") {
+        return; // no run-time compile without the JIT: the loop stays on its image body or the lane
+    }
     count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
@@ -280,9 +283,13 @@ pub(crate) fn loop_compile_in_lane(
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
     let (native_field_loads, store_loads) = (native_field_loads(machine, own.filter(|_| !base), region), native_store_loads(machine, region));
     let types = entry_types(region, r);
-    // A loop array's base is no entry register of the region: its string is sampled here too.
+    // A loop array's base, or a field read's, is no entry register of the region: its string is sampled here too.
+    let field_bases = region.field_reads().keys().filter_map(|offset| match region.instructions()[*offset as usize].field_lookup() {
+        Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) => base.register_index(),
+        _ => None,
+    });
     let strings: Vec<quench_runtime::bytecode::Register> = region.entry_registers()
-        .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register))
+        .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register)).chain(field_bases)
         .filter(|register| machine.heap_reads().is_string(r.get(*register))).collect();
     // The kind each loop array holds at entry: a typed array's accesses then keep one arm
     // (`ElementViews::Typed`), where a region of mixed kinds would walk every kind per access.

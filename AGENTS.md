@@ -49,7 +49,7 @@ Single homes (add to these; never a second copy):
 - `crates/quench-runtime/src/staged.rs`: object-layout and narrow-value reads, written once
   over the `Stage` trait. `Concrete` runs them in the interpreter, `Emit` generates them as
   Cranelift IR. Tests check that layout decodes outside this file only go down.
-- `vm/compiled/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
+- `vm/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
   compiles.
 - `vm/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
 - Opcode meaning: one staged row per opcode (`staged::step` over `Stage`). The interpreter's

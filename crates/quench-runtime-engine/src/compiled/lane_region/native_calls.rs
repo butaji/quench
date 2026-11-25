@@ -75,11 +75,6 @@ impl Inline {
         matches!(self, Self::Builtin(builtin) if builtin.mutates_arrays())
     }
 
-    /// Whether a loop holds the operation natively: it changes no array, or it appends to one
-    /// and reloads the views the append may move (`Lowering::hoisted_push`).
-    const fn holds_in_loop(self) -> bool {
-        !self.mutates_arrays() || self.appends()
-    }
 
     /// Whether the operation appends a value to an array (`push`).
     const fn appends(self) -> bool {
@@ -104,17 +99,16 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(crate) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a lane body runs a call of `native` inline and a loop holds it natively: the call
-/// changes no array, or appends to one (`holds_in_loop`). A loop whose calls are all such runs
+/// Whether a lane body runs a call of `native` inline, which a loop holds natively (`holds_in_loop`). A loop whose calls are all such runs
 /// natively in a body (`loop_body::offer_body`).
 pub(crate) fn inlines_in_loop(native: Native) -> bool {
-    Inline::of(native).is_some_and(Inline::holds_in_loop)
+    Inline::of(native).is_some()
 }
 
 /// Whether a call of `native` with `count` arguments runs inline in a loop that holds it, the lane's test
-/// of `intrinsic_calls` (`accepts`, `holds_in_loop`) for the region analysis.
+/// of `intrinsic_calls` (`accepts`) for the region analysis.
 pub(crate) fn inlines_in_loop_call(native: Native, count: u16) -> bool {
-    Inline::of(native).is_some_and(|inline| inline.accepts(count) && inline.holds_in_loop())
+    Inline::of(native).is_some_and(|inline| inline.accepts(count))
 }
 
 /// Whether the call at `pc` of `decoded` is a method call of a native that `inlines_in_loop_call` runs in place:
@@ -129,10 +123,12 @@ pub(crate) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], 
     inlines_in_loop_call(native, quench_runtime::bytecode::ImmediateLayout::argument_count(call.imm()))
 }
 
-/// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`): its read
-/// is a slot or a live load that leaves at a miss, and it changes nothing a loop holds.
+/// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`) or folded
+/// to its value: its read is a slot, a live load that leaves at a miss, or none, and it changes nothing a loop holds.
 pub(crate) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {
-    matches!(global_reads.get(&pc), Some(quench_runtime::vm::global_facts::GlobalRead::NativeSlot { .. }))
+    use quench_runtime::vm::global_facts::GlobalRead;
+    // A folded read (a constant, a Stable or frozen cell under its dependency) as `Math` in `Math.imul`.
+    matches!(global_reads.get(&pc), Some(GlobalRead::NativeSlot { .. } | GlobalRead::Constant(_) | GlobalRead::Stable { .. } | GlobalRead::Frozen { .. }))
 }
 
 /// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code
@@ -141,9 +137,15 @@ pub(crate) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| !inline.mutates_arrays())
 }
 
-/// Whether a loop holds the call at `pc` natively (`holds_in_loop`).
+/// Whether a loop holds the call at `pc` natively: it runs inline, and one that changes an array
+/// (`push`, `pop`) reloads the views it may move or shorten (`Lowering::reload_dense_arrays`).
 pub(crate) fn holds_in_loop(intrinsics: &Intrinsics, pc: usize) -> bool {
-    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.holds_in_loop())
+    intrinsics.get(pc).copied().flatten().is_some()
+}
+
+/// Whether the call at `pc` changes an array's length (`push`, `pop`).
+pub(crate) fn resizes(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.mutates_arrays())
 }
 
 /// Whether the call at `pc` appends to an array (`appends`): the array's length may grow.
@@ -214,7 +216,7 @@ impl Lowering<'_, '_> {
             Some(quench_runtime::staged::Receiver::Undefined) => None,
             _ => return false,
         };
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         let held = self.tagged(state, instruction.register_b());
         // An in-place native's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
         if !matches!(inline, Inline::InPlace) {
@@ -335,7 +337,7 @@ impl Lowering<'_, '_> {
             return None;
         }
         let arguments: Vec<ScalarArgument> = (0..argc).map(|index| self.scalar_argument(header, end, pc, window + index)).collect::<Option<_>>()?;
-        let exit = self.guard_exit(state, header as u32);
+        let exit = self.guard_exit_for(state, header as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
         let same = self.is_identity(entry, identity);

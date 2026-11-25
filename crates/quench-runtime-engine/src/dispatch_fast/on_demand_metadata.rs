@@ -63,6 +63,9 @@ fn caller_loops(cx: *mut LaneContext, call: &PendingGeneralCall) -> bool {
 /// `late_call_calls` the body specializes again and a calling loop region's code goes (`LoopTier::late_callee`),
 /// answered true so the call leaves the region. A settled site (`LaneContext::late_settled`) counts no more.
 pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) -> bool {
+    // A loop region's direct call of another closure of the function it plans rebinds to it (`DirectCallee::bound`): the
+    // site's plan stands, so the call counts as no late callee.
+    if crate::compiled::direct_callee::rebind_closure(cx, ip, target, argc) { return false; }
     if unsafe { (*cx).late_settled } == ip { return false; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.

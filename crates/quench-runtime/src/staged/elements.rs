@@ -285,6 +285,25 @@ fn flagged_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word,
     Some(record_backing(stage, record))
 }
 
+/// Proves `base` a direct array (among the array records at `record_base`) of no named property (the
+/// empty shape, as `Heap::alloc_array` makes one) whose prototype's link is `link`, else leaves at
+/// `miss`: a member read by name of it is its prototype's (`GlobalRead::NativeMember`'s `array_link`).
+#[inline(always)]
+pub fn plain_array_of<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, link: u32, miss: S::Miss) -> Option<()> {
+    let is_array = super::value::is_direct_array(stage, base);
+    stage.guard(is_array, miss)?;
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let record = array_record(stage, record_base, base);
+    let object = stage.add_imm(record, crate::heap::NATIVE_ARRAY_LAYOUT.object_offset as u64);
+    let shape = super::object::exact_shape(stage, object);
+    let unnamed = stage.eq_imm(shape, 0u32);
+    stage.guard(unnamed, miss)?;
+    let prototype = super::object::proto_link(stage, object);
+    let linked = stage.eq_imm(prototype, u64::from(link));
+    stage.guard(linked, miss)
+}
+
 /// The record of the direct array `base`, which the caller proved one, among the array records at
 /// `record_base`, which it proved present: the record's address is its index, `base`'s low half,
 /// times the record size past `record_base`.

@@ -444,6 +444,23 @@ fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
     debt
 }
 
+/// `Op::X` and `Class::X` count per file and name (`op:X`, `Class:X`), so a tier file that names an
+/// opcode or a family is debt like a lane handler; a path into `Op` that is no opcode (`Op::COUNT`)
+/// and a longer name ending in `Op::` (`WordOp::Add`) are not. The tree holds none today: these
+/// tokens are absent from `derivation_debt.txt`, so a first one fails.
+#[test]
+fn opcode_and_family_names_count_per_file() {
+    let words = vocabulary();
+    let op = words.opcodes.iter().next().unwrap();
+    let class = words.classes.iter().next().unwrap();
+    let code = format!("fn f() {{ a == Op::{op} || b == Op::{op} || c == Class::{class} || Op::COUNT == 0 || WordOp::{op} == d }}");
+    let mut debt = std::collections::BTreeMap::new();
+    count_decisions(&code, "tier.rs", &words, &mut debt);
+    assert_eq!(debt.get(&("tier.rs".to_owned(), format!("op:{op}"))), Some(&2));
+    assert_eq!(debt.get(&("tier.rs".to_owned(), format!("Class:{class}"))), Some(&1));
+    assert_eq!(debt.len(), 2, "{debt:?}");
+}
+
 const DEBT_FILE: &str = include_str!("../../src/staged/derivation_debt.txt");
 
 fn render_debt(debt: &std::collections::BTreeMap<(String, String), usize>) -> String {

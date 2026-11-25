@@ -1161,18 +1161,6 @@ impl Vm {
         self.equal(&program, left, right)
     }
 
-    pub(crate) fn evaluate_embedding_script(
-        &mut self,
-        source: &str,
-        name: &str,
-    ) -> Result<Value, JsError> {
-        let program = self.embedding_program()?;
-        let previous = std::mem::replace(&mut self.direct_eval, false);
-        let result = self.eval_host_script(&program, source, name);
-        self.direct_eval = previous;
-        result
-    }
-
     /// Creates and initializes the active realm's mutable global lexical binding `name`, as
     /// a Script's top-level `let name = value` does; an existing one is a SyntaxError.
     pub(crate) fn define_embedding_global_lexical(&mut self, name: &str, root: RootId) -> Result<(), JsError> {

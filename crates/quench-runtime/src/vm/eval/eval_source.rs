@@ -140,18 +140,6 @@ impl Vm {
         Ok(CallerFacts { context, private_names, annex_b_forbidden_names, key })
     }
 
-    /// The host's kept compilation of the script `source`, which compiles from its text alone:
-    /// it is no direct eval, so it has no caller context, private names or Annex B restrictions.
-    pub(super) fn kept_host_script(&mut self, source_name: &str, mode: &str, source: &str) -> Option<ResidualProgram> {
-        let entry = self.host.kept_compiled_program(source_name, &[mode, source])?;
-        // An entry that keeps its source (`append_kept_source`) is read in place, as a
-        // compiled host script's is; any other holds none, and the program keeps one copy.
-        let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
-            .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
-        let specialized = self.specialized;
-        self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
-    }
-
     /// The caller identity the eval's program is installed with.
     pub(super) fn eval_caller_identity(&mut self, p: &ResidualProgram) -> Result<EvalCaller, JsError> {
         Ok(EvalCaller { origin: self.capture_eval_origin(p)?, script_or_module: self.active_script_or_module(p) })

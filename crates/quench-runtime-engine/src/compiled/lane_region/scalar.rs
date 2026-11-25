@@ -284,7 +284,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn enter_numeric_parameters(&mut self, state: &mut State, pc: usize, parameters: &[ir::Value]) {
         let Completion::Scalar(abi) = self.completion else {
             for register in 0..self.params as Register {
-                let miss = self.guard_exit(state, pc as u32);
+                let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
                 self.number(state, register, miss);
             }
             return;
@@ -302,7 +302,7 @@ impl Lowering<'_, '_> {
         let limit = self.raw_load(Lane::I64, super::super::invariant(), self.context, super::super::CONTEXT_STACK_LIMIT);
         let stack = emit(&mut self.builder).stack_pointer();
         let room = self.raw_compare(Relation::UnsignedGreaterEqual, stack, limit);
-        let miss = self.guard_exit(state, pc as u32);
+        let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         super::super::emit_js_guard(&mut self.builder, room, miss);
     }
 
@@ -331,7 +331,7 @@ impl Lowering<'_, '_> {
         let abi = self.scalar_abi().expect("an admitted scalar call has its entry");
         let callee = self.scalar_target(pc).expect("an admitted scalar call has its callee");
         let (cell, captures) = (callee.cell, callee.capture_word());
-        let miss = self.guard_exit(state, pc as u32);
+        let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let mut arguments = smallvec::SmallVec::<[ir::Value; ARGUMENT_WORDS]>::new();
         arguments.push(self.context);
@@ -387,7 +387,7 @@ impl Lowering<'_, '_> {
         slots.dedup();
         if slots.is_empty() { return; }
         let (values, len) = self.entry_capture_slots();
-        let miss = self.guard_exit(state, pc as u32);
+        let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         for slot in slots {
             let address = quench_runtime::staged::environment::slot_address(&mut emit(&mut self.builder), values, len, slot, miss)
                 .expect("the emit stage continues past its guards");
@@ -400,7 +400,7 @@ impl Lowering<'_, '_> {
     /// callee, which the register then holds as a constant. A closure the binding names otherwise leaves the entry to the generic call.
     fn scalar_callee_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let callee = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call").callee;
-        let miss = self.guard_exit(state, pc as u32);
+        let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let loaded = match self.completion {
             Completion::Scalar(_) => {
                 let address = self.callee_slots.iter().find(|(slot, _)| *slot == instruction.capture_slot()).map(|(_, address)| *address)
@@ -425,7 +425,7 @@ impl Lowering<'_, '_> {
             self.valid = false;
             return true;
         };
-        let proof = super::EmitProof::GlobalRead { miss: None, binding: GlobalBinding::Held { value, ty } };
+        let proof = super::EmitProof::GlobalRead { miss: None, binding: GlobalBinding::Held { value, ty }, slot: None };
         let row = Operation::decode_load_name(instruction, proof).expect("a global read is a name read");
         self.step(state, frame::Edges::Value, row);
         true

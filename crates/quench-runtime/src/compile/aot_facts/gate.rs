@@ -28,6 +28,10 @@ pub(super) fn closed_world(program: &ResidualProgram) -> bool {
         ProgramKind::Eval | ProgramKind::Wasm => return false,
     };
     let imports = program.atoms.iter().any(|name| name == DYNAMIC_IMPORT);
+    // Without the front end nothing reads the source: no program is proved closed.
+    if !cfg!(feature = "source") {
+        return false;
+    }
     !imports
         && program
             .source

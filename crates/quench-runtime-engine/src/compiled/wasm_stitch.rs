@@ -409,6 +409,13 @@ pub(crate) use quench_runtime::vm::engine_types::World;
 pub(crate) use quench_runtime::vm::engine_types::IndirectSite;
 
 pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
+    stitch_naming(function, params, returns, world, &|_| false).map(|(code, _)| code)
+}
+
+/// `stitch`, with the code offset and hole value of every absolute word whose value `symbolic` names (an
+/// image's symbol, which its World gave as that value): the words a loader fills (`aot_image::wasm`).
+pub(crate) fn stitch_naming(function: &Function, params: usize, returns: bool, world: &World<'_>, symbolic: &dyn Fn(u64) -> bool)
+    -> Option<(Vec<u8>, Vec<(usize, u64)>)> {
     let instructions: Vec<WideInstruction> =
         function.code.iter().map(|packed| function.widened(*packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
@@ -467,8 +474,12 @@ pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &
     let entry = entry_stencil(params, rest)?;
     let entry_holes = padded_holes([wasm_stitch_simd::frame_bytes(function.registers, vectors), params as u64, rest, slot(first_parameter)]);
     // Every row's exit is the trap leave, the routine behind the entry.
-    let (code, _, _) = stitcher::stitch_behind((&entry, &entry_holes), &[&trap], &placed, Behind::Routine(0)).ok()?;
-    Some(code)
+    let (code, routines, _) = stitcher::stitch_behind((&entry, &entry_holes), &[&trap], &placed, Behind::Routine(0)).ok()?;
+    // The rows follow the entry and the trap routine (`stitch_behind`).
+    let rows_at = routines.last().map_or(entry.code.len(), |at| at + trap.code.len());
+    let named = quench_bjit::absolute_symbolic_fields(&placed, |row, hole| flat[row].holes.get(hole as usize).is_some_and(|value| symbolic(*value)))?;
+    let named = named.into_iter().map(|field| (rows_at + field.offset, flat[field.row].holes[field.hole as usize])).collect();
+    Some((code, named))
 }
 
 /// The index of the row `target` is, a row target already being one (`stitch`).

@@ -74,7 +74,7 @@ impl Dataflow for Solver<'_> {
     }
 
     fn entry_state(&self, block: usize) -> Option<Vec<Fact>> {
-        (block == 0).then(|| vec![Fact::Unknown; self.ctx.registers])
+        (block == 0).then(|| vec![Fact::UNKNOWN; self.ctx.registers])
     }
 
     fn join(&self, into: &mut Vec<Fact>, incoming: &Vec<Fact>) -> bool {
@@ -98,7 +98,7 @@ impl Dataflow for Solver<'_> {
     /// An exception edge may leave the block before any of its writes, so it carries no fact.
     fn transfer_edge_at(&self, block: usize, index: usize, out: &Vec<Fact>) -> Vec<Fact> {
         match self.blocks.kinds[block][index] {
-            ControlEdge::Handler => vec![Fact::Unknown; out.len()],
+            ControlEdge::Handler => vec![Fact::UNKNOWN; out.len()],
             ControlEdge::Normal => out.clone(),
         }
     }

@@ -4419,6 +4419,114 @@ static double NOINL op_v_weakmap_get(long n) {
   return s;
 }
 
+/* ---------------- S1.17 (TOD-2193): the C twins of staged rows no kernel isolated ---------------- */
+
+/* NumberOperation::BitwiseNot: int32 ~ */
+static double NOINL op_bit_not(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a = ~(a ^ i); }
+  return a;
+}
+
+/* number::SUB_NO_OVERFLOW: the exact subtraction int_add_noor's add is */
+static double NOINL op_int_sub_noor(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a = a - (double)(i & 7); }
+  return a;
+}
+
+static double NOINL op_math_ceil(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a += ceil((double)i * 0.37); }
+  return a;
+}
+
+static double NOINL op_math_trunc(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a += trunc((double)i * 0.37 - 500.0); }
+  return a;
+}
+
+static double NOINL op_math_fround(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a += (double)(float)((double)i * 0.37); }
+  return a;
+}
+
+static double NOINL op_math_sign(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double x = (double)i - 500.0;
+    a += x > 0 ? 1.0 : (x < 0 ? -1.0 : x);
+  }
+  return a;
+}
+
+static double NOINL op_math_clz32(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    uint32_t x = (uint32_t)i;
+    a = (int32_t)((uint32_t)a + (uint32_t)(x ? __builtin_clz(x) : 32));
+  }
+  return a;
+}
+
+/* Int32Array(256).length: the length is the array's, read each iteration */
+static double NOINL op_typed_length(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  int32_t t[256];
+  int32_t tlen = (int32_t)(sizeof t / sizeof t[0]);
+  ESCAPE(t);
+  OPAQUE_I(tlen);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a += (double)tlen; }
+  return a;
+}
+
+/* block-scoped lets declared, initialized and read in each iteration: plain C locals */
+static double NOINL op_v_let_block(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t t = i & 7;
+    int32_t u = (int32_t)((uint32_t)t + 1u);
+    a = (int32_t)((uint32_t)a + (uint32_t)u);
+  }
+  return a;
+}
+
+/* a global variable (the global object's slot) read and written each iteration: a C global */
+static int32_t v_global_var_G;
+static double NOINL op_v_global_var(long n) {
+  int32_t N = (int32_t)n;
+  v_global_var_G = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); v_global_var_G = (int32_t)((uint32_t)v_global_var_G + (uint32_t)i); }
+  return v_global_var_G;
+}
+
+/* ---- v_obj_add ---- */
+struct v_add2 { int32_t a, b; };
+/* equiv: an empty object per iteration, bump-allocated from the arena, then two fields added by store */
+static double NOINL op_v_obj_add(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    v_arena_top = 0;
+    struct v_add2 *o = v_arena_alloc(sizeof *o);
+    o->a = i;
+    o->b = (int32_t)((uint32_t)i + 1u);
+    s = (int32_t)((uint32_t)s + (uint32_t)o->a + (uint32_t)o->b);
+  }
+  return s;
+}
+
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
   {"call_closure", op_call_closure}, {"call_rest", op_call_rest}, {"call_spread", op_call_spread}, {"call_rest_forward", op_call_rest_forward}, {"call_method", op_call_method},
@@ -4605,6 +4713,9 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"v_bigint_add", op_v_bigint_add}, {"v_int53_arith", op_v_int53_arith}, {"v_dataview_get", op_v_dataview_get},
   {"v_unipoker_rank", op_v_unipoker_rank}, {"v_basic_interp", op_v_basic_interp}, {"v_air_regalloc_like", op_v_air_regalloc_like},
   {"v_ml_dot_sigmoid", op_v_ml_dot_sigmoid}, {"v_weakmap_get", op_v_weakmap_get},
+  {"bit_not", op_bit_not}, {"int_sub_noor", op_int_sub_noor}, {"math_ceil", op_math_ceil}, {"math_trunc", op_math_trunc},
+  {"math_fround", op_math_fround}, {"math_sign", op_math_sign}, {"math_clz32", op_math_clz32}, {"typed_length", op_typed_length},
+  {"v_let_block", op_v_let_block}, {"v_global_var", op_v_global_var}, {"v_obj_add", op_v_obj_add},
 };
 
 int main(int argc, char **argv) {

@@ -12,6 +12,7 @@
 //! flag is stated once, in its row.
 
 use crate::heap::Native;
+use crate::property_names::same_text;
 
 /// The object whose own property a row's function is.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -308,22 +309,6 @@ pub(super) const STRING_METHODS: &[(&str, Native, f64)] = &STRING_PROTOTYPE_ROWS
 /// `Math`'s functions, in installation order.
 pub(super) const MATH_FUNCTIONS: &[(&str, Native)] = &MATH_ROWS;
 
-/// Whether `left` and `right` spell the same text.
-const fn same_name(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut index = 0;
-    while index < left.len() {
-        if left[index] != right[index] {
-            return false;
-        }
-        index += 1;
-    }
-    true
-}
-
 /// Each native's row flags by discriminant: the union of the flags of the rows that name it.
 const NATIVE_FLAGS: [u8; Native::COUNT as usize] = {
     let mut flags = [0; Native::COUNT as usize];
@@ -368,7 +353,7 @@ const _: () = {
                     resolved_length(other) == resolved_length(row) && other.flags == row.flags,
                     "alias rows disagree on length or flags"
                 );
-                assert!(same_name(other.name, row.name), "alias rows disagree on name");
+                assert!(same_text(other.name, row.name), "alias rows disagree on name");
             }
             later += 1;
         }

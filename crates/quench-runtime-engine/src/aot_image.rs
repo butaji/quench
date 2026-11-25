@@ -35,6 +35,8 @@ pub(crate) mod live;
 pub(crate) mod file;
 #[path = "aot_image/page.rs"]
 mod page;
+#[path = "aot_image/demand.rs"]
+pub(crate) mod demand;
 
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;
@@ -76,7 +78,18 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         let leaves: usize = functions.iter().map(|function| function.base.generic_rows()).sum();
         eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body; base bodies leave at {leaves} records", program.source_name, functions.len());
     }
-    let symbols::Finished { shapes, heap_values, atoms, labels, calls } = symbols.finish();
+    let image = assemble(program, functions, symbols.finish(), &sites)?;
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
+    }
+    Ok(image)
+}
+
+/// The image of `program`: its `functions`, with what their bodies name (`symbols`), each named call
+/// record resolved to the call site a base body planned (`sites`). The one assembly every lowering ends in.
+fn assemble(program: &ResidualProgram, functions: Vec<AotFunction>, symbols: symbols::Finished, sites: &std::collections::BTreeMap<(u32, u32), CallSite>)
+    -> Result<AotImage, String> {
+    let symbols::Finished { shapes, heap_values, atoms, labels, calls } = symbols;
     let calls = calls.into_iter().map(|site| sites.get(&site).copied().ok_or("a body names a call record no base body planned"))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(AotImage {
@@ -88,7 +101,48 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         atoms,
         labels,
         calls,
+        wasm: None,
     })
+}
+
+/// The image of Wasm program `id`, every function planned from the module's binding types `bindings`: each
+/// function's stitched rows (`compiled::wasm_image`, `AotImage::wasm`), which the instance's Wasm tier links
+/// in place of stitching (`compiled::wasm_image::linked`); its base body is empty, every record generic.
+pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::ProgramId, program: &ResidualProgram,
+    bindings: &[quench_runtime::WasmBindingType]) -> Result<AotImage, String> {
+    let mut symbols = symbols::SymbolTable::new(program);
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    let wasm = {
+        use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
+        let (memory_slot, rows) = crate::compiled::wasm_image::rows(vm, id, program, bindings);
+        if quench_runtime::trace::Channel::AotLanes.on() {
+            let (stitched, named) = (rows.iter().flatten().count(), rows.iter().flatten().map(|rows| rows.symbols.len()).sum::<usize>());
+            eprintln!("aot-lanes: {} wasm: {stitched} of {} functions stitch, naming {named} symbols", program.source_name, rows.len());
+        }
+        let functions = rows.into_iter().map(|rows| rows.map(|rows| {
+            let relocations = rows.symbols.iter().map(|&(offset, symbol)| {
+                let (namespace, key) = symbols.intern(symbol);
+                Relocation { offset, kind: cranelift_codegen::binemit::Reloc::Abs8, namespace, key, addend: 0 }
+            }).collect();
+            RelocatableCode { code: rows.code.into(), relocations }
+        })).collect();
+        Some(quench_runtime::vm::engine_types::WasmRows { memory_slot, functions })
+    };
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let wasm = { let _ = (vm, id, bindings); None };
+    // The interpreter runs every record of a function the instance's tier did not link rows for.
+    let functions = (0..program.function_count() as u32).map(|function| {
+        let records = program.function(function as usize).instructions().count() as u32;
+        let code = quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode { code: Box::default(), relocations: Box::default() };
+        let base = base::BaseImage { code, pc_offsets: vec![base::NO_ENTRY; records as usize].into(), generic: (0..records).collect(), scratch: 0 };
+        AotFunction { id: function, base, lane: None }
+    }).collect();
+    let mut image = assemble(program, functions, symbols.finish(), &std::collections::BTreeMap::new())?;
+    image.wasm = wasm;
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
+    }
+    Ok(image)
 }
 
 /// One function: its base body always, its lane body where it lowers native records, the

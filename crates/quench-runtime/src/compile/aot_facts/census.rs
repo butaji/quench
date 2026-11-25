@@ -2,7 +2,7 @@
 //! names.
 
 use super::flow::FunctionFlow;
-use super::value::{Fact, Key};
+use super::value::{Fact, Key, Origin};
 use std::collections::BTreeMap;
 
 /// Every binding write of the program, counted.
@@ -32,7 +32,7 @@ impl Census {
         let mut members: BTreeMap<u32, Option<u32>> = BTreeMap::new();
         let mut members_on: BTreeMap<(u32, bool, u32), Option<u32>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
-            let stored = match fact { Fact::Closure(function) => Some(function), _ => None };
+            let stored = fact.ty.body_index();
             match key {
                 Key::Member(atom) => {
                     let entry = members.entry(atom).or_insert(stored);
@@ -65,7 +65,7 @@ impl Census {
             Key::MemberOn { .. } => return None,
         };
         match self.writes.get(&key) {
-            Some(&(1, Fact::Closure(function))) if !wild => Some(function),
+            Some(&(1, fact)) if !wild => fact.ty.body_index(),
             _ => None,
         }
     }
@@ -73,21 +73,23 @@ impl Census {
     /// Every binding the census proves holds one closure, which the second flow pass resolves.
     pub(super) fn singles(&self) -> BTreeMap<Key, u32> {
         self.writes.iter().filter_map(|(&key, &(count, fact))| {
-            let Fact::Closure(function) = fact else { return None };
+            let Some(function) = fact.ty.body_index() else { return None };
             (count == 1 && self.single(key) == Some(function)).then_some((key, function))
         }).collect()
     }
 
     /// The function a callee fact names: a closure, or the single closure of a binding.
     pub(super) fn target(&self, callee: Fact) -> Option<u32> {
-        match callee {
-            Fact::Closure(function) => Some(function),
-            Fact::Binding(key) => self.single(key),
+        if let Some(function) = callee.ty.body_index() {
+            return Some(function);
+        }
+        match callee.origin? {
+            Origin::Binding(key) => self.single(key),
             // A method read: the one closure every store of its name writes. The call's record still guards the
             // callee it reaches (a builtin's property of that name, a closure made again, a store through a computed
             // key, `member_wild`), so the proof only picks the callee its direct row tries first.
-            Fact::Member(atom) => self.members.get(&atom).copied().flatten(),
-            Fact::MemberOn { class, instance, atom } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
+            Origin::Member(atom) => self.members.get(&atom).copied().flatten(),
+            Origin::MemberOn { class, instance, atom } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
             _ => None,
         }
     }

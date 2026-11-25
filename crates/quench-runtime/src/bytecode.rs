@@ -2404,14 +2404,8 @@ impl Function {
         if has_legacy_environment_access {
             return Some(PlainLocalContextIneligibility::LegacyCaptureLayout);
         }
-        let has_dynamic_name_resolution = self.code.iter().any(|instruction| {
-            instruction.op() == Op::ResolveName
-                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
-        }) || self.wide.iter().any(|instruction| {
-            instruction.op() == Op::ResolveName
-                || instruction.op().is_call_with_eval_flags()
-                    && ImmediateLayout::direct_eval(instruction.imm())
-        });
+        let has_dynamic_name_resolution = self.code.iter().any(|instruction| self.widened(*instruction).resolves_dynamic_scope())
+            || self.wide.iter().any(|instruction| instruction.resolves_dynamic_scope());
         has_dynamic_name_resolution.then_some(PlainLocalContextIneligibility::DynamicNameResolution)
     }
 

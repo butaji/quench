@@ -46,6 +46,8 @@ pub struct StableCell {
     pub fact: GlobalFact,
     pub global: Value,
     pub realm_offset: i32,
+    /// The value the cell held when the code was compiled: code that holds no cell compares a live read with it.
+    pub value: Value,
 }
 
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
@@ -77,7 +79,9 @@ pub enum GlobalRead {
     /// `folds` where the receiver is that global, so the read itself may fold to the value; a
     /// method read by name off an unknown receiver (`x.push`) only names the call's candidate,
     /// and the read still runs: the receiver may hold its own member of that name.
-    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool, cell: Option<StableCell> },
+    /// `array_link`, for a member of `Array.prototype` (`a.push`), is that prototype's link: the read folds
+    /// where its receiver is a direct array of no named property whose prototype is it (`elements::plain_array_of`).
+    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool, cell: Option<StableCell>, array_link: Option<u32> },
     /// A `Slot` read (the b-jit's) of a global name whose function is the native `native` (`parseInt`) when the body was
     /// compiled, held by the global object's watched exact shape `holder` (`NativeMember`'s code dependency). The read is the
     /// slot's; a call of the register it defines guards the function's identity (`base_region::function::native_call`).
@@ -189,7 +193,10 @@ impl Vm {
         if !self.global_name_hintable(atom) { return None; }
         let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
         let table = self.heap.object_mut(globals).map(crate::heap::Object::global_values_table)?;
-        let held = crate::heap::global_value_fact(table, GlobalCell::Slot(u32::from(hint.slot))).is_some();
+        let cell = GlobalCell::Slot(u32::from(hint.slot));
+        // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
+        while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
+        let held = crate::heap::global_value_fact(table, cell).is_some();
         let inherited = self.heap.object(globals)?.was_used_as_prototype();
         if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
         let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));

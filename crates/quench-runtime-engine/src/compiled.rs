@@ -110,9 +110,10 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
+pub(crate) mod fallback_sites;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
-pub(crate) use exit_protocol::{ExitTable, RegionRun};
+pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
 pub(crate) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
 pub(crate) use lane_compile::FactTables;
@@ -193,6 +194,11 @@ pub(crate) mod stitcher;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;
 pub(crate) mod wasm_specializer;
+// An AOT image's Wasm functions: their stitched rows, planned from the module's declarations.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) mod wasm_image;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) mod wasm_world;
 use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
@@ -465,7 +471,7 @@ pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding, slot: Option<(quench_runtime::vm::global_facts::GlobalSlot, quench_runtime::staged::ShapeFact)> }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -1009,9 +1015,11 @@ macro_rules! lane_helper_inventory {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
-            const COUNT: usize = [$(stringify!($name)),+].len();
+            pub(crate) const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
             const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
+            /// The name of helper number `index` (`Symbol::Helper`), as an image's demand lists it.
+            pub(crate) fn name(index: usize) -> Option<&'static str> { Self::NAMES.get(index).copied() }
             pub(crate) fn addresses() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
@@ -1029,8 +1037,8 @@ macro_rules! lane_helper_inventory {
         /// jump to the helper, so a call through it is the helper's own (every register and the
         /// stack as the caller left them). These are the symbols an ahead image's object imports
         /// (`aot_image::object`, `lane_helper_symbol`). An executable's export macro instantiates
-        /// this once (`export_native_js_operations!`); the trampolines lie in their own section,
-        /// so the function itself runs nothing.
+        /// this once (`export_native_js_operations!`); each trampoline lies in a section of its own,
+        /// so the function itself runs nothing and the linker keeps only the ones an image names.
         #[doc(hidden)]
         #[inline(never)]
         // The labels are the exported symbols themselves, defined once: the one instantiation is
@@ -1041,9 +1049,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: the template only lays out code in another section; it runs no instruction here.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -1052,9 +1058,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: as above.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -2718,98 +2722,43 @@ enum CompiledArgs<'a> {
 }
 
 /// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
-/// for every instruction: the `WasmEntry` ABI the compiled entry has.
+/// for every instruction: the `WasmEntry` ABI the compiled entry has. Its World is the shared one
+/// (`Analysis::with_world`), naming this process's cells and callouts.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn stitched_entry(
-    vm: &Vm,
-    program: ProgramId,
-    code: &quench_runtime::bytecode::ResidualProgram,
+    analysis: &Analysis<'_>,
     index: usize,
-    (plans, cells, callable, grows_memory): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool], &quench_runtime::bitset::BitSet),
+    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
     memory_slot: Option<u32>,
-    (full_plan, sites, env): (&Plan, &[(usize, usize)], Value),
+    (full_plan, sites): (&Plan, &[(usize, usize)]),
 ) -> Option<Vec<u8>> {
+    let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
     // The indirect call row calls the non-diagnostic reference callout.
     if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
         return None;
     }
-    let function = code.function_get(index)?;
-    let constant = |at: usize| {
-        let value = vm.programs.constant(program, at)?;
-        if vm.heap_reads().v128(value).is_some() {
-            return None;
-        }
-        Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
-    };
+    // The program's image may hold the rows already (`wasm_image::linked`).
+    if let Some(rows) = wasm_image::linked(analysis, index, memory_slot, (cells, callable)) {
+        return Some(rows);
+    }
+    let function = analysis.code.function_get(index)?;
     // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
     // the cell holds the entry once placed. A callee that is not callable is called through the
     // VM (`CALL_VM`), so its callers stitch all the same.
     let callee = |callee: usize| callable.get(callee).copied()?.then(|| cells[callee].as_ptr() as u64);
-    // A global access names its environment slot in the full plan; the row reads the cell from
-    // the context, since a program's code serves every instance.
-    let global = |pc: usize| -> Option<(u32, quench_runtime::staged::wasm_instance::Storage)> {
-        if !full_plan.reachable(pc) {
-            return None;
-        }
-        let Slot::Binding(slot) = full_plan.operand(pc) else { return None };
-        let binding = vm.heap_reads().environment_slot(env, slot as usize)?;
-        let Some(Cell::WasmGlobal { ty, .. }) = vm.heap_reads().get(binding) else { return None };
-        Some((slot, quench_runtime::staged::wasm_instance::Storage::of(*ty)))
-    };
     let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
     let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
-    let vector_constant = |at: usize| vm.heap_reads().v128(vm.programs.constant(program, at)?);
-    let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
     // A growth leaves the base in place only for a reserved (guarded) memory.
     let memory_stable = memory_slot.is_none_or(|slot| {
         vm.heap_reads().environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
     });
-    // A table or segment operation names its bindings in the full plan, as the u-jit reads them.
-    let table_bindings = |pc: usize| -> Option<(Option<u32>, Option<u32>)> {
-        if !full_plan.reachable(pc) {
-            return None;
-        }
-        let first = match full_plan.operand(pc) {
-            Slot::Binding(slot) => Some(slot),
-            _ => None,
-        };
-        let second = match full_plan.seconds[pc] {
-            Some(Slot::Binding(slot)) => Some(slot),
-            _ => None,
-        };
-        Some((first, second))
-    };
-    // A call holds the reference registers its state names (`wasm_roots`), and an allocating step
-    // reads the operands its plan gives their kinds (`wasm_gc_allocate`).
-    let references = |pc: usize| -> Vec<u16> { full_plan.references.get(pc).cloned().unwrap_or_default() };
-    let gc_reads = |pc: usize| -> Vec<(u16, u64)> {
-        full_plan.gc_reads.get(pc).map_or_else(Vec::new, |reads| reads.iter().map(|(register, kind)| (*register, *kind as u64)).collect())
-    };
-    let world = wasm_stitch::World {
-        constant: &constant,
-        memory_slot,
-        memory_stable,
-        callee: &callee,
-        grows_memory,
-        vm_call: wasm_call_vm::vm_call_callout as *const () as u64,
-        global: &global,
-        globals_offset: CONTEXT_GLOBALS as u64,
-        indirect: &indirect,
-        table_callout: wasm_table_ops_stage::table_op_callout as *const () as u64,
-        gc_callout: wasm_gc_callout::wasm_gc_callout as *const () as u64,
-        allocate_callout: wasm_gc_allocate::allocate_frame as *const () as u64,
-        references: &references,
-        gc_reads: &gc_reads,
-        table_bindings: &table_bindings,
-        registers: function.registers,
-        vector_constant: &vector_constant,
-        vector_move: &vector_move,
-    };
-    wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
+    let naming = wasm_world::Naming { constant: &|_| true, callee: &callee, indirect: &indirect, memory_stable, callouts: wasm_world::Callouts::live() };
+    let returns = plans[index].as_ref()?.result.is_some();
+    analysis.with_world(function, full_plan, memory_slot, naming, |world| wasm_stitch::stitch(function, usize::from(function.params), returns, world))
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn stitched_entry(_: &Vm, _: ProgramId, _: &quench_runtime::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool], &quench_runtime::bitset::BitSet), _: Option<u32>, _: (&Plan, &[(usize, usize)], Value)) -> Option<Vec<u8>> {
+fn stitched_entry(_: &Analysis<'_>, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)])) -> Option<Vec<u8>> {
     None
 }
 
@@ -3171,6 +3120,9 @@ impl CompiledOsrRegion {
         // (`dense`), so an entry refills it in place.
         let mut captures = self.dense.take();
         let parked = self.parked.take().filter(|_| self.crossing == Crossing::General);
+        // The region's calls, named to the lane's helpers for the run (`rebind_region_call`).
+        // SAFETY: `lane_context` is the running lane's.
+        let outer_calls = unsafe { std::mem::replace(&mut (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls, std::ptr::from_ref(&self.calls).addr()) };
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe {
             match parked {
@@ -3222,6 +3174,8 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
+        // SAFETY: as above.
+        unsafe { (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls = outer_calls };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -4237,7 +4191,7 @@ impl JsStepDispatch {
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
             typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
             outcome: None,
         }
@@ -4269,7 +4223,7 @@ impl JsStepDispatch {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
-        if self.vm == (vm as *const Vm).addr() && self.layout_seen == layout
+        if self.bases_vm == (vm as *const Vm).addr() && self.layout_seen == layout
             && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
             && self.store_watch == vm.heap_reads().store_watch_word()
@@ -4280,7 +4234,7 @@ impl JsStepDispatch {
             return;
         }
         self.reread_object_bases(vm);
-        self.layout_seen = layout;
+        (self.layout_seen, self.bases_vm) = (layout, (vm as *const Vm).addr());
     }
 
     #[cold]
@@ -5231,6 +5185,20 @@ struct Analysis<'a> {
     /// The defined functions that may grow the memory (`wasm_growth`); empty until the module's
     /// memory is known, and a function past its bound is taken to grow it.
     grows_memory: quench_runtime::bitset::BitSet,
+    /// The module's binding types by environment slot where the plan has no instance (an image's), which
+    /// the plan then reads in place of `env`'s cells (`binding`).
+    declared: Option<&'a [quench_runtime::WasmBindingType]>,
+}
+
+impl<'a> Analysis<'a> {
+    /// The plan of program `program` (`code`) over the instance environment `env`: callouts compile, no
+    /// root experiment, no diagnostics, no unrolling, growth unknown, bindings read from `env`.
+    fn new(vm: &'a Vm, program: ProgramId, code: &'a ResidualProgram, env: Value) -> Self {
+        Self {
+            vm, program, code, env, callouts: true, experimental_root_compilation: false, root_only: false,
+            compile_rejections: None, unrolls: false, grows_memory: quench_runtime::bitset::BitSet::default(), declared: None,
+        }
+    }
 }
 
 impl Analysis<'_> {
@@ -5324,50 +5292,39 @@ impl Analysis<'_> {
         }
     }
 
+    /// What environment slot `slot` binds: the module's declared type where the plan has no instance
+    /// (`declared`, an image's), else the instance's cell.
+    fn binding(&self, slot: u32) -> quench_runtime::WasmBindingType {
+        use quench_runtime::WasmBindingType as Binding;
+        if let Some(declared) = self.declared { return declared.get(slot as usize).copied().unwrap_or(Binding::Other); }
+        let heap = self.vm.heap_reads();
+        match heap.environment_slot(self.env, slot as usize).and_then(|binding| heap.get(binding)) {
+            Some(Cell::WasmGlobal { ty, .. }) => Binding::Global(*ty),
+            Some(Cell::WasmMemory { bytes, header, .. }) => Binding::Memory { ty: header.ty, direct: bytes.is_direct() },
+            Some(Cell::WasmTable { table64, .. }) => Binding::Table { table64: *table64 },
+            _ => Binding::Other,
+        }
+    }
+
     /// The type of the global bound at environment slot `slot`.
     fn global_type(&self, slot: u32) -> Option<quench_runtime::WasmType> {
-        let binding = self.vm.heap_reads().environment_slot(self.env, slot as usize)?;
-        match self.vm.heap_reads().get(binding)? {
-            Cell::WasmGlobal { ty, .. } => Some(*ty),
-            _ => None,
-        }
+        match self.binding(slot) { quench_runtime::WasmBindingType::Global(ty) => Some(ty), _ => None }
     }
 
     /// Whether `slot` binds a memory compiled code can view (`MemoryStorage::is_direct`).
     fn binds_direct_memory(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
-            return false;
-        };
-        matches!(
-            self.vm.heap_reads().get(binding),
-            Some(Cell::WasmMemory { bytes, .. }) if bytes.is_direct()
-        )
+        matches!(self.binding(slot), quench_runtime::WasmBindingType::Memory { direct: true, .. })
     }
 
     /// Whether a bound memory has the representation supported by native
     /// linear-memory operations: direct memory32 with ordinary Wasm pages.
     fn supports_compiled_memory(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
-            return false;
-        };
-        matches!(
-            self.vm.heap_reads().get(binding),
-            Some(Cell::WasmMemory { bytes, header, .. })
-                if bytes.is_direct()
-                    && !header.ty.memory64
-                    && header.ty.page_size() as usize
-                        == (1usize << quench_runtime::wasm::memory::WASM_PAGE_BITS)
-        )
+        matches!(self.binding(slot), quench_runtime::WasmBindingType::Memory { ty, direct: true }
+            if !ty.memory64 && ty.page_size() as usize == (1usize << quench_runtime::wasm::memory::WASM_PAGE_BITS))
     }
 
     fn binds_table32(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
-            return false;
-        };
-        matches!(
-            self.vm.heap_reads().get(binding),
-            Some(Cell::WasmTable { table64: false, .. })
-        )
+        matches!(self.binding(slot), quench_runtime::WasmBindingType::Table { table64: false })
     }
 
     fn signature(&self, index: u32) -> Option<&quench_runtime::WasmSignature> {
@@ -7957,6 +7914,9 @@ impl Vm {
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
     /// the specializer declines it or the tier does not install it.
     fn js_tier_compile(&mut self, unit: admission::CompiledUnit, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
+        if !cfg!(feature = "jit") {
+            return None; // no run-time compile without the JIT: only image bodies run natively
+        }
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
@@ -8278,16 +8238,10 @@ impl Vm {
             vec![true; count]
         };
         let mut analysis = Analysis {
-            vm: self,
-            program,
-            code: &code,
-            env,
-            callouts: true,
             experimental_root_compilation: root.is_some(),
             root_only,
             compile_rejections: compile_rejections.as_ref(),
-            unrolls: false,
-            grows_memory: quench_runtime::bitset::BitSet::default(),
+            ..Analysis::new(self, program, &code, env)
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
@@ -8458,13 +8412,10 @@ impl Vm {
                             reference_site_ids: &reference_site_ids[index],
                             admitted,
                             tier: WasmTierChoice::Baseline {
-                                vm: self,
-                                program_id: program,
-                                env,
+                                analysis: &analysis,
                                 memory_slot,
                                 entry_cells: &entry_cells,
                                 callable: &callable,
-                                grows_memory: &analysis.grows_memory,
                             },
                         }
                         .specialize(&code);
@@ -8851,7 +8802,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn offer_compiled_cold(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !cfg!(feature = "jit") || self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
         let wasm_root_only = jit_wasm_root_only_enabled()

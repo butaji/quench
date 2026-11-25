@@ -45,7 +45,7 @@ impl Lowering<'_, '_> {
     /// An element read into `destination`: a hoisted array's through its view (a typed array's a
     /// Number), any other the row. The element an observation typed (`number_reads`) is proved after it.
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, quench_runtime::bytecode::Operand)) -> bool {
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
         let array = self.loop_array(pc, Some(base));
         if let Some(pending) = self.unit_compare(state, pc, (destination, base, key), exit) {
             self.pending_unit = Some(pending);
@@ -210,10 +210,11 @@ impl Lowering<'_, '_> {
 
     /// Whether every store of the loop `array` belongs to is an int32 stored through `source`, the
     /// array's own register (the loop never redefines it, so it names the same array), and no append
-    /// runs: an append or a store through another register could make a hole or a non-int32 element.
+    /// or pop runs: an append or a store through another register could make a hole or a non-int32
+    /// element, and a pop changes the count the view keeps.
     fn int32_stores(&self, array: LoopArray, source: Register) -> bool {
         (array.header..=array.back).all(|pc| {
-            if super::native_calls::appends(&self.intrinsics, pc) { return false; }
+            if super::native_calls::resizes(&self.intrinsics, pc) { return false; }
             match crate::compiled::performed(self.unit.instructions[pc]) {
                 Some(quench_runtime::staged::Operation::ElementWrite { value, base, .. }) => base == source
                     && self.facts.at(pc).and_then(|types| types.get(usize::from(value))).is_some_and(|ty| ty.is_subtype(Type::INT32)),
@@ -274,7 +275,7 @@ impl Lowering<'_, '_> {
             // A call or construction may run code that stores into the backing in place, which no
             // reload follows: its loop keeps the per-read test.
             let stores = matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementWrite { .. }))
-                || native_calls::appends(&self.intrinsics, pc)
+                || native_calls::resizes(&self.intrinsics, pc)
                 || quench_runtime::staged::meaning::means(&instruction, quench_runtime::staged::meaning::Meaning::Call)
                 || quench_runtime::staged::meaning::means(&instruction, quench_runtime::staged::meaning::Meaning::Construct);
             if stores { return false; }
@@ -340,7 +341,7 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         }
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
         // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
         // a typed view takes a Number alone.

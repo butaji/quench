@@ -119,23 +119,23 @@ macro_rules! catalog {
     STORE_ROW: uses(Unread, Src, Src, Kept) twin: kernel(arr_store_int) = Heap::Store,
     FIELD_ROW: uses(Dst, Unread, Unread, Never) twin: none("frame field read; no kernel isolates it") = Heap::Field,
     ARRAY_ROW: uses(Unread, Unread, Unread, Never) twin: none("direct-array test; no kernel isolates it"),
-    SITE_ROW: uses(Dst, Unread, Unread, Kept) twin: none("field-site read through its chain; no kernel isolates it") = Heap::Site | Heap::SiteChain,
+    SITE_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::Site | Heap::SiteChain,
     /// The running activation's `this`, a local slot read, a local slot written.
-    THIS_ROW: uses(Dst, Unread, Unread, Never) twin: none("receiver read; no kernel isolates it") = Heap::This,
-    LOAD_LOCAL_ROW: uses(Dst, Unread, Unread, Never) twin: none("local read inside the loop step; no kernel isolates it") = Heap::LoadLocal(_),
-    STORE_LOCAL_ROW: uses(Unread, Src, Unread, Never) twin: none("local write; no kernel isolates it") = Heap::StoreLocal(_),
+    THIS_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(c_class_method) = Heap::This,
+    LOAD_LOCAL_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(c_locals_rotate) = Heap::LoadLocal(_),
+    STORE_LOCAL_ROW: uses(Unread, Src, Unread, Never) twin: kernel(c_locals_rotate) = Heap::StoreLocal(_),
     /// The frame slot at hole 1 holds exactly the word at hole 2: the proof a call's callee is the one
     /// a site was stitched for.
     IDENTITY_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Identity,
     LENGTH_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(arr_length) = Heap::Length,
-    CAPTURE_SET_ROW: uses(Unread, Src, Unread, Never) twin: none("capture write; no kernel isolates it") = Heap::CaptureSet(_),
-    SITE_STORE_ROW: uses(Unread, Src, Unread, Kept) twin: none("field-site store; no kernel isolates it") = Heap::SiteStore,
+    CAPTURE_SET_ROW: uses(Unread, Src, Unread, Never) twin: kernel(v_closure_counter) = Heap::CaptureSet(_),
+    SITE_STORE_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::SiteStore,
     /// The site rows of the activation's receiver (`this`), which the payload holds.
-    THIS_SITE_ROW: uses(Dst, Unread, Unread, Kept) twin: none("receiver field-site read; no kernel isolates it") = Heap::ThisSite | Heap::ThisChain,
-    THIS_STORE_ROW: uses(Unread, Src, Unread, Kept) twin: none("receiver field store; no kernel isolates it") = Heap::ThisStore,
+    THIS_SITE_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(c_class_method) = Heap::ThisSite | Heap::ThisChain,
+    THIS_STORE_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(c_class_ctor_fields) = Heap::ThisStore,
     /// A prototype-held field folded to the value its holder held when the code was compiled, over the
     /// receiver (shape and prototype link) it stands on; the receiver's variant (`entry`) takes it from the payload.
-    HELD_ROW: uses(Dst, Unread, Unread, Kept) twin: none("folded prototype-held field; no kernel isolates it") = Heap::Held | Heap::ThisHeld,
+    HELD_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(v_proto_chain3_field) = Heap::Held | Heap::ThisHeld,
     /// Leaves unless the invalidation word at the address in hole 1 is zero.
     LIVE_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Live,
     /// A fast arm of an instruction whose full operation a helper step makes (`staged::iteration`): the
@@ -156,8 +156,8 @@ macro_rules! catalog {
     /// whose binding may be in its temporal dead zone: the slot holds the deleted marker, which leaves through
     /// EXIT0 into the helper step after the row, whose read raises the `ReferenceError`; a hit continues at
     /// TAKEN. The slot number is hole 1 (a read) or hole 2 (the store, whose first operand is the value).
-    LOAD_CHECKED_ROW: uses(Dst, Unread, Unread, Never) twin: none("dead-zone checked local read; no kernel isolates it") = Heap::LoadChecked(_),
-    STORE_CHECKED_ROW: uses(Unread, Src, Unread, Never) twin: none("dead-zone checked local write; no kernel isolates it") = Heap::StoreChecked(_),
+    LOAD_CHECKED_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_let_block) = Heap::LoadChecked(_),
+    STORE_CHECKED_ROW: uses(Unread, Src, Unread, Never) twin: kernel(v_let_block) = Heap::StoreChecked(_),
     ]
     [HEAP_END_2 HEAP_TABLE_2:
     /// A fast arm of `Unary`'s `typeof` string (`staged::value::immediate_typeof_string`): the operand (hole 1)
@@ -182,8 +182,8 @@ macro_rules! catalog {
     /// The global object's slot, read into the destination (hole 1: the object's record id, hole 2: the
     /// slot's byte offset), or written from the first operand (hole 0: the record id, hole 2: the byte
     /// offset; the `entry` variant takes the store gate, for a value that may be a heap reference).
-    GLOBAL_READ_ROW: uses(Dst, Unread, Unread, Never) twin: none("global object slot read; no kernel isolates it") = Heap::GlobalRead,
-    GLOBAL_STORE_ROW: uses(Unread, Src, Unread, Kept) twin: none("global object slot write; no kernel isolates it") = Heap::GlobalStore,
+    GLOBAL_READ_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_global_var) = Heap::GlobalRead,
+    GLOBAL_STORE_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(v_global_var) = Heap::GlobalStore,
     /// The destination takes the tagged word of hole 1.
     CONSTANT_ROW: uses(Dst, Unread, Unread, Never) twin: none("constant load; no kernel isolates it") = Heap::Word,
     /// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the unique writable dense array at the
@@ -195,12 +195,12 @@ macro_rules! catalog {
     /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
     /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid out
     /// after the row (or the leave a guarded row's miss makes); a miss leaves through EXIT0 into it.
-    ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: none("property add; no kernel isolates it") = Heap::Add { form: Form::Packed, this: false },
-    ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: none("property add; no kernel isolates it") = Heap::Add { form: Form::Arena, this: false },
-    ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: none("property add; no kernel isolates it") = Heap::Add { form: Form::Either, this: false },
-    THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: none("property add; no kernel isolates it") = Heap::Add { form: Form::Packed, this: true },
-    THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: none("property add; no kernel isolates it") = Heap::Add { form: Form::Arena, this: true },
-    THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: none("property add; no kernel isolates it") = Heap::Add { form: Form::Either, this: true },
+    ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Packed, this: false },
+    ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Arena, this: false },
+    ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Either, this: false },
+    THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Packed, this: true },
+    THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Arena, this: true },
+    THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Either, this: true },
     /// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
     /// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
     /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
@@ -217,7 +217,7 @@ macro_rules! catalog {
     /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
     /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
     IC_GET_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcGet,
-    IC_GET_HOLDER_ROW: uses(Dst, Unread, Unread, Kept) twin: none("prototype-held read; no kernel isolates it"),
+    IC_GET_HOLDER_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(v_proto_chain3_field),
     IC_SET_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSet { int: false },
     IC_SET_INT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSet { int: true },
     /// A read (`ENV_ROW`) and a store (`ENV_SET_ROW`) of a local slot the running activation's environment window holds
@@ -226,13 +226,13 @@ macro_rules! catalog {
     /// at hole 1 and its byte offset at hole 2 as a capture row's, the destination (read) or the value operand (store) at hole 0.
     /// A hit continues at TAKEN, past the helper step laid out after the row; a slot past the run or holding an internal
     /// marker (a dead zone, a slot the environment took) leaves through EXIT0 into it.
-    ENV_ROW: uses(Dst, Unread, Unread, Never) twin: none("environment slot read; no kernel isolates it") = Heap::EnvLocal(_),
-    ENV_SET_ROW: uses(Unread, Src, Unread, Never) twin: none("environment slot write; no kernel isolates it") = Heap::EnvStore(_),
+    ENV_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(c_closure_read) = Heap::EnvLocal(_),
+    ENV_SET_ROW: uses(Unread, Src, Unread, Never) twin: kernel(v_closure_counter) = Heap::EnvStore(_),
     /// The definition of a slot of that storage (`staged::environment::environment_slot_define`): a binding's first value
     /// (hole 0 the value operand, holes 1 and 2 the slot as `ENV_SET_ROW`'s), over its dead zone or an earlier value, which
     /// `InitializeTdz` (the hole as the operand) and a declaration's store make. A hit continues at TAKEN; a slot past the run
     /// or another environment's shared slot leaves through EXIT0 into the helper step.
-    ENV_DEFINE_ROW: uses(Unread, Src, Unread, Never) twin: none("environment slot definition; no kernel isolates it") = Heap::EnvDefine(_),
+    ENV_DEFINE_ROW: uses(Unread, Src, Unread, Never) twin: kernel(v_alloc_closure) = Heap::EnvDefine(_),
     ]
     [HEAP_END_3 HEAP_TABLE_3:
     /// The destination (hole 0) takes the word of the global lexical binding at the address in hole 1 (`staged::lexical_read`), or the
@@ -249,7 +249,7 @@ macro_rules! catalog {
     /// the entry words hold (hole 1) as the destination's int32.
     TYPED_INDEX_ROW: uses(Float, Unread, Src, Always) x TYPED_KINDS twin: kernel(typed_load) = Heap::TypedIndex(k) => k,
     TYPED_STORE_ROW: uses(Unread, Src, Src, Always) x TYPED_KINDS twin: kernel(typed_store_f64) = Heap::TypedStore(k) => k,
-    TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always) twin: none("typed array length; no kernel isolates it") = Heap::TypedLength,
+    TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always) twin: kernel(typed_length) = Heap::TypedLength,
     /// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
     /// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
     IC_PROOF_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::IcProof,
@@ -311,9 +311,9 @@ macro_rules! catalog {
     ]
     [HEAP_END_4 HEAP_TABLE_4:
     STAGED_RELVAL_NE: uses(Unread, Src, Src, Never) twin: kernel(cmp_dbl),
-    STAGED_BITWISE_NOT: uses(Unread, Src, Unread, Never) twin: none("int32 ~; no kernel isolates it"),
-    STAGED_INIT_LOCAL: uses(Unread, Unread, Unread, Never) twin: none("dead-zone initialization; no kernel isolates it"),
-    STAGED_COERCIBLE: uses(Unread, Src, Unread, Never) twin: none("RequireObjectCoercible; no kernel isolates it"),
+    STAGED_BITWISE_NOT: uses(Unread, Src, Unread, Never) twin: kernel(bit_not),
+    STAGED_INIT_LOCAL: uses(Unread, Unread, Unread, Never) twin: kernel(v_let_block),
+    STAGED_COERCIBLE: uses(Unread, Src, Unread, Never) twin: kernel(v_destructure_obj),
     STAGED_VOID: uses(Unread, Unread, Unread, Never) twin: none("void; no kernel isolates it"),
     STAGED_LOOSE_EQ: uses(Unread, Src, Src, Never) twin: kernel(eq_undef_null),
     STAGED_LOOSE_NE: uses(Unread, Src, Src, Never) twin: kernel(eq_undef_null),
@@ -322,13 +322,13 @@ macro_rules! catalog {
     /// An empty object (`EMPTY_OBJECT_ROW`) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its kind's record cursor
     /// and template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent run, a missing
     /// template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
-    EMPTY_OBJECT_ROW: uses(Dst, Unread, Unread, Never) twin: none("empty object bump; alloc_literal fills its literal"),
-    EMPTY_ARRAY_ROW: uses(Dst, Unread, Unread, Never) twin: none("empty array bump; alloc_literal fills its literal"),
+    EMPTY_OBJECT_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_obj_add),
+    EMPTY_ARRAY_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_array_push_grow),
     ]
     }
     number {
-    MOVE twin: none("register copy; no kernel isolates it"),
-    COPY twin: none("register copy; no kernel isolates it"),
+    MOVE twin: kernel(c_locals_rotate),
+    COPY twin: kernel(c_locals_rotate),
     ADD twin: kernel(int_add),
     SUB twin: kernel(int_sub),
     MUL twin: kernel(int_mul),
@@ -345,7 +345,7 @@ macro_rules! catalog {
     GE twin: kernel(cmp_int),
     EQ twin: kernel(eq_int),
     NE twin: kernel(eq_int),
-    JUMP twin: none("the jump of the empty loop step; no kernel isolates it"),
+    JUMP twin: kernel(empty),
     JUMP_POLL twin: kernel(empty),
     GUARD twin: none("entry tag guard; no kernel isolates it"),
     /// `GUARD` of a pinned double with its tag test left out: the destination takes the frame slot's word as a binary64
@@ -374,27 +374,27 @@ macro_rules! catalog {
     /// a register, and `Math.round`'s composition of them, its constants immediates (`machine::constant`).
     SQRT twin: kernel(math_sqrt),
     FLOOR twin: kernel(math_floor),
-    CEIL twin: none("no Math.ceil kernel in ops.c"),
-    TRUNC twin: none("no Math.trunc kernel in ops.c"),
+    CEIL twin: kernel(math_ceil),
+    TRUNC twin: kernel(math_trunc),
     ABS twin: kernel(math_abs),
     ROUND twin: kernel(math_round),
     /// `Math.fround` (the nearest binary32, as a double) and `Math.sign` of one Number, in the same staged native call.
-    FROUND twin: none("no Math.fround kernel in ops.c"),
-    SIGN twin: none("no Math.sign kernel in ops.c"),
+    FROUND twin: kernel(math_fround),
+    SIGN twin: kernel(math_sign),
     /// `Math.min`, `Math.max` of two Numbers (a double: `staged::math::float_extreme`) and `Math.imul` of
     /// two int32s (`staged::math::int_multiply`).
     MIN twin: kernel(math_minmax),
     MAX twin: kernel(math_minmax),
     IMUL twin: kernel(math_imul),
     /// `Math.clz32` of one Number: the leading zero bits of its ToUint32 (`staged::math::leading_zeros`), an int32.
-    CLZ32 twin: none("no Math.clz32 kernel in ops.c"),
+    CLZ32 twin: kernel(math_clz32),
     /// `switch`'s case slot (`NumberOperation::IntCase`): the slot of the first operand among the labels from the
     /// second's immediate to the maximum at hole 3, an int32 into the destination. Never leaves.
     INT_CASE twin: kernel(c_switch_dense),
     /// int32 `+` and `-` the planner proved exact (a range fact of the operands): the staged int32 step
     /// with `Overflow::Impossible`, so no overflow test. Int operands only; anything else leaves through exit 0.
     ADD_NO_OVERFLOW twin: kernel(int_add_noor),
-    SUB_NO_OVERFLOW twin: none("no exact int32 subtraction kernel; int_add_noor is the add"),
+    SUB_NO_OVERFLOW twin: kernel(int_sub_noor),
     /// The jump of `if (a & b)`: branches to the taken successor unless the int32 of `a & b` is nonzero
     /// (`Comparison::Bitwise(And)`, the staged compare step's own bitwise test).
     BIT_TEST twin: kernel(c_bit_test),
@@ -403,8 +403,8 @@ macro_rules! catalog {
     NULLISH_EQ twin: kernel(eq_undef_null),
     NULLISH_NE twin: kernel(eq_undef_null),
     /// The jump of `a === true` and of `a === false` (`Comparison::Boolean`): the tested word's identity decides it.
-    BOOL_TRUE twin: none("boolean identity jump; no kernel isolates it"),
-    BOOL_FALSE twin: none("boolean identity jump; no kernel isolates it"),
+    BOOL_TRUE twin: kernel(c_bool_flag),
+    BOOL_FALSE twin: kernel(c_bool_flag),
     }
         }
     };

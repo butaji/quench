@@ -12,7 +12,7 @@
 //!   always. The interpreter checks it where it is defined, never where it is read: the overflowing
 //!   update runs the VM's increment (`Vm::inc_dec_value` or the general loop's `IncDec` arm), which
 //!   retires every speculating record of the VM to its checked form before the double is written
-//!   (`Vm::retire_int_speculation`).
+//!   (`Vm::retire_int_speculation`), as the lane does after native code (`admission::retire_after_native`).
 //! - `Tagged`: anything else, including every register live at the function's entry
 //!   (parameters, `this`, values a caller or a resumption put there).
 //!

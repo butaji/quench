@@ -44,7 +44,7 @@ impl Lowering<'_, '_> {
             return false;
         };
         let row = quench_runtime::staged::Operation::decode(instruction, quench_runtime::staged::DecodeContext::of(self.program)).expect("a call-out record decodes");
-        let miss = self.guard_exit(state, pc as u32);
+        let miss = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         self.canonicalize(state, pc);
         let cell = self.global_cell(state, pc, &row, miss);
         let site = self.call_out_site(pc, record, cell);

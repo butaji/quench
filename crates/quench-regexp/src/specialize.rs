@@ -12,7 +12,7 @@
 //! * `Concrete` runs them on the interpreter's own state. Every method is `#[inline(always)]`
 //!   and the step functions are monomorphized into `Program::run`, so the interpreter pays
 //!   nothing for the indirection.
-//! * The native compiler (`quench-runtime` `vm/regexp_native`) implements the same operations as
+//! * The native compiler (`quench-runtime-engine` `regexp_native`, through the shared stitcher) implements the same operations as
 //!   Cranelift IR: a position becomes a value, a required flag a branch to the backtrack block,
 //!   a push a store through the stack pointer. Each instruction's code is the function in
 //!   `machine.rs` run with its static operands, so an interpreter change reaches native code.

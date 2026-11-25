@@ -96,7 +96,7 @@ impl Lowering<'_, '_> {
                 self.set_int(state, result, length);
             }
             Builtin::Pop => {
-                let popped = self.pop(state, receiver, exit);
+                let popped = self.pop(state, pc, receiver, exit);
                 self.set_tagged(state, result, popped);
             }
             Builtin::IsInteger => {
@@ -132,22 +132,14 @@ impl Lowering<'_, '_> {
     /// brand is one), so such a record is no arguments object and `Array.isArray` holds of it. Any other value leaves
     /// at `exit`.
     fn plain_array_argument(&mut self, state: &mut State, register: Register, exit: ir::Block) {
-        use quench_runtime::tier_surface::NATIVE_ARRAY_LAYOUT as ARRAY;
         let base = self.tagged(state, register);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
-        let direct = quench_runtime::staged::value::is_direct_array(&mut stage, base);
-        continues(stage.guard(direct, exit));
-        let present = stage.ne_imm(records, 0u32);
-        continues(stage.guard(present, exit));
-        let record = elements::array_record(&mut stage, records, base);
-        let payload = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-        let plain = quench_runtime::staged::object::plain_payload(&mut stage, payload);
-        continues(stage.guard(plain, exit));
+        continues(quench_runtime::staged::builtins::is_plain_array(&mut stage, records, base, exit));
     }
 
     /// The word of the dispatch payload at `offset`.
-    fn dispatch_word(&mut self, offset: usize) -> ir::Value {
+    pub(super) fn dispatch_word(&mut self, offset: usize) -> ir::Value {
         emit_js_payload_word(&mut self.builder, self.payload, offset)
     }
 
@@ -319,14 +311,17 @@ impl Lowering<'_, '_> {
     }
 
     /// `pop` of the array in `receiver`: its last element, which the backing no longer holds,
-    /// and the lane's array storage proofs retire (`LaneHelper::RetireArrayProofs`).
-    fn pop(&mut self, state: &mut State, receiver: Register, exit: ir::Block) -> ir::Value {
+    /// and the lane's array storage proofs retire (`LaneHelper::RetireArrayProofs`). Each view a
+    /// loop around `pc` hoisted reads its count again (`reload_dense_views`): the pop shortened one in
+    /// place, through whichever register names it.
+    fn pop(&mut self, state: &mut State, pc: usize, receiver: Register, exit: ir::Block) -> ir::Value {
         let array = self.tagged(state, receiver);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
         let popped = continues(builtins::step_array_native_of(&mut stage, builtins::ArrayNative::Pop, backing, exit));
         self.helper_call(LaneHelper::RetireArrayProofs, &[]);
+        self.reload_dense_views(pc);
         popped
     }
 }

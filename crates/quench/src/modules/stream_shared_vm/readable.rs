@@ -410,7 +410,7 @@ fn how_much_to_read(c: &mut Context<'_>, n: f64, state: RootId) -> Result<f64, R
 
 /// `NumberParseInt(String(value), 10)`.
 fn parse_int(text: &str) -> f64 {
-    let text = text.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let text = text.trim_start_matches(quench_runtime::staged::is_ecma_whitespace_char);
     let (negative, digits) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, text.strip_prefix('+').unwrap_or(text)),

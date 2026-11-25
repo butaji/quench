@@ -95,6 +95,25 @@ impl Refusal {
             _ => return None,
         })
     }
+
+    /// Whether the refusal is an expensive fallback (`quench_runtime::fallback`): a unit that wanted
+    /// to compile and could not. The tier model's pricing and the compile bound decide that a
+    /// compile does not pay, which is policy, not a fallback.
+    fn is_fallback(self) -> bool {
+        !matches!(self, Self::NotAmortized | Self::CompileBound)
+    }
+
+    /// The refusal's report name, with the operation an unsupported instruction names.
+    pub(crate) fn describe(self) -> String {
+        let name = Self::NAMES[self.slot()];
+        match self {
+            Self::UnsupportedInstruction(op) => match quench_runtime::bytecode::Op::from_index(usize::from(op)) {
+                Some(op) => format!("{name} {op:?}"),
+                None => format!("{name} {op}"),
+            },
+            _ => name.to_owned(),
+        }
+    }
 }
 
 /// Refusals counted since the process started, one per `Refusal::slot`. Atomics rather than
@@ -111,6 +130,9 @@ fn reporting() -> bool {
 /// Counts `refusal`, and registers the exit report on the first count when reporting is on.
 pub(crate) fn record(refusal: Refusal) {
     COUNTS[refusal.slot()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if quench_runtime::fallback::on() && refusal.is_fallback() {
+        quench_runtime::fallback::note_in_focus(quench_runtime::fallback::Fallback::JitReject, format_args!("{}", refusal.describe()));
+    }
     if reporting() {
         REPORT.call_once(|| {
             // SAFETY: `report` is a plain function that outlives the process.
@@ -380,24 +402,33 @@ pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
 #[inline]
 pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
 
-/// Whether the interpreter is the only tier (`--no-jit`).
-#[inline]
-pub(crate) fn interpreter_only() -> bool { quench_runtime::jit_mode::JitMode::process() == quench_runtime::jit_mode::JitMode::Interp }
-
 /// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
 /// interpreter's own projection of the function, decided here as every compiled unit is.
 #[derive(Clone, Copy)]
 pub(crate) struct RecordPlan {
     /// Loop records keep tier sites (`install_loop_sites`) and their jumps stay visible to them.
     pub(crate) loop_sites: bool,
-    /// The int32 kinds may speculate: only where the interpreter alone runs, since it retires a
-    /// speculation whose `IncDec` overflows and a compiled tier's overflowing update does not.
+    /// The int32 kinds may speculate: the interpreter retires a speculation whose `IncDec`
+    /// overflows, and the lane retires them once native code, whose updates retire nothing,
+    /// hands it an activation (`retire_after_native`).
     pub(crate) speculates: bool,
 }
 
 /// The record plan of a function whose tiers may run (`tiers_run`: `Vm::tier_may_run`, any tier).
 pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
-    RecordPlan { loop_sites: tiers_run, speculates: interpreter_only() && crate::dispatch_fast::int_kinds::speculation_allowed() }
+    RecordPlan { loop_sites: tiers_run, speculates: crate::dispatch_fast::int_kinds::speculation_allowed() }
+}
+
+/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code ran an activation
+/// the lane goes on in (`exit` names a record of it or a callee it made, or `frames_left` native frames
+/// it left): a native tier steps a register as a double without the interpreter's retirement (a widened
+/// stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
+/// A run that completed its activation and left no native frame hands back nothing.
+#[inline(always)]
+pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, exit: crate::compiled::LaneExit, frames_left: impl FnOnce() -> bool) {
+    if crate::dispatch_fast::int_kinds::speculation_allowed() && (!matches!(exit, crate::compiled::LaneExit::Returned { .. }) || frames_left()) {
+        vm.retire_int_speculation();
+    }
 }
 
 /// Where a function's lane body comes from (`route_for_lane`).

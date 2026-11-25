@@ -134,10 +134,11 @@ fn source_keys_reject_unknown_or_noncanonical_shapes() {
         vec!["specialized", "specialized-script:0:0:yes", ""],
         vec!["specialized", "specialized-script:0:0:false:jsx", ""],
         vec!["other-mode", ""],
+        vec!["unspecialized", ""],
     ] {
         assert!(NativeSourceKey::new("unit", &parts).is_err(), "{parts:?}");
     }
-    let key = NativeSourceKey::new("unit", &["unspecialized", ""]).unwrap();
+    let key = NativeSourceKey::new("unit", &["unspecialized", quench_runtime::GLOBAL_SCRIPT_GOAL, ""]).unwrap();
     assert!(NativeJsCompiler::new(true).compile_source(&key).is_err());
 }
 

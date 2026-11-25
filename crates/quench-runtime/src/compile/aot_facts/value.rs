@@ -1,7 +1,7 @@
 //! The facts the closed-world analyses carry: what a register holds, and which binding a write
 //! reaches.
 
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Representation, Type};
 
 /// A binding: a global name (by atom), or a slot of the environment or frame of `owner`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -14,13 +14,9 @@ pub(super) enum Key {
     MemberOn { class: u32, instance: bool, atom: u32 },
 }
 
-/// What a register is known to hold at a point.
+/// Where a register's value was read from, which the census follows to the closure it names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Fact {
-    /// Any value.
-    Unknown,
-    /// The closure of function `function`.
-    Closure(u32),
+pub(super) enum Origin {
     /// The value the binding held when the register was loaded from it.
     Binding(Key),
     /// The value of a named property `atom` read off some object (a method read before its call).
@@ -33,42 +29,93 @@ pub(super) enum Fact {
     Instance(u32),
     /// A method `atom` read on class `function`'s static object (`instance: false`) or prototype.
     MemberOn { class: u32, instance: bool, atom: u32 },
-    /// A Number held as an int32.
-    Int32,
-    /// A Number.
-    Float64,
+}
+
+/// What a register is known to hold at a point: its type in the one fact lattice
+/// (`typed_ir::Type`: a closure's body, int32, Number, any value) and, when it was read from a
+/// binding or a named property, where from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Fact {
+    pub(super) ty: Type,
+    pub(super) origin: Option<Origin>,
 }
 
 impl Fact {
-    pub(super) fn is_number(self) -> bool {
-        matches!(self, Self::Int32 | Self::Float64)
+    /// Any value, from nowhere the census follows.
+    pub(super) const UNKNOWN: Self = Self::of(Type::ANY);
+
+    /// A value of type `ty`.
+    pub(super) const fn of(ty: Type) -> Self {
+        Self { ty, origin: None }
     }
 
-    /// The fact both describe: equal facts, or `Float64` where both are Numbers.
-    pub(super) fn join(self, other: Self) -> Self {
-        match () {
-            _ if self == other => self,
-            _ if self.is_number() && other.is_number() => Self::Float64,
-            _ => Self::Unknown,
+    /// Any value, read from `origin`.
+    pub(super) const fn from(origin: Origin) -> Self {
+        Self { ty: Type::ANY, origin: Some(origin) }
+    }
+
+    /// The closure of function `function`.
+    pub(super) const fn closure(function: u32) -> Self {
+        Self::of(Type::function_body(function))
+    }
+
+    /// The property-key constant `atom`.
+    pub(super) const fn atom(atom: u32) -> Self {
+        Self::from(Origin::Atom(atom))
+    }
+
+    /// The prototype of class `class` (`Class.prototype`).
+    pub(super) const fn prototype(class: u32) -> Self {
+        Self::from(Origin::Prototype(class))
+    }
+
+    /// An instance of class `class` (`new`).
+    pub(super) const fn instance(class: u32) -> Self {
+        Self::from(Origin::Instance(class))
+    }
+
+    /// The method `atom` read on class `class`'s static object (`instance: false`) or prototype.
+    pub(super) const fn member_on(class: u32, instance: bool, atom: u32) -> Self {
+        Self::from(Origin::MemberOn { class, instance, atom })
+    }
+
+    /// The class object `self` is: a closure's constructor (`instance: false`), or a prototype or
+    /// instance of one (`instance: true`).
+    pub(super) fn class_site(self) -> Option<(u32, bool)> {
+        if let Some(class) = self.ty.body_index() {
+            return Some((class, false));
         }
+        match self.origin? {
+            Origin::Prototype(class) | Origin::Instance(class) => Some((class, true)),
+            _ => None,
+        }
+    }
+
+    /// The atom `self` is the property-key constant of, if it is one.
+    pub(super) fn atom_key(self) -> Option<u32> {
+        match self.origin? {
+            Origin::Atom(atom) => Some(atom),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_number(self) -> bool {
+        self.ty != Type::NEVER && self.ty.is_subtype(Type::NUMBER)
+    }
+
+    /// The fact both describe: the join of their types, from the origin both share.
+    pub(super) fn join(self, other: Self) -> Self {
+        Self { ty: self.ty.join(other.ty), origin: if self.origin == other.origin { self.origin } else { None } }
     }
 
     /// The fact of the Number `value`: an int32 unless it is not one, or is `-0`.
     pub(super) fn number(value: f64) -> Self {
         let int = value as i32;
-        if f64::from(int) == value && (int != 0 || value.is_sign_positive()) {
-            Self::Int32
-        } else {
-            Self::Float64
-        }
+        Self::of(if f64::from(int) == value && (int != 0 || value.is_sign_positive()) { Type::INT32 } else { Type::NUMBER })
     }
 
     /// The representation a register holding this fact at every point has.
     pub(super) fn representation(self) -> Option<Representation> {
-        match self {
-            Self::Int32 => Some(Representation::Int32),
-            Self::Float64 => Some(Representation::Float64),
-            _ => None,
-        }
+        [Representation::Int32, Representation::Float64].into_iter().find(|representation| representation.accepts(self.ty))
     }
 }

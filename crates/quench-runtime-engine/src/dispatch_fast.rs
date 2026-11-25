@@ -827,6 +827,11 @@ fn requicken(ip: Ip, handler: Handler) {
         if loop_kernel::requicken_kernel(ip, handler) {
             return;
         }
+        // A record whose result carries flags got the general step at its edge (`derive_lane_view`), which
+        // decodes them; it keeps it, as the generated rows read `a` as a plain register.
+        if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
+            return;
+        }
         (*ip.cast_mut()).handler = handler as *const ();
     }
 }
@@ -4753,6 +4758,14 @@ pub(crate) const fn own_site_decodes(site: u8) -> bool {
         && form != quench_runtime::value_vec::NARROW_FORM)
 }
 
+/// The value of the slot word `word` an own-field read at a decoding site took: a form fixed
+/// untagged runs only where slots hold raw doubles (`own_formed_handler`), so it decodes a
+/// Number's word without testing the switch; an unfixed form tests it (`decode_staged_word`).
+#[inline(always)]
+pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
+    if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
+}
+
 /// Every generated own-field read: `$each!(site)` for each site, `this` and register alike.
 macro_rules! own_sites {
     ($each:ident) => {
@@ -6573,6 +6586,7 @@ script_handler! {
             // An instruction no region runs leaves the loop to a body, which runs what it can
             // natively and leaves at the rest (`loop_body::offer_body`).
             if loop_body::offer_body(cx, r, site) { next!(cx, r, header, Carried::script_in(cx, view)) }
+            if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_rejected(cx, site); }
             loop_retire_in_lane(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
@@ -6666,17 +6680,15 @@ fn loop_run_native_in_lane(
     region: &crate::compiled::LoopRegion,
     entry: &mut crate::compiled::LoopEntry,
 ) -> Option<LoopContinuation> {
-    let mut tier = site.tier.borrow_mut();
-    if tier.awaits_code(unsafe { vm(cx) }, site) {
+    let wait = { let mut tier = site.tier.borrow_mut(); tier.awaits_code(unsafe { vm(cx) }, site).then(|| tier.take_wait()) };
+    if let Some(wait) = wait {
         // The code is compiling: the back edges until the next look run the header untried
         // (`skips_entry`) rather than each paying the whole entry attempt (~200 Ir) to count
         // the wait down.
-        site.skipped_entries.set(tier.take_wait());
-        drop(tier);
+        site.skipped_entries.set(wait);
         site.count_decline(RegionDecline::Awaiting);
         return None;
     }
-    drop(tier);
     let views = match loop_entry_checked_in_lane(cx, r, region, entry) {
         Ok(views) => views,
         Err(decline) => {
@@ -6688,6 +6700,7 @@ fn loop_run_native_in_lane(
     // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
     let continuation = loop_run_in_lane(cx, r, site, region, entry, views, site.header);
     count_continuation(cx, &continuation);
+    if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_left(cx, site, &continuation); }
     if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
     Some(continuation)
 }
@@ -6831,7 +6844,7 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
     let base_only = crate::compiled::admission::stencil_only();
-    let ahead_image = !own.respecializes() && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
@@ -6978,7 +6991,7 @@ fn loop_release_header_in_lane(header: Ip, site: &LoopSite) {
 }
 
 /// Where the lane goes after a loop site's native attempt.
-enum LoopContinuation {
+pub(crate) enum LoopContinuation {
     /// Take the backward jump in the interpreter.
     Jump,
     Resume(u32),
@@ -7085,11 +7098,10 @@ fn loop_run_in_lane(
     if exit.entered_nothing() {
         // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
         site.tier.borrow_mut().missed_entry(site.tiers);
-        return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
+        return crate::compiled::fallback_sites::entry_refused(cx, site, if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
-    if matches!(exit, LaneExit::Terminated) {
-        return LoopContinuation::Safepoint;
-    }
+    if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count());
     if nested {
@@ -7739,6 +7751,7 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
+            // The same derivation as every entry's (`derived_view`): an image's view takes on every record.
             let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
                 vm.derived_view(function, code, constants, kind, live, sites, image)
@@ -9818,7 +9831,7 @@ script_handler! {
 
 /// The function the lane runs: its innermost activation's, or else its frame's.
 #[inline(always)]
-fn running_function_in_lane(cx: *mut LaneContext) -> u32 {
+pub(crate) fn running_function_in_lane(cx: *mut LaneContext) -> u32 {
     let vm = unsafe { vm(cx) };
     vm.lane_stack.innermost_function().unwrap_or_else(|| vm.frames[unsafe { (*cx).frame() }].function)
 }
@@ -12610,7 +12623,7 @@ fn tier_enter_in_lane(
 /// The script targets the call record at `pc` of `view` linked (`call_link`), newest first:
 /// its latest and its history (`LaneStack::call_sites`), each where a plain call of it binds
 /// an ordinary `this` and activates in place: what a lane body inlines (`lane_unit::unit`).
-fn site_targets_in_lane(vm: &Vm, view: &LaneView, pc: u32) -> Vec<crate::compiled::CallTarget> {
+pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, pc: u32) -> Vec<crate::compiled::CallTarget> {
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
     let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
     let history = vm.lane_stack.call_sites.borrow();
@@ -12695,37 +12708,7 @@ impl Vm {
     }
 }
 
-/// Per PC of `body`, the callees its call site reached where the callee's own lane body
-/// specialized and the lane would activate it in place, with an ordinary `this`, from a
-/// plain call of at most its parameters: what a lane body calls by its compiled entry
-/// (`compiled::DirectCallee`), the latest first.
-fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
-    let tail_calls = vm.host.proper_tail_calls() && body.strict;
-    body.code.iter().enumerate().map(|(pc, packed)| {
-        let instruction = body.widened(*packed);
-        let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
-            && !(tail_calls && instruction.returns_from_frame());
-        let mut callees = crate::compiled::DirectCandidates::new();
-        if quench_runtime::staged::construction_family(instruction.op()) {
-            callees.extend(construct_callee_in_lane(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
-            return callees;
-        }
-        let Some(argc) = direct_argc(program, instruction) else { return callees };
-        callees.extend(body_tier_in_lane::site_targets(vm, view, pc).filter(|_| direct)
-            .filter_map(|target| direct_callee_in_lane(vm, view, function, pc, argc, target)));
-        callees
-    }).collect()
-}
-
-/// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the
-/// site names (`None` where the program holds no such site).
-fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction) -> Option<u16> {
-    if instruction.op() as u16 == quench_runtime::staged::METHOD_CALL_ROW {
-        quench_runtime::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count)
-    } else {
-        Some(ImmediateLayout::argument_count(instruction.imm()))
-    }
-}
+pub(crate) use crate::compiled::direct_callee::{direct_callee_in_lane, direct_callees_in_lane};
 
 /// Records the forwarded initializer the construction at `i` ran, which a body may call by
 /// its entry (`construct_callee_in_lane`).
@@ -12736,54 +12719,9 @@ fn note_construct_site(vm: &Vm, i: &LaneInstruction, constructor: Value, forward
     });
 }
 
-/// The `compiled::DirectCallee` of the construction at `pc` of `view` through a forwarding
-/// constructor: the forwarded initializer the site last ran (`construct_keeping_activation_in_lane`)
-/// as the callee, the constructor as the identity it guards and the activation it skips.
-fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16) -> Option<crate::compiled::DirectCallee> {
-    for site in site_targets_in_lane(vm, view, pc as u32) {
-        let crate::compiled::CalleeBinding::Forwarded { through, callee } = site.callee else { continue };
-        // SAFETY: as `Vm::script_call_entry`; both targets are copied before anything resolves one.
-        let (constructor, initializer) = unsafe { (*vm.script_call_entry(through)?, *vm.script_call_entry(callee)?) };
-        let method = *vm.lane_stack.forwarded_methods.get(constructor.forwarded_method as usize)?;
-        if !constructor.forwards() || !constructor.constructs() || holding_construct_plan(vm, through).is_none_or(|plan| plan.forwarded.is_none()) {
-            return None;
-        }
-        let mut direct = direct_callee_in_lane(vm, view, function, pc, argc, initializer)?;
-        direct.callee = through;
-        direct.forwarder = Some(SkippedForwarder { function: constructor.function, callee: through, env: constructor.env, method });
-        return Some(direct);
-    }
-    None
-}
-
-/// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
-/// `argc` arguments, where the lane would activate it in place.
-pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<crate::compiled::DirectCallee> {
-    // Only BaseJIT's direct row binds an arrow's `this`; an arrow that never reads it calls as strict.
-    let (sloppy, lexical) = match target.this_binding {
-        ThisBinding::Sloppy => (Some(vm.realm.globals), false),
-        ThisBinding::Strict => (None, false),
-        ThisBinding::Lexical if crate::compiled::admission::stencil_only() => (None, true),
-        ThisBinding::Lexical => vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize))).map(|_| (None, false))?,
-        _ => return None,
-    };
-    (target.admission.current(vm.lane_stack.admission)
-        && target.entry.activates() && !target.view.is_null() && argc <= target.params).then_some(())?;
-    // SAFETY: a resolved target's view outlives its program.
-    let view_of = unsafe { &*target.view };
-    let (method, body) = view_of.pinned_callee(target.function == function);
-    // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
-        .unwrap_or((std::ptr::null(), 0));
-    Some(crate::compiled::DirectCallee {
-        target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, lexical, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
-    })
-}
-
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
 /// their activations should it leave inside one (`body_call_helper`'s own conditions).
-fn direct_calls_in_lane(cx: *mut LaneContext) -> bool {
+pub(crate) fn direct_calls_in_lane(cx: *mut LaneContext) -> bool {
     let vm = unsafe { vm(cx) };
     let script_calls = unsafe { (*cx).script_calls };
     // A direct callee's registers follow the caller's window, where an activation that keeps its
@@ -13060,7 +12998,7 @@ fn note_warming_leave_in_lane(cx: *mut LaneContext, own: &LaneView) {
 /// registers are `r`: the activations of the native frames it left inside first
 /// (`native_frames::advance_into_frames`), then the record its leave names in the innermost, or the
 /// innermost's completion; `body_left_in_lane` adds the leave as feedback (`LaneMethod::feedback`).
-enum LaneBodyLeft {
+pub(crate) enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,
     Resume(Registers, Ip, Carried),
@@ -13073,13 +13011,11 @@ enum LaneBodyLeft {
 
 
 
-/// Records that a run of `own`'s body ended at `exit`, in the diagnostics report's leave table;
-/// nothing the lane does next reads it.
+/// Counts a run of `own`'s body that ended at `exit` on its typed edge (`ExitTable::cross`), and in the diagnostics leave table.
 #[inline(always)]
 fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
-    if !matches!(exit, crate::compiled::LaneExit::Returned { .. }) && quench_runtime::trace::Channel::BodyLeave.on() {
-        eprintln!("QUENCH_BODY_LEAVE function={} exit={exit:?}", running_function_in_lane(cx));
-    }
+    crate::compiled::fallback_sites::body_ended(cx, method, exit);
+    method.exits.cross(exit);
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());
     }
@@ -13117,6 +13053,7 @@ fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }
@@ -13210,12 +13147,19 @@ pub(crate) unsafe fn region_payload_in_lane(context: usize, payload: usize) -> u
 ///
 /// # Safety
 /// `context` is the running lane's, which the region entered (`region_payload_in_lane`), and `call_pc` a call record of its function.
-pub(crate) unsafe extern "C" fn region_call_in_lane(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(crate) unsafe extern "C" fn region_call_in_lane(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
-    let status = unsafe { body_calls::body_call_helper(vm, residual, context, call_pc) };
-    // SAFETY: as above. No context (a body that binds none, `body_call_helper`) has no region to
-    // refresh, and the miss already left the body.
-    if context != 0 { unsafe { refresh_region_bases_of(context) }; }
+    let (status, in_place) = unsafe { body_calls::body_call_status(context, call_pc) };
+    let cx = context as usize as *mut LaneContext;
+    let payload = unsafe { (*cx).region_payload };
+    if in_place {
+        // An in-place native pushed nothing: the stacks stand, only the heap bases may have moved.
+        // SAFETY: a region's payload lives for its run.
+        if let Some(payload) = unsafe { (payload as *mut quench_runtime::vm::engine_types::JsStepDispatch).as_mut() } { payload.refresh_object_bases(unsafe { self::vm(cx) }); }
+    } else {
+        // SAFETY: as above.
+        unsafe { refresh_region_bases_of(context) };
+    }
     status
 }
 
