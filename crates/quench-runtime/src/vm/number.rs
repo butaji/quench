@@ -481,15 +481,15 @@ pub fn global_number_predicate(native: Native, number: f64) -> Option<bool> {
 /// What `Number.isNaN`, `isFinite`, `isInteger` or `isSafeInteger` returns for `value`: none
 /// coerces its argument, so a non-Number answers `false`. `None` for any other native.
 pub fn number_predicate(native: Native, value: Value) -> Option<bool> {
-    let number = value.as_number();
-    let integral = || crate::staged::builtins::concrete_is_integral(value);
-    Some(match native {
-        Native::NumberIsNaN => number.is_some_and(f64::is_nan),
-        Native::NumberIsFinite => number.is_some_and(f64::is_finite),
-        Native::NumberIsInteger => integral(),
-        Native::NumberIsSafeInteger => integral() && number.is_some_and(|number| number.abs() <= MAX_SAFE_INTEGER),
+    use crate::staged::call_native::NumberNative;
+    let row = match native {
+        Native::NumberIsNaN => NumberNative::IsNaN,
+        Native::NumberIsFinite => NumberNative::IsFinite,
+        Native::NumberIsInteger => NumberNative::IsInteger,
+        Native::NumberIsSafeInteger => NumberNative::IsSafeInteger,
         _ => return None,
-    })
+    };
+    Some(crate::staged::builtins::concrete_number_predicate(row, value))
 }
 
 /// The coefficient text and exponent of a `{:e}` formatted number.

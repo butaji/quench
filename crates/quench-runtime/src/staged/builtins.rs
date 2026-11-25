@@ -215,8 +215,15 @@ pub fn is_integral<S: NumericStage>(stage: &mut S, domain: Domain, number: S::Wo
 /// that is no Number.
 #[inline(always)]
 pub(crate) fn concrete_is_integral(value: Value) -> bool {
+    concrete_number_predicate(super::call_native::NumberNative::IsInteger, value)
+}
+
+/// The interpreter's `Number.isInteger`, `isSafeInteger`, `isNaN` or `isFinite` of `value`
+/// (`call_native::step_number_native_of`): false for any value that is no Number.
+#[inline(always)]
+pub(crate) fn concrete_number_predicate(native: super::call_native::NumberNative, value: Value) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let answer = super::call_native::step_number_native_of(&mut stage, super::call_native::NumberNative::IsInteger, &[value.to_bits()], ());
+    let answer = super::call_native::step_number_native_of(&mut stage, native, &[value.to_bits()], ());
     answer == Some(Value::boolean(true).to_bits())
 }
 
