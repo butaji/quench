@@ -212,25 +212,28 @@ pub(crate) fn with_native<R>(
     Ok(table.crypto.handles.get_mut(index).and_then(Option::as_mut).map(|handle| f(&mut handle.native)))
 }
 
-/// Releases the state of objects the collector reclaimed (the idle hook).
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared.borrow().crypto.dead(|owner| runtime.host_weak_root_is_live(owner));
-    for index in dead {
-        let owner = shared.borrow_mut().crypto.release(index);
-        if let Some(owner) = owner {
-            runtime.release_host_weak_root(owner);
-        }
-    }
-}
 
 /// Releases every handle at shutdown.
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let handles = std::mem::take(&mut shared.borrow_mut().crypto.handles);
-    shared.borrow_mut().crypto.vacant.clear();
-    for handle in handles.into_iter().flatten() {
-        runtime.release_host_weak_root(handle.owner);
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let handles = std::mem::take(&mut shared.borrow_mut().crypto.handles);
+        shared.borrow_mut().crypto.vacant.clear();
+        for handle in handles.into_iter().flatten() {
+            runtime.release_host_weak_root(handle.owner);
+        }
+    }
+
+    /// Releases the state of objects the collector reclaimed (the idle hook).
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared.borrow().crypto.dead(|owner| runtime.host_weak_root_is_live(owner));
+        for index in dead {
+            let owner = shared.borrow_mut().crypto.release(index);
+            if let Some(owner) = owner {
+                runtime.release_host_weak_root(owner);
+            }
+        }
     }
 }
 

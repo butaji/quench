@@ -118,10 +118,15 @@ fn create_handle(
 ) -> Result<RootId, RootedError> {
     let is_socket = context.boolean(matches!(kind, EndpointKind::Socket));
     let reusable = if matches!(kind, EndpointKind::Socket) {
-        if let Some(object) = object {
-            super::tls_shared_vm::handle::reusable(context, object)?
-        } else {
-            None
+        // Only a TLS session reuses a socket's handle: its operation is named unmarked, and the
+        // session's registration marks it (`shared_vm::call_linked`).
+        match object {
+            Some(object) => {
+                let reusable = crate::host::shared_vm::static_operation("tlsReusableHandle");
+                crate::host::shared_vm::call_linked(context, reusable, &[object])?
+                    .filter(|&handle| !context.rooted_value(handle).is_some_and(|value| value.is_undefined()))
+            }
+            None => None,
         }
     } else {
         None

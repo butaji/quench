@@ -98,6 +98,11 @@ fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::Sha
 }
 
 /// The messaging API object, built on first use.
+/// The API, once something built it (`api`).
+fn built_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    state(c).borrow().messaging.api.ok_or_else(|| RootedError::host("worker_threads API is not built"))
+}
+
 fn api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(api) = state(c).borrow().messaging.api {
         return Ok(api);

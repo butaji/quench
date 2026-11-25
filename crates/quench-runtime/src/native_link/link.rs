@@ -287,8 +287,13 @@ impl NativeSupport {
         command.args(["-C", "link-arg=-Xlinker", "-C", if cfg!(target_os = "macos") { "link-arg=-map" } else { "link-arg=-Map" },
             "-C", "link-arg=-Xlinker", "-C"]).arg(format!("link-arg={}", map.display()));
         // `QUENCH_EXTRA_LINK_ARGS` (whitespace-separated linker driver arguments, such as
-        // `-Wl,--why-live=SYMBOL`) diagnoses what keeps code in an image.
-        if let Some(extra) = std::env::var_os("QUENCH_EXTRA_LINK_ARGS") {
+        // `-Wl,--why-live=SYMBOL`) diagnoses what keeps code in an image: in every link, or in
+        // the `QUENCH_EXTRA_LINK_ROUND`th alone, counted from 1, of a compile that links again
+        // until the operations it keeps settle.
+        static LINKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let link = LINKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let round = std::env::var("QUENCH_EXTRA_LINK_ROUND").ok().and_then(|round| round.parse::<usize>().ok());
+        if let Some(extra) = std::env::var_os("QUENCH_EXTRA_LINK_ARGS").filter(|_| round.is_none_or(|round| round == link)) {
             for argument in extra.to_string_lossy().split_whitespace() {
                 command.arg("-C").arg(format!("link-arg={argument}"));
             }

@@ -85,36 +85,66 @@ impl EncryptedStream {
             write_end: None,
         })
     }
-    pub(crate) fn raw(&self) -> &RawStream {
+}
+
+/// An encrypted stream, as the transport drives it: only the code that encrypts a socket makes
+/// one (`EncryptedStream::new`), so an image whose program encrypts none links no OpenSSL for
+/// the transport's polls and drops.
+pub(crate) trait Encrypted {
+    fn raw(&self) -> &RawStream;
+    fn ssl(&self) -> &openssl::ssl::SslRef;
+    /// The sessions the peer issued since the last call, oldest first.
+    fn take_sessions(&self) -> Vec<Vec<u8>>;
+    /// The key log lines the session wrote since the last call, oldest first.
+    fn take_keylog(&self) -> Vec<Vec<u8>>;
+    fn receive(&mut self, bytes: &[u8]);
+    fn ready(&self) -> bool;
+    fn dormant(&self) -> bool;
+    fn start(&mut self);
+    fn authorize(&mut self);
+    fn handshake(&mut self) -> Result<bool, io::Error>;
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize>;
+    fn write(&mut self, bytes: &[u8], offset: usize) -> io::Result<usize>;
+    fn write_raw(&mut self, bytes: &[u8]) -> io::Result<usize>;
+    fn shutdown_write(&mut self) -> io::Result<bool>;
+}
+
+impl Encrypted for EncryptedStream {
+    fn raw(&self) -> &RawStream {
         &self.stream.get_ref().raw
     }
-    pub(crate) fn ssl(&self) -> &openssl::ssl::SslRef {
+    fn ssl(&self) -> &openssl::ssl::SslRef {
         self.stream.ssl()
     }
-    /// What the session reported since the last call, oldest first.
-    pub(crate) fn take_announcements<T>(&self, take: impl FnOnce(&mut crate::modules::tls_shared_vm::contexts::Announcements) -> Vec<T>) -> Vec<T> {
-        crate::modules::tls_shared_vm::contexts::with_announcements(self.stream.ssl(), take).unwrap_or_default()
+    fn take_sessions(&self) -> Vec<Vec<u8>> {
+        crate::modules::tls_shared_vm::contexts::with_announcements(self.stream.ssl(), |announcements| std::mem::take(&mut announcements.sessions))
+            .unwrap_or_default()
     }
-    pub(crate) fn receive(&mut self, bytes: &[u8]) {
+    fn take_keylog(&self) -> Vec<Vec<u8>> {
+        crate::modules::tls_shared_vm::contexts::with_announcements(self.stream.ssl(), |announcements| {
+            announcements.keylog.as_mut().map(std::mem::take).unwrap_or_default()
+        }).unwrap_or_default()
+    }
+    fn receive(&mut self, bytes: &[u8]) {
         self.stream.get_mut().received.extend(bytes);
     }
-    pub(crate) fn ready(&self) -> bool {
+    fn ready(&self) -> bool {
         matches!(self.phase, Phase::Ready)
     }
-    pub(crate) fn dormant(&self) -> bool {
+    fn dormant(&self) -> bool {
         matches!(self.phase, Phase::Dormant(_))
     }
-    pub(crate) fn start(&mut self) {
+    fn start(&mut self) {
         if let Phase::Dormant(role) = self.phase {
             self.phase = Phase::Handshaking(role);
         }
     }
-    pub(crate) fn authorize(&mut self) {
+    fn authorize(&mut self) {
         if matches!(self.phase, Phase::AwaitAuthorization) {
             self.phase = Phase::Ready;
         }
     }
-    pub(crate) fn handshake(&mut self) -> Result<bool, io::Error> {
+    fn handshake(&mut self) -> Result<bool, io::Error> {
         let Phase::Handshaking(role) = self.phase else {
             return Ok(false);
         };
@@ -138,7 +168,7 @@ impl EncryptedStream {
             Err(error) => Err(io_error(error)),
         }
     }
-    pub(crate) fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         match self.stream.ssl_read(bytes) {
             Ok(count) => Ok(count),
             Err(error) if error.code() == ErrorCode::ZERO_RETURN => Ok(0),
@@ -155,7 +185,7 @@ impl EncryptedStream {
             Err(error) => Err(io_error(error)),
         }
     }
-    pub(crate) fn write(&mut self, bytes: &[u8], offset: usize) -> io::Result<usize> {
+    fn write(&mut self, bytes: &[u8], offset: usize) -> io::Result<usize> {
         let end = *self.write_end.get_or_insert(bytes.len());
         match self.stream.ssl_write(&bytes[offset..end]) {
             Ok(count) => {
@@ -169,10 +199,10 @@ impl EncryptedStream {
             }
         }
     }
-    pub(crate) fn write_raw(&mut self, bytes: &[u8]) -> io::Result<usize> {
+    fn write_raw(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.stream.get_mut().raw.write(bytes)
     }
-    pub(crate) fn shutdown_write(&mut self) -> io::Result<bool> {
+    fn shutdown_write(&mut self) -> io::Result<bool> {
         match self.stream.shutdown() {
             Ok(ShutdownResult::Sent | ShutdownResult::Received) => Ok(true),
             Err(error) if readiness(&error) => Ok(false),
@@ -180,6 +210,7 @@ impl EncryptedStream {
         }
     }
 }
+
 fn readiness(error: &Error) -> bool {
     matches!(error.code(), ErrorCode::WANT_READ | ErrorCode::WANT_WRITE)
 }

@@ -1485,6 +1485,7 @@ node_bindings! {
         method "utilExternalValue" (0) => crate::modules::util_shared_vm::external_value,
         #[cfg(quench_openssl_provider)]
         method "cryptoStructuredClone" (1) => crate::modules::crypto_node::clone::structured_clone,
+        method "tlsReusableHandle" (1) => crate::modules::tls_shared_vm::handle::reusable_handle,
         #[cfg(quench_openssl_provider)]
         method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
         #[cfg(quench_openssl_provider)]
@@ -2308,7 +2309,8 @@ node_bindings! {
         method "stringDecoderEnd" (1) => crate::modules::string_decoder_shared_vm::end,
         method "stringDecoderText" (2) => crate::modules::string_decoder_shared_vm::text,
         method "stringDecoderField" (0) => crate::modules::string_decoder_shared_vm::field,
-        global "fetch" (1) => crate::modules::fetch_shared_vm::fetch::fetch,
+        method "fetch" (1) => crate::modules::fetch_shared_vm::fetch::fetch,
+        method "webFetchFunctionInitialize" (0) => crate::modules::fetch_shared_vm::initialize_fetch,
         global "queueMicrotask" (1) => crate::modules::timers_shared_vm::queue_microtask,
         global "setImmediate" (1) => crate::modules::timers_shared_vm::set_immediate,
         global "clearImmediate" (1) => crate::modules::timers_shared_vm::clear_immediate,
@@ -2443,6 +2445,53 @@ node_bindings! {
         method "traceInitialize" (2) => crate::modules::trace_shared_vm::initialize,
         method "traceInspect" (3) => crate::modules::trace_shared_vm::inspect,
         method "traceInternal" (1) => crate::modules::trace_shared_vm::internal_binding,
+        #[cfg(unix)]
+        method "binding:os" (0) => crate::modules::trace_shared_vm::binding_os,
+        #[cfg(unix)]
+        method "binding:credentials" (0) => crate::modules::trace_shared_vm::binding_credentials,
+        method "binding:fs" (0) => crate::modules::trace_shared_vm::binding_fs,
+        method "binding:errors" (0) => crate::modules::trace_shared_vm::binding_errors,
+        method "binding:report" (0) => crate::modules::trace_shared_vm::binding_report,
+        #[cfg(unix)]
+        method "binding:process_methods" (0) => crate::modules::trace_shared_vm::binding_process_methods,
+        method "binding:modules" (0) => crate::modules::trace_shared_vm::binding_modules,
+        method "binding:stream_wrap" (0) => crate::modules::trace_shared_vm::binding_stream_wrap,
+        method "binding:tty_wrap" (0) => crate::modules::trace_shared_vm::binding_tty_wrap,
+        method "binding:udp_wrap" (0) => crate::modules::trace_shared_vm::binding_udp_wrap,
+        method "binding:pipe_wrap" (0) => crate::modules::trace_shared_vm::binding_pipe_wrap,
+        method "binding:tcp_wrap" (0) => crate::modules::trace_shared_vm::binding_tcp_wrap,
+        method "binding:contextify" (0) => crate::modules::trace_shared_vm::binding_contextify,
+        method "binding:types" (0) => crate::modules::trace_shared_vm::binding_types,
+        method "binding:messaging" (0) => crate::modules::trace_shared_vm::binding_messaging,
+        method "binding:crypto_keys" (0) => crate::modules::trace_shared_vm::binding_crypto_keys,
+        method "binding:util" (0) => crate::modules::trace_shared_vm::binding_util,
+        method "binding:options" (0) => crate::modules::trace_shared_vm::binding_options,
+        method "binding:string_decoder" (0) => crate::modules::trace_shared_vm::binding_string_decoder,
+        method "binding:zlib" (0) => crate::modules::trace_shared_vm::binding_zlib,
+        method "binding:serdes" (0) => crate::modules::trace_shared_vm::binding_serdes,
+        method "binding:ipc_serdes" (0) => crate::modules::trace_shared_vm::binding_ipc_serdes,
+        method "binding:v8" (0) => crate::modules::trace_shared_vm::binding_v8,
+        method "binding:heap_utils" (0) => crate::modules::trace_shared_vm::binding_heap_utils,
+        method "binding:internal_only_v8" (0) => crate::modules::trace_shared_vm::binding_internal_only_v8,
+        method "binding:encoding_binding" (0) => crate::modules::trace_shared_vm::binding_encoding_binding,
+        #[cfg(quench_icu)]
+        method "binding:icu" (0) => crate::modules::trace_shared_vm::binding_icu,
+        method "binding:config" (0) => crate::modules::trace_shared_vm::binding_config,
+        method "binding:symbols" (0) => crate::modules::trace_shared_vm::binding_symbols,
+        method "binding:cares_wrap" (0) => crate::modules::trace_shared_vm::binding_cares_wrap,
+        method "binding:http_parser" (0) => crate::modules::trace_shared_vm::binding_http_parser,
+        method "binding:http2" (0) => crate::modules::trace_shared_vm::binding_http2,
+        method "binding:buffer" (0) => crate::modules::trace_shared_vm::binding_buffer,
+        method "binding:url" (0) => crate::modules::trace_shared_vm::binding_url,
+        method "binding:blob" (0) => crate::modules::trace_shared_vm::binding_blob,
+        method "binding:crypto" (0) => crate::modules::trace_shared_vm::binding_crypto,
+        method "binding:timers" (0) => crate::modules::trace_shared_vm::binding_timers,
+        method "binding:performance" (0) => crate::modules::trace_shared_vm::binding_performance,
+        method "binding:uv" (0) => crate::modules::trace_shared_vm::binding_uv,
+        method "binding:fs_event_wrap" (0) => crate::modules::trace_shared_vm::binding_fs_event_wrap,
+        method "binding:trace_events" (0) => crate::modules::trace_shared_vm::binding_trace_events,
+        method "binding:cjs_lexer" (0) => crate::modules::trace_shared_vm::binding_cjs_lexer,
+        method "binding:constants" (0) => crate::modules::trace_shared_vm::binding_constants,
         method "cjsLexerParse" (1) => crate::modules::trace_shared_vm::cjs_lexer_parse,
         method "traceRecord" (5) => crate::modules::trace_shared_vm::record,
         method "traceCategoryBuffer" (1) => crate::modules::trace_shared_vm::category_buffer,
@@ -2607,10 +2656,11 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn after_collection(context: &mut quench_runtime::CollectionContext<'_>) {
-        #[cfg(quench_openssl_provider)]
-        crate::modules::crypto_hash_shared_vm::prune(context);
-        #[cfg(not(quench_openssl_provider))]
-        let _ = context;
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
+        let hooks: Vec<_> = shared.borrow().armed_hooks().collect();
+        for hooks in hooks {
+            (hooks.prune_at_collection)(context);
+        }
     }
 
     /// The pages the program touched leave the resident set before the code generator's join

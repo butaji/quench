@@ -51,6 +51,9 @@ impl GraphRequirement {
     }
 }
 
+/// The globals that name the global object itself.
+pub(super) const GLOBAL_OBJECT_NAMES: &[&str] = &["globalThis", "global", "self", "window", "frames", "parent", "top"];
+
 #[derive(Default)]
 pub struct DependencyGraph {
     pub files: BTreeMap<PathBuf, ModuleFile>,
@@ -58,6 +61,14 @@ pub struct DependencyGraph {
     pub builtins: BTreeSet<String>,
     pub esm_builtins: BTreeSet<String>,
     pub host_globals: BTreeSet<String>,
+    /// Every global the program reads by name, as an identifier or a member of `globalThis`.
+    pub global_names: BTreeSet<String>,
+    /// A script reads `this`, which a sloppy function call binds to the global object.
+    pub script_reads_this: bool,
+    /// The internal bindings the program names by literal (`process.binding('fs')`).
+    pub bindings: BTreeSet<String>,
+    /// The program reads a binding loader other than to call it with a literal name.
+    pub dynamic_bindings: bool,
     pub requirements: Vec<GraphRequirement>,
     /// Unshadowed eval references may receive source first known at execution.
     pub dynamic_eval_sites: Vec<(PathBuf, u32)>,
@@ -107,13 +118,20 @@ struct Requests<'s> {
     dynamic_imports: BTreeSet<u32>,
     literal_imports: BTreeSet<String>,
     host_globals: BTreeSet<String>,
+    global_names: BTreeSet<String>,
+    reads_this: bool,
+    bindings: BTreeSet<String>,
+    /// Binding loader reads that call it with a literal name, by their offsets.
+    classified_bindings: BTreeSet<u32>,
+    dynamic_bindings: bool,
 }
 
 impl<'s> Requests<'s> {
     fn new(scoping: &'s oxc_semantic::Scoping, loaders: &'s LoaderBindings<'s>) -> Self {
         Self { scoping, loaders, specifiers: BTreeMap::new(), classified_requires: loaders.transfers(),
             dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
-            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new() }
+            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new(), global_names: BTreeSet::new(), reads_this: false,
+            bindings: BTreeSet::new(), classified_bindings: BTreeSet::new(), dynamic_bindings: false }
     }
 
     fn request(&mut self, specifier: String, kind: RequestKind) {
@@ -129,10 +147,11 @@ impl<'s> Requests<'s> {
 
     fn is_global_object(&self, expression: &Expression<'_>) -> bool {
         matches!(expression.get_inner_expression(), Expression::Identifier(name)
-            if name.name == "globalThis" && self.runtime_reference(name).is_some_and(|reference|reference.symbol_id().is_none()))
+            if GLOBAL_OBJECT_NAMES.contains(&name.name.as_str()) && self.runtime_reference(name).is_some_and(|reference|reference.symbol_id().is_none()))
     }
 
     fn record_host_global(&mut self, name: &str) {
+        self.global_names.insert(name.to_owned());
         if name == "console" { self.request("node:console".into(), RequestKind::Load); }
         let interfaces = commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS).copied()
             .chain(crate::modules::events_shared_vm::EVENT_GLOBALS.iter().copied())
@@ -145,8 +164,48 @@ impl<'s> Requests<'s> {
     }
 }
 
+/// The names that load an internal binding by name: `process.binding` and `internalBinding`.
+const BINDING_LOADERS: &[&str] = &["binding", "internalBinding"];
+
+impl Requests<'_> {
+    /// Classifies a call of a binding loader with one literal name (`process.binding('fs')`):
+    /// the loader's read is then this call's alone.
+    fn classify_binding_call(&mut self, call: &CallExpression<'_>) {
+        let loader = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => Some((member.property.name.as_str(), member.span.start)),
+            Expression::Identifier(name) => Some((name.name.as_str(), name.span.start)),
+            _ => None,
+        };
+        let Some((_, offset)) = loader.filter(|(name, _)| BINDING_LOADERS.contains(name)) else { return };
+        let literal = match call.arguments.as_slice() {
+            [argument] => match argument.as_expression().map(Expression::get_inner_expression) {
+                Some(Expression::StringLiteral(binding)) => Some(binding.value.to_string()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(binding) = literal {
+            self.bindings.insert(binding);
+            self.classified_bindings.insert(offset);
+        }
+    }
+
+    /// A read of a binding loader no literal call classified loads bindings by names first
+    /// known as the program runs.
+    fn note_binding_loader(&mut self, name: &str, offset: u32) {
+        if BINDING_LOADERS.contains(&name) && !self.classified_bindings.contains(&offset) {
+            self.dynamic_bindings = true;
+        }
+    }
+}
+
 impl<'a> Visit<'a> for Requests<'_> {
+    fn visit_this_expression(&mut self, _: &oxc_ast::ast::ThisExpression) {
+        self.reads_this = true;
+    }
+
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.classify_binding_call(call);
         if let Some(require) = self.loaders.require_call(call) {
             if let Some(reference) = require.reference { self.classified_requires.insert(reference); }
             let kind = if require.resolve_only { RequestKind::Resolve } else { RequestKind::Load };
@@ -169,23 +228,34 @@ impl<'a> Visit<'a> for Requests<'_> {
     fn visit_identifier_reference(&mut self, name: &IdentifierReference<'a>) {
         let Some(reference) = self.runtime_reference(name) else { return };
         let global = reference.symbol_id().is_none();
-        if global { self.record_host_global(name.name.as_str()); }
+        if global {
+            self.note_binding_loader(name.name.as_str(), name.span.start);
+            self.record_host_global(name.name.as_str());
+        }
         if self.loaders.is_require_reference(name) && !self.classified_requires.contains(&name.span.start) {
             self.dynamic_requires.insert(name.span.start);
         }
     }
 
+    // A member of the global object read by a name records that name alone: only another use
+    // of the global object's name reaches its members by computed keys (`global_names`).
     fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
+        self.note_binding_loader(member.property.name.as_str(), member.span.start);
         if self.is_global_object(&member.object) {
             self.record_host_global(member.property.name.as_str());
+            return;
         }
         walk::walk_static_member_expression(self, member);
     }
 
     fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        if let Expression::StringLiteral(name) = member.expression.get_inner_expression() {
+            self.note_binding_loader(name.value.as_str(), member.span.start);
+        }
         if let (true, Expression::StringLiteral(name)) =
             (self.is_global_object(&member.object), member.expression.get_inner_expression()) {
             self.record_host_global(name.value.as_str());
+            return;
         }
         walk::walk_computed_member_expression(self, member);
     }
@@ -289,6 +359,10 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         let mut requests = Requests::new(scoping, &loaders);
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
+        graph.global_names.extend(std::mem::take(&mut requests.global_names));
+        graph.script_reads_this |= source_type.is_script() && requests.reads_this;
+        graph.bindings.extend(std::mem::take(&mut requests.bindings));
+        graph.dynamic_bindings |= requests.dynamic_bindings;
         for offset in requests.dynamic_requires {
             graph.requirements.push(GraphRequirement::DynamicRequire { from: name.clone().into(), offset: offset + base });
         }

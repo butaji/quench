@@ -206,8 +206,8 @@ struct SavedWait {
     answers: super::strict::Answers,
     effects: Vec<(i32, Vec<u8>)>,
     rest: PathBuf,
-    /// The host operations the saved runtime's host functions run.
-    held: Vec<u32>,
+    /// The host operations the saved runtime holds.
+    held: super::prefix::HeldOperations,
 }
 
 /// Saves, per answer set of `runs`, the native entry's run at its first wait (`--wait-worker`);
@@ -379,7 +379,28 @@ fn compile(options: Options) -> Result<(), String> {
     let held: Option<std::collections::BTreeSet<u32>> = (!saved_waits.is_empty()).then(|| {
         let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned));
         let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
-        saved_waits.iter().flat_map(|wait| wait.held.iter().copied()).chain(builders).collect()
+        // What the global object holds only for globals no loaded code names (a pending lazy
+        // global's initializer, an accessor's getter) runs only when code reads one of those
+        // names: code the program holds names it, code it loads may, and so may a computed read
+        // of the global object, which code reaches by an alias's name or a sloppy call's `this`.
+        let names_any = loads_code(&graph) || graph.script_reads_this
+            || graph.builtins.iter().any(|name| name.trim_start_matches("node:") == "vm")
+            || super::graph::GLOBAL_OBJECT_NAMES.iter().any(|alias| graph.global_names.contains(*alias));
+        report["unnamed_globals"] = json!(saved_waits.iter().flat_map(|wait| &wait.held.1).map(|(names, operations)| json!({
+            "names": names, "operations": operations.len(),
+            "kept": names_any || names.iter().any(|name| graph.global_names.contains(name)),
+        })).collect::<Vec<_>>());
+        let lazy = saved_waits.iter().flat_map(|wait| &wait.held.1)
+            .filter(|(names, _)| names_any || names.iter().any(|name| graph.global_names.contains(name)))
+            .flat_map(|(_, operations)| operations.iter().copied());
+        // The internal bindings it may load as it runs: those it names, or every one where it
+        // reads a binding loader otherwise.
+        let bindings: Vec<_> = if graph.dynamic_bindings {
+            crate::host::shared_vm::commonjs::binding_operations().map(|operation| operation.0).collect()
+        } else {
+            graph.bindings.iter().filter_map(|name| crate::modules::trace_shared_vm::binding_operation(name)).map(|operation| operation.0).collect()
+        };
+        saved_waits.iter().flat_map(|wait| wait.held.0.iter().copied()).chain(lazy).chain(builders).chain(bindings).collect()
     });
     let support_report = match &options.sdk_report {
         Some(path) => {
@@ -622,6 +643,8 @@ fn link_with_reached_operations(
     let mut kept = held.filter(|_| !loads_code(graph));
     report["held_host_operations"] = json!(kept.as_ref().map(std::collections::BTreeSet::len));
     let mut links = 0;
+    // The operations each link's marks added, by name.
+    let mut rounds: Vec<Vec<&'static str>> = Vec::new();
     loop {
         let (table, unlinked) = operation_table(graph, kept.as_ref());
         fs::write(inputs.catalog(), format!("{catalog}{table}")).map_err(|error| error.to_string())?;
@@ -633,9 +656,11 @@ fn link_with_reached_operations(
             return Ok(audit);
         };
         let marks = quench_runtime::native_link::marked_words(staged, "QUENCH_OPERATION_MARK")?;
-        let before = operations.len();
-        operations.extend(marks);
-        if operations.len() == before {
+        let added: Vec<u32> = marks.into_iter().filter(|mark| !operations.contains(mark)).collect();
+        rounds.push(added.iter().map(|&operation| crate::host::shared_vm::commonjs::operation_name(operation)).collect::<Vec<_>>());
+        report["operation_rounds"] = json!(rounds);
+        operations.extend(added);
+        if rounds.last().is_some_and(Vec::is_empty) {
             report["unlinked_host_operations"] = json!(unlinked);
             report["operation_links"] = json!(links);
             return Ok(audit);

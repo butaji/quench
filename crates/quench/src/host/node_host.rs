@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use crate::shared_run::EntryGoal;
 
+mod armed;
+pub(crate) use armed::{Armed, Hooks, Teardown};
 mod snapshot;
 
 /// Output callback owned by the canonical Node host boundary.
@@ -103,6 +105,23 @@ pub(crate) enum CommonJsCache {
     Module(quench_runtime::RootId),
 }
 
+impl SharedNodeState {
+    /// The release hooks of each state its module wrote, in teardown order (`Armed`).
+    pub(crate) fn armed_hooks(&self) -> impl Iterator<Item = Hooks> {
+        [
+            self.tls_contexts.hooks(),
+            self.crypto_secret_jobs.hooks(),
+            self.crypto_key_material.hooks(),
+            #[cfg(quench_openssl_provider)]
+            self.crypto_signatures.hooks(),
+            #[cfg(quench_openssl_provider)]
+            self.crypto_hashes.hooks(),
+            #[cfg(quench_openssl_provider)]
+            self.crypto.hooks(),
+        ].into_iter().flatten()
+    }
+}
+
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
@@ -113,7 +132,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
-    pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    pub(crate) tls_contexts: Armed<crate::modules::tls_shared_vm::contexts::State>,
     /// The `node:sqlite` engine's handles (`sqlite_shared_vm::State`).
     pub(crate) sqlite: LazyState,
     #[cfg(quench_icu)]
@@ -145,13 +164,13 @@ pub(crate) struct SharedNodeState {
     /// REPL inputs evaluated so far: each is the resource `REPL<n>`.
     pub(crate) repl_resources: u32,
     #[cfg(quench_openssl_provider)]
-    pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
-    pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
+    pub(crate) crypto_hashes: Armed<crate::modules::crypto_hash_shared_vm::State>,
+    pub(crate) crypto_key_material: Armed<crate::modules::crypto_key_material_shared_vm::State>,
     #[cfg(quench_openssl_provider)]
-    pub(crate) crypto: crate::modules::crypto_node::State,
+    pub(crate) crypto: Armed<crate::modules::crypto_node::State>,
     #[cfg(quench_openssl_provider)]
-    pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
-    pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
+    pub(crate) crypto_signatures: Armed<crate::modules::crypto_signature_shared_vm::State>,
+    pub(crate) crypto_secret_jobs: Armed<crate::modules::crypto_secret_job_shared_vm::State>,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) messaging: crate::modules::worker_shared_vm::State,
     /// Pure-Rust resolver channels for `cares_wrap` when c-ares is not linked.
@@ -330,7 +349,7 @@ impl SharedNodeState {
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
-        self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
+        self.tls_contexts = Armed::default();
         #[cfg(quench_icu)]
         {
             self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
@@ -357,7 +376,7 @@ impl SharedNodeState {
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
-            tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            tls_contexts: Armed::default(),
             sqlite: LazyState::default(),
             #[cfg(quench_icu)]
             icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
@@ -386,13 +405,13 @@ impl SharedNodeState {
             hmr: None,
             repl_resources: 0,
             #[cfg(quench_openssl_provider)]
-            crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            crypto_hashes: Armed::default(),
             #[cfg(quench_openssl_provider)]
-            crypto: crate::modules::crypto_node::State::default(),
-            crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
+            crypto: Armed::default(),
+            crypto_key_material: Armed::default(),
             #[cfg(quench_openssl_provider)]
-            crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),
-            crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
+            crypto_signatures: Armed::default(),
+            crypto_secret_jobs: Armed::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             messaging: crate::modules::worker_shared_vm::State::default(),
             dns_channels: crate::modules::dns_shared_vm::State::default(),

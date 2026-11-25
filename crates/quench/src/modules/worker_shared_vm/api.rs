@@ -237,8 +237,10 @@ fn events_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::modules::events_shared_vm::event_family(c)
 }
 
+/// A member of the API, which every port, worker and API function comes from: code that reaches
+/// one finds the API built, so the event loop's deliveries link no building of it.
 fn member(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    let api = super::api(c)?;
+    let api = super::built_api(c)?;
     get(c, api, name)
 }
 
@@ -1054,5 +1056,6 @@ pub(super) fn module(c: &mut Context<'_>, facts: ThreadFacts) -> Result<RootId, 
 
 /// The classes a global group installs (`MessagePort`, `MessageChannel`, `BroadcastChannel`).
 pub(super) fn global_class(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    member(c, name)
+    let api = super::api(c)?;
+    get(c, api, name)
 }

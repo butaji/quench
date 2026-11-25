@@ -119,31 +119,34 @@ pub(crate) fn prune_context(c: &mut Context<'_>) {
         c.release_host_weak_root(handle.identity);
     }
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared
-        .borrow()
-        .crypto_key_material
-        .handles
-        .iter()
-        .enumerate()
-        .filter_map(|(index, handle)| {
-            (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let handle = shared
-            .borrow_mut()
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        for handle in std::mem::take(&mut shared.borrow_mut().crypto_key_material.handles) {
+            runtime.release_host_weak_root(handle.identity);
+        }
+    }
+
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared
+            .borrow()
             .crypto_key_material
             .handles
-            .remove(index);
-        runtime.release_host_weak_root(handle.identity);
-    }
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    for handle in std::mem::take(&mut shared.borrow_mut().crypto_key_material.handles) {
-        runtime.release_host_weak_root(handle.identity);
+            .iter()
+            .enumerate()
+            .filter_map(|(index, handle)| {
+                (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let handle = shared
+                .borrow_mut()
+                .crypto_key_material
+                .handles
+                .remove(index);
+            runtime.release_host_weak_root(handle.identity);
+        }
     }
 }
 

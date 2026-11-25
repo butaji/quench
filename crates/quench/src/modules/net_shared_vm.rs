@@ -119,7 +119,7 @@ impl Write for RawStream {
 
 enum SocketStream {
     Plain(RawStream),
-    Encrypted(encrypted::EncryptedStream),
+    Encrypted(Box<dyn encrypted::Encrypted + Send>),
 }
 impl SocketStream {
     fn raw(&self) -> &RawStream {
@@ -174,7 +174,7 @@ impl SocketStream {
     /// Announce the TLS sessions the peer issued, as `session` events of `socket`.
     fn announce_sessions(&self, socket: u64, events: &mut Vec<TransportEvent>) {
         if let Self::Encrypted(tls) = self {
-            let sessions = tls.take_announcements(|announcements| std::mem::take(&mut announcements.sessions));
+            let sessions = tls.take_sessions();
             events.extend(sessions.into_iter().map(|session| TransportEvent::Session { socket, session }));
         }
     }
@@ -1051,7 +1051,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         if let SocketStream::Encrypted(tls) = &mut socket.stream {
             let handshake = tls.handshake();
             // The handshake writes its key log lines as it runs, ahead of its outcome.
-            let lines = tls.take_announcements(|announcements| announcements.keylog.as_mut().map(std::mem::take).unwrap_or_default());
+            let lines = tls.take_keylog();
             events.extend(lines.into_iter().map(|line| TransportEvent::Keylog { socket: id, line }));
             match handshake {
                 Ok(true) => events.push(TransportEvent::Secure { socket: id }),
@@ -2366,7 +2366,7 @@ pub(crate) fn encrypt(
     let referenced = socket.referenced;
     match encrypted::EncryptedStream::new(ssl, raw, role, started) {
         Ok(tls) => {
-            socket.stream = SocketStream::Encrypted(tls);
+            socket.stream = SocketStream::Encrypted(Box::new(tls));
             transport.sockets.insert(id, socket);
             Ok(())
         }

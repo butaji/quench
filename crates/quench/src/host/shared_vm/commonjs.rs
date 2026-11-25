@@ -675,6 +675,10 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
         context.define_lazy_data_properties_rooted(global, &names, false, initializer)?;
         context.release_root(initializer);
     }
+    // `fetch`, enumerable as in Node, is built on its first read, as Node loads undici then.
+    let initializer = context.host_function(crate::host::shared_vm::operation!("webFetchFunctionInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["fetch"], true, initializer)?;
+    context.release_root(initializer);
     Ok(())
 }
 
@@ -1639,7 +1643,23 @@ fn cached_builtin(
 
 /// The host operation that builds the builtin `key` names, if any.
 pub(crate) fn builtin_operation(key: &str) -> Option<quench_runtime::HostFunctionId> {
-    let name = format!("builtin:{key}");
+    named_operation(&format!("builtin:{key}"))
+}
+
+/// The name operation `id` is registered as.
+pub(crate) fn operation_name(id: u32) -> &'static str {
+    super::OPERATION_DESCRIPTORS.get(id as usize).map_or("", |descriptor| descriptor.name)
+}
+
+/// The builder operations of every internal binding (`binding:NAME`).
+pub(crate) fn binding_operations() -> impl Iterator<Item = quench_runtime::HostFunctionId> {
+    super::OPERATION_DESCRIPTORS.iter().enumerate().filter(|(_, descriptor)| descriptor.name.starts_with("binding:"))
+        .map(|(index, _)| quench_runtime::HostFunctionId(index as u32))
+}
+
+/// The host operation registered as `name`, found as the code runs: a call through it links
+/// nothing, so the image keeps it only where something marks it.
+pub(crate) fn named_operation(name: &str) -> Option<quench_runtime::HostFunctionId> {
     super::OPERATION_DESCRIPTORS.iter().position(|descriptor| descriptor.name == name)
         .map(|index| quench_runtime::HostFunctionId(index as u32))
 }
@@ -1889,10 +1909,10 @@ fn task_queues_module(context: &mut Context<'_>) -> Result<RootId, RootedError> 
     Ok(module)
 }
 
-/// The web and timer globals Node defines enumerable.
+/// The web and timer globals Node defines enumerable (`fetch` is defined so, lazily).
 const ENUMERABLE_GLOBALS: &[&str] = &[
     "queueMicrotask", "clearImmediate", "clearInterval", "clearTimeout", "setImmediate",
-    "setInterval", "setTimeout", "structuredClone", "fetch", "crypto", "performance",
+    "setInterval", "setTimeout", "structuredClone", "crypto", "performance",
 ];
 
 /// Node's global descriptors: `ENUMERABLE_GLOBALS` enumerable, a `navigator` getter, and
