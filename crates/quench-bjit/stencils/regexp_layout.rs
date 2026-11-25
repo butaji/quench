@@ -162,8 +162,9 @@ pub struct RegexpProgram {
     pub pcs: *const usize,
     /// Each resume's row, by `id - FIRST_RESUME`.
     pub resumes: *const usize,
-    /// The ASCII words of each set (`UnitTest::Set` indexes it).
-    pub masks: *const [u64; 2],
+    /// Each set by byte unit, nonzero where the set has the (ASCII) unit (`UnitTest::Set`
+    /// indexes it).
+    pub sets: *const [u8; 256],
     /// The capture and branch lists (`Program::lists`).
     pub lists: *const u32,
     /// Each guard: at the start, at the end, its units' test word.
