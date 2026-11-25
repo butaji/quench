@@ -39,10 +39,10 @@ macro_rules! heap_code_match {
     (@go $heap:tt, [$($arms:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
         heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
     };
-    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? = $pat:pat $(=> $off:expr)? $(, $($rest:tt)*)?) => {
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? twin: $kind:ident($what:tt) = $pat:pat $(=> $off:expr)? $(, $($rest:tt)*)?) => {
         heap_code_match!(@go $heap, [$($arms)* $pat => Some(row_names::$name $(+ $off)?),]; $($($rest)*)?)
     };
-    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? $(, $($rest:tt)*)?) => {
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? twin: $kind:ident($what:tt) $(, $($rest:tt)*)?) => {
         heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
     };
     ($heap:tt heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
