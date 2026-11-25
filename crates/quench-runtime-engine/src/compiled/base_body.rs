@@ -179,7 +179,8 @@ impl Vm {
         // A body proves its realm at entry (`base_region::function::assemble`); its inlined callees are that
         // realm's (`inlinable_callee`), and so must its direct ones be for a realm switch to leave it standing.
         let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.callee).is_some());
-        let Some(method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
+        let Some(mut method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
+        method.exits = ExitTable::of_code(code);
         // A body native callers call by its entry (`bind_callees`) pays for itself whatever its
         // length, as a Cranelift body does (`start_lane_method`).
         if !method.amortizes_entry() && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
