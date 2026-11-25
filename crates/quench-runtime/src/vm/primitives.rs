@@ -388,24 +388,7 @@ impl Vm {
                     {
                         return Err(self.range_error(p, "invalid code point".into()));
                     }
-                    let code_point = number as u32;
-                    if crate::unicode::is_surrogate(code_point)
-                        || code_point <= crate::unicode::UTF16_MAX_CODE_UNIT
-                    {
-                        units.push(code_point as u16);
-                    } else {
-                        let payload = code_point - crate::unicode::SUPPLEMENTARY_CODE_POINT_START;
-                        units.push(
-                            (crate::unicode::SURROGATE_START
-                                + (payload >> crate::unicode::SURROGATE_PAYLOAD_SHIFT))
-                                as u16,
-                        );
-                        units.push(
-                            (crate::unicode::LOW_SURROGATE_START as u32
-                                + (payload & crate::unicode::SURROGATE_PAYLOAD_MASK))
-                                as u16,
-                        );
-                    }
+                    crate::staged::strings::push_code_point_units(&mut units, number as u32);
                 }
                 self.string_from_units(&units)
             }

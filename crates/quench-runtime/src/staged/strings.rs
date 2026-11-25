@@ -271,6 +271,37 @@ pub fn code_point_at_row<S: Stage>(stage: &mut S, wide: bool, units: S::Word, le
     }, #[inline(always)] |_| first)
 }
 
+/// The UTF-16 units of the code point `point` (at most U+10FFFF): one unit, the point itself,
+/// for a point up to U+FFFF (a lone surrogate too), else the two units of its surrogate pair,
+/// the high one in the low 16 bits and the low one above it. Nonzero high bits mean two units,
+/// since a low surrogate is never zero. The inverse of `code_point_at_row`.
+#[inline(always)]
+pub fn code_point_units_row<S: Stage>(stage: &mut S, point: S::Word) -> S::Word {
+    let limit = stage.constant(0x10000);
+    let single = stage.ult(point, limit);
+    stage.choose(single, #[inline(always)] |_| point, #[inline(always)] |stage| {
+        let payload = stage.add_imm(point, 0x10000u64.wrapping_neg());
+        let top = stage.shr_imm(payload, 10u64);
+        let high = stage.add_imm(top, 0xD800u64);
+        let bottom = stage.and_imm(payload, 0x3FFu64);
+        let low = stage.add_imm(bottom, 0xDC00u64);
+        let shifted = stage.mul_imm(low, 0x10000u64);
+        stage.or(high, shifted)
+    })
+}
+
+/// `code_point_units_row` on `Concrete`: `point`'s units pushed to `units`.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn push_code_point_units(units: &mut Vec<u16>, point: u32) {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let packed = code_point_units_row(&mut stage, u64::from(point));
+    units.push(packed as u16);
+    if packed >> 16 != 0 {
+        units.push((packed >> 16) as u16);
+    }
+}
+
 /// `code_point_at_row` on `Concrete` over `units`; `None` past the end.
 #[cfg(not(stencil_build))]
 pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
