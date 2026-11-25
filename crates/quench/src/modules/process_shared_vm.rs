@@ -402,7 +402,12 @@ pub(crate) fn initialize_terminal(context: &mut NativeContext<'_>, _: RootId, _:
     let process = process_root(context)?;
     let key = context.string_rooted(if fd == STDERR_FD { "stderr" } else { "stdout" });
     let stream = context.get_property_rooted(process, key)?;
-    let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
+    let terminal = if crate::aot::prefix::armed() {
+        crate::aot::prefix::terminal(fd).ok_or_else(|| crate::aot::prefix::stop(context))?
+    } else {
+        crate::modules::tty_state::is_terminal_fd(fd)
+    };
+    let tty = context.boolean(terminal);
     install(context, stream, "isTTY", tty)?;
     Ok(context.undefined())
 }

@@ -129,13 +129,13 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
     enum Work {
         Application(Options),
         Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
-        Evaluation { entry: PathBuf, journal: PathBuf },
+        Evaluation { entry: PathBuf, journal: PathBuf, assumptions: Vec<String> },
     }
     let work = match arguments.as_slice() {
         [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
             Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
-        [option, entry, journal] if option == super::strict::EVALUATION_WORKER_OPTION =>
-            Work::Evaluation { entry: entry.into(), journal: journal.into() },
+        [option, entry, journal, assumptions @ ..] if option == super::strict::EVALUATION_WORKER_OPTION =>
+            Work::Evaluation { entry: entry.into(), journal: journal.into(), assumptions: assumptions.to_vec() },
         _ => Work::Application(Options::parse(arguments)?),
     };
     std::thread::Builder::new()
@@ -144,7 +144,7 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .spawn(move || match work {
             Work::Application(options) => compile(options),
             Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
-            Work::Evaluation { entry, journal } => super::strict::evaluate(&entry, &journal),
+            Work::Evaluation { entry, journal, assumptions } => super::strict::evaluate(&entry, &journal, &assumptions),
         })
         .map_err(|error| error.to_string())?
         .join()
