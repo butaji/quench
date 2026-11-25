@@ -71,7 +71,7 @@ fn index(c: &mut Context<'_>, receiver: RootId) -> Result<usize, RootedError> {
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
-        .crypto_signatures
+        .crypto_signatures()
         .handles
         .iter()
         .map(|handle| handle.identity)
@@ -98,7 +98,7 @@ pub(crate) fn new(
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let dead = shared
         .borrow()
-        .crypto_signatures
+        .crypto_signatures()
         .handles
         .iter()
         .enumerate()
@@ -109,11 +109,11 @@ pub(crate) fn new(
         })
         .collect::<Vec<_>>();
     for index in dead.into_iter().rev() {
-        let handle = shared.borrow_mut().crypto_signatures.handles.remove(index);
+        let handle = shared.borrow_mut().crypto_signatures().handles.remove(index);
         c.release_host_weak_root(handle.identity);
     }
     let identity = c.host_weak_root(receiver)?;
-    shared.borrow_mut().crypto_signatures.handles.push(Handle {
+    shared.borrow_mut().crypto_signatures().handles.push(Handle {
         identity,
         value: Signature::default(),
     });
@@ -127,7 +127,7 @@ pub(crate) fn init(
     let index = index(c, receiver)?;
     let name = c.to_string(args[0])?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = shared.borrow_mut().crypto_signatures.handles[index]
+    let result = shared.borrow_mut().crypto_signatures().handles[index]
         .value
         .initialize(&name);
     result.map_err(|failure| error(c, failure))?;
@@ -141,7 +141,7 @@ pub(crate) fn update(
     let index = index(c, receiver)?;
     let bytes = super::crypto_hash_shared_vm::input(c, args[0], args.get(1).copied())?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = shared.borrow_mut().crypto_signatures.handles[index]
+    let result = shared.borrow_mut().crypto_signatures().handles[index]
         .value
         .update(&bytes);
     result.map_err(|failure| error(c, failure))?;
@@ -184,7 +184,7 @@ pub(crate) fn sign(
     let key = super::crypto_asymmetric_shared_vm::import_input(c, KeyKind::Private, &input)?;
     let options = options(c, args, 5)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = shared.borrow_mut().crypto_signatures.handles[index]
+    let result = shared.borrow_mut().crypto_signatures().handles[index]
         .value
         .sign(&key, &options);
     let bytes = result.map_err(|failure| error(c, failure))?;
@@ -204,7 +204,7 @@ pub(crate) fn verify(
         .ok_or_else(|| RootedError::host("Native signature is not a BufferSource"))?;
     let options = options(c, args, 6)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    let result = shared.borrow_mut().crypto_signatures.handles[index]
+    let result = shared.borrow_mut().crypto_signatures().handles[index]
         .value
         .verify(&key, &signature, &options);
     let result = result.map_err(|failure| error(c, failure))?;
@@ -238,29 +238,33 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     }
     Ok(())
 }
+
+
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared
-        .borrow()
-        .crypto_signatures
-        .handles
-        .iter()
-        .enumerate()
-        .filter_map(|(index, handle)| {
-            (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let handle = shared.borrow_mut().crypto_signatures.handles.remove(index);
-        runtime.release_host_weak_root(handle.identity);
-    }
+    crate::host::node_host::prune_lazy_state(runtime, |shared| &shared.crypto_signatures);
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let handles = std::mem::take(&mut shared.borrow_mut().crypto_signatures.handles);
-    for handle in handles {
-        runtime.release_host_weak_root(handle.identity);
-    }
+    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.crypto_signatures);
 }
 
 crate::host::startup_snapshot::host_snap_empty!(State { handles } "a signature");
+
+impl crate::host::node_host::LazyStateValue for State {
+    fn snapshot_write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        self.write_snapshot(writer)
+    }
+    fn snapshot_read(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.read_snapshot(reader)
+    }
+    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        let dead: Vec<usize> = self.handles.iter().enumerate()
+            .filter_map(|(index, handle)| (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)).collect();
+        for index in dead.into_iter().rev() {
+            let handle = self.handles.remove(index);
+            runtime.release_host_weak_root(handle.identity);
+        }
+    }
+    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        for handle in std::mem::take(&mut self.handles) { runtime.release_host_weak_root(handle.identity); }
+    }
+}

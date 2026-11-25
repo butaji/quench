@@ -1495,7 +1495,7 @@ impl Vm {
             let compiled = kept.is_none();
             let residual = match kept {
                 Some(residual) => residual,
-                None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self)
+                None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self, false)
                     .map_err(|diagnostics| {
                         if diagnostics
                             .iter()

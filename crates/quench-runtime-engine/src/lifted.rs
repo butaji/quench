@@ -2,8 +2,10 @@
 //! `quench_runtime::vm::engine_calls2`.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
+#[cfg(feature = "jit")]
 use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::{AheadImages, LaneView, LaneBody};
+#[cfg(feature = "jit")]
 use crate::aot_image::{self, ImageTarget};
 
 #[quench_macros::ext(AheadImagesLifted160)]
@@ -11,6 +13,7 @@ impl AheadImages {
 
 
     /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
+    #[cfg(feature = "jit")]
     #[inline]
     pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
         let facts = quench_runtime::compile::aot_facts::analyze(program);

@@ -9,6 +9,7 @@ use super::*;
 use quench_runtime::vm::program_store::lane_publication::LaneKey;
 
 type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
+pub(crate) use super::lane_method::{finish_lane_method, LaneMethodFacts};
 #[path = "lane_compile/image.rs"] pub(crate) mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
@@ -317,7 +318,7 @@ pub(crate) enum LaneBodyWork<'a> {
         arrays: &'a [(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)] },
     /// Look for the code of the body compiling, for the view that started it (a plan again
     /// after its code was too large starts from it).
-    Poll(Box<PendingLaneMethod>, &'a crate::dispatch_fast::LaneView),
+    Poll(Box<dyn std::any::Any>, &'a crate::dispatch_fast::LaneView),
 }
 
 /// Why a body did not start compiling.
@@ -339,7 +340,7 @@ type PlanGate<'a> = dyn Fn(&Vm, &lane_unit::Unit, &dyn std::fmt::Debug, &[Direct
 
 /// What the VM did for it.
 pub(crate) enum LaneBodyOutcome {
-    Compiling(Box<PendingLaneMethod>),
+    Compiling(Box<dyn std::any::Any>),
     Published(Rc<PublishedLaneMethod>),
     /// A collection ran while its code compiled: its proofs no longer hold, and it warms again.
     Stale,
@@ -711,7 +712,8 @@ impl Vm {
 
     /// What a pending body's compile came to, or the feedback and budget to plan it again with
     /// where its code needed more memory than a body may take: half the inlining.
-    fn body_poll_in_lane(&mut self, program: &ResidualProgram, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
+    fn body_poll_in_lane(&mut self, program: &ResidualProgram, pending: Box<dyn std::any::Any>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
+        let pending = crate::compiled::pending_lane(pending);
         if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
             return Ok(LaneBodyOutcome::Stale);
         }
@@ -850,30 +852,15 @@ impl LanePlan {
     }
 
     /// The method `memory`'s code makes (`finish`, `finish_in`).
-    fn finish_placed(mut self, memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
-        let stable = std::mem::take(&mut self.lowered.region.stable);
-        let unit = &self.unit;
-        let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
-        let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
-        let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
-        let names_shapes = self.names_shapes();
-        if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
-            dump_native_code(directory, DumpSite::Body { function: self.function, scalar }, &memory, clif);
-        }
-        // SAFETY: the lane region lowers a body with the lane body ABI (`body_signature_in_lane`).
-        let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
-        let scalar = scalar.map(|at| memory.pointer().addr() + at);
-        let proven = proven.map(|(at, params)| (memory.pointer().addr() + at, params));
-        Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: Some(memory), entry, scalar, proven, rows: None, recovery_space,
-            fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
-            // A body that names a callee's body retires with it (`DirectCallee::method`).
-            names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,
-            scratch_width, caller_registers, frame_reach: 0,
-            amortizes, direct: self.direct, closed: self.closed,
-            framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
-            summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
-        })
+    fn finish_placed(self, memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
+        let mut lowered = self.lowered;
+        let facts = LaneMethodFacts {
+            unit: self.unit, stable: std::mem::take(&mut lowered.region.stable), fields: self.fields,
+            direct: self.direct, closed: self.closed, function: self.function, invalidation: self.invalidation,
+            tiers: self.tiers, fault_poll: lowered.region.fault_poll,
+            exits: std::mem::take(&mut lowered.region.exits), summary: lowered.region.summary.take(), clif: lowered.clif,
+        };
+        finish_lane_method(memory, scalar, proven, facts)
     }
 }
 

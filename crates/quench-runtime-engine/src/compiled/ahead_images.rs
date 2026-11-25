@@ -5,13 +5,20 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[cfg(feature = "jit")]
 use std::collections::BTreeMap;
+#[cfg(feature = "jit")]
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
-use crate::aot_image::{LaneImage, base::BaseImage, symbols::{Symbol, SymbolTable}};
+use crate::aot_image::{LaneImage, base::BaseImage, symbols::SymbolTable};
+#[cfg(feature = "jit")]
+use crate::aot_image::symbols::Symbol;
 use quench_runtime::compile::aot_facts::AotFacts;
+#[cfg(feature = "jit")]
 use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, file::Words, live::{self, LiveImage}};
-#[path = "ahead_images/constructions.rs"] pub(crate) mod constructions;
+#[cfg(feature = "jit")]
+#[path = "ahead_images/constructions.rs"]
+pub(crate) mod constructions;
 
 /// This build of the engine and the core (`build.rs`): the only build an ahead image runs on.
 pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_ENGINE_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
@@ -82,6 +89,7 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
+#[cfg(feature = "jit")]
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads))
     -> Result<(RelocatableCode, bool), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
@@ -103,6 +111,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 
 /// The message a rejected image body is refused with, printing the structured rejection under
 /// `QUENCH_TRACE=aot-lanes` (Cranelift's own error is printed where it is raised).
+#[cfg(feature = "jit")]
 fn rejection_reason(function: u32, rejection: NativeCompileRejection) -> &'static str {
     if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: function {function}: image body rejected: {rejection:?}"); }
     match rejection {
@@ -118,6 +127,7 @@ fn rejection_reason(function: u32, rejection: NativeCompileRejection) -> &'stati
 /// construction the closed world proves keeps its receiver as its fields (`constructions`). A call
 /// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
 /// `None` where it gives no native record.
+#[cfg(feature = "jit")]
 pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
@@ -140,13 +150,23 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     Ok(LaneImage { code, fault_poll })
 }
 
+
+#[cfg(not(feature = "jit"))]
+pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &ClosedFrozen),
+    _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable,
+) -> Result<LaneImage, &'static str> {
+    Err("ahead image lowering requires the jit feature")
+}
+
 /// Whether `unit` may enter another body: a call of any form or a construction.
+#[cfg(feature = "jit")]
 fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
+#[cfg(feature = "jit")]
 fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: &mut SymbolTable) -> BTreeMap<usize, u32> {
     unit.instructions.iter()
         .filter(|instruction| quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::LoadConst))
@@ -163,6 +183,7 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// (`calls`, its `AotImage::calls`): the lane body calls each through the same record, which the
 /// loader binds (`BoundCalls::bind`) and the lane reads by `Symbol::CallRecord`. An arrow is left
 /// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver.
+#[cfg(feature = "jit")]
 fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], symbols: &mut SymbolTable)
     -> BTreeMap<usize, lane_region::ProvenCall> {
     unit.origins.iter().enumerate().filter_map(|(pc, origin)| {
@@ -201,9 +222,14 @@ impl AheadImages {
     pub fn from_bytes(file: &[u8]) -> Result<Self, String> { Ok(Self::of(aot_image::file::from_bytes(file)?)) }
 
     /// Starts collecting the images of every program this thread stores (`finish_recording`).
+    #[cfg(feature = "jit")]
     pub fn start_recording() {
         *recorded() = Some(quench_runtime::vm::engine_types::Recording { lower: |program| AheadImages::compile(program), images: Vec::new() });
     }
+
+    /// An execution-only build records no images (it carries no lowering).
+    #[cfg(not(feature = "jit"))]
+    pub fn start_recording() {}
 
     /// What was recorded since `start_recording`, which stops.
     pub fn finish_recording() -> Vec<AheadImages> { recorded().take().map(|recording| recording.images).unwrap_or_default().into_iter().map(Self::of).collect() }
@@ -319,14 +345,14 @@ impl Vm {
         };
         let roots = roots.unwrap_or_default();
         // The heap values the code names are its roots, which its publication keeps alive.
-        let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
-            fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() },
-            entry_types: Default::default(), summary: None,
-            exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
-        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
-            direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish_in(memory, None, None);
-        if method.is_none() { refuse_lane(function, "plan.finish_in"); }
+        let exits = ExitTable::of_unit(&unit, |_, _| Vec::new());
+        let facts = lane_compile::LaneMethodFacts {
+            unit, stable: lane_region::StableFacts { roots, ..Default::default() }, fields: Vec::new(),
+            direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(),
+            tiers: self.programs.tiers(), fault_poll, exits, summary: None, clif: None,
+        };
+        let method = lane_compile::finish_lane_method(memory, None, None, facts);
+        if method.is_none() { refuse_lane(function, "finish_lane_method"); }
         method
     }
 

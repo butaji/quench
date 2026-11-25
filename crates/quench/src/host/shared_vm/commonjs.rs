@@ -496,7 +496,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
     context.scoped(install_performance_global)?;
     #[cfg(quench_openssl_provider)]
-    context.scoped(crate::modules::crypto_node::install_global)?;
+    {
+        let initialize = crate::host::shared_vm::operation!("cryptoGlobalInitialize");
+        crate::host::shared_vm::call_linked(context, initialize, &[])?;
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // The SDK console reads its primordial snapshot. It loads on the first read of
@@ -1750,10 +1753,6 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 pub(crate) fn cares_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     builtin!(context, "internalBinding/cares_wrap")
-}
-
-pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    builtin!(context, "internalBinding/http2")
 }
 
 pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {

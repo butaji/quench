@@ -593,8 +593,7 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     }
     for id in dead {
         if !live.iter().any(|(_, existing)| *existing == id) {
-            super::net_shared_vm::native_tcp_close(&mut shared.borrow_mut().tcp(), id);
-            super::native_async_wrap::collect_tcp(runtime, id);
+            shared.borrow().tcp.net_close_socket(runtime, id);
         }
     }
     shared.borrow_mut().net_handle_identities = live;

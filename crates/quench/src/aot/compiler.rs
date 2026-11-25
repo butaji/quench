@@ -152,9 +152,11 @@ impl CompiledSources {
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
         // The image's lane helper imports are defined by this library (`aot::lane_helper_symbols`), and the
-        // attention byte its polls read by the runtime (`execution_interrupt`, exported by name).
+        // attention byte its polls read and the narrow decode's table by the runtime (exported by name).
         let mut exports = required_exports.iter()
-            .filter(|name| !name.starts_with("quench_lane_helper_") && *name != "quench_execution_attention")
+            .filter(|name| !name.starts_with("quench_lane_helper_")
+                && *name != quench_runtime::execution_interrupt::ATTENTION_SYMBOL
+                && *name != quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL)
             .map(|name| format!("{name:?}")).collect::<Vec<_>>();
         // The Node host defines the lane helper trampolines from its own library
         // (`aot::lane_helper_symbols`); a core image has no host library, so its catalog does.
@@ -284,7 +286,7 @@ impl SourceManifest {
         let mut compiler = NativeJsCompiler::new(true);
         let entry = match kind {
             quench_runtime::SourceKind::Module => compiler.compile_module(source, NATIVE_ENTRY_NAME),
-            quench_runtime::SourceKind::Script | quench_runtime::SourceKind::Eval => compiler.compile_script(source, NATIVE_ENTRY_NAME, Default::default()),
+            quench_runtime::SourceKind::Script | quench_runtime::SourceKind::Eval => compiler.compile_script(source, NATIVE_ENTRY_NAME, quench_runtime::HostScriptOptions { keep_records: true, ..Default::default() }),
         }.map_err(|errors| format!("{errors:?}"))?;
         Ok(CompiledSources { entry: compiler.finish(entry)?, units: Vec::new(), syntax_errors: Vec::new(), assets: self.assets })
     }

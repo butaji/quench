@@ -38,7 +38,9 @@ mod page;
 
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;
-pub(crate) use symbols::{HeapValueRecipe, Symbol};
+#[cfg(feature = "jit")]
+pub(crate) use symbols::HeapValueRecipe;
+pub(crate) use symbols::Symbol;
 
 pub(crate) use quench_runtime::vm::engine_types::AotImage;
 
@@ -59,6 +61,7 @@ pub(crate) use quench_runtime::vm::engine_types::LaneImage;
 pub(crate) use quench_runtime::vm::jit_backend::NativeTarget as ImageTarget;
 
 /// Lowers every function of `program` under `facts` for `target`.
+#[cfg(feature = "jit")]
 pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageTarget) -> Result<AotImage, String> {
     // Every function lowers as a VM that loads the image runs it (`lowered_function`), so the image's PCs are its.
     for index in 0..program.function_count() { program.lowered_function(index); }
@@ -90,6 +93,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
 
 /// One function: its base body always, its lane body where it lowers native records, the
 /// lane's leaves bound to the base body's PC entries; its base body's proven calls join `sites`.
+#[cfg(feature = "jit")]
 fn lower_function(
     program: &ResidualProgram,
     (facts, frozen): (&AotFacts, &crate::compiled::ClosedFrozen),
@@ -116,4 +120,10 @@ impl AotImage {
     pub(crate) fn generic_rows(&self) -> usize {
         self.functions.iter().map(|function| function.base.generic_rows()).sum()
     }
+}
+
+/// An execution-only build carries no lowering; the compiler that builds images enables `jit`.
+#[cfg(not(feature = "jit"))]
+pub(crate) fn lower(_: &ResidualProgram, _: &AotFacts, _: &ImageTarget) -> Result<AotImage, String> {
+    Err("ahead image lowering requires the jit feature".into())
 }

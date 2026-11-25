@@ -405,3 +405,5 @@ pub(crate) fn from_owned_descriptor(
     }
     Ok(handle)
 }
+
+crate::host::shared_vm::binding_operation!(binding_operation, binding);

@@ -18,9 +18,8 @@ pub(crate) mod sign;
 pub(crate) mod web;
 pub(crate) mod x509;
 
-use crate::host::NodeHost;
 use errors::CryptoError;
-use quench_runtime::{BuiltinBrand, DescriptorFields, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
+use quench_runtime::{BuiltinBrand, DescriptorFields, HostWeakRoot, NativeContext, RootId, RootedError};
 
 pub(crate) use crate::modules::stream_shared_vm::{arg, attempt, call_method, get, inherit, is_null, is_nullish, is_undefined, put};
 
@@ -130,16 +129,10 @@ fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::Sha
 }
 
 pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
-    if state(c).borrow().crypto.intrinsics.is_none() {
+    if state(c).borrow().crypto().intrinsics.is_none() {
         exports::module(c)?;
     }
-    state(c).borrow().crypto.intrinsics.ok_or_else(|| RootedError::host("crypto module is not initialized"))
-}
-
-/// Class `class`, once the module is built: every key and key class is the built module's,
-/// so a value is no key of a module not yet built.
-pub(crate) fn built_class(c: &mut Context<'_>, class: Class) -> Option<RootId> {
-    state(c).borrow().crypto.intrinsics.map(|intrinsics| intrinsics.classes[class as usize])
+    state(c).borrow().crypto().intrinsics.ok_or_else(|| RootedError::host("crypto module is not initialized"))
 }
 
 pub(crate) fn class(c: &mut Context<'_>, class: Class) -> Outcome {
@@ -151,23 +144,25 @@ pub(crate) fn attach(c: &mut Context<'_>, object: RootId, native: Native) -> Res
     let symbol = intrinsics(c)?.handle;
     let shared = state(c);
     let sweep = {
-        let table = &shared.borrow().crypto;
+        let shared = shared.borrow();
+        let table = shared.crypto();
         table.live() >= SWEEP_FLOOR.max(table.live_after_sweep * 2)
     };
     if sweep {
-        let dead = shared.borrow().crypto.dead(|owner| c.host_weak_root_is_live(owner));
+        let dead = shared.borrow().crypto().dead(|owner| c.host_weak_root_is_live(owner));
         for index in dead {
-            let owner = shared.borrow_mut().crypto.release(index);
+            let owner = shared.borrow_mut().crypto().release(index);
             if let Some(owner) = owner {
                 c.release_host_weak_root(owner);
             }
         }
-        let live = shared.borrow().crypto.live();
-        shared.borrow_mut().crypto.live_after_sweep = live;
+        let live = shared.borrow().crypto().live();
+        shared.borrow_mut().crypto().live_after_sweep = live;
     }
     let owner = c.host_weak_root(object)?;
     let index = {
-        let table = &mut shared.borrow_mut().crypto;
+        let shared = shared.borrow_mut();
+        let mut table = shared.crypto();
         let handle = Some(Handle { owner, native });
         match table.vacant.pop() {
             Some(index) => {
@@ -208,32 +203,15 @@ pub(crate) fn with_native<R>(
         return Ok(None);
     };
     let shared = state(c);
-    let mut table = shared.borrow_mut();
-    Ok(table.crypto.handles.get_mut(index).and_then(Option::as_mut).map(|handle| f(&mut handle.native)))
+    let result = {
+        let table = shared.borrow_mut();
+        let mut crypto = table.crypto();
+        crypto.handles.get_mut(index).and_then(Option::as_mut).map(|handle| f(&mut handle.native))
+    };
+    Ok(result)
 }
 
 /// Releases the state of objects the collector reclaimed (the idle hook).
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared.borrow().crypto.dead(|owner| runtime.host_weak_root_is_live(owner));
-    for index in dead {
-        let owner = shared.borrow_mut().crypto.release(index);
-        if let Some(owner) = owner {
-            runtime.release_host_weak_root(owner);
-        }
-    }
-}
-
-/// Releases every handle at shutdown.
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let handles = std::mem::take(&mut shared.borrow_mut().crypto.handles);
-    shared.borrow_mut().crypto.vacant.clear();
-    for handle in handles.into_iter().flatten() {
-        runtime.release_host_weak_root(handle.owner);
-    }
-}
-
 // ---- Argument conversion -------------------------------------------------------------
 
 /// Node's formatted lists of the types an argument accepts.
@@ -626,6 +604,8 @@ pub(crate) fn set_engine(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
     Err(errors::throw(c, CryptoError::EngineUnknown(&id)))
 }
 
+pub(crate) mod binding;
+
 /// Installs `globalThis.crypto` and the lazy WebCrypto class globals.
 pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
     let global = c.global_root()?;
@@ -655,4 +635,28 @@ pub(crate) fn web_class_globals(c: &mut Context<'_>, _: RootId, _: &[RootId]) ->
         c.define_data_property_rooted(global, key, constructor, true, false, true)?;
     }
     Ok(c.undefined())
+}
+
+
+impl crate::host::node_host::LazyStateValue for State {
+    fn snapshot_write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        self.write_snapshot(writer)
+    }
+    fn snapshot_read(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.read_snapshot(reader)
+    }
+    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        let dead = self.dead(|owner| runtime.host_weak_root_is_live(owner));
+        for index in dead {
+            if let Some(owner) = self.release(index) { runtime.release_host_weak_root(owner); }
+        }
+    }
+    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        let handles = std::mem::take(&mut self.handles);
+        self.vacant.clear();
+        for handle in handles.into_iter().flatten() { runtime.release_host_weak_root(handle.owner); }
+    }
+    fn built_key_object_class(&self) -> Option<quench_runtime::RootId> {
+        self.intrinsics.as_ref().map(|intrinsics| intrinsics.classes[Class::KeyObject as usize])
+    }
 }

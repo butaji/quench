@@ -2818,7 +2818,7 @@ fn wait_for_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) {
     let extra = Vec::new();
     let control = shared_state.borrow().process_control.clone();
     let started = std::time::Instant::now();
-    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp(), &extra, wait);
+    shared_state.borrow().tcp.net_wait_ready(&extra, wait);
     control.record_event_loop_idle(started.elapsed());
 }
 
@@ -2864,7 +2864,7 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
-        || crate::modules::net_shared_vm::has_work(&shared_state.borrow().tcp())
+        || shared_state.borrow().tcp.net_has_work()
         || crate::modules::napi::has_work()
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
@@ -3267,7 +3267,7 @@ fn drain_shared_jobs(
             super::crypto_signature_shared_vm::prune(runtime);
             super::crypto_secret_job_shared_vm::prune(runtime);
             #[cfg(quench_openssl_provider)]
-            super::crypto_node::prune(runtime);
+            runtime.host_mut().shared_state().borrow().crypto.prune_if_initialized(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
@@ -3837,7 +3837,7 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     #[cfg(quench_openssl_provider)]
     super::crypto_hash_shared_vm::cleanup(runtime);
     #[cfg(quench_openssl_provider)]
-    super::crypto_node::cleanup(runtime);
+    runtime.host_mut().shared_state().borrow().crypto.cleanup_if_initialized(runtime);
     super::cares_binding::cleanup(runtime);
     super::performance_binding_shared_vm::cleanup(runtime);
     super::pipe_binding::cleanup(runtime);

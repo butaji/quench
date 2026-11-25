@@ -1056,6 +1056,7 @@ impl Vm {
 
     /// The JavaScript value of an exported function's encoded `result` of scalar type `ty`
     /// (`CallCompletion::WasmExport`), whose decoding allocates nothing; `undefined` for none.
+    #[cfg(feature = "wasm")]
     pub fn wasm_export_result(&self, result: Value, ty: Option<WasmType>) -> Value {
         let Some(ty) = ty else { return Value::UNDEFINED };
         match self.decode_wasm_value_in(result, ty, None) {
@@ -1065,6 +1066,10 @@ impl Vm {
             _ => unreachable!("a pushed export's result is a validated scalar"),
         }
     }
+
+    /// Without the WebAssembly frontend (`wasm` off) no export completes: its value stands.
+    #[cfg(not(feature = "wasm"))]
+    pub fn wasm_export_result(&self, value: Value, _ty: Option<WasmType>) -> Value { value }
 
     /// The exported function `callee` names, when a JavaScript call can push its frame in place
     /// (`dispatch_fast::lane_wasm_export_frame`): an interpreted function of a Wasm program

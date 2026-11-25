@@ -407,7 +407,7 @@ pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> R
     let constructor = if class == "KeyObject" {
         // A value is no key of a crypto module not yet built.
         #[cfg(quench_openssl_provider)]
-        let key_object = crate::modules::crypto_node::built_class(c, crate::modules::crypto_node::Class::KeyObject);
+        let key_object = c.host_as::<crate::host::NodeHost>().shared_state().borrow().crypto.built_key_object_class();
         #[cfg(not(quench_openssl_provider))]
         let key_object = None;
         match key_object {

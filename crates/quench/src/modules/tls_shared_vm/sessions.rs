@@ -1,7 +1,6 @@
 //! A TLS socket owns its SSL session before the physical connection exists.
-use crate::host::NodeHost;
 use openssl::ssl::Ssl;
-use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
+use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]
 pub(crate) enum Purpose {
@@ -10,7 +9,7 @@ pub(crate) enum Purpose {
     Server,
 }
 pub(crate) struct Session {
-    identity: HostWeakRoot,
+    pub(crate) identity: HostWeakRoot,
     pub(crate) pending: Option<Pending>,
     pub(crate) purpose: Purpose,
 }
@@ -96,34 +95,4 @@ pub(crate) fn set_purpose(
         .entries[index]
         .purpose = purpose;
     Ok(())
-}
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared
-        .borrow()
-        .tls()
-        .sessions
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| {
-            (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let entry = shared
-            .borrow_mut()
-            .tls()
-            .sessions
-            .entries
-            .remove(index);
-        runtime.release_host_weak_root(entry.identity);
-    }
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let entries = std::mem::take(&mut shared.borrow_mut().tls().sessions.entries);
-    for entry in entries {
-        runtime.release_host_weak_root(entry.identity);
-    }
 }

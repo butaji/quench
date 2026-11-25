@@ -51,7 +51,7 @@ impl LaneView {
                 return true;
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
-                (work(crate::compiled::LaneBodyWork::Poll(crate::compiled::pending_lane(pending), self)), 0, recompiles, stuck, looks.saturating_add(1)),
+                (work(crate::compiled::LaneBodyWork::Poll(pending, self)), 0, recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
         *body = self.body_after(outcome, entry, entries, recompiles, stuck, looks);
@@ -95,7 +95,7 @@ impl LaneView {
         }
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
-                self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });
+                self.tier().history.set(LaneBodyHistory { shrinks: crate::compiled::pending_lane_ref(&*pending).shrinks(), ..self.tier().history.get() });
                 let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(self.tiers.lane_body.compile_poll_interval);
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }

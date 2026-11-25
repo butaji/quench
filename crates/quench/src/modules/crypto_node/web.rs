@@ -756,10 +756,10 @@ const EXPERIMENTAL_ALGORITHMS: [Algorithm; 2] = [Algorithm::Ed448, Algorithm::X4
 
 fn warn_experimental(c: &mut Context<'_>, algorithm: Algorithm) -> Result<(), RootedError> {
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
-    if shared.borrow().crypto.experimental_warned.contains(&algorithm) {
+    if shared.borrow().crypto().experimental_warned.contains(&algorithm) {
         return Ok(());
     }
-    shared.borrow_mut().crypto.experimental_warned.push(algorithm);
+    shared.borrow_mut().crypto().experimental_warned.push(algorithm);
     let process = shared.borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let message = format!("The {} Web Crypto API algorithm is an experimental feature and might change at any time", algorithm.name());
     let message = c.string_rooted(&message);

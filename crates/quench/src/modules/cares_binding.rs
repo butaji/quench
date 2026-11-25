@@ -330,3 +330,5 @@ impl State {
         Ok(())
     }
 }
+
+crate::host::shared_vm::binding_operation!(binding_operation, module);

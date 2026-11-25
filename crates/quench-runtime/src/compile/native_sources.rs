@@ -143,12 +143,17 @@ impl NativeJsCompiler {
         }
         match parts.as_slice() {
             [_, source] => self.compile_host_script(source, key.name()).map_err(|errors| format!("{errors:?}")),
-            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions::default())
+            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions { keep_records: true, ..Default::default() })
                 .map_err(|errors| format!("{errors:?}")),
             [_, goal @ (STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL), source] => self.compile_module_with_syntax(source, key.name(), *goal == STATIC_TYPESCRIPT_MODULE_GOAL)
                 .map_err(|errors| format!("{errors:?}")),
-            [_, goal, source] => self.compile_script(source, key.name(), script_options(goal)?)
-                .map_err(|errors| format!("{errors:?}")),
+            [_, goal, source] => {
+                // A captured unit is serialized into an image, which carries no compiler: keep
+                // its records and compile every body now (`KeptRecords`), never on first call.
+                let mut options = script_options(goal)?;
+                options.keep_records = true;
+                self.compile_script(source, key.name(), options).map_err(|errors| format!("{errors:?}"))
+            },
             [_, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
                 let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
                 self.compile_function_constructor(kind, parameters, body).map_err(|errors| format!("{errors:?}"))
@@ -162,7 +167,8 @@ impl NativeJsCompiler {
         &mut self, kind: DynamicFunctionKind, parameters: &str, body: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let source = DynamicFunctionSource::new(parameters, body, kind);
-        let mut program = Engine::specialize_function_constructor(&source, DYNAMIC_FUNCTION_SOURCE_NAME, self)?;
+        // A native image carries no compiler: every body compiles here, never on first call.
+        let mut program = Engine::specialize_function_constructor(&source, DYNAMIC_FUNCTION_SOURCE_NAME, self, true)?;
         self.adopt(&mut program);
         Ok(program)
     }
@@ -184,7 +190,7 @@ impl NativeJsCompiler {
                 let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
                 self.compile_function_constructor(kind, parameters, body)
             },
-            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions::default()),
+            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions { keep_records: true, ..Default::default() }),
             _ => return Err("unsupported native source request".into()),
         };
         match compiled {
@@ -230,15 +236,13 @@ impl NativeJsCompiler {
         Ok(program)
     }
 
-    /// Compile context-free host bootstrap source, matching `eval_host_script`.
+    /// Compile context-free host bootstrap source, matching `eval_host_script`. A native image
+    /// serializes this unit and carries no compiler, so it keeps its records and compiles every
+    /// body now (`KeptRecords`), never as a first-call stub.
     pub fn compile_host_script(
         &mut self, source: &str, name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let mut program = Engine::specialize_eval_with_context(
-            source, name, self, false, Default::default(), &[], &[], None,
-        )?;
-        self.adopt(&mut program);
-        Ok(program)
+        self.compile_script(source, name, HostScriptOptions { keep_records: true, ..Default::default() })
     }
 
     /// Compile the same retained wrapper/body shape used by host libraries.

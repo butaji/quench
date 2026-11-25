@@ -114,6 +114,21 @@ macro_rules! marked_operation {
 }
 pub(crate) use marked_operation;
 
+/// Declares `$name`, the callback of a module's binding host operation: the binding's own
+/// builder (`$build`) under the operation ABI's unused receiver and arguments.
+macro_rules! binding_operation {
+    ($name:ident, $build:path) => {
+        pub(crate) fn $name(
+            context: &mut quench_runtime::NativeContext<'_>,
+            _: quench_runtime::RootId,
+            _: &[quench_runtime::RootId],
+        ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
+            $build(context)
+        }
+    };
+}
+pub(crate) use binding_operation;
+
 /// The operation registered as `name`, marked as one the enclosing code makes.
 macro_rules! literal_operation {
     ($name:expr $(,)?) => {
@@ -2549,6 +2564,24 @@ node_bindings! {
         method "builtin:cluster" (0) => commonjs::builders::cluster,
         method "builtin:repl" (0) => commonjs::builders::repl,
         method "builtin:sea" (0) => commonjs::builders::sea,
+        method "internalBinding:crypto" (0) => crate::modules::crypto_node::binding::binding_operation,
+        method "cryptoGlobalInitialize" (0) => crate::modules::crypto_node::binding::install_global_operation,
+        method "internalBinding:crypto_keys" (0) => crate::modules::crypto_key_shared_vm::binding_operation,
+        method "internalBinding:zlib" (0) => crate::modules::zlib_native_shared_vm::binding_operation,
+        method "internalBinding:cares_wrap" (0) => crate::modules::cares_binding::binding_operation,
+        method "internalBinding:http_parser" (0) => crate::modules::http_common_shared_vm::binding_operation,
+        method "internalBinding:http2" (0) => crate::modules::http2_shared_vm::binding_operation,
+        method "internalBinding:udp_wrap" (0) => crate::modules::udp_binding::binding_operation,
+        method "internalBinding:tcp_wrap" (0) => crate::modules::tcp_binding::binding_operation,
+        method "internalBinding:pipe_wrap" (0) => crate::modules::pipe_binding::binding_operation,
+        method "internalBinding:stream_wrap" (0) => crate::modules::stream_binding::binding_operation,
+        method "internalBinding:contextify" (0) => crate::modules::contextify_shared_vm::binding_operation,
+        method "internalBinding:v8" (0) => crate::modules::v8_shared_vm::binding_operation,
+        method "internalBinding:heap_utils" (0) => crate::modules::v8_shared_vm::heap_utils_binding_operation,
+        method "internalBinding:internal_only_v8" (0) => crate::modules::v8_shared_vm::internal_only_binding_operation,
+        method "internalBinding:performance" (0) => crate::modules::performance_binding_shared_vm::binding_operation,
+        method "internalBinding:constants.zlib" (0) => crate::modules::zlib_constants::binding_operation,
+        method "internalBinding:constants.crypto" (0) => crate::modules::crypto_constants::binding_operation,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing

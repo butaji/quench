@@ -802,7 +802,7 @@ fn register(
     let identity = c.host_weak_root(job)?;
     shared
         .borrow_mut()
-        .crypto_secret_jobs
+        .crypto_secret_jobs()
         .resources
         .push(Resource { identity, id });
     #[cfg(quench_openssl_provider)]
@@ -810,7 +810,7 @@ fn register(
         let identity = c.host_weak_root(job)?;
         shared
             .borrow_mut()
-            .crypto_secret_jobs
+            .crypto_secret_jobs()
             .configured
             .push(Configured { identity, request });
     }
@@ -911,7 +911,7 @@ fn take_request(c: &mut Context<'_>, job: RootId) -> Result<Option<NativeRequest
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
-        .crypto_secret_jobs
+        .crypto_secret_jobs()
         .configured
         .iter()
         .map(|job| job.identity)
@@ -919,7 +919,7 @@ fn take_request(c: &mut Context<'_>, job: RootId) -> Result<Option<NativeRequest
     for (i, identity) in identities.into_iter().enumerate() {
         if let Some(value) = c.resolve_host_weak_root(identity) {
             if c.strict_equal_rooted(value, job)? {
-                let configured = shared.borrow_mut().crypto_secret_jobs.configured.remove(i);
+                let configured = shared.borrow_mut().crypto_secret_jobs().configured.remove(i);
                 c.release_host_weak_root(configured.identity);
                 return Ok(Some(configured.request));
             }
@@ -932,14 +932,14 @@ pub(crate) fn digest_inventory(c: &mut Context<'_>, aliases: bool) -> Result<Roo
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let synchronized = shared
         .borrow_mut()
-        .crypto_secret_jobs
+        .crypto_secret_jobs()
         .digests
         .synchronize(super::crypto_provider_shared_vm::fips_generation);
     synchronized.map_err(|error| native_error(c, Failure::Digest(error)))?;
     if aliases {
         let values = shared
             .borrow()
-            .crypto_secret_jobs
+            .crypto_secret_jobs()
             .digests
             .aliases()
             .map(|(name, id)| (name.to_owned(), id))
@@ -953,7 +953,7 @@ pub(crate) fn digest_inventory(c: &mut Context<'_>, aliases: bool) -> Result<Roo
     } else {
         let names = shared
             .borrow()
-            .crypto_secret_jobs
+            .crypto_secret_jobs()
             .digests
             .names()
             .map(str::to_owned)
@@ -1298,14 +1298,14 @@ fn queue(c: &mut Context<'_>, data: RootId, completion: bool) -> Result<(), Root
         let (_, id) = resource.expect("completion resource");
         let index = shared
             .borrow()
-            .crypto_secret_jobs
+            .crypto_secret_jobs()
             .resources
             .iter()
             .position(|r| r.id == id);
         if let Some(index) = index {
             let resource = shared
                 .borrow_mut()
-                .crypto_secret_jobs
+                .crypto_secret_jobs()
                 .resources
                 .remove(index);
             c.release_host_weak_root(resource.identity);
@@ -1554,7 +1554,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     shared
         .borrow_mut()
-        .crypto_secret_jobs
+        .crypto_secret_jobs()
         .running
         .push(Running {
             identity,
@@ -1563,7 +1563,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
     if let Err(error) = queue(c, data, false) {
         let entry = shared
             .borrow_mut()
-            .crypto_secret_jobs
+            .crypto_secret_jobs()
             .running
             .pop()
             .expect("just inserted");
@@ -1578,7 +1578,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
-        .crypto_secret_jobs
+        .crypto_secret_jobs()
         .running
         .iter()
         .map(|e| e.identity)
@@ -1597,7 +1597,8 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
     };
     let result = {
         let state = shared.borrow();
-        match &state.crypto_secret_jobs.running[index].result {
+        let jobs = state.crypto_secret_jobs();
+        match &jobs.running[index].result {
             Delivery::Pending(receiver) => receiver.try_recv(),
             Delivery::Ready(_) => {
                 return Err(RootedError::host("Crypto completion already queued"));
@@ -1612,13 +1613,13 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
         }
         Err(TryRecvError::Disconnected) => {
             // Preserve disconnected worker failure as a host error, not empty material.
-            shared.borrow_mut().crypto_secret_jobs.running[index].result =
+            shared.borrow_mut().crypto_secret_jobs().running[index].result =
                 Delivery::Ready(Err(Failure::WorkerDisconnected));
             queue(c, data, true)?;
             return Ok(c.undefined());
         }
     };
-    shared.borrow_mut().crypto_secret_jobs.running[index].result = Delivery::Ready(outcome);
+    shared.borrow_mut().crypto_secret_jobs().running[index].result = Delivery::Ready(outcome);
     queue(c, data, true)?;
     Ok(c.undefined())
 }
@@ -1633,7 +1634,7 @@ pub(crate) fn complete(
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let identities = shared
         .borrow()
-        .crypto_secret_jobs
+        .crypto_secret_jobs()
         .running
         .iter()
         .map(|e| e.identity)
@@ -1648,7 +1649,7 @@ pub(crate) fn complete(
         }
     }
     let index = index.ok_or_else(|| RootedError::host("Missing completed crypto job"))?;
-    let entry = shared.borrow_mut().crypto_secret_jobs.running.remove(index);
+    let entry = shared.borrow_mut().crypto_secret_jobs().running.remove(index);
     c.release_host_weak_root(entry.identity);
     let Delivery::Ready(outcome) = entry.result else {
         return Err(RootedError::host("Crypto completion before worker result"));
@@ -1707,76 +1708,10 @@ pub(crate) fn complete(
     Ok(undefined)
 }
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    #[cfg(quench_openssl_provider)]
-    {
-        let dead = shared
-            .borrow()
-            .crypto_secret_jobs
-            .configured
-            .iter()
-            .enumerate()
-            .filter_map(|(i, job)| (!runtime.host_weak_root_is_live(job.identity)).then_some(i))
-            .collect::<Vec<_>>();
-        for index in dead.into_iter().rev() {
-            let job = shared
-                .borrow_mut()
-                .crypto_secret_jobs
-                .configured
-                .remove(index);
-            runtime.release_host_weak_root(job.identity);
-        }
-    }
-    let dead = shared
-        .borrow()
-        .crypto_secret_jobs
-        .resources
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| (!runtime.host_weak_root_is_live(r.identity)).then_some(i))
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let resource = shared
-            .borrow_mut()
-            .crypto_secret_jobs
-            .resources
-            .remove(index);
-        runtime.release_host_weak_root(resource.identity);
-        super::async_hooks_shared_vm::complete_runtime_context(runtime, resource.id);
-    }
-    let dead = shared
-        .borrow()
-        .crypto_secret_jobs
-        .running
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| (!runtime.host_weak_root_is_live(r.identity)).then_some(i))
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let entry = shared.borrow_mut().crypto_secret_jobs.running.remove(index);
-        runtime.release_host_weak_root(entry.identity);
-    }
+    crate::host::node_host::prune_lazy_state(runtime, |shared| &shared.crypto_secret_jobs);
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    #[cfg(quench_openssl_provider)]
-    {
-        let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.configured);
-        for job in hashes {
-            runtime.release_host_weak_root(job.identity);
-        }
-        shared.borrow_mut().crypto_secret_jobs.digests = Default::default();
-    }
-    let entries = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.running);
-    for entry in entries {
-        runtime.release_host_weak_root(entry.identity);
-    }
-    let resources = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.resources);
-    for resource in resources {
-        runtime.release_host_weak_root(resource.identity);
-        super::async_hooks_shared_vm::clear_context(runtime, &shared, resource.id);
-    }
-    // Dropping receivers causes late worker results to be dropped and cleansed.
+    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.crypto_secret_jobs);
 }
 
 #[cfg(quench_openssl_provider)]
@@ -2456,4 +2391,53 @@ pub(crate) fn create_argon2(
             associated_data,
         })),
     )
+}
+
+
+impl crate::host::node_host::LazyStateValue for State {
+    fn snapshot_write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        self.write_snapshot(writer)
+    }
+    fn snapshot_read(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.read_snapshot(reader)
+    }
+
+    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        #[cfg(quench_openssl_provider)]
+        {
+            let dead: Vec<usize> = self.configured.iter().enumerate()
+                .filter_map(|(index, job)| (!runtime.host_weak_root_is_live(job.identity)).then_some(index)).collect();
+            for index in dead.into_iter().rev() {
+                let job = self.configured.remove(index);
+                runtime.release_host_weak_root(job.identity);
+            }
+        }
+        let dead: Vec<usize> = self.resources.iter().enumerate()
+            .filter_map(|(index, resource)| (!runtime.host_weak_root_is_live(resource.identity)).then_some(index)).collect();
+        for index in dead.into_iter().rev() {
+            let resource = self.resources.remove(index);
+            runtime.release_host_weak_root(resource.identity);
+            super::async_hooks_shared_vm::complete_runtime_context(runtime, resource.id);
+        }
+        let dead: Vec<usize> = self.running.iter().enumerate()
+            .filter_map(|(index, entry)| (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)).collect();
+        for index in dead.into_iter().rev() {
+            let entry = self.running.remove(index);
+            runtime.release_host_weak_root(entry.identity);
+        }
+    }
+    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        #[cfg(quench_openssl_provider)]
+        {
+            let hashes = std::mem::take(&mut self.configured);
+            self.digests = Default::default();
+            for job in hashes { runtime.release_host_weak_root(job.identity); }
+        }
+        for entry in std::mem::take(&mut self.running) { runtime.release_host_weak_root(entry.identity); }
+        let shared = runtime.host_mut().shared_state();
+        for resource in std::mem::take(&mut self.resources) {
+            runtime.release_host_weak_root(resource.identity);
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, resource.id);
+        }
+    }
 }

@@ -31,7 +31,7 @@ pub(crate) fn clone_key(c: &mut Context<'_>, value: RootId) -> Result<Option<Roo
 pub(crate) fn structured_clone(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
     let value = args.first().copied().unwrap_or(undefined);
-    if super::state(c).borrow().crypto.intrinsics.is_none() {
+    if super::state(c).borrow().crypto().intrinsics.is_none() {
         return Ok(undefined);
     }
     if contains_nested_key(c, value)? {

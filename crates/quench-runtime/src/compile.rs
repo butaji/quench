@@ -1024,9 +1024,11 @@ impl Engine {
         source: &DynamicFunctionSource,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
+        eager: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let expected_shape = ParsedProgramShape::DynamicFunction {
             parameter_list_end: source.parameter_list_end,
+            eager,
         };
         Self::specialize_with_program_shape(
             &source.text,
@@ -1314,7 +1316,7 @@ impl Engine {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
             }
-            ParsedProgramShape::DynamicFunction { parameter_list_end } => {
+            ParsedProgramShape::DynamicFunction { parameter_list_end, .. } => {
                 match parsed.program.body.as_mut_slice() {
                     [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
                         Expression::ParenthesizedExpression(expression) => {

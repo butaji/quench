@@ -68,7 +68,7 @@ const IMPORTED_OPERATION_FAMILIES: &[OperationFamily] = &[
     family(&["https"], &["https_shared_vm", "builders::https"]),
     family(
         &["net", "http", "https", "tls", "http2"],
-        &["net_", "tcp_binding", "builders::net", "builders::internal_net"],
+        &["net_", "tcp_binding", "stream_binding", "builders::net", "builders::internal_net"],
     ),
     family(
         &["child_process"],

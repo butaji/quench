@@ -860,3 +860,9 @@ mod tests {
         assert_eq!(limit, 512 * MIB + YOUNG_GENERATION_SEMI_SPACES * MAX_SEMI_SPACE_SIZE);
     }
 }
+
+crate::host::shared_vm::binding_operation!(binding_operation, binding);
+
+crate::host::shared_vm::binding_operation!(heap_utils_binding_operation, heap_utils_binding);
+
+crate::host::shared_vm::binding_operation!(internal_only_binding_operation, internal_only_binding);

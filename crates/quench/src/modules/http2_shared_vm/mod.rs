@@ -658,3 +658,5 @@ fn emit_warning(c: &mut Context<'_>, message: &str, kind: Option<&str>) -> Resul
     }
     call_method(c, process, "emitWarning", &values).map(drop)
 }
+
+crate::host::shared_vm::binding_operation!(binding_operation, binding);

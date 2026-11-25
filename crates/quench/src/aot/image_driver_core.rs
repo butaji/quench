@@ -8,15 +8,44 @@ use quench_runtime::{ExecutionMode, MemoryPolicy, NativeProgramNamespace, Runtim
 // `extern "Rust"` symbols, so a binary that uses the core must name the crate.
 extern crate quench_layers;
 
+/// The runtime's size-classed small-object allocator (`quench_alloc`), which the Node driver
+/// also installs (`quench::GLOBAL_ALLOCATOR`).
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();
+
 include!(env!("QUENCH_NATIVE_CATALOG"));
+
+/// The policy this image runs: the default, or memory-first under the experiment the Node host
+/// also reads (`QUENCH_DEV=memory-first`).
+fn memory_policy() -> MemoryPolicy {
+    if quench_runtime::trace::Dev::MemoryFirst.on() {
+        MemoryPolicy::MemoryFirst
+    } else {
+        MemoryPolicy::default()
+    }
+}
+
+/// Serve small requests from Quench's allocator under the throughput policy, as the Node host's
+/// `allocator_policy` does; the memory-first policy keeps the system allocator.
+fn apply_allocator_policy(policy: MemoryPolicy) {
+    #[cfg(unix)]
+    if policy == MemoryPolicy::Throughput && !quench_runtime::memory_mix_has("alloc") {
+        quench_alloc::QuenchAlloc::enable();
+    }
+    #[cfg(not(unix))]
+    let _ = policy;
+}
 
 fn run() -> Result<std::process::ExitCode, String> {
     // SAFETY: the compiler emits the catalog, metadata and objects together.
     let entry = unsafe { bind_entry() }?;
     let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
+    let policy = memory_policy();
+    apply_allocator_policy(policy);
     let mut runtime = Runtime::new(SystemHost);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
-    runtime.set_memory_policy(MemoryPolicy::default());
+    runtime.set_memory_policy(policy);
     runtime.set_native_program_resolver(move |name, parts| {
         // SAFETY: this resolver belongs to the same compiler-owned image.
         unsafe { resolve(&namespace, name, parts) }

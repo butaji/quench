@@ -550,7 +550,7 @@ pub(crate) fn cleanup(
             roots.extend(socket.write_callbacks.drain(..));
         }
         roots.extend(host.net_closing_sockets.drain().map(|(_, root)| root));
-        net_shared_vm::cleanup(&mut host.tcp());
+        host.tcp.net_cleanup();
         roots
     };
     for root in roots {

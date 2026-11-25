@@ -96,14 +96,14 @@ impl SharedNodeState {
             hmr: _,
             repl_resources: _,
             #[cfg(quench_openssl_provider)]
-            crypto_hashes,
+            crypto_hashes: _,
             #[cfg(quench_openssl_provider)]
-            crypto,
-            crypto_key_material,
+            crypto: _,
+            crypto_key_material: _,
             #[cfg(quench_openssl_provider)]
-            crypto_signatures,
-            crypto_secret_jobs,
-            zlib_native,
+            crypto_signatures: _,
+            crypto_secret_jobs: _,
+            zlib_native: _,
             messaging,
             dns_channels,
             serdes,
@@ -170,9 +170,9 @@ impl SharedNodeState {
         icu_converters.write_snapshot(writer)?;
         #[cfg(quench_openssl_provider)]
         {
-            crypto_hashes.write_snapshot(writer)?;
-            crypto.write_snapshot(writer)?;
-            crypto_signatures.write_snapshot(writer)?;
+            self.crypto_hashes.write_snapshot(writer)?;
+            self.crypto.write_snapshot(writer)?;
+            self.crypto_signatures.write_snapshot(writer)?;
         }
         dns_channels.write_snapshot(writer)?;
         vm_scripts.write_snapshot(writer)?;
@@ -192,9 +192,9 @@ impl SharedNodeState {
         node_error_api.write(writer)?;
         stdin.write_snapshot(writer)?;
         process_ipc.write_snapshot(writer)?;
-        crypto_key_material.write_snapshot(writer)?;
-        crypto_secret_jobs.write_snapshot(writer)?;
-        zlib_native.write_snapshot(writer)?;
+        self.crypto_key_material.write_snapshot(writer)?;
+        self.crypto_secret_jobs.write_snapshot(writer)?;
+        self.zlib_native.write_snapshot(writer)?;
         messaging.write_snapshot(writer)?;
         serdes.write_snapshot(writer)?;
         net_auto_select_family_attempt_timeout.write(writer)?;

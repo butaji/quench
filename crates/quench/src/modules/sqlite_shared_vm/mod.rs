@@ -216,3 +216,5 @@ pub(crate) fn require_new(c: &mut Context<'_>, name: &str) -> Result<RootId, Roo
         }
     }
 }
+
+impl crate::host::node_host::LazyStateValue for State {}

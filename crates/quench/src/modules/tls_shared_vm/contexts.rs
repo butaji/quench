@@ -148,36 +148,12 @@ pub(crate) fn owner(
     Err(context.throw(error))
 }
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    super::sessions::prune(runtime);
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared
-        .borrow()
-        .tls()
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| {
-            (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let entry = shared.borrow_mut().tls().entries.remove(index);
-        runtime.release_host_weak_root(entry.identity);
-    }
+    crate::host::node_host::prune_lazy_state(runtime, |shared| &shared.tls_contexts);
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    super::sessions::cleanup(runtime);
-    let shared = runtime.host_mut().shared_state();
-    let entries = std::mem::take(&mut shared.borrow_mut().tls().entries);
-    for entry in entries {
-        runtime.release_host_weak_root(entry.identity);
-    }
-    shared.borrow_mut().tls().transport_errors.clear();
-    let api = shared.borrow_mut().tls().api.take();
-    if let Some(api) = api {
-        runtime.release_root(api);
-    }
+    crate::host::node_host::cleanup_lazy_state(runtime, |shared| &shared.tls_contexts);
 }
+
 
 pub(crate) fn register(
     context: &mut NativeContext<'_>,
@@ -500,4 +476,27 @@ fn protocol_version(
         }
     };
     Ok(context.number(f64::from(version)))
+}
+
+impl crate::host::node_host::LazyStateValue for State {
+    fn prune(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        let dead: Vec<usize> = self.sessions.entries.iter().enumerate()
+            .filter_map(|(index, entry)| (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)).collect();
+        for index in dead.into_iter().rev() {
+            let entry = self.sessions.entries.remove(index);
+            runtime.release_host_weak_root(entry.identity);
+        }
+        let dead: Vec<usize> = self.entries.iter().enumerate()
+            .filter_map(|(index, entry)| (!runtime.host_weak_root_is_live(entry.identity)).then_some(index)).collect();
+        for index in dead.into_iter().rev() {
+            let entry = self.entries.remove(index);
+            runtime.release_host_weak_root(entry.identity);
+        }
+    }
+    fn cleanup(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        for entry in std::mem::take(&mut self.sessions.entries) { runtime.release_host_weak_root(entry.identity); }
+        for entry in std::mem::take(&mut self.entries) { runtime.release_host_weak_root(entry.identity); }
+        self.transport_errors.clear();
+        if let Some(api) = self.api.take() { runtime.release_root(api); }
+    }
 }

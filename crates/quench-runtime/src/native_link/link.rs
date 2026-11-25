@@ -36,6 +36,8 @@ pub struct NativeSupport {
     /// The layer facade (`quench-layers`), which a core image names (`extern crate quench_layers`)
     /// so its `extern "Rust"` engine, intl and stencil symbols link.
     layers: Option<PathBuf>,
+    /// The allocator (`quench-alloc`), which a core image names as its global allocator.
+    alloc: Option<PathBuf>,
     native_paths: BTreeSet<PathBuf>,
     optimization: String,
     rust_lto: bool,
@@ -53,6 +55,7 @@ impl NativeSupport {
         let mut runtime = None;
         let mut engine = None;
         let mut layers = None;
+        let mut alloc = None;
         let mut native_paths = BTreeSet::new();
         let mut optimization = None;
         let mut completed = false;
@@ -75,11 +78,11 @@ impl NativeSupport {
                     // A dynamic-source image links the standard build's artifacts (default features:
                     // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
                     // symbol audit checks that the compiler is dropped.
-                    if name == "quench_runtime_engine" || name == "quench_layers" {
-                        let files = artifact["filenames"].as_array().ok_or("Cargo artifact has no files")?;
-                        if let Some(file) = files.iter().filter_map(Value::as_str).find(|file| Path::new(file).extension().is_some_and(|extension| extension == "rlib")) {
-                            let library = exact_dependency(Path::new(file), name, files)?;
-                            if name == "quench_runtime_engine" { engine = Some(library); } else { layers = Some(library); }
+                    if let Some(library) = layer_library(&artifact, name)? {
+                        match name {
+                            "quench_runtime_engine" => engine = Some(library),
+                            "quench_layers" => layers = Some(library),
+                            _ => alloc = Some(library),
                         }
                     }
                     if name == host_crate || name == "quench_runtime" {
@@ -155,6 +158,7 @@ impl NativeSupport {
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
             engine,
             layers,
+            alloc,
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
@@ -262,6 +266,10 @@ impl NativeSupport {
             let layers = self.layers.as_ref().ok_or("Cargo report has no layer support library")?;
             command.arg("--extern").arg(format!("quench_layers={}", layers.display()))
                 .arg("-L").arg(format!("dependency={}", parent(layers, "layer library")?.display()));
+            // The runtime's own allocator: a core image's global allocator.
+            let alloc = self.alloc.as_ref().ok_or("Cargo report has no allocator support library")?;
+            command.arg("--extern").arg(format!("quench_alloc={}", alloc.display()))
+                .arg("-L").arg(format!("dependency={}", parent(alloc, "allocator library")?.display()));
         }
         Ok(())
     }
@@ -385,6 +393,19 @@ fn requires_rust_lto(library: &Path) -> Result<bool, String> {
         magic,
         LLVM_RAW_BITCODE_MAGIC | LLVM_WRAPPED_BITCODE_MAGIC
     ))
+}
+
+/// The rlib of a reported layer crate (`quench_runtime_engine`, `quench_layers`,
+/// `quench_alloc`), selected by Cargo's own artifact identity; none for any other crate.
+fn layer_library(artifact: &Value, name: &str) -> Result<Option<PathBuf>, String> {
+    if !matches!(name, "quench_runtime_engine" | "quench_layers" | "quench_alloc") {
+        return Ok(None);
+    }
+    let files = artifact["filenames"].as_array().ok_or("Cargo artifact has no files")?;
+    let file = files.iter().filter_map(Value::as_str)
+        .find(|file| Path::new(file).extension().is_some_and(|extension| extension == "rlib"));
+    let Some(file) = file else { return Ok(None); };
+    exact_dependency(Path::new(file), name, files).map(Some)
 }
 
 fn exact_dependency(file: &Path, name: &str, reported_files: &[Value]) -> Result<PathBuf, String> {

@@ -10,7 +10,8 @@ pub(crate) fn digest_by_name(c: &mut Context<'_>, name: &str) -> Result<Arc<Dige
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     {
         let state = shared.borrow();
-        let cache = &state.crypto.digests;
+        let crypto = state.crypto();
+        let cache = &crypto.digests;
         if cache.generation == generation {
             if let Some(digest) = cache.by_name.get(name) {
                 return Ok(digest.clone());
@@ -18,8 +19,9 @@ pub(crate) fn digest_by_name(c: &mut Context<'_>, name: &str) -> Result<Arc<Dige
         }
     }
     let digest = Arc::new(Digest::fetch(name)?);
-    let mut state = shared.borrow_mut();
-    let cache = &mut state.crypto.digests;
+    let state = shared.borrow_mut();
+    let mut crypto = state.crypto();
+    let cache = &mut crypto.digests;
     if cache.generation != generation {
         cache.by_name.clear();
         cache.generation = generation;

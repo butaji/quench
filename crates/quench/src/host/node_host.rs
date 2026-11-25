@@ -190,14 +190,14 @@ pub(crate) struct SharedNodeState {
     /// REPL inputs evaluated so far: each is the resource `REPL<n>`.
     pub(crate) repl_resources: u32,
     #[cfg(quench_openssl_provider)]
-    pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
-    pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
+    pub(crate) crypto_hashes: LazyState,
+    pub(crate) crypto_key_material: LazyState,
     #[cfg(quench_openssl_provider)]
-    pub(crate) crypto: crate::modules::crypto_node::State,
+    pub(crate) crypto: LazyState,
     #[cfg(quench_openssl_provider)]
-    pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
-    pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
-    pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
+    pub(crate) crypto_signatures: LazyState,
+    pub(crate) crypto_secret_jobs: LazyState,
+    pub(crate) zlib_native: LazyState,
     pub(crate) messaging: crate::modules::worker_shared_vm::State,
     /// Pure-Rust resolver channels for `cares_wrap` when c-ares is not linked.
     pub(crate) dns_channels: crate::modules::dns_shared_vm::State,
@@ -331,6 +331,35 @@ impl SharedNodeState {
         self.tcp.state()
     }
 
+    /// The crypto module's handles and intrinsics, made on first use: a program that reaches no
+    /// crypto operation links none of it (and no `openssl`).
+    #[cfg(quench_openssl_provider)]
+    pub(crate) fn crypto(&self) -> LazyStateRef<'_, crate::modules::crypto_node::State> {
+        self.crypto.state()
+    }
+
+    #[cfg(quench_openssl_provider)]
+    pub(crate) fn crypto_hashes(&self) -> LazyStateRef<'_, crate::modules::crypto_hash_shared_vm::State> {
+        self.crypto_hashes.state()
+    }
+
+    #[cfg(quench_openssl_provider)]
+    pub(crate) fn crypto_signatures(&self) -> LazyStateRef<'_, crate::modules::crypto_signature_shared_vm::State> {
+        self.crypto_signatures.state()
+    }
+
+    pub(crate) fn crypto_secret_jobs(&self) -> LazyStateRef<'_, crate::modules::crypto_secret_job_shared_vm::State> {
+        self.crypto_secret_jobs.state()
+    }
+
+    pub(crate) fn crypto_key_material(&self) -> LazyStateRef<'_, crate::modules::crypto_key_material_shared_vm::State> {
+        self.crypto_key_material.state()
+    }
+
+    pub(crate) fn zlib_native(&self) -> LazyStateRef<'_, crate::modules::zlib_native_shared_vm::State> {
+        self.zlib_native.state()
+    }
+
     /// Child output pipes with pending guest demand. The event loop polls them
     /// with the transport descriptors, so a child's write wakes the loop at once
     /// instead of being found on the fallback poll interval.
@@ -443,14 +472,14 @@ impl SharedNodeState {
             hmr: None,
             repl_resources: 0,
             #[cfg(quench_openssl_provider)]
-            crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            crypto_hashes: LazyState::default(),
             #[cfg(quench_openssl_provider)]
-            crypto: crate::modules::crypto_node::State::default(),
-            crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
+            crypto: LazyState::default(),
+            crypto_key_material: LazyState::default(),
             #[cfg(quench_openssl_provider)]
-            crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),
-            crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
-            zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
+            crypto_signatures: LazyState::default(),
+            crypto_secret_jobs: LazyState::default(),
+            zlib_native: LazyState::default(),
             messaging: crate::modules::worker_shared_vm::State::default(),
             dns_channels: crate::modules::dns_shared_vm::State::default(),
             serdes: crate::modules::serdes_shared_vm::State::default(),
@@ -670,8 +699,33 @@ pub fn unlinked_operation(
 
 /// A module's state, made on the module's first use and dropped through its own vtable: a
 /// program that never uses the module links none of its code, and none of its dependencies'.
+/// A state a [`LazyState`] holds: dropped with the image's `dyn` trait object, so a module that
+/// makes no state contributes no destructor (and no native library) to the image.
+pub(crate) trait LazyStateValue: std::any::Any {
+    /// Writes the state into a startup snapshot; empty by default.
+    fn snapshot_write(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> { Ok(()) }
+    /// Restores the state from a startup snapshot; nothing by default.
+    fn snapshot_read(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> { Ok(()) }
+    /// Releases the state of heap objects the collector reclaimed; nothing by default.
+    fn prune(&mut self, _: &mut quench_runtime::Runtime<crate::host::NodeHost>) {}
+    /// `prune` under a live VM context, for the collector's idle hook.
+    fn prune_context(&mut self, _: &mut quench_runtime::CollectionContext<'_>) {}
+    /// Releases everything the state holds at shutdown; nothing by default.
+    fn cleanup(&mut self, _: &mut quench_runtime::Runtime<crate::host::NodeHost>) {}
+    /// The module's `KeyObject` class, when the module has been built; none by default.
+    fn built_key_object_class(&self) -> Option<quench_runtime::RootId> { None }
+    /// Whether the socket transport has polled work; false by default.
+    fn net_has_work(&self) -> bool { false }
+    /// Waits for the socket transport's polled work; nothing by default.
+    fn net_wait_ready(&mut self, _: &[std::os::fd::RawFd], _: std::time::Duration) {}
+    /// Closes the socket transport's pending work; nothing by default.
+    fn net_cleanup(&mut self) {}
+    /// Closes socket `id` after its handle was collected; nothing by default.
+    fn net_close_socket(&mut self, _: &mut quench_runtime::Runtime<crate::host::NodeHost>, _: u64) {}
+}
+
 #[derive(Default)]
-pub(crate) struct LazyState(std::cell::RefCell<Option<Box<dyn std::any::Any>>>);
+pub(crate) struct LazyState(std::cell::RefCell<Option<Box<dyn LazyStateValue>>>);
 
 impl LazyState {
     /// Whether the module has made its state.
@@ -680,30 +734,115 @@ impl LazyState {
     }
 
     /// The state, made now if the module has not made it.
-    pub(crate) fn state<T: Default + 'static>(&self) -> LazyStateRef<'_, T> {
+    pub(crate) fn state<T: Default + LazyStateValue>(&self) -> LazyStateRef<'_, T> {
         let mut slot = self.0.borrow_mut();
         if slot.is_none() {
             *slot = Some(Box::new(T::default()));
         }
         LazyStateRef { slot, state: std::marker::PhantomData }
     }
+
+    /// Writes the state where the module made it.
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        match self.0.borrow().as_ref() {
+            Some(state) => state.snapshot_write(writer),
+            None => Ok(()),
+        }
+    }
+
+    /// Restores the state where the module made it.
+    pub(crate) fn read_snapshot(&self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        match self.0.borrow_mut().as_mut() {
+            Some(state) => state.snapshot_read(reader),
+            None => Ok(()),
+        }
+    }
+
+    /// Prunes the state where the module made it.
+    pub(crate) fn prune_if_initialized(&self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        if let Some(state) = self.0.borrow_mut().as_mut() { state.prune(runtime); }
+    }
+
+    /// Releases the state where the module made it, dropping it after its own cleanup.
+    pub(crate) fn cleanup_if_initialized(&self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>) {
+        if let Some(mut state) = self.0.borrow_mut().take() { state.cleanup(runtime); }
+    }
+
+    /// The module's `KeyObject` class where it has been built.
+    pub(crate) fn built_key_object_class(&self) -> Option<quench_runtime::RootId> {
+        self.0.borrow().as_ref().and_then(|state| state.built_key_object_class())
+    }
+
+    pub(crate) fn net_has_work(&self) -> bool { self.0.borrow().as_ref().is_some_and(|state| state.net_has_work()) }
+
+    pub(crate) fn net_wait_ready(&self, extra: &[std::os::fd::RawFd], wait: std::time::Duration) {
+        let mut state = self.0.borrow_mut().take();
+        if let Some(state) = state.as_mut() { state.net_wait_ready(extra, wait); }
+        *self.0.borrow_mut() = state;
+    }
+
+    pub(crate) fn net_cleanup(&self) {
+        let mut state = self.0.borrow_mut().take();
+        if let Some(state) = state.as_mut() { state.net_cleanup(); }
+        *self.0.borrow_mut() = state;
+    }
+
+    pub(crate) fn net_close_socket(&self, runtime: &mut quench_runtime::Runtime<NodeHost>, id: u64) {
+        let mut state = self.0.borrow_mut().take();
+        if let Some(state) = state.as_mut() { state.net_close_socket(runtime, id); }
+        *self.0.borrow_mut() = state;
+    }
+
+    /// Takes the state out for a call that may read the host's other state.
+    fn take_state(&self) -> Option<Box<dyn LazyStateValue>> { self.0.borrow_mut().take() }
+
+    /// Puts `state` back after `take_state`.
+    fn put_state(&self, state: Box<dyn LazyStateValue>) { *self.0.borrow_mut() = Some(state); }
+}
+
+/// Prunes one lazy state outside every `SharedNodeState` borrow, so the state may read the
+/// host's other state.
+pub(crate) fn prune_lazy_state(runtime: &mut quench_runtime::Runtime<NodeHost>, pick: fn(&SharedNodeState) -> &LazyState) {
+    let shared = runtime.host_mut().shared_state();
+    let state = pick(&shared.borrow()).take_state();
+    let Some(mut state) = state else { return };
+    state.prune(runtime);
+    let shared = runtime.host_mut().shared_state();
+    pick(&shared.borrow()).put_state(state);
+}
+
+/// Releases one lazy state outside every `SharedNodeState` borrow and drops it.
+pub(crate) fn cleanup_lazy_state(runtime: &mut quench_runtime::Runtime<NodeHost>, pick: fn(&SharedNodeState) -> &LazyState) {
+    let shared = runtime.host_mut().shared_state();
+    let state = pick(&shared.borrow()).take_state();
+    if let Some(mut state) = state { state.cleanup(runtime); }
+}
+
+/// `prune` of one lazy state from the collector's context, outside every borrow.
+pub(crate) fn prune_lazy_context(context: &mut quench_runtime::CollectionContext<'_>, pick: fn(&SharedNodeState) -> &LazyState) {
+    let shared = context.host_as::<NodeHost>().shared_state();
+    let state = pick(&shared.borrow()).take_state();
+    let Some(mut state) = state else { return };
+    state.prune_context(context);
+    let shared = context.host_as::<NodeHost>().shared_state();
+    pick(&shared.borrow()).put_state(state);
 }
 
 /// A borrow of one lazy state, usable like the field it replaced.
 pub(crate) struct LazyStateRef<'a, T> {
-    slot: std::cell::RefMut<'a, Option<Box<dyn std::any::Any>>>,
+    slot: std::cell::RefMut<'a, Option<Box<dyn LazyStateValue>>>,
     state: std::marker::PhantomData<fn() -> T>,
 }
 
-impl<T: 'static> std::ops::Deref for LazyStateRef<'_, T> {
+impl<T: LazyStateValue> std::ops::Deref for LazyStateRef<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
-        self.slot.as_deref().and_then(|state| state.downcast_ref::<T>()).expect("a lazy state slot holds one module's state")
+        self.slot.as_deref().and_then(|state| (state as &dyn std::any::Any).downcast_ref::<T>()).expect("a lazy state slot holds one module's state")
     }
 }
 
-impl<T: 'static> std::ops::DerefMut for LazyStateRef<'_, T> {
+impl<T: LazyStateValue> std::ops::DerefMut for LazyStateRef<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        self.slot.as_deref_mut().and_then(|state| state.downcast_mut::<T>()).expect("a lazy state slot holds one module's state")
+        self.slot.as_deref_mut().and_then(|state| (state as &mut dyn std::any::Any).downcast_mut::<T>()).expect("a lazy state slot holds one module's state")
     }
 }

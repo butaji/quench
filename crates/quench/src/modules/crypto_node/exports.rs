@@ -83,7 +83,7 @@ const DEPRECATED_EXPORTS: [(&str, &str, &str); 2] = [
 
 /// The `crypto` module, built on first use.
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
-    if let Some(intrinsics) = state(c).borrow().crypto.intrinsics {
+    if let Some(intrinsics) = state(c).borrow().crypto().intrinsics {
         return Ok(intrinsics.module);
     }
     // The keys this module makes travel through `structuredClone` by this operation, which
@@ -98,11 +98,11 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let module = c.retain(module)?;
     let classes = [undefined; Class::COUNT];
     // Publish the symbol and module first: the classes' builders read them.
-    state(c).borrow_mut().crypto.intrinsics = Some(Intrinsics { handle, key_type, classes, module, webcrypto: undefined });
+    state(c).borrow_mut().crypto().intrinsics = Some(Intrinsics { handle, key_type, classes, module, webcrypto: undefined });
     match build(c, module) {
         Ok(()) => Ok(module),
         Err(error) => {
-            state(c).borrow_mut().crypto.intrinsics = None;
+            state(c).borrow_mut().crypto().intrinsics = None;
             Err(error)
         }
     }
@@ -112,7 +112,7 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let classes = build_classes(c, module)?;
     let webcrypto = web::create_crypto(c)?;
     let webcrypto = c.retain(webcrypto)?;
-    if let Some(intrinsics) = state(c).borrow_mut().crypto.intrinsics.as_mut() {
+    if let Some(intrinsics) = state(c).borrow_mut().crypto().intrinsics.as_mut() {
         intrinsics.webcrypto = webcrypto;
     }
     for &(name, operation, own_name) in FUNCTIONS {
@@ -141,7 +141,7 @@ fn build_classes(c: &mut Context<'_>, module: RootId) -> Result<[RootId; Class::
     for (class, constructor) in built {
         classes[class as usize] = c.retain(constructor)?;
     }
-    if let Some(intrinsics) = state(c).borrow_mut().crypto.intrinsics.as_mut() {
+    if let Some(intrinsics) = state(c).borrow_mut().crypto().intrinsics.as_mut() {
         intrinsics.classes = classes;
     }
     Ok(classes)

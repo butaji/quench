@@ -30,8 +30,6 @@ const IMAGE_RECORD: u32 = 0;
 const ENTRY_TABLE_RECORD: usize = 1;
 /// The proven calls' records, after the entry table.
 const CALL_RECORDS_RECORD: u32 = 2;
-/// The object's copy of the narrow decode's upper-word table (`Symbol::NarrowUpperWords`), after the call records.
-const NARROW_WORDS_RECORD: u32 = 3;
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
 
@@ -62,7 +60,7 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
     functions.extend(definitions);
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), file.len())?;
-    let data = vec![image_data(namespace, file), table, call_data(namespace, image), narrow_data(namespace)];
+    let data = vec![image_data(namespace, file), table, call_data(namespace, image)];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
@@ -86,7 +84,9 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
             Some(Symbol::Helper(helper)) => helper_import(isa, helper)?,
             // The runtime exports the byte by name; the system linker resolves the word to it.
             Some(Symbol::Attention) => NativeFunction::Import { name: quench_runtime::execution_interrupt::ATTENTION_SYMBOL.into(), signature: ir::Signature::new(isa.default_call_conv()) },
-            Some(Symbol::BasePc { .. } | Symbol::CallRecord { .. } | Symbol::NarrowUpperWords) => continue,
+            // The runtime exports the narrow decode's table by name: one table for every image.
+            Some(Symbol::NarrowUpperWords) => NativeFunction::Import { name: quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL.into(), signature: ir::Signature::new(isa.default_call_conv()) },
+            Some(Symbol::BasePc { .. } | Symbol::CallRecord { .. }) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),
             None => return Err("an AOT image names an unknown symbol".into()),
         };
@@ -141,7 +141,6 @@ impl Targets<'_> {
                 Ok((NATIVE_FUNCTION_NAMESPACE, base, addend + i64::from(offset)))
             }
             Some(Symbol::CallRecord { .. }) => Ok((NATIVE_DATA_NAMESPACE, CALL_RECORDS_RECORD, addend + i64::from(key) * CALL_RECORD_BYTES)),
-            Some(Symbol::NarrowUpperWords) => Ok((NATIVE_DATA_NAMESPACE, NARROW_WORDS_RECORD, addend)),
             _ => self.imports.get(&(namespace, key)).map(|index| (NATIVE_FUNCTION_NAMESPACE, *index, addend)).ok_or_else(|| "an AOT image symbol has no object form".into()),
         }
     }
@@ -153,19 +152,6 @@ fn image_data(namespace: &str, file: Vec<u8>) -> NativeData {
     NativeData {
         name: format!("{namespace}_image"),
         bytes: file,
-        alignment: std::mem::align_of::<u64>() as u64,
-        writable: false,
-        function_addresses: Vec::new(),
-        data_addresses: Vec::new(),
-    }
-}
-
-/// The narrow decode's upper words by code (`NarrowLayout::upper_words`), the runtime's own constant
-/// table: a base body's field and element reads decode a narrow value through it.
-fn narrow_data(namespace: &str) -> NativeData {
-    NativeData {
-        name: format!("{namespace}_narrow_words"),
-        bytes: quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS.iter().flat_map(|word| word.to_ne_bytes()).collect(),
         alignment: std::mem::align_of::<u64>() as u64,
         writable: false,
         function_addresses: Vec::new(),

@@ -3225,3 +3225,13 @@ mod tests {
         assert!(elapsed < Duration::from_secs(1), "wait_ready slept {elapsed:?}");
     }
 }
+
+impl crate::host::node_host::LazyStateValue for Transport {
+    fn net_has_work(&self) -> bool { has_work(self) }
+    fn net_wait_ready(&mut self, extra: &[std::os::fd::RawFd], wait: std::time::Duration) { wait_ready(self, extra, wait); }
+    fn net_cleanup(&mut self) { cleanup(self); }
+    fn net_close_socket(&mut self, runtime: &mut quench_runtime::Runtime<crate::host::NodeHost>, id: u64) {
+        native_tcp_close(self, id);
+        super::native_async_wrap::collect_tcp(runtime, id);
+    }
+}

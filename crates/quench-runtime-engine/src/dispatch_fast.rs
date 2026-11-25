@@ -2389,7 +2389,7 @@ fn exited(ip: Ip) -> (Ip, bool) {
 /// SAFETY: the context outlives the lane run and no other reference to the
 /// VM is live while a handler runs.
 #[inline(always)]
-unsafe fn vm<'a>(cx: *mut LaneContext) -> &'a mut Vm {
+pub(crate) unsafe fn vm<'a>(cx: *mut LaneContext) -> &'a mut Vm {
     unsafe { &mut *(*cx).vm }
 }
 
@@ -6967,7 +6967,7 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
 /// Restore the semantic header at the event that replaces its native owner.
 /// `LoopSite::header_handler` of a retired site (`loop_retire_in_lane`): no record, so the site
 /// never holds its header again.
-const RETIRED_HEADER: *const () = std::ptr::without_provenance(1);
+pub(crate) const RETIRED_HEADER: *const () = std::ptr::without_provenance(1);
 
 fn loop_release_header_in_lane(header: Ip, site: &LoopSite) {
     let held = site.header_handler.replace(std::ptr::null());
@@ -14401,12 +14401,7 @@ fn complete_activation_in_lane(cx: *mut LaneContext, ip: Ip, mut value: Value) -
                 set_script_calls_in_lane(cx, true);
                 (*cx).instance = Value::DELETED;
             }
-            #[cfg(feature = "wasm")]
-            {
-                value = vm.wasm_export_result(value, result);
-            }
-            #[cfg(not(feature = "wasm"))]
-            let _ = result;
+            value = vm.wasm_export_result(value, result);
         }
         // SAFETY: the call record belongs to the caller's live view.
         if unsafe { (*frame.call()).a } & quench_runtime::bytecode::RETURN_REGISTER == 0 {
@@ -14450,13 +14445,7 @@ impl quench_runtime::staged::wasm_activation::WasmReturn for LaneReturn {
         unsafe { ((*self.cx).inline_calls, (*self.cx).instance) = (false, Value::DELETED); set_script_calls_in_lane(self.cx, true) };
     }
     fn export_value(&mut self, value: Value, export: Self::Export) -> Value {
-        #[cfg(feature = "wasm")]
-        { unsafe { vm(self.cx) }.wasm_export_result(value, export) }
-        #[cfg(not(feature = "wasm"))]
-        {
-            let _ = export;
-            value
-        }
+        unsafe { vm(self.cx) }.wasm_export_result(value, export)
     }
     #[inline(always)]
     fn import(&mut self) -> ToWasmCall {

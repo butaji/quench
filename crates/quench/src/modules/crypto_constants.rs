@@ -173,3 +173,5 @@ pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> 
     shared.borrow_mut().builtin_cache.insert(CACHE.into(), root);
     Ok(object)
 }
+
+crate::host::shared_vm::binding_operation!(binding_operation, binding);

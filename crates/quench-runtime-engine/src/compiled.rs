@@ -144,6 +144,7 @@ pub(crate) mod lane_sites;
 use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
+#[path = "compiled/lane_method.rs"] pub(crate) mod lane_method;
 #[path = "compiled/site_posterior.rs"]
 pub(crate) mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(crate) mod entry_cell;
@@ -156,6 +157,7 @@ pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fing
 pub(crate) mod lane_facts;
 #[path = "compiled/tier_model.rs"] pub(crate) mod tier_model;
 #[path = "compiled/loop_model.rs"] pub(crate) mod loop_model;
+#[path = "compiled/loop_tier_up.rs"] pub(crate) mod loop_tier_up;
 pub(crate) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 pub(crate) mod static_loops;
