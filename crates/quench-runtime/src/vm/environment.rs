@@ -858,14 +858,8 @@ impl Vm {
         None
     }
 
-    pub(super) fn store_resolved_name(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        atom: Atom,
-        value: Value,
-        strict: bool,
-    ) -> Result<(), JsError> {
+    pub(super) fn store_resolved_name(&mut self, p: &ResidualProgram, object: Value, atom: Atom, value: Value, strict: bool) -> Result<(), JsError> {
+        if object == self.realm.globals && self.names_resolve_to_global_object(p, VarOwner::Frame(self.frames.len().saturating_sub(1)), atom) { return self.store_resolved_global(p, atom, value, strict); }
         if object == UNRESOLVABLE_NAME_REFERENCE {
             return if strict {
                 Err(self.name_not_defined(p, atom))
@@ -995,11 +989,15 @@ impl Vm {
         {
             return self.store_environment_binding(p, VarOwner::Frame(frame_index), env, slot as u16, value);
         }
+        self.store_resolved_global(p, atom, value, strict)
+    }
+
+    /// A store to the global object past every scope that may bind `atom`: a global `var`, else the property (required if strict).
+    fn store_resolved_global(&mut self, p: &ResidualProgram, atom: Atom, value: Value, strict: bool) -> Result<(), JsError> {
         if self.store_global_var_binding(p, atom, value, self.owner_is_strict(p, VarOwner::Frame(self.frames.len() - 1)))? {
             return Ok(());
         }
         if strict { self.require_global_assignment_binding(p, atom)?; }
-        let _ = object;
         self.set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
     }
 
@@ -1174,15 +1172,11 @@ impl Vm {
         self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
     }
 
-    pub(super) fn resolve_name(
-        &mut self,
-        p: &ResidualProgram,
-        atom: Atom,
-        strict: bool,
-    ) -> Result<Value, JsError> {
-        if strict && !self.has_name_binding(p, atom)? {
-            return Ok(UNRESOLVABLE_NAME_REFERENCE);
-        }
+    pub(super) fn resolve_name(&mut self, p: &ResidualProgram, atom: Atom, strict: bool) -> Result<Value, JsError> {
+        // Only the global object can bind the name, and owns it: no scope to walk (`names_resolve_to_global_object`).
+        let global = strict && self.names_resolve_to_global_object(p, VarOwner::Frame(self.frames.len().saturating_sub(1)), atom);
+        if global && self.own_property(self.realm.globals, atom).is_some() { return Ok(self.realm.globals); }
+        if strict && !self.has_name_binding(p, atom)? { return Ok(UNRESOLVABLE_NAME_REFERENCE); }
         Ok(self.resolve_name_reference(p, atom)?.0)
     }
 
