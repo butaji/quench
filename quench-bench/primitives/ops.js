@@ -551,4 +551,18 @@ ops.v_basic_interp = function (n) { const code = [0, 2, 1, 3, 3, 0, 1, 2, 2, 1, 
 ops.v_air_regalloc_like = function (n) { const objs = []; for (let j = 0; j < 64; j++) objs.push({ a: j, b: j * 2, c: 0 }); let s = 0; for (let i = 0; i < n; i++) { const o = objs[i & 63]; o.c = (o.a + o.b) | 0; s = (s + o.c) | 0; } return s; };
 ops.v_ml_dot_sigmoid = function (n) { const w = [0.5, -0.25, 0.125, 1, -2, 0.75, 0.0625, -0.5]; let s = 0; for (let i = 0; i < n; i++) { let d = 0; for (let j = 0; j < 8; j++) d += w[j] * (((i + j) & 15) - 8); const z = d * 0.125; s += Math.floor((1 / (1 + Math.exp(-z))) * 1048576); } return s; };
 ops.v_weakmap_get = function (n) { const keys = []; const wm = new WeakMap(); for (let j = 0; j < 16; j++) { const k = { id: j }; keys.push(k); wm.set(k, j * 3); } let s = 0; for (let i = 0; i < n; i++) { s = (s + wm.get(keys[i & 15])) | 0; } return s; };
+// S1.17 (TOD-2193): the benchmark ops of staged rows no op isolated, each with its ops.c twin.
+ops.bit_not = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = ~(a ^ i); } return a; };
+ops.int_sub_noor = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = a - (i & 7); } return a; };
+ops.math_ceil = function (n) { let a = 0; for (let i = 0; i < n; i++) { a += Math.ceil(i * 0.37); } return a; };
+ops.math_trunc = function (n) { let a = 0; for (let i = 0; i < n; i++) { a += Math.trunc(i * 0.37 - 500); } return a; };
+ops.math_fround = function (n) { let a = 0; for (let i = 0; i < n; i++) { a += Math.fround(i * 0.37); } return a; };
+ops.math_sign = function (n) { let a = 0; for (let i = 0; i < n; i++) { a += Math.sign(i - 500); } return a; };
+ops.math_clz32 = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + Math.clz32(i)) | 0; } return a; };
+ops.typed_length = function (n) { const t = new Int32Array(256); let a = 0; for (let i = 0; i < n; i++) { a += t.length; } return a; };
+ops.v_let_block = function (n) { let a = 0; for (let i = 0; i < n; i++) { let t = i & 7; let u = (t + 1) | 0; a = (a + u) | 0; } return a; };
+// A global variable: a property of the global object (ops.js runs as strict eval code, whose own `var`s are not global).
+globalThis.v_global_var_G = 0;
+ops.v_global_var = function (n) { v_global_var_G = 0; for (let i = 0; i < n; i++) { v_global_var_G = (v_global_var_G + i) | 0; } return v_global_var_G; };
+ops.v_obj_add = function (n) { let s = 0; for (let i = 0; i < n; i++) { const o = {}; o.a = i; o.b = (i + 1) | 0; s = (s + o.a + o.b) | 0; } return s; };
 globalThis.PRIMITIVE_OPS = ops;
