@@ -41,8 +41,23 @@ struct Places<'a> {
     calls: &'a [UnsafeCell<CallRecord>],
 }
 
+/// Places the native searches of `image`'s RegExp literals (`AotImage::regexps`) and registers them on this
+/// thread, so each literal's matcher runs its code from its first search (`quench_regexp::backtrack::native::register_ahead`).
+/// A static executable, which has no code memory, searches with the interpreter's matcher (TOD-2080 links them next).
+#[cfg(not(feature = "jit"))]
+fn register_regexps(_: &AotImage) {}
+#[cfg(feature = "jit")]
+fn register_regexps(image: &AotImage) {
+    for regexp in &image.regexps {
+        if let Some((entry, keep)) = crate::regexp_native::place_ahead(&regexp.code) {
+            quench_regexp::backtrack::native::register_ahead(regexp.key.clone(), entry, keep);
+        }
+    }
+}
+
 /// Links `image` into `vm`: its code placed, every symbol resolved.
 pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String> {
+    register_regexps(image);
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let calls = BoundCalls::of(image);
@@ -93,6 +108,7 @@ impl LinkedTable {
 /// placed or linked; a lane body a VM publishes is relinked from the image against the placed base
 /// bodies and records (`link_lane`).
 pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage, String> {
+    register_regexps(image);
     let count = image.functions.len();
     if table.entries.len() != count || table.bases.len() != count {
         return Err("native image table does not match its image".into());

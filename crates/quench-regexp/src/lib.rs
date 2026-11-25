@@ -78,6 +78,14 @@ impl From<&str> for Flags {
     }
 }
 
+impl Flags {
+    /// The flags as one byte, which an ahead search's key holds (`backtrack::native::AheadKey`).
+    pub fn bits(self) -> u8 {
+        [self.ignore_case, self.multiline, self.dot_all, self.unicode, self.unicode_sets].iter().enumerate()
+            .fold(0, |bits, (bit, set)| bits | u8::from(*set) << bit)
+    }
+}
+
 #[derive(Clone)]
 pub struct Match {
     pub range: Range<usize>,
@@ -348,6 +356,9 @@ impl CompleteMatcher {
         .then(|| required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>())
         .filter(|bytes| !(backtracking.searches_prefix(bytes) || backtracking.anchored_at_start()))
         .map(|bytes| literal_finder(&bytes));
+        // An ahead image's searches of the pattern, where it holds them (`backtrack::native::register_ahead`).
+        backtracking.adopt_ahead((source.into(), flags.bits(), false));
+        if let Some(bounds) = &bounds { bounds.adopt_ahead((source.into(), flags.bits(), true)); }
         let min_length = min_length(&program);
         let empty_everywhere = empty_everywhere(&program);
         let literal_run = range_search::LiteralRun::of(&program, &required_literal);
@@ -424,6 +435,16 @@ impl Regex {
             capture_names: names,
             has_named_groups,
         })
+    }
+
+    /// The native plans of the pattern's programs for an ahead image, by their key
+    /// (`backtrack::native::AheadKey`): the search program's, and the capture-free bounds program's
+    /// where it has one; a program whose code would name a live address has none (`Program::ahead_plan`).
+    pub fn ahead_plans(&self) -> Vec<(backtrack::native::AheadKey, backtrack::native::NativePlan)> {
+        let complete = self.complete();
+        let key = |bounds| (self.source.clone(), self.flags.bits(), bounds);
+        std::iter::once((false, &complete.backtracking)).chain(complete.bounds.as_ref().map(|bounds| (true, bounds)))
+            .filter_map(|(bounds, program)| program.ahead_plan().map(|plan| (key(bounds), plan))).collect()
     }
 
     /// The repository matcher, lowered from the kept source on first use.
