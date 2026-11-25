@@ -12,7 +12,7 @@ use quench_runtime::staged::{Allocation, InlineEmpty};
 use cranelift_codegen::ir;
 use quench_runtime::Value;
 use cranelift_codegen::ir::types;
-use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
+use quench_runtime::staged::machine::{Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use super::super::object_slots::emit;
 use crate::compiled::regions;
 
@@ -196,36 +196,18 @@ const EMPTY_ARRAY: Template = Template {
 /// first, and a spent run is refilled only there, so every run is checked once before it is used.
 fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, template: Template,
     helper: LaneHelper, arguments: &[ir::Value], proof: EmitProof) -> Option<ir::Value> {
-    use quench_runtime::tier_surface::{NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR};
-    use quench_runtime::staged::region::Region;
-    use quench_runtime::staged::Stage;
+    use quench_runtime::staged::bump::{bump_record, Template as Bump};
     let EmitProof::Allocation { miss } = proof else { return None };
     let payload = frame.payload;
-    let (next_at, limit_at) = (CURSOR.next_offset as i32, CURSOR.limit_offset as i32);
     let cursor = emit_js_record_base(stage.builder, payload, template.cursor);
-    let next = stage.load_u32(Region::HeapMeta.mutable(), cursor, next_at);
-    let limit = stage.load_u32(Region::HeapMeta.mutable(), cursor, limit_at);
     let layout = emit_js_payload_word(stage.builder, payload, template.layout);
     let words = emit_js_payload_word(stage.builder, payload, template.words);
-    let room = stage.ult(next, limit);
-    let templated = stage.ne_imm(layout, 0u64);
-    let inline = stage.raw_binary(Binary::And, room, templated);
-    let fast = stage.builder.create_block();
+    let records = emit_js_record_base(stage.builder, payload, template.records);
     let slow = stage.builder.create_block();
     let joined = stage.builder.create_block();
     let made = stage.builder.append_block_param(joined, types::I64);
-    stage.branch_if(inline, (fast, &[]), (slow, &[]));
-
-    stage.builder.switch_to_block(fast);
-    stage.builder.seal_block(fast);
-    let bumped = stage.add_imm(next, 1u64);
-    stage.store_u32(Region::HeapMeta.mutable(), cursor, next_at, bumped);
-    let records = emit_js_record_base(stage.builder, payload, template.records);
-    let stride = stage.mul_imm(next, template.record_size as u64);
-    let record = stage.add(records, stride);
-    stage.store_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32, words);
-    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, layout);
-    let value = stage.or_imm(next, template.tag);
+    let bump = Bump { records, record_size: template.record_size as u64, layout, words, tag: template.tag };
+    let value = bump_record(stage, cursor, bump, slow).expect("an Emit guard always continues");
     stage.goto(joined, &[value]);
 
     stage.builder.switch_to_block(slow);
