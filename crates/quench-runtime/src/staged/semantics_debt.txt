@@ -10,7 +10,6 @@ clz32 quench-bjit/stencils/numeric.rs:fn clz32_row(mut frame: Places) -> Out {
 ecma_whitespace quench-runtime/src/vm/date/legacy_parse.rs:ch.is_whitespace() || ch == '\u{feff}'
 ecma_whitespace quench-runtime/src/vm/eval.rs:&& (character == '\u{feff}' || character.is_whitespace())
 ecma_whitespace quench-runtime/src/vm/regexp.rs:} else if character.is_control() || character.is_whitespace() || character == '\u{FEFF}' {
-ecma_whitespace quench/src/modules/stream_shared_vm/readable.rs:let text = text.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
 equality quench-runtime-engine/src/compiled/lane_region.rs:fn number_strict_equality(&mut self, state: &mut State, pc: u32, number: Operand, other: Operand) -> Option<ir::Value> {
 equality quench-runtime-engine/src/compiled/lane_region.rs:fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
 equality quench-runtime-engine/src/compiled/lane_region.rs:let ordered = self.raw_compare_imm(Relation::NotEqual, left, ValueLayout::CANONICAL_NAN as i64);

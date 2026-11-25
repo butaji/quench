@@ -1,8 +1,7 @@
 # Fixpoint drivers outside `dataflow::solve` (`tests/staged_guards/fixpoint_drivers.rs`, which defines
 # the shape): a worklist loop that refills its worklist and joins states. Lines are `file count`;
 # counts may only shrink, and a new line fails. Goal: an empty file.
-# total 4
+# total 3
 quench-runtime-engine/src/compiled.rs 1
 quench-runtime-engine/src/compiled/base_region/proofs.rs 1
-quench-runtime/src/compile/native_sources/constructors.rs 1
 quench-runtime/src/webs.rs 1
