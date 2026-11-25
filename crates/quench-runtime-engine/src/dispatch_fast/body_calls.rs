@@ -427,7 +427,7 @@ fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
 /// `activate_environment_in_lane`; a form that routes the call to the general path is the helper's
 /// miss.
 fn body_activate_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, how: CallActivation<bool>) -> u64 {
-    record_late_call(cx, call.ip, target, call.argc());
+    if record_late_call(cx, call.ip, target, call.argc()) { return miss(unsafe { vm(cx) }, Miss::Callee) }
     let refused = || miss(unsafe { vm(cx) }, Miss::NoActivationRoom);
     let registers = if how.plain {
         call.push_plain(cx, target, this, constructs)
