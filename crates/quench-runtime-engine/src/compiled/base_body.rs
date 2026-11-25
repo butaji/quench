@@ -40,26 +40,28 @@ fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register)
 
 /// The PCs a previous body left at: its rows there take the general (tagged) semantics.
 /// A loop's interpreter kernel, run on the loop's entry edge (`LaneHelper::KernelStep`, `base_region::kernel_entries`): the
-/// record at `call_pc`, the loop's head, runs its kernel (`loop_kernel::enter_kernel`) over the frame's registers, as
-/// the interpreter's head does, and the body's rows continue the loop from where it left them. A head the kernel stood
-/// down from, and a body running as a frameless leaf (whose records are its caller's) or under a native callee's frame
-/// (whose window is not the context's), runs nothing here: the rows run the loop.
-pub(super) unsafe extern "C" fn kernel_step_in_lane(vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// record at `call_pc`, the loop's head, runs its kernel (`loop_kernel::enter_kernel`) over the running activation's
+/// registers, as the interpreter's head does, and the body's rows continue the loop from where it left them. A body
+/// running as a native callee runs it in its own frame, which the helper makes the context's
+/// (`native_frames::in_innermost_frame`), as every helper of a native callee does. A head the kernel stood down from,
+/// and a body running as a frameless leaf (whose records are its caller's), runs nothing here: the rows run the loop.
+pub(super) unsafe extern "C" fn kernel_step_in_lane(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
-    // SAFETY: the payload holds the running VM and its lane context, live while the body runs.
-    let stack = &unsafe { &*(vm as *const Vm) }.lane_stack;
-    if !unsafe { (*cx).leaf.call }.is_null() || stack.top_is_native() || stack.top_native().is_some() {
+    // SAFETY: the payload holds the running lane context, live while the body runs.
+    if !unsafe { (*cx).leaf.call }.is_null() {
         return super::LANE_CALL_COMPLETED;
     }
-    // SAFETY: the context's records and registers are the running activation's (`dispatch_fast::owner_step_in` reads
-    // the same record), and its view holds `call_pc`.
-    let ip = unsafe { (*cx).base.add(call_pc as usize) };
-    // SAFETY: the kernel runs over the frame's registers, which the chain spilled the pinned ones to.
-    let ran = unsafe { crate::dispatch_fast::loop_kernel::kernel_at(ip) }.is_some_and(|kernel| unsafe { crate::dispatch_fast::loop_kernel::enter_kernel(kernel, cx, (*cx).registers, ip) });
-    // A run wrote the registers the loop writes, whose values the body's pins and int proofs did not see: the
-    // interpreter continues at the head from the frame as the kernel left it (a missed step's leave, which spills
-    // nothing), where the loop's test now fails, as the interpreter's own head goes on after its kernel.
-    if ran { super::LANE_CALL_MISSED } else { super::LANE_CALL_COMPLETED }
+    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records and registers are the running activation's (`in_innermost_frame`), and its
+        // view holds `call_pc`.
+        let ip = unsafe { (*cx).base.add(call_pc as usize) };
+        // SAFETY: the kernel runs over the frame's registers, which the chain spilled the pinned ones to.
+        let ran = unsafe { crate::dispatch_fast::loop_kernel::kernel_at(ip) }.is_some_and(|kernel| unsafe { crate::dispatch_fast::loop_kernel::enter_kernel(kernel, cx, (*cx).registers, ip) });
+        // A run wrote the registers the loop writes, whose values the body's pins and int proofs did not see: the
+        // interpreter continues at the head from the frame as the kernel left it (a missed step's leave, which spills
+        // nothing), where the loop's test now fails, as the interpreter's own head goes on after its kernel.
+        if ran { super::LANE_CALL_MISSED } else { super::LANE_CALL_COMPLETED }
+    })
 }
 
 /// Whether a loop of `code` has an interpreter kernel (`LoopKernel::recurrence`) that `cheaper`
@@ -217,6 +219,9 @@ impl Vm {
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        if !cfg!(feature = "jit") {
+            return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
+        }
         let _ = unit;
         // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, 0);

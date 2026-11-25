@@ -19,3 +19,6 @@ fallback_helper_calls 1
 fallback_deopts 4
 fallback_opaque_natives 0
 lane_dispatch_lines 38683
+semantics_debt_lines 54
+opcode_name_debt 0
+fixpoint_drivers 3

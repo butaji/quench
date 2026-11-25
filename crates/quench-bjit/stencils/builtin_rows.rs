@@ -67,6 +67,7 @@ enum Builtin {
     Imul,
     Push,
     Pop,
+    IsArray,
 }
 
 /// A row's body: which builtin, over the row's state (for the dispatch payload's words).
@@ -131,6 +132,7 @@ impl call_native::InPlaceBody<StencilStage> for BuiltinBody<'_> {
                     let backing = elements::array_backing(stage, word_at(payload, JS_STEP_ARRAY_RECORD_BASE), receiver, miss)?;
                     builtins::step_array_native_of(stage, builtins::ArrayNative::Pop, backing, miss)
                 }
+                Builtin::IsArray => builtins::is_plain_array(stage, word_at(payload, JS_STEP_ARRAY_RECORD_BASE), argument(stage, 0), miss),
             }
         }
     }
@@ -184,3 +186,4 @@ builtin_row!(builtin_is_integer, |s, record| builtin_call(s, record, Builtin::Is
 builtin_row!(builtin_imul, |s, record| builtin_call(s, record, Builtin::Imul));
 builtin_row!(builtin_push, |s, record| builtin_call(s, record, Builtin::Push));
 builtin_row!(builtin_pop, |s, record| builtin_call(s, record, Builtin::Pop));
+builtin_row!(builtin_is_array, |s, record| builtin_call(s, record, Builtin::IsArray));

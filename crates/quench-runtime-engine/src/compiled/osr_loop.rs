@@ -1890,7 +1890,7 @@ fn admit_register_roles(
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     let stored: std::collections::BTreeSet<u16> = instructions.iter()
-        .filter(|instruction| is_store_capture_row(**instruction) && instruction.capture_depth() == 0)
+        .filter(|instruction| matches!(Operation::<(), ()>::decode(**instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. })) && instruction.capture_depth() == 0)
         .map(|instruction| instruction.capture_slot())
         .collect();
     let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
@@ -2038,9 +2038,9 @@ fn admit(
                 admission.tagged(receiver)?;
             }
         }
-        // The lane stores through the binding's own store, and a binding it does not take
+        // A capture's or global's store runs as the binding's own (`Lowering::global_cell`), and a binding it does not take
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
-        _ if is_store_capture_row(instruction) => {
+        _ if stores_binding(instruction) => {
             let value = instruction.register_a();
             admit_stored(admission, value, tagged, defined_registers)?;
         }
@@ -2306,8 +2306,8 @@ fn is_truthiness_row(instruction: WideInstruction) -> bool {
 }
 
 /// Whether `instruction` stores to a capture, by its staged row (`Operation::StoreCapture`).
-fn is_store_capture_row(instruction: WideInstruction) -> bool {
-    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. }))
+fn stores_binding(instruction: WideInstruction) -> bool {
+    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. } | Operation::GlobalWrite { initialize: false, .. }))
 }
 
 /// Whether `instruction` reads a capture, by its staged row (`Operation::LoadCapture`, which the
@@ -2327,7 +2327,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(instruction) || if comparison_jump(instruction) {
+    admitted_store(instruction) || stores_binding(instruction) || if comparison_jump(instruction) {
         // A conditional jump only on a relation or a bitwise and, so one on `in` or
         // `instanceof` is an exit.
         quench_runtime::vm::operations::NumberRelation::from_operator(instruction.binary_operator_field())

@@ -283,8 +283,12 @@ fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Val
 /// value is the destination's tagged word.
 fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
-    let value = global_word(frame, stage, atom, site);
+    let EmitProof::GlobalRead { miss: Some(miss), slot, .. } = proof else { return None };
+    // A slot the lowering holds under the global object's layout is read live; any other read is the lane's own.
+    let value = match slot {
+        Some(held) => super::call_out::global_slot_read(frame, stage, held, miss)?,
+        None => global_word(frame, stage, atom, site),
+    };
     guard_word(frame, stage, value, Relation::NotEqual, Value::DELETED, miss);
     let fact = if ty == Type::ANY { RegisterFact::definition(ty, Representation::Tagged) } else {
         RegisterFact::admit(Fact { ty, representation: Representation::Tagged, binding: BindingTime::Stable,

@@ -415,6 +415,9 @@ pub(crate) fn start_osr_region(
     admitted: super::admission::CompiledUnit,
     mut online: Option<OsrOnline<'_>>,
 ) -> Option<PendingOsrRegion> {
+    if !cfg!(feature = "jit") {
+        return None; // no run-time compile without the JIT: only image bodies run natively
+    }
     let isa = quench_runtime::vm::jit_backend::target_isa()?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
     let invalidation = Invalidation::default();
