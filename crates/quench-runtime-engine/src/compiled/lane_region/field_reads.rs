@@ -85,10 +85,12 @@ impl Lowering<'_, '_> {
     /// to one retires this code rather than each run re-reading the member.
     /// `None` where the read is not one, or completes its frame or writes `this` besides.
     pub(crate) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let Some(&quench_runtime::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds, .. }) = self.global_reads.get(&pc) else { return None };
+        let Some(&quench_runtime::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds, array_link, .. }) = self.global_reads.get(&pc) else { return None };
         // A method read by name folds only where the receiver can hold no own member of that
-        // name: a string primitive, whose members are its prototype's. A string method's read
-        // proves its receiver a string by one tag test, as the call it names would.
+        // name: a string primitive, whose members are its prototype's, or a direct array of no
+        // named property whose prototype is the holder (`array_link`). A string method's read
+        // proves its receiver a string by one tag test, as the call it names would; an Array
+        // method's proves its receiver such an array (`elements::plain_array_of`).
         let receiver = match instruction.field_lookup() {
             Some(FieldLookup::Atom { base, .. }) => base.register_index().filter(|register| usize::from(*register) < state.values.len()),
             _ => None,
@@ -98,11 +100,17 @@ impl Lowering<'_, '_> {
         let receiver = match (folds, receiver) {
             (true, _) => None,
             (false, Some(register)) if string_method && (string.is_subtype(state.values[usize::from(register)].value.ty) || state.values[usize::from(register)].value.ty.is_subtype(string)) => Some(register),
+            (false, Some(register)) if array_link.is_some() => Some(register),
             _ => return None,
         };
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
         let exit = self.guard_exit(state, pc as u32);
-        if let Some(register) = receiver.filter(|register| !state.values[usize::from(*register)].value.ty.is_subtype(string)) {
+        if let (Some(register), Some(link)) = (receiver, array_link) {
+            let bits = self.tagged(state, register);
+            let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            super::builtin_calls::continues(quench_runtime::staged::elements::plain_array_of(&mut stage, records, bits, link, exit));
+        } else if let Some(register) = receiver.filter(|register| !state.values[usize::from(*register)].value.ty.is_subtype(string)) {
             let bits = self.tagged(state, register);
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let is_string = quench_runtime::staged::value::is_direct_string(&mut stage, bits);

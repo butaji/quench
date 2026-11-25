@@ -210,10 +210,11 @@ impl Lowering<'_, '_> {
 
     /// Whether every store of the loop `array` belongs to is an int32 stored through `source`, the
     /// array's own register (the loop never redefines it, so it names the same array), and no append
-    /// runs: an append or a store through another register could make a hole or a non-int32 element.
+    /// or pop runs: an append or a store through another register could make a hole or a non-int32
+    /// element, and a pop changes the count the view keeps.
     fn int32_stores(&self, array: LoopArray, source: Register) -> bool {
         (array.header..=array.back).all(|pc| {
-            if super::native_calls::appends(&self.intrinsics, pc) { return false; }
+            if super::native_calls::resizes(&self.intrinsics, pc) { return false; }
             match crate::compiled::performed(self.unit.instructions[pc]) {
                 Some(quench_runtime::staged::Operation::ElementWrite { value, base, .. }) => base == source
                     && self.facts.at(pc).and_then(|types| types.get(usize::from(value))).is_some_and(|ty| ty.is_subtype(Type::INT32)),
@@ -274,7 +275,7 @@ impl Lowering<'_, '_> {
             // A call or construction may run code that stores into the backing in place, which no
             // reload follows: its loop keeps the per-read test.
             let stores = matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementWrite { .. }))
-                || native_calls::appends(&self.intrinsics, pc)
+                || native_calls::resizes(&self.intrinsics, pc)
                 || quench_runtime::staged::meaning::means(&instruction, quench_runtime::staged::meaning::Meaning::Call)
                 || quench_runtime::staged::meaning::means(&instruction, quench_runtime::staged::meaning::Meaning::Construct);
             if stores { return false; }
