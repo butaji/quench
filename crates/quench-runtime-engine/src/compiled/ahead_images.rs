@@ -121,12 +121,15 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let crosses = crosses_bodies(&unit);
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    // A lane body's call through the VM's call helper steps its callee's records, where the base
+    // body binds and enters the callee's body: richards' IdleTask.run (`this.scheduler.release(packet)`)
+    // cost 5x the whole run as a lane.
+    if calls_through_helper(&code) { return Err("calls through the VM's helper"); }
     // A lane body that polls and calls enters its callee's body through the VM's call helper, where
     // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
     // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
-    if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
+    if fault_poll && crosses_bodies(&unit) { return Err("polls and calls through the VM's helper"); }
     Ok(LaneImage { code, fault_poll })
 }
 
@@ -134,6 +137,13 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
 fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
+}
+
+/// Whether `code` calls the VM's call helper (`LaneHelper::Call`), the lowering's own record of a
+/// call it neither proved nor made in place.
+fn calls_through_helper(code: &RelocatableCode) -> bool {
+    code.relocations.iter().any(|relocation| relocation.namespace == lane_region::relocs::RelocKind::Helper as u32
+        && relocation.key == LaneHelper::Call as u32)
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
