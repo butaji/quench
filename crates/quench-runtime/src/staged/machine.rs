@@ -139,17 +139,22 @@ pub trait MachineAccess: MachineScalar {
         self.raw_store(lane, flags, (value, false), base, offset);
     }
     /// A call of the code at `target` on word `arguments`: its word.
-    fn call_words(&mut self, target: Self::Word, arguments: &[Self::Word]) -> Self::Word;
+    fn call_words(&mut self, target: CallTarget<Self::Word>, arguments: &[Self::Word]) -> Self::Word;
     /// A call of the code at `target` whose `signature` is its parameter lanes and its result lane.
-    fn call_lanes(&mut self, target: Self::Word, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word;
-    /// A call of the leaf at address `leaf` on word `arguments`: its word.
-    fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word {
-        let target = self.raw_const(Lane::I64, leaf as i64);
+    fn call_lanes(&mut self, target: CallTarget<Self::Word>, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word;
+    /// The entry of the slow path `leaf` as a call target.
+    fn slow_path_target(&mut self, leaf: impl SlowPath) -> CallTarget<Self::Word> {
+        CallTarget(self.raw_const(Lane::I64, leaf.address() as i64))
+    }
+    /// A call of the slow path `leaf` on word `arguments`: its word. A leaf is one its crate's
+    /// inventory declares (`slow_paths!`), never a bare address.
+    fn call_leaf(&mut self, leaf: impl SlowPath, arguments: &[Self::Word]) -> Self::Word {
+        let target = self.slow_path_target(leaf);
         self.call_words(target, arguments)
     }
-    /// A call of the leaf at address `leaf` under `signature` (parameter lanes and result lane).
-    fn call_leaf_lanes(&mut self, leaf: usize, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word {
-        let target = self.raw_const(Lane::I64, leaf as i64);
+    /// A call of the slow path `leaf` under `signature` (parameter lanes and result lane).
+    fn call_leaf_lanes(&mut self, leaf: impl SlowPath, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word {
+        let target = self.slow_path_target(leaf);
         self.call_lanes(target, signature, arguments)
     }
     /// A function the machine calls directly, linked where the code is placed.
@@ -169,7 +174,7 @@ pub trait MachineAccess: MachineScalar {
     /// The low `lane` bits of `value` into `slot`, `offset` bytes in.
     fn slot_store(&mut self, slot: Self::Slot, lane: Lane, value: Self::Word, offset: i32);
     /// A call of the code at `target` under `signature`: all of its results.
-    fn call_signature(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]) -> Vec<Self::Word>;
+    fn call_signature(&mut self, signature: Self::Signature, target: CallTarget<Self::Word>, arguments: &[Self::Word]) -> Vec<Self::Word>;
 }
 
 /// A machine with blocks: the transfers between them, each carrying words as the target's
@@ -219,8 +224,9 @@ pub trait MachineVariables: Machine {
 }
 
 /// A machine that continues in the code it calls, so the call is the end of the function: a tail
-/// call of `target`, or of the code at an address under a `signature`, on `arguments`.
-#[cfg(all(feature = "jit", not(stencil_build)))]
+/// call of `target`, or of the code at an address under a `signature`, on `arguments`. Wasm
+/// tail calls lower through it in every build that emits code, AOT support included.
+#[cfg(not(stencil_build))]
 pub trait MachineTail: MachineAccess + MachineFlow {
     fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
     fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);
@@ -245,4 +251,77 @@ pub trait MachineVector: MachineAccess {
     fn spill_operand(&mut self, slot: Self::Slot, at: usize, value: Self::Word);
     /// The value of type `ty` the word position `at` of `slot` holds.
     fn reload_result(&mut self, slot: Self::Slot, at: usize, ty: WasmType) -> Self::Word;
+}
+
+/// A slow path compiled code may call (TOD-2194): a helper its crate's inventory declares
+/// (`slow_paths!`), the only name a leaf call (`MachineAccess::call_leaf`) takes. A bare address
+/// is no slow path, so a call to any other code does not type-check.
+pub trait SlowPath: Copy + slow_path_seal::Declared {
+    /// The helper's entry.
+    fn address(self) -> usize;
+}
+
+/// Where a call target word was read (TOD-2194): an entry its crate's inventory declares
+/// (`entry_sources!`), such as a lane helper table, a context's call-out slot or a compiled body's
+/// entry. Every call compiled code makes names one, or a `SlowPath`.
+pub trait EntrySource: Copy + slow_path_seal::Declared {}
+
+/// A word compiled code may call (`MachineAccess::call_words`, `call_lanes`, `call_signature`): a
+/// slow path's entry (`MachineAccess::slow_path_target`), or a word read from a declared
+/// `EntrySource`. No other word is a call target, so a call to undeclared code does not type-check.
+#[derive(Clone, Copy, Debug)]
+pub struct CallTarget<W>(W);
+
+impl<W: Copy> CallTarget<W> {
+    /// The target `word`, read from `source`.
+    #[inline]
+    pub fn entry(word: W, _source: impl EntrySource) -> Self { Self(word) }
+    /// The target's word, for the backend that emits the call.
+    #[inline]
+    pub fn word(self) -> W { self.0 }
+}
+
+/// The seal of `SlowPath` and `EntrySource`: implemented by the inventories alone.
+#[doc(hidden)]
+pub mod slow_path_seal {
+    pub trait Declared {}
+}
+
+/// Declares a crate's slow paths: the enum that names each helper compiled code may call, and its
+/// entry (`SlowPath`). Each crate keeps one inventory, so the helpers its compiled code reaches are
+/// one list.
+#[macro_export]
+macro_rules! slow_paths {
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($(#[$attr:meta])* $variant:ident => $helper:path),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        $vis enum $name { $($(#[$attr])* $variant),+ }
+        impl $crate::staged::machine::slow_path_seal::Declared for $name {}
+        impl $crate::staged::machine::SlowPath for $name {
+            #[inline]
+            fn address(self) -> usize {
+                match self { $(Self::$variant => $helper as *const () as usize),+ }
+            }
+        }
+    };
+}
+
+/// Declares a crate's entry sources (`EntrySource`): where the words its compiled code calls are read.
+#[macro_export]
+macro_rules! entry_sources {
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($(#[$attr:meta])* $variant:ident),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        $vis enum $name { $($(#[$attr])* $variant),+ }
+        impl $crate::staged::machine::slow_path_seal::Declared for $name {}
+        impl $crate::staged::machine::EntrySource for $name {}
+    };
+}
+
+slow_paths! {
+    /// The slow paths of the runtime's Number machine rows (the RegExp machine's are `regexp::machine::RegexpSlowPath`).
+    pub enum RuntimeSlowPath {
+        /// The Number remainder (`vm::operations::number_remainder`), which libm computes.
+        NumberRemainder => crate::vm::operations::number_remainder,
+    }
 }

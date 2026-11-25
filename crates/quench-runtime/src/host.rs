@@ -571,10 +571,15 @@ impl<'a> HostContext<'a> {
     pub fn invoke(&mut self, capability: CapabilityId, text: Option<&str>) -> f64 {
         match capability {
             CapabilityId::WriteLine => {
+                // Output past the host's streams, which a build-time evaluation cannot keep.
+                crate::clock::note_input("the host's direct output");
                 self.host.write_line(text.unwrap_or_default());
                 0.0
             }
-            CapabilityId::ClockMillis => self.host.clock_millis(),
+            CapabilityId::ClockMillis => {
+                crate::clock::note_input("the clock");
+                self.host.clock_millis()
+            }
             CapabilityId::Done => {
                 self.host.done(text);
                 0.0

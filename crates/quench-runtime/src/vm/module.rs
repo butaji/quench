@@ -333,3 +333,47 @@ impl ModuleEvaluationStack {
         Some(&self.0[start..])
     }
 }
+
+use crate::snapshot::Snap;
+
+/// A snapshot (`crate::snapshot`) keeps a settled record: its outcome, program, resolved
+/// requests and deferred namespace. A record still loading, linking or evaluating has waiters
+/// and promises in flight, which a snapshot taken at rest never holds.
+impl crate::snapshot::Snap for ModuleRecord {
+    fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self { outcome, program, resolved_requests, deferred_namespace, evaluation_promise, waiters, pending_namespace, async_cycle_root } = self;
+        let (tag, value) = match *outcome {
+            ModuleOutcome::Deferred(value) => (0, value),
+            ModuleOutcome::Evaluated(value) => (1, value),
+            ModuleOutcome::Errored(value) => (2, value),
+            ModuleOutcome::Pending(_) => return Err(crate::snapshot::SnapshotError::unsupported("a module being loaded or evaluated")),
+        };
+        if evaluation_promise.is_some() || !waiters.is_empty() || pending_namespace.is_some() || async_cycle_root.is_some() {
+            return Err(crate::snapshot::SnapshotError::unsupported("a module awaiting its evaluation"));
+        }
+        writer.u8(tag);
+        writer.value(value);
+        program.snap(writer)?;
+        resolved_requests.snap(writer)?;
+        deferred_namespace.snap(writer)
+    }
+
+    fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let outcome = match (reader.u8()?, reader.value()?) {
+            (0, value) => ModuleOutcome::Deferred(value),
+            (1, value) => ModuleOutcome::Evaluated(value),
+            (2, value) => ModuleOutcome::Errored(value),
+            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot module outcome".into())),
+        };
+        Ok(Self {
+            outcome,
+            program: Snap::unsnap(reader)?,
+            resolved_requests: Snap::unsnap(reader)?,
+            deferred_namespace: Snap::unsnap(reader)?,
+            evaluation_promise: None,
+            waiters: Vec::new(),
+            pending_namespace: None,
+            async_cycle_root: None,
+        })
+    }
+}

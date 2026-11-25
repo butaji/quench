@@ -122,3 +122,21 @@ mod tests {
         );
     }
 }
+
+impl crate::snapshot::Snap for ModuleIdentity {
+    fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        match self {
+            Self::File(path) => { writer.u8(0); path.snap(writer) }
+            Self::Url(url) => { writer.u8(1); url.snap(writer) }
+        }
+    }
+
+    fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        use crate::snapshot::Snap;
+        match reader.u8()? {
+            0 => Ok(Self::File(Snap::unsnap(reader)?)),
+            1 => Ok(Self::Url(Snap::unsnap(reader)?)),
+            _ => Err(crate::snapshot::SnapshotError("invalid snapshot module identity".into())),
+        }
+    }
+}

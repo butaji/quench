@@ -14,7 +14,7 @@ const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration] [--sdk-report FILE] [--support-dir DIR] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -28,7 +28,6 @@ struct Options {
     output: PathBuf,
     report: Option<PathBuf>,
     sdk_report: Option<PathBuf>,
-    support_dir: Option<PathBuf>,
     profile: String,
     strict: bool,
     support: SourceSupport,
@@ -42,7 +41,6 @@ impl Options {
         let mut output = None;
         let mut report = None;
         let mut sdk_report = None;
-        let mut support_dir = None;
         let mut profile = None;
         let mut strict = false;
         let mut support = None;
@@ -50,7 +48,7 @@ impl Options {
         let mut target_triple = None;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
-                "-o" | "--output" | "--report" | "--profile" | "--sdk-report" | "--support-dir" | "--target-cpu" | "--target" => {
+                "-o" | "--output" | "--report" | "--profile" | "--sdk-report" | "--target-cpu" | "--target" => {
                     let value = arguments
                         .next()
                         .ok_or_else(|| format!("missing value for {argument}"))?;
@@ -68,11 +66,6 @@ impl Options {
                         "--sdk-report" => {
                             if sdk_report.replace(PathBuf::from(value)).is_some() {
                                 return Err("SDK report specified twice".into());
-                            }
-                        }
-                        "--support-dir" => {
-                            if support_dir.replace(PathBuf::from(value)).is_some() {
-                                return Err("support directory specified twice".into());
                             }
                         }
                         "--profile" => {
@@ -109,9 +102,6 @@ impl Options {
             }
         }
         let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if strict && matches!(support, Some(SourceSupport::Dynamic)) {
-            return Err("--strict-aot excludes --dynamic-source".into());
-        }
         if !matches!(profile.as_str(), "experiment" | "release" | "iteration") {
             return Err("compile profile must be experiment, release or iteration".into());
         }
@@ -120,7 +110,6 @@ impl Options {
             output: output.ok_or("compile requires -o BINARY")?,
             report,
             sdk_report,
-            support_dir,
             profile,
             strict,
             support: support.unwrap_or(SourceSupport::Automatic),
@@ -137,10 +126,16 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
     enum Work {
         Application(Options),
         Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
+        Evaluation { entry: PathBuf, journal: PathBuf, assumptions: Vec<String> },
+        Resumption { entry: PathBuf, rest: PathBuf, arguments: Vec<String> },
     }
     let work = match arguments.as_slice() {
         [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
             Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
+        [option, entry, journal, assumptions @ ..] if option == super::strict::EVALUATION_WORKER_OPTION =>
+            Work::Evaluation { entry: entry.into(), journal: journal.into(), assumptions: assumptions.to_vec() },
+        [option, entry, rest, arguments @ ..] if option == super::strict::RESUMPTION_WORKER_OPTION =>
+            Work::Resumption { entry: entry.into(), rest: rest.into(), arguments: arguments.to_vec() },
         _ => Work::Application(Options::parse(arguments)?),
     };
     std::thread::Builder::new()
@@ -149,6 +144,8 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .spawn(move || match work {
             Work::Application(options) => compile(options),
             Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
+            Work::Evaluation { entry, journal, assumptions } => super::strict::evaluate(&entry, &journal, &assumptions),
+            Work::Resumption { entry, rest, arguments } => super::strict::resume(&entry, &rest, arguments),
         })
         .map_err(|error| error.to_string())?
         .join()
@@ -189,7 +186,9 @@ fn compile(options: Options) -> Result<(), String> {
         SourceSupport::Static => Some(NativeImageSupport::Static),
         SourceSupport::Automatic => None,
     };
-    let variant = variant::select(options.strict, explicit, &graph)?;
+    // A strict compile that reads a dynamic input falls back to full support: static support
+    // still retains the interpreter, which its link audit refuses (TOD-2196).
+    let variant = if options.strict { variant::Variant::Full } else { variant::select(explicit, &graph) };
     let support = variant.image_support();
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
@@ -242,8 +241,18 @@ fn compile(options: Options) -> Result<(), String> {
             report["requirements"]
         ));
     }
-    variant::require_linkable(variant, options.support_dir.as_deref())?;
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
+    // A strict compile links no support when the program folds at build time; one that reads
+    // a dynamic input links its support variant, and the report names the input.
+    if options.strict {
+        if let super::strict::Outcome::Image = super::strict::compile(&entry, &output, &work.0, &mut report)? {
+            report["status"] = json!("compiled");
+            report["support_variant"] = json!("strict");
+            report["execution_mode"] = json!("replay");
+            write_report(report_path.as_deref(), &report)?;
+            return Ok(());
+        }
+    }
     manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
     report["source_units"] = json!(manifest.units().len());
     report["archived_module_sources"] = json!(manifest.assets().modules.len());
@@ -445,7 +454,6 @@ mod tests {
             vec!["entry.js", "other.js", "-o", "a"],
             vec!["entry.js", "-o", "a", "--profile", "unknown"],
             vec!["entry.js", "-o", "a", "--static-source", "--dynamic-source"],
-            vec!["entry.js", "-o", "a", "--strict-aot", "--dynamic-source"],
         ] {
             assert!(Options::parse(args.into_iter().map(str::to_owned).collect()).is_err());
         }
@@ -465,7 +473,6 @@ mod tests {
             output: output.clone(),
             report: Some(report.clone()),
             sdk_report: None,
-            support_dir: None,
             profile: "iteration".into(),
             strict: false,
             support: SourceSupport::Static,
@@ -496,8 +503,7 @@ mod tests {
                 output: destination,
                 report,
                 sdk_report: None,
-                support_dir: None,
-                profile: "iteration".into(),
+                    profile: "iteration".into(),
                 strict: false,
                 support: SourceSupport::Static,
                 target: NativeTarget::default(),

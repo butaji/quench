@@ -7,7 +7,7 @@ use crate::staged::machine::{Binary, Relation};
 use quench_regexp::backtrack::native::NATIVE_ASCII_UNITS;
 use quench_regexp::backtrack::machine::{self as m, Cursor, Machine, Step, CAPTURE_REGISTERS, UNBOUNDED};
 use quench_regexp::backtrack::matcher::{Admission, MatchStage};
-use quench_regexp::backtrack::native::{native_class_ends, CASE_BIT, CLASS_COUNT_SHIFT, CLASS_NONE, CLASS_OVERFLOW};
+use quench_regexp::backtrack::native::{CASE_BIT, CLASS_COUNT_SHIFT, CLASS_NONE, CLASS_OVERFLOW};
 use quench_regexp::backtrack::{Inst, UnitTest};
 use crate::staged::machine::Lane;
 use super::FRAME_BYTES;
@@ -231,7 +231,7 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
             self.stack_end,
             Emit::constant(self, choice),
         ];
-        let ends = self.b.call_leaf(native_class_ends as *const () as usize, &arguments);
+        let ends = self.b.call_leaf(RegexpSlowPath::NativeClassEnds, &arguments);
         let overflowed = self.compare_constant(Relation::Equal, ends, CLASS_OVERFLOW as i64);
         let fits = self.b.new_block();
         self.branch(overflowed, self.overflow, fits);
@@ -273,5 +273,13 @@ impl<M: RegexpMachine> Machine for Emit<'_, M> {
         let step = otherwise(self);
         self.finish_step(step);
         Step::Branched
+    }
+}
+
+crate::slow_paths! {
+    /// The slow paths of the RegExp machine rows: a class run's ends, which the matcher's native
+    /// table computes (`quench_regexp::backtrack::native::native_class_ends`).
+    pub enum RegexpSlowPath {
+        NativeClassEnds => quench_regexp::backtrack::native::native_class_ends,
     }
 }

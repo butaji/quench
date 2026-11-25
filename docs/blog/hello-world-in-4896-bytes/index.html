@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hello world in 4,896 bytes: AOT as the JIT run at build time · Quench blog</title>
+<meta name="description" content="Quench now compiles a JavaScript hello world to a 4,896-byte native executable that starts in 0.96 ms with 1.3 MB of memory, level with C. No second compiler: the build runs the program through the same specializer as the JIT and keeps only what is left." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/blog/hello-world-in-4896-bytes/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="application/atom+xml" title="Quench blog" href="https://quench.run/blog/feed.xml" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/blog/hello-world-in-4896-bytes/" />
+<meta property="og:title" content="Hello world in 4,896 bytes: AOT as the JIT run at build time · Quench blog" />
+<meta property="og:description" content="Quench now compiles a JavaScript hello world to a 4,896-byte native executable that starts in 0.96 ms with 1.3 MB of memory, level with C. No second compiler: the build runs the program through the same specializer as the JIT and keeps only what is left." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-11-25" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Hello world in 4,896 bytes: AOT as the JIT run at build time", "description": "Quench now compiles a JavaScript hello world to a 4,896-byte native executable that starts in 0.96 ms with 1.3 MB of memory, level with C. No second compiler: the build runs the program through the same specializer as the JIT and keeps only what is left.", "datePublished": "2026-11-25", "dateModified": "2026-11-25", "url": "https://quench.run/blog/hello-world-in-4896-bytes/", "image": "https://quench.run/og.png", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "publisher": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "mainEntityOfPage": "https://quench.run/blog/hello-world-in-4896-bytes/", "keywords": "compile JavaScript to native executable, JavaScript AOT compiler, small JavaScript binary, partial evaluation, Futamura projection, JavaScript startup time, Rust JavaScript runtime"}</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/blog/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z"/></svg>Blog</a>
+<a class="badge" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>FUTAMURA</span><span>PROJECTION</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/blog/">blog</a> / <time datetime="2026-11-25">25 November 2026</time> · 5 min read · aot</p>
+<h1>Hello world in 4,896 bytes: AOT as the JIT run at build time</h1>
+<p class="lead">Quench now compiles a JavaScript hello world to a 4,896-byte native executable that starts in 0.96 ms with 1.3 MB of memory, level with C. No second compiler: the build runs the program through the same specializer as the JIT and keeps only what is left.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p>Here is the smallest program we care about:</p>
+<pre><code>// hello.js
+console.log("Hello world!")</code></pre>
+<p>And here is what Quench does with it on 25 November 2026:</p>
+<pre><code>$ quench compile --strict-aot hello.js -o hello
+$ ls -l hello
+-rwxr-xr-x 1 dev dev 4896 hello
+$ ./hello
+Hello world!</code></pre>
+<div class="stats"><div class="stat hot"><div class="stat-num">4,896 B</div><div class="stat-label">executable</div><p class="stat-note">C hello: 14 KB</p></div><div class="stat"><div class="stat-num">0.96 ms</div><div class="stat-label">startup</div><p class="stat-note">C hello: 0.89 ms</p></div><div class="stat"><div class="stat-num">1.3 MB</div><div class="stat-label">peak RSS</div><p class="stat-note">C hello: 1.36 MB</p></div></div>
+<p>A day earlier the same program compiled to an 84.8 MB executable. This post is about what changed, and why it is not a hello-world trick.</p>
+<h2 id="the-numbers">The numbers</h2>
+<div class="table-scroll"><table><thead><tr><th>console.log("Hello world!")</th><th>Executable</th><th>Startup</th><th>Peak RSS</th></tr></thead><tbody><tr><td><b>Quench strict AOT image</b></td><td class="n"><b>4,896 B</b></td><td class="n"><b>0.96 ms</b></td><td class="n"><b>1.3 MB</b></td></tr><tr><td>Quench AOT image, 24 November</td><td class="n">84.8 MB</td><td class="n">6.16 ms</td><td class="n">3.7 MB</td></tr><tr><td>C, gcc -O2, dynamic glibc, stripped</td><td class="n">14 KB</td><td class="n">0.89 ms</td><td class="n">1.36 MB</td></tr><tr><td>Node 22 running the script</td><td class="n">(runtime)</td><td class="n">27.5 ms</td><td class="n">36 MB</td></tr></tbody></table></div>
+<p>One 4-vCPU x86 Linux machine, wall time and peak resident memory from a small C harness that spawns the process and waits for it. A later rebuild on 25 November measured 4,880 bytes, 0.99 ms and 1.2 MB, which is the run-to-run noise of this box. The build itself takes 0.15 s.</p>
+<h2 id="why-it-was-85-mb">Why it used to be 85 MB</h2>
+<p>Every Quench executable used to link the whole engine. Asking the linker why the parser stayed in a hello-world image gave a chain that explains everything: the image starts the generic VM, the VM can call a user function, a user function can hit code that was never compiled, and compiling it needs the parser. Once the VM is in, so are the interpreter, both JITs, WebAssembly, ICU, compression and TLS.</p>
+<p>Trimming that graph edge by edge might reach a few megabytes. It can never reach C's size class, because the image still contains a JavaScript engine. To get there the image has to stop being "the engine plus your program".</p>
+<h2 id="the-first-futamura-projection">The first Futamura projection, at build time</h2>
+<p>Quench's design rule is that the interpreter is the only definition of what JavaScript means, and every other tier is that interpreter specialized to what it knows. We wrote about it in <a href="/blog/one-interpreter-four-outputs/">One interpreter, four outputs</a> and <a href="/blog/aot-without-a-second-compiler/">AOT without a second compiler</a>. The JIT specializes to facts it learns while the program runs. AOT is the same specializer run earlier, against facts known at build time.</p>
+<aside class="note">With one source of truth for everything, AOT is just a particular case of JIT.</aside>
+<p>Specializing an interpreter to a program is the first Futamura projection: the result is a compiled program. Its coarsest form is also the simplest. The build runs the entry file against the same realm the image would start with, and keeps going until the program reads its first <b>dynamic input</b>: something a later run could see differently, such as its arguments, the environment, a file, the clock or standard input.</p>
+<p>Everything computed before that point is the same in every run, so the image does not need the code that computed it. It only needs the program's <b>effects</b>: which bytes went to which descriptor, in what order, and the exit status.</p>
+<p>Hello world reads no dynamic input at all. Its residual program is one write of 13 bytes to descriptor 1 and an exit status of 0. Quench emits that as a <code>no_std</code> Rust program that calls <code>write</code> and returns, and links it with the system C library. That is the whole 4,896-byte executable. There is no engine inside it because nothing is left for an engine to do.</p>
+<h2 id="not-a-special-case">Why this is not a special case</h2>
+<p>Nothing in the compiler knows about <code>console.log</code> or about hello world. The rule is general: evaluate up to the first dynamic input, keep the effects. A program that builds a table, formats a report and prints it, reading nothing from outside, compiles the same way. The work it did at build time costs nothing at run time.</p>
+<p>The rule is also strict in the other direction. If a program does read a dynamic input, the build stops there, says which input it was, and does not pretend. That half of the design is the subject of <a href="/blog/strict-aot-refuses-and-names-the-input/">the companion post</a>.</p>
+<h2 id="what-it-does-not-do-yet">What it does not do yet</h2>
+<p>Most real programs read an input in the first few lines. A command-line tool reads its arguments, a REPL reads standard input. For those, the strict image is refused today and the compile falls back to the full image, which still works and is still large. Our current target is a readline REPL, and the gap there is wide: <a href="/blog/chasing-a-sub-megabyte-readline-binary/">we wrote down where it stands</a>.</p>
+<p>The next stage keeps more than effects. The build saves the heap at the program's first wait for input, and the code that runs after it (the input handlers) is compiled against that saved heap by the same JIT specializer, linking only the runtime services it still calls. The hello-world image is the end point of that pipeline for a program with no inputs. Every other program should land somewhere between 4.9 KB and the full engine, in proportion to how much of it really depends on run time.</p>
+</div></div>
+</article>
+<nav class="frame cols-2" aria-label="More posts"><a class="tile navt" href="/blog/strict-aot-refuses-and-names-the-input/"><span class="mono">← earlier · 25 November 2026</span><b>Strict AOT: a compiler that refuses, and names the input</b></a><a class="tile navt right" href="/blog/"><span class="mono">that is the latest →</span><b>All posts</b></a></nav>
+<section class="frame cols-3 cta-frame" aria-label="Get involved">
+<div class="tile orange"><h2>Try it</h2><p>Quench builds from source with Cargo and runs TypeScript, JavaScript and WebAssembly.</p><a class="btn" href="/#start">Build and run</a></div>
+<div class="tile"><h2>Work on it</h2><p>Interpreter, JIT, AOT, GC, Node APIs. Every claim on this blog has a measurement you can rerun.</p><a class="btn" href="/#contribute">Where to start</a></div>
+<div class="tile"><h2>Follow it</h2><p>New posts land here as the engine moves. Star the repository or subscribe to the feed.</p><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Feed</a></div>
+</section>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/blog/">blog</a> · <a href="/blog/feed.xml">feed</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

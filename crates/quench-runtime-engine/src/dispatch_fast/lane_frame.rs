@@ -2425,7 +2425,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             cx: cx.cast(),
             ip,
             tier: |context, r, view, function, parameters| tier_prologue_resumed(context.cast(), r, view, function, parameters),
-            body: |context, ip, r, view, function, binds_this| body_entry_resumed(context.cast(), ip, r, view, function, binds_this),
+            body: |context, ip, r, view, function, binds_this| body_calls::enter_published_body(context.cast(), ip, r, view, function, binds_this),
         };
         return LaneFrame::<ACC> { entry: Some(entry), ..LaneFrame::<ACC>::new(r, view) };
     }

@@ -27,7 +27,8 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_offer_compiled(this: &mut Vm, caller: usize, id: u32) -> Option<std::rc::Rc<CompiledProgram>>;
     safe fn quench_engine_vm_run_offered(this: &mut Vm, compiled: std::rc::Rc<CompiledProgram>, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
     safe fn quench_engine_vm_js_jit_compiled_call(this: &mut Vm, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value>;
-    safe fn quench_engine_vm_admits_in_lane(this: &Vm, program: &ResidualProgram) -> bool;
+    safe fn quench_engine_vm_admits_in_lane(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool;
+    safe fn quench_engine_vm_may_run_in_lane(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool;
     safe fn quench_engine_vm_entry_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
     safe fn quench_engine_vm_hot_loop_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
     safe fn quench_engine_vm_runs_call_in_lane(view: *const LaneView) -> bool;
@@ -104,7 +105,8 @@ pub trait EngineVm {
     fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<std::rc::Rc<CompiledProgram>>;
     fn run_offered(&mut self, compiled: std::rc::Rc<CompiledProgram>, caller: usize, id: u32, window: crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
     fn js_jit_compiled_call(&mut self, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value>;
-    fn admits_in_lane(&self, program: &ResidualProgram) -> bool;
+    fn admits_in_lane(&self, program: ProgramId, code: &ResidualProgram) -> bool;
+    fn may_run_in_lane(&self, program: ProgramId, code: &ResidualProgram) -> bool;
     fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView;
     fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView;
     fn runs_call_in_lane(view: *const LaneView) -> bool;
@@ -182,7 +184,9 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn js_jit_compiled_call(&mut self, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value> { quench_engine_vm_js_jit_compiled_call(self, program, arg1, returns, arguments) }
     #[inline(always)]
-    fn admits_in_lane(&self, program: &ResidualProgram) -> bool { quench_engine_vm_admits_in_lane(self, program) }
+    fn admits_in_lane(&self, program: ProgramId, code: &ResidualProgram) -> bool { quench_engine_vm_admits_in_lane(self, program, code) }
+    #[inline(always)]
+    fn may_run_in_lane(&self, program: ProgramId, code: &ResidualProgram) -> bool { quench_engine_vm_may_run_in_lane(self, program, code) }
     #[inline(always)]
     fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView { quench_engine_vm_entry_lane_view(self, program, function) }
     #[inline(always)]
@@ -370,7 +374,8 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_offer_compiled = fn(&mut Vm, usize, u32) -> Option<std::rc::Rc<CompiledProgram>>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_run_offered = fn(&mut Vm, std::rc::Rc<CompiledProgram>, usize, u32, crate::bytecode::RegisterWindow) -> Option<Result<Value, JsError>>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_js_jit_compiled_call = fn(&mut Vm, &ResidualProgram, (ProgramId, u32), bool, &[Value]) -> Option<Value>;
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_admits_in_lane = fn(&Vm, &ResidualProgram) -> bool;
+    #[allow(non_camel_case_types)] pub type quench_engine_vm_admits_in_lane = fn(&Vm, ProgramId, &ResidualProgram) -> bool;
+    #[allow(non_camel_case_types)] pub type quench_engine_vm_may_run_in_lane = fn(&Vm, ProgramId, &ResidualProgram) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_entry_lane_view = fn(&Vm, ProgramId, u32) -> *const LaneView;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_hot_loop_lane_view = fn(&Vm, ProgramId, u32) -> *const LaneView;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_runs_call_in_lane = fn(*const LaneView) -> bool;

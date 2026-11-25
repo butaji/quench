@@ -52,7 +52,7 @@ pub(crate) struct CheckedRow {
 /// `expected` (a type index of the program) although its id is not the expected one: a subtype,
 /// or a host function whose signature the VM compares. A reference the VM cannot compare does
 /// not satisfy it.
-unsafe extern "C" fn compiled_table_accepts(
+pub(super) unsafe extern "C" fn compiled_table_accepts(
     context: *mut CallContext,
     table: u64,
     index: u64,
@@ -162,7 +162,7 @@ impl WasmTable for Emitter<'_, '_> {
         let context = self.body.core.context;
         let table = self.constant(Width::I64, i64::from(site.table));
         let expected_type = self.constant(Width::I64, i64::from(site.signature_index));
-        let target = compiled_table_accepts as *const () as usize;
+        let target = crate::compiled::slow_paths::EngineSlowPath::TableAccepts;
         let related = self.call_leaf(target, &[context, table, reference, expected_type]);
         let related = self.convert(Conversion::WrapI64, related);
         let mismatch = self.operate_unary(quench_runtime::wasm::integer::I64UnaryOperator::EqualZero, Width::I32, related);
@@ -367,7 +367,7 @@ impl Emitter<'_, '_> {
         let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
         let callee = self.body.core.builder.import_signature(callee);
         let roots = self.root();
-        let results = self.call_signature(callee, body, &arguments);
+        let results = self.call_signature(callee, quench_runtime::staged::machine::CallTarget::entry(body, crate::compiled::slow_paths::EngineEntry::WasmTableBody), &arguments);
         self.unroot(roots);
         let bits = match signature.results.first() {
             Some(result) => match Kind::of(*result).expect("planned") {
@@ -476,7 +476,7 @@ impl Emitter<'_, '_> {
         let signature_index = self.constant(Width::I64, i64::from(signature_index));
         let site = self.constant(Width::I64, site as i64);
         let roots = self.root();
-        let status = self.call_words(target, &[context, table, row, signature_index, site, args, out]);
+        let status = self.call_words(quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmTableCallOut), &[context, table, row, signature_index, site, args, out]);
         self.unroot(roots);
         status
     }

@@ -15,6 +15,7 @@ pub mod js_compiled;
 pub mod aot_image;
 pub mod native_program;
 pub mod native_object;
+#[cfg(feature = "jit")]
 pub mod regexp_native;
 pub(crate) mod engine_calls;
 pub(crate) mod engine_calls2;
@@ -103,6 +104,7 @@ pub(crate) mod engine_prelude {
     pub use crate::aot_image;
     pub use crate::native_program;
     pub use crate::native_object;
+    #[cfg(feature = "jit")]
     pub use crate::regexp_native;
     pub use crate::native_program::NativeProgramVm;
     pub use crate::dispatch_fast::DispatchFastVm;

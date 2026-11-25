@@ -14,6 +14,7 @@ thread_local! {
 
 /// The zone `TZ` names, or without `TZ` the system's, if either names one.
 pub(super) fn local_timezone() -> Option<chrono_tz::Tz> {
+    crate::clock::note_input("the local time zone");
     let generation = GENERATION.load(Ordering::Acquire);
     ZONE.with(|zone| match zone.get() {
         Some((seen, parsed)) if seen == generation => parsed,

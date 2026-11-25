@@ -714,6 +714,8 @@ node_bindings! {
         method "processOnWarning" (1) => crate::modules::process_warning_shared_vm::on,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
+        method "processIdentityInitialize" (0) => crate::modules::process_shared_vm::initialize_identity,
+        method "processStreamTerminal" (0) => crate::modules::process_shared_vm::initialize_terminal,
         method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
@@ -2736,6 +2738,14 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn function_callback(&self, index: usize) -> Option<HostCallback> {
+        // A build-time evaluation runs only the operations its gate admits (`aot::prefix`).
+        if crate::aot::prefix::armed() {
+            let name = OPERATION_DESCRIPTORS.get(index)?.name;
+            if !crate::aot::prefix::admits(name) {
+                crate::aot::prefix::refuse(crate::aot::prefix::input_of(name));
+                return Some(crate::aot::prefix::refused);
+            }
+        }
         callbacks().get(index).copied()
     }
 

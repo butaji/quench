@@ -229,6 +229,40 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
 /// The process's arguments, executable and ids on `process`. A restored startup snapshot
 /// (`Host::resume`) holds another process's, which these replace in place.
 fn install_identity(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
+    // A build-time evaluation keeps them unread until the entry reads them, when its gate
+    // refuses the initializer: they are this process's, not the image's.
+    if crate::aot::prefix::active() {
+        set_text(context, process, "arch", process_state::architecture())?;
+        set_text(context, process, "platform", &process_state::platform())?;
+        let exec_argv = context.host_as::<crate::host::NodeHost>().shared_state().borrow().exec_argv.clone();
+        let exec_argv = exec_argv.iter().map(|value| context.string_rooted(value)).collect::<Vec<_>>();
+        let exec_argv = context.array_rooted(&exec_argv)?;
+        install(context, process, "execArgv", exec_argv)?;
+        let initializer = context.host_function(crate::host::shared_vm::operation!("processIdentityInitialize"))?;
+        return context.define_lazy_data_properties_rooted(process, IDENTITY, true, initializer);
+    }
+    install_identity_now(context, process)
+}
+
+/// The members of `install_identity` that a build-time evaluation keeps lazy: the target's
+/// architecture and platform are the image's too, as are its Node options (`execArgv`: an
+/// image takes none).
+const IDENTITY: &[&str] = &["argv", "execPath", "argv0", "pid", "ppid"];
+
+/// `install_identity`'s lazy initializer.
+pub(crate) fn initialize_identity(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = process_root(context)?;
+    install_identity_now(context, process)?;
+    Ok(context.undefined())
+}
+
+/// The installed `process`.
+pub(crate) fn process_root(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))
+}
+
+fn install_identity_now(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
     let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
@@ -348,10 +382,34 @@ fn install_exit_code(
     Ok(())
 }
 
-/// Whether the stream's descriptor is a terminal, as `isTTY`.
+/// Whether the stream's descriptor is a terminal, as `isTTY`. A build-time evaluation keeps
+/// it lazy, as it keeps the process identity: whether a descriptor is a terminal is the
+/// running process's, and its gate refuses the initializer.
 fn install_terminal(context: &mut NativeContext<'_>, stream: RootId, fd: i32) -> Result<(), RootedError> {
+    if crate::aot::prefix::active() {
+        let data = context.number(f64::from(fd));
+        let initializer = context.host_function_with_data(crate::host::shared_vm::operation!("processStreamTerminal"), data)?;
+        return context.define_lazy_data_properties_rooted(stream, &["isTTY"], true, initializer);
+    }
     let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
     install(context, stream, "isTTY", tty)
+}
+
+/// `install_terminal`'s lazy initializer, whose data is the stream's descriptor.
+pub(crate) fn initialize_terminal(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let fd = context.rooted_value(data).and_then(|value| value.as_number()).ok_or_else(|| RootedError::host("invalid process stream descriptor"))? as i32;
+    let process = process_root(context)?;
+    let key = context.string_rooted(if fd == STDERR_FD { "stderr" } else { "stdout" });
+    let stream = context.get_property_rooted(process, key)?;
+    let terminal = if crate::aot::prefix::armed() {
+        crate::aot::prefix::answer(crate::aot::prefix::Question::Terminal(fd)).ok_or_else(|| crate::aot::prefix::stop(context))?
+    } else {
+        crate::modules::tty_state::is_terminal_fd(fd)
+    };
+    let tty = context.boolean(terminal);
+    install(context, stream, "isTTY", tty)?;
+    Ok(context.undefined())
 }
 
 fn create_stream(
@@ -991,7 +1049,10 @@ pub(crate) fn stream_write(
         )?);
     };
     let worker = context.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.control.clone());
-    if let Some(control) = worker {
+    if crate::aot::prefix::armed() {
+        // A build-time evaluation keeps its output for the image to write (`aot::prefix`).
+        crate::aot::prefix::record(fd, bytes);
+    } else if let Some(control) = worker {
         // A worker's stdio reaches its parent's `worker.stdout`/`worker.stderr`.
         control.write_output(fd == STDERR_FD, bytes);
     } else if fd == STDERR_FD {
@@ -2582,6 +2643,10 @@ fn poll_io(
         }
         Ok(())
     };
+    // A build-time evaluation ends where the run would first wait for stdin (`aot::prefix`).
+    if crate::aot::prefix::armed() && crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin) {
+        return Err(crate::aot::prefix::reach_wait(runtime, program));
+    }
     let ran = crate::modules::process_stdin_shared_vm::poll(runtime)?;
     settle(runtime, ran)?;
     let ran = poll_process_signals(runtime, program, shared_state)?;

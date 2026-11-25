@@ -192,7 +192,7 @@ mod tests {
             _: *const u64, out: *mut u64) -> u32 {
             assert_eq!(ACTIVE_CONTEXT.with(std::cell::Cell::get), context);
             // SAFETY: the outer entry lends its interrupt owner and protected page.
-            let mut child = CallContext::native_adapter(std::ptr::null_mut(), unsafe { (*context).interrupt },
+            let mut child = CallContext::native_adapter(std::ptr::null_mut(), unsafe { (&(*context)).interrupt },
                 Some((page as usize, bytes as usize)));
             let status = unsafe { crate::compiled::enter_wasm(&mut child, page, bytes,
                 std::ptr::null(), std::ptr::null_mut(), clobber_and_poll) };

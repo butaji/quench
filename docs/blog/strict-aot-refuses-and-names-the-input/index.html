@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Strict AOT: a compiler that refuses, and names the input · Quench blog</title>
+<meta name="description" content="Running a program at build time is only safe if the build never bakes in something a later run would see differently. Quench&#x27;s strict AOT mode is sound by construction: host operations off an allow-list are refused before they run, and the build names the input it could not fold." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/blog/strict-aot-refuses-and-names-the-input/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="application/atom+xml" title="Quench blog" href="https://quench.run/blog/feed.xml" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/blog/strict-aot-refuses-and-names-the-input/" />
+<meta property="og:title" content="Strict AOT: a compiler that refuses, and names the input · Quench blog" />
+<meta property="og:description" content="Running a program at build time is only safe if the build never bakes in something a later run would see differently. Quench&#x27;s strict AOT mode is sound by construction: host operations off an allow-list are refused before they run, and the build names the input it could not fold." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-11-25" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Strict AOT: a compiler that refuses, and names the input", "description": "Running a program at build time is only safe if the build never bakes in something a later run would see differently. Quench's strict AOT mode is sound by construction: host operations off an allow-list are refused before they run, and the build names the input it could not fold.", "datePublished": "2026-11-25", "dateModified": "2026-11-25", "url": "https://quench.run/blog/strict-aot-refuses-and-names-the-input/", "image": "https://quench.run/og.png", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "publisher": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "mainEntityOfPage": "https://quench.run/blog/strict-aot-refuses-and-names-the-input/", "keywords": "JavaScript AOT compiler, ahead-of-time compilation soundness, build-time evaluation, JavaScript snapshot, partial evaluation, binding-time analysis, native executable from TypeScript"}</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/blog/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z"/></svg>Blog</a>
+<a class="badge" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>SOUND BY</span><span>CONSTRUCTION</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/blog/">blog</a> / <time datetime="2026-11-25">25 November 2026</time> · 5 min read · aot</p>
+<h1>Strict AOT: a compiler that refuses, and names the input</h1>
+<p class="lead">Running a program at build time is only safe if the build never bakes in something a later run would see differently. Quench&#x27;s strict AOT mode is sound by construction: host operations off an allow-list are refused before they run, and the build names the input it could not fold.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p>Quench's strict AOT mode runs your program at build time and keeps only what it left behind. For a program that reads nothing from outside, that is a few kilobytes of output replay, as described in <a href="/blog/hello-world-in-4896-bytes/">Hello world in 4,896 bytes</a>.</p>
+<p>Running code at build time has an obvious failure mode. If the build reads a file, the image contains the build machine's file. If it reads the clock, every run starts at the same instant. If it reads <code>process.argv</code>, every run gets the build's arguments. A compiler that does this produces a binary that is fast and wrong.</p>
+<p>So strict AOT is built around one question: is this value the same in every future run? If the answer is not a proven yes, the build stops there.</p>
+<h2 id="an-allow-list-not-a-deny-list">An allow-list, not a deny-list</h2>
+<p>Every way a Quench program touches the outside world goes through a named host operation. Strict AOT lets a short list of them run at build time, in <code>aot/prefix.rs</code>:</p>
+<ul><li><b>Loading the program's own modules</b> (<code>require</code> and the builtin module views). The sources are what the image is compiled from, so they are static by definition.</li><li><b>Writes to stdout and stderr.</b> They run against a recorder, not the terminal. The recording becomes the image's effects.</li><li><b>Exit status</b>: <code>process.exitCode</code> and <code>process.exit(n)</code>.</li><li><b>Asking for standard input.</b> This only marks a read as wanted. The wait for it is where evaluation ends.</li></ul>
+<p>Everything else is a dynamic input: files, the terminal, timers, the network, child processes. A host operation that is not on the list is refused <i>before it runs</i>, and the refusal ends the run. It cannot be caught. We checked that with <code>fs.writeFileSync</code> inside a <code>try</code>: the build stops and no file is written.</p>
+<aside class="note">A new host operation is dynamic until someone proves otherwise. Forgetting to classify one makes the build refuse, never makes it wrong.</aside>
+<p>A deny-list would fail the other way: the first operation nobody thought about would be baked silently into every binary.</p>
+<h2 id="inputs-that-hide-in-plain-sight">Inputs that hide in plain sight</h2>
+<p>Some inputs are not host calls at the point of use. They are values the runtime prepared at start-up. Quench handles those three ways:</p>
+<ul><li><b>Process identity and environment</b> (<code>process.argv</code>, <code>execPath</code>, <code>pid</code>, <code>process.env</code>) are lazy. They are not filled in until the program reads them, and reading them is a refused host operation.</li><li><b>The clock, the local time zone and <code>Math.random</code></b> are noted by the runtime when used, so the build knows the result depended on them.</li><li><b>Whether a stream is a terminal.</b> This one surprised us. <code>console.log</code> of a non-string colours its output when stdout is a terminal, so even a constant program depends on where it runs. Our first build baked <code>process.stdout.isTTY</code> from the build worker's own descriptors. That was a soundness bug, and it is now an input like any other.</li></ul>
+<h2 id="refusing-with-a-name">Refusing with a name</h2>
+<p>A refusal is a diagnostic, not a crash. The compile report names the first dynamic input the run reached, then the compile falls back to the full image, which runs the program normally. These are four small programs on 25 November 2026:</p>
+<div class="table-scroll"><table><thead><tr><th>Program</th><th>Strict outcome</th><th>Executable</th></tr></thead><tbody><tr><td><code>console.log("hello")</code></td><td>image, no engine linked</td><td>4,880 B</td></tr><tr><td>print <code>process.argv</code></td><td>refused: the process identity (process.argv, execPath, pid)</td><td>full image</td></tr><tr><td>read a file named on the command line</td><td>refused: the process identity</td><td>full image</td></tr><tr><td>readline REPL</td><td>refused: standard input, after it waits for it</td><td>full image</td></tr></tbody></table></div>
+<p>The readline row is the interesting one. Its refusal is not "it reads stdin". The build evaluated everything up to the point where the program waits for a line: module loading, creating the interface, writing the prompt. Only then did it stop. That is exactly the prefix the next stage will keep as a saved heap instead of throwing away.</p>
+<h2 id="small-inputs-become-variants">Small inputs become variants</h2>
+<p>Refusing every input would make strict AOT useless for anything that prints a number. But some inputs have only a few possible values. Whether descriptor 1 is a terminal has two.</p>
+<p>For those, the build does what partial evaluation calls "The Trick": it evaluates the program once per value the program actually distinguishes, and the image starts with a guard that picks the matching variant. Quench asks up to three yes-or-no questions per image (today: whether each of stdin, stdout and stderr is a terminal), and only the ones the program really read. The image calls <code>isatty()</code> at start and replays the right recording. A fourth question refuses the strict image and names it.</p>
+<p>The same mechanism is meant to carry other small inputs later: whether an environment variable such as <code>NO_COLOR</code> is set, platform facts, how many arguments were passed.</p>
+<h2 id="why-bother">Why be this strict</h2>
+<p>Startup snapshots and build-time evaluation are not new. What we want from Quench is that the fast binary and the slow interpreter can never disagree. The interpreter is the only definition of JavaScript in the engine. The JIT and AOT are specializations of it, and a specialization is only correct if every fact it relied on holds in every run. For the JIT, a guard checks the fact at run time. For AOT, the fact has to be proved at build time, or the build has to say it could not.</p>
+<p>That is the trade we picked: a strict build that sometimes says no, and names why, over a permissive one that is occasionally wrong.</p>
+</div></div>
+</article>
+<nav class="frame cols-2" aria-label="More posts"><a class="tile navt" href="/blog/chasing-a-sub-megabyte-readline-binary/"><span class="mono">← earlier · 25 November 2026</span><b>Chasing a sub-megabyte readline binary</b></a><a class="tile navt right" href="/blog/hello-world-in-4896-bytes/"><span class="mono">later · 25 November 2026 →</span><b>Hello world in 4,896 bytes: AOT as the JIT run at build time</b></a></nav>
+<section class="frame cols-3 cta-frame" aria-label="Get involved">
+<div class="tile orange"><h2>Try it</h2><p>Quench builds from source with Cargo and runs TypeScript, JavaScript and WebAssembly.</p><a class="btn" href="/#start">Build and run</a></div>
+<div class="tile"><h2>Work on it</h2><p>Interpreter, JIT, AOT, GC, Node APIs. Every claim on this blog has a measurement you can rerun.</p><a class="btn" href="/#contribute">Where to start</a></div>
+<div class="tile"><h2>Follow it</h2><p>New posts land here as the engine moves. Star the repository or subscribe to the feed.</p><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Feed</a></div>
+</section>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/blog/">blog</a> · <a href="/blog/feed.xml">feed</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

@@ -4,7 +4,6 @@
 use crate::ext_traits::*;
 use super::{Builds, machine_type};
 use quench_runtime::staged::machine::{Lane, MachineFlow, MachineVariables};
-#[cfg(feature = "jit")]
 use quench_runtime::staged::machine::MachineTail;
 use cranelift_codegen::ir::{self, InstBuilder};
 
@@ -131,7 +130,6 @@ crate::compiled::emit_machine::for_each_builder!(MachineVariables {
     }
 });
 
-#[cfg(feature = "jit")]
 crate::compiled::emit_machine::for_each_builder!(MachineTail {
     fn tail_call(&mut self, target: ir::FuncRef, arguments: &[ir::Value]) {
         self.function_builder().ins().return_call(target, arguments);
