@@ -234,4 +234,22 @@ impl Stage for Concrete {
     fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
         super::object::walk_prototypes_loop(self, records, object, target, max_depth)
     }
+    /// The tuned forward search of `vm::wtf16::search` (memchr, the block filter, memmem).
+    #[inline(always)]
+    fn find_span(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, from: u64) -> (bool, u64) {
+        let found = super::spans::concrete_units(text).find(super::spans::concrete_units(needle), from as usize);
+        (found.is_some(), found.map_or(u64::MAX, |index| index as u64))
+    }
+    /// The tuned reverse search: memrchr or memmem's reverse search for ASCII, `Units::rfind` otherwise.
+    #[inline(always)]
+    fn rfind_span(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, from: u64) -> (bool, u64) {
+        let found = super::spans::concrete_units(text).rfind(super::spans::concrete_units(needle), from as usize);
+        (found.is_some(), found.map_or(u64::MAX, |index| index as u64))
+    }
+    /// Slice equality of the units from `start`.
+    #[inline(always)]
+    fn span_equal_at(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, start: u64) -> bool {
+        let start = start as usize;
+        super::spans::concrete_units(text).slice(start..start + needle.length as usize) == super::spans::concrete_units(needle)
+    }
 }
