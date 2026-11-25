@@ -1,4 +1,4 @@
-//! Closed-world facts of small scripts: call targets, constructor shapes, numbers, and the gate.
+//! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
 use super::analyze;
 use crate::Engine;
@@ -20,11 +20,6 @@ fn function_named(program: &ResidualProgram, name: &str) -> usize {
         })
     };
     (0..program.function_count()).find(|&id| named(id)).expect("a function with that name")
-}
-
-fn atom_text(program: &ResidualProgram, atom: u32) -> String {
-    let text: &str = program.atoms[atom as usize].as_ref();
-    text.to_owned()
 }
 
 #[test]
@@ -50,18 +45,6 @@ fn a_binding_written_twice_names_no_call_target() {
 fn a_program_that_can_eval_has_no_facts() {
     let program = program("function f() { return 1; } f(); eval('1');");
     assert!(analyze(&program).is_empty());
-}
-
-#[test]
-fn a_constructors_prologue_fields_are_its_shape() {
-    let program = program("function P(x) { this.x = x; this.y = 1; } var p = new P(2);");
-    let facts = analyze(&program);
-    let id = function_named(&program, "P");
-    let shape = facts
-        .function_facts(id as u32)
-        .constructor_shape()
-        .map(|fields| fields.iter().map(|&atom| atom_text(&program, atom)).collect::<Vec<_>>());
-    assert_eq!(shape, Some(vec!["x".to_owned(), "y".to_owned()]));
 }
 
 #[test]

@@ -107,8 +107,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 /// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them. A
 /// construction the closed world proves keeps its receiver as its fields (`constructions`). A call
 /// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
-/// `None` where it gives no native record, or polls for faults: the lowering does not report
-/// the poll's offset, so the base body runs such a function.
+/// `None` where it gives no native record.
 pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
@@ -122,9 +121,19 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
+    let crosses = crosses_bodies(&unit);
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    if fault_poll { return Err("polls for faults"); }
-    Ok(LaneImage { code, fault_poll: None })
+    // A lane body that polls and calls enters its callee's body through the VM's call helper, where
+    // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
+    // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
+    if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
+    Ok(LaneImage { code, fault_poll })
+}
+
+/// Whether `unit` may enter another body: a call of any form or a construction.
+fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -266,7 +275,7 @@ impl Vm {
     /// `function`'s lane body from `images`, linked to this VM.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
         let linked_live: &LiveImage = images.linked.as_ref()?;
-        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
+        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll;
         let refused = |why: &str| if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;

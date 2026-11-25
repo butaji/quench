@@ -4,7 +4,6 @@
 use super::blocks::Blocks;
 use super::effects::{Ctx, Events, step};
 use super::scope::Scope;
-use super::shapes;
 use super::value::{Fact, Key};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
@@ -30,8 +29,6 @@ pub(super) struct FunctionFlow {
     pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
-    /// The fields the prologue stores on `this`, where the function is a plain constructor.
-    pub(super) shape: Option<Vec<u32>>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -60,7 +57,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope) -> F
             solver.replay(block, state, &mut record);
         }
     }
-    record.finish(shapes::prologue_fields(function, &successors))
+    record.finish()
 }
 
 impl Dataflow for Solver<'_> {
@@ -170,7 +167,7 @@ impl Record {
         }
     }
 
-    fn finish(self, shape: Option<Vec<u32>>) -> FunctionFlow {
+    fn finish(self) -> FunctionFlow {
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -184,7 +181,6 @@ impl Record {
             global_wild: self.wild_global,
             member_wild: self.wild_member,
             numbers,
-            shape,
         }
     }
 }
