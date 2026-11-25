@@ -90,19 +90,6 @@ impl super::LoopSite {
         inside
     }
 
-    /// Whether this loop, inside an admitted loop (`inside_admitted_loop`), leaves the region to it: while
-    /// it warms up, counting its back edges as `interprets` does, and from then on only once an enclosing
-    /// loop has warmed up too. A hot inner loop whose outer loop runs too few iterations to warm (a
-    /// function called once) takes its own region instead of running as plain jumps for good.
-    pub(crate) fn defers_to_enclosing(&self) -> bool {
-        if self.warm_backedge() { return true; }
-        self.enclosing.get().is_some_and(|enclosing| enclosing.iter().any(|outer| {
-            // SAFETY: as `inside_admitted_loop`.
-            let outer = unsafe { &**outer };
-            outer.is_admitted() && outer.enters() && outer.taken.get() >= outer.needed.get()
-        }))
-    }
-
     /// Whether the body's dispatch counts this header dispatch down to its plan (`body_wait`),
     /// counting it as an iteration of the loop either way.
     pub(crate) fn body_waits(&self) -> bool {

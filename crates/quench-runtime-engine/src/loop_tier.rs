@@ -576,3 +576,16 @@ pub(crate) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, q
     region.entry_registers().filter_map(|register| r.get(register).as_int()
         .map(|value| (register, quench_runtime::typed_ir::IntRange::entering(value)))).collect()
 }
+
+/// Whether `site`, inside an admitted loop (`LoopSite::inside_admitted_loop`), leaves the region to it: while
+/// it warms up, counting its back edges as `interprets` does, and from then on only once an enclosing
+/// loop has warmed up too. A hot inner loop whose outer loop runs too few iterations to warm (a
+/// function called once) takes its own region instead of running as plain jumps for good.
+pub(crate) fn defers_to_enclosing(site: &LoopSite) -> bool {
+    if site.warm_backedge() { return true; }
+    site.enclosing.get().is_some_and(|enclosing| enclosing.iter().any(|outer| {
+        // SAFETY: as `inside_admitted_loop`: the sites are boxed with the lane view that runs.
+        let outer = unsafe { &**outer };
+        outer.is_admitted() && outer.enters() && outer.taken.get() >= outer.needed.get()
+    }))
+}
