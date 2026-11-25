@@ -13136,8 +13136,7 @@ fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::comp
 /// `LaneView::note_lane_body_end`, counting the retirement it makes in the VM's tier events.
 #[inline(always)]
 fn note_body_end_in_lane(cx: *mut LaneContext, own: &LaneView, exit: crate::compiled::LaneExit, left_new: impl FnOnce((Option<u32>, usize))) {
-    let replace = true;
-    if own.note_lane_body_end(exit, false, replace, left_new) {
+    if own.note_lane_body_end(exit, false, left_new) {
         unsafe { vm(cx) }.programs.tier_events().record(Event::Retired);
     }
 }
@@ -16803,8 +16802,9 @@ fn derive_lane_view<'live>(
                 let flagged = admits_row(op)
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
-                // A property read's row has no plain form to compare with: a flagged one always steps.
-                let property = quench_runtime::staged::reads_named_field(op) && !sinks_field_in_lane(instruction)
+                // A row reads `a` as a register, so it cannot carry flags: every such record steps,
+                // whichever row its opcode and accumulator chose (a specialised one included).
+                let property = (quench_runtime::staged::reads_named_field(op) || admits_row(op))
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
                 if property || flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ()) {
