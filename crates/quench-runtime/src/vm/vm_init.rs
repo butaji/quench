@@ -14,6 +14,7 @@ impl Vm {
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
+        super::layer_hooks::enable_jit();
         Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
     }
 
