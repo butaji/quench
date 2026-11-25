@@ -2119,7 +2119,7 @@ pub(crate) fn lower(
     // A preliminary run of the facts over the arrays the loops index without their captured reads
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false, |at| lowering.held_field(at),
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
@@ -2130,7 +2130,7 @@ pub(crate) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::compiled::performed(&instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        |at| lowering.held_field(at), lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
         && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
@@ -4428,6 +4428,7 @@ impl Lowering<'_, '_> {
                 let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
                 Some(self.builder.use_var(read.value))
             }
+            ArraySource::Field(pc) => Some(self.loop_entry_word(self.entry_fields.get(pc).copied().flatten()?)),
         }
     }
 
@@ -4734,7 +4735,7 @@ impl Lowering<'_, '_> {
             return self.held_length(string);
         }
         let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
-            && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
+            && (entering != Some(array.header) || !matches!(array.source, ArraySource::Capture(_)));
         if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
             let (_, count) = self.hoisted_view(array);
             let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
@@ -4795,6 +4796,12 @@ impl Lowering<'_, '_> {
     /// than leave, as this unit's other reads would leave one recompile at a time.
     fn left_a_field_read(&self) -> bool {
         self.generic.iter().any(|pc| self.unit.instructions.get(*pc).is_some_and(|instruction| matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))))
+    }
+
+    /// Whether the read at `pc` is a field read the loop's entry record answers (`field_read`'s held read).
+    pub(crate) fn held_field(&self, pc: usize) -> bool {
+        self.entry_fields.get(pc).copied().flatten().is_some()
+            && matches!(crate::compiled::performed(self.unit.instructions[pc]), Some(quench_runtime::staged::Operation::GetField { .. }))
     }
 
     /// Word `word` of the loop's entry record (`frame_fields::entry_record_word`).
