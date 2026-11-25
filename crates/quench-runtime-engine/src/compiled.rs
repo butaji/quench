@@ -191,6 +191,9 @@ pub(crate) mod stitcher;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;
 pub(crate) mod wasm_specializer;
+// An AOT image's Wasm functions: their stitched rows, planned from the module's declarations.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) mod wasm_image;
 use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
@@ -5202,6 +5205,9 @@ struct Analysis<'a> {
     /// The defined functions that may grow the memory (`wasm_growth`); empty until the module's
     /// memory is known, and a function past its bound is taken to grow it.
     grows_memory: quench_runtime::bitset::BitSet,
+    /// The module's binding types by environment slot where the plan has no instance (an image's), which
+    /// the plan then reads in place of `env`'s cells (`binding`).
+    declared: Option<&'a [quench_runtime::WasmBindingType]>,
 }
 
 impl Analysis<'_> {
@@ -5295,50 +5301,39 @@ impl Analysis<'_> {
         }
     }
 
+    /// What environment slot `slot` binds: the module's declared type where the plan has no instance
+    /// (`declared`, an image's), else the instance's cell.
+    fn binding(&self, slot: u32) -> quench_runtime::WasmBindingType {
+        use quench_runtime::WasmBindingType as Binding;
+        if let Some(declared) = self.declared { return declared.get(slot as usize).copied().unwrap_or(Binding::Other); }
+        let heap = self.vm.heap_reads();
+        match heap.environment_slot(self.env, slot as usize).and_then(|binding| heap.get(binding)) {
+            Some(Cell::WasmGlobal { ty, .. }) => Binding::Global(*ty),
+            Some(Cell::WasmMemory { bytes, header, .. }) => Binding::Memory { ty: header.ty, direct: bytes.is_direct() },
+            Some(Cell::WasmTable { table64, .. }) => Binding::Table { table64: *table64 },
+            _ => Binding::Other,
+        }
+    }
+
     /// The type of the global bound at environment slot `slot`.
     fn global_type(&self, slot: u32) -> Option<quench_runtime::WasmType> {
-        let binding = self.vm.heap_reads().environment_slot(self.env, slot as usize)?;
-        match self.vm.heap_reads().get(binding)? {
-            Cell::WasmGlobal { ty, .. } => Some(*ty),
-            _ => None,
-        }
+        match self.binding(slot) { quench_runtime::WasmBindingType::Global(ty) => Some(ty), _ => None }
     }
 
     /// Whether `slot` binds a memory compiled code can view (`MemoryStorage::is_direct`).
     fn binds_direct_memory(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
-            return false;
-        };
-        matches!(
-            self.vm.heap_reads().get(binding),
-            Some(Cell::WasmMemory { bytes, .. }) if bytes.is_direct()
-        )
+        matches!(self.binding(slot), quench_runtime::WasmBindingType::Memory { direct: true, .. })
     }
 
     /// Whether a bound memory has the representation supported by native
     /// linear-memory operations: direct memory32 with ordinary Wasm pages.
     fn supports_compiled_memory(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
-            return false;
-        };
-        matches!(
-            self.vm.heap_reads().get(binding),
-            Some(Cell::WasmMemory { bytes, header, .. })
-                if bytes.is_direct()
-                    && !header.ty.memory64
-                    && header.ty.page_size() as usize
-                        == (1usize << quench_runtime::wasm::memory::WASM_PAGE_BITS)
-        )
+        matches!(self.binding(slot), quench_runtime::WasmBindingType::Memory { ty, direct: true }
+            if !ty.memory64 && ty.page_size() as usize == (1usize << quench_runtime::wasm::memory::WASM_PAGE_BITS))
     }
 
     fn binds_table32(&self, slot: u32) -> bool {
-        let Some(binding) = self.vm.heap_reads().environment_slot(self.env, slot as usize) else {
-            return false;
-        };
-        matches!(
-            self.vm.heap_reads().get(binding),
-            Some(Cell::WasmTable { table64: false, .. })
-        )
+        matches!(self.binding(slot), quench_runtime::WasmBindingType::Table { table64: false })
     }
 
     fn signature(&self, index: u32) -> Option<&quench_runtime::WasmSignature> {
@@ -8223,6 +8218,7 @@ impl Vm {
             compile_rejections: compile_rejections.as_ref(),
             unrolls: false,
             grows_memory: quench_runtime::bitset::BitSet::default(),
+            declared: None,
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.

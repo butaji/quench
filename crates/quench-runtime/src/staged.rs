@@ -163,6 +163,7 @@ pub mod naming;
 pub mod call; pub mod frame;
 pub mod forms;
 pub mod protocol;
+pub(crate) mod native_frame;
 pub mod call_keeping;
 pub mod call_environment;
 pub mod call_leaf;

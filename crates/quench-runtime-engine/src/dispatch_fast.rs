@@ -827,6 +827,11 @@ fn requicken(ip: Ip, handler: Handler) {
         if loop_kernel::requicken_kernel(ip, handler) {
             return;
         }
+        // A record whose result carries flags got the general step at its edge (`derive_lane_view`), which
+        // decodes them; it keeps it, as the generated rows read `a` as a plain register.
+        if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
+            return;
+        }
         (*ip.cast_mut()).handler = handler as *const ();
     }
 }
@@ -4726,6 +4731,14 @@ pub(crate) const fn own_site_decodes(site: u8) -> bool {
         && form != quench_runtime::value_vec::NARROW_FORM)
 }
 
+/// The value of the slot word `word` an own-field read at a decoding site took: a form fixed
+/// untagged runs only where slots hold raw doubles (`own_formed_handler`), so it decodes a
+/// Number's word without testing the switch; an unfixed form tests it (`decode_staged_word`).
+#[inline(always)]
+pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
+    if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
+}
+
 /// Every generated own-field read: `$each!(site)` for each site, `this` and register alike.
 macro_rules! own_sites {
     ($each:ident) => {
@@ -6816,7 +6829,7 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
     let base_only = crate::compiled::admission::stencil_only();
-    let ahead_image = !own.respecializes() && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
@@ -7072,9 +7085,8 @@ fn loop_run_in_lane(
         site.tier.borrow_mut().missed_entry(site.tiers);
         return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
-    if matches!(exit, LaneExit::Terminated) {
-        return LoopContinuation::Safepoint;
-    }
+    if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count());
     if nested {
@@ -13100,6 +13112,7 @@ fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }

@@ -129,10 +129,12 @@ pub(crate) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], 
     inlines_in_loop_call(native, quench_runtime::bytecode::ImmediateLayout::argument_count(call.imm()))
 }
 
-/// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`): its read
-/// is a slot or a live load that leaves at a miss, and it changes nothing a loop holds.
+/// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`) or folded
+/// to its value: its read is a slot, a live load that leaves at a miss, or none, and it changes nothing a loop holds.
 pub(crate) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {
-    matches!(global_reads.get(&pc), Some(quench_runtime::vm::global_facts::GlobalRead::NativeSlot { .. }))
+    use quench_runtime::vm::global_facts::GlobalRead;
+    // A folded read (a constant, a Stable or frozen cell under its dependency) as `Math` in `Math.imul`.
+    matches!(global_reads.get(&pc), Some(GlobalRead::NativeSlot { .. } | GlobalRead::Constant(_) | GlobalRead::Stable { .. } | GlobalRead::Frozen { .. }))
 }
 
 /// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code

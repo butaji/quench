@@ -306,6 +306,10 @@ impl Stage for StencilStage {
         None
     }
     #[inline(always)]
+    #[inline(always)]
+    fn effect_if_both(&mut self, first: bool, second: impl FnOnce(&mut Self) -> bool, then: impl FnOnce(&mut Self), cold: impl FnOnce(&mut Self)) {
+        if first && second(self) { then(self) } else { cold(self) }
+    }
     fn known(&self, _cond: bool) -> Option<bool> { None }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 {

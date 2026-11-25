@@ -50,6 +50,14 @@ pub fn decode_staged_word(word: u64) -> Value {
     decode_slot(read_type(), Value::from_bits(word))
 }
 
+/// `decode_staged_word` of a read whose row runs only where slots hold raw doubles (an own read
+/// of a form not tagged, `dispatch_fast::own_formed_handler`): the Number decoding, which passes
+/// any tagged word too, without testing the switch again.
+#[inline(always)]
+pub fn decode_float_word(word: u64) -> Value {
+    decode_slot(SlotType::Number, Value::from_bits(word))
+}
+
 /// The type a word of a slot is decoded as where its owner is unknown to the reader (`decode_slot`):
 /// Number where slots of that type hold raw doubles (`switches::float_slots`), whose decoding is the
 /// identity on every canonical `Value`, so it reads the word of any owner; else the type of tagged words.

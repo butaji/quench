@@ -26,6 +26,8 @@ use crate::bytecode::Register;
 use crate::value::ValueLayout;
 use crate::Value;
 
+pub use super::native_frame::{pop_native_frame, push_native_frame, set_body_top, set_values, LaneWords, NativeFrame, NativePlaces, PayloadTops};
+
 const _: () = assert!(std::mem::size_of::<Value>() == std::mem::size_of::<u64>(), "a register of a window is one word");
 
 /// The callee's window of a plain call: `registers` words, of which the first `argc` are the
@@ -280,59 +282,45 @@ pub fn pop_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word) -> Pl
 /// the plain-frame depth word (its registers word is `frame::PLAIN_REGISTERS_AT` past it), and the body
 /// table's top word. Read once where a call is admitted; every move writes through them.
 #[derive(Clone, Copy)]
-pub(crate) struct LaneTops<W> {
-    pub(crate) values_at: W,
-    pub(crate) plain_at: W,
-    pub(crate) body_top_at: W,
+pub struct LaneTops<W> {
+    pub values_at: W,
+    pub plain_at: W,
+    pub body_top_at: W,
 }
 
 /// The lane's state addresses, from the dispatch payload.
 #[allow(dead_code)] // the b-jit stencils' call rows
 #[inline(always)]
-pub(crate) fn lane_tops<S: Stage>(stage: &mut S, payload: S::Word) -> LaneTops<S::Word> {
+pub fn lane_tops<S: Stage>(stage: &mut S, payload: S::Word) -> LaneTops<S::Word> {
     let values_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_LANE_VALUES_TOP as i32);
     let plain_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_PLAIN_DEPTH as i32);
     let body_top_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_BODY_TOP as i32);
     LaneTops { values_at, plain_at, body_top_at }
 }
 
-/// Moves the values' top to `values`, through the word `tops` addresses.
-#[allow(dead_code)] // the b-jit stencils' call rows
-#[inline(always)]
-pub(crate) fn set_values<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, values: S::Word) {
-    stage.store_u64(Region::Frame.mutable(), tops.values_at, 0, values);
-}
-
 /// Moves the plain frames to `depth`, with the innermost window at `registers` (`PlainFrames`).
 #[allow(dead_code)] // the b-jit stencils' call rows
 #[inline(always)]
-pub(crate) fn set_plain<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, depth: S::Word, registers: S::Word) {
-    stage.store_u64(Region::Frame.mutable(), tops.plain_at, super::frame::PLAIN_DEPTH_AT as i32, depth);
-    stage.store_u64(Region::Frame.mutable(), tops.plain_at, super::frame::PLAIN_REGISTERS_AT as i32, registers);
-}
-
-/// The body table's top word moves to `depth`: one entry per plain depth (the running body of each frame).
-#[allow(dead_code)] // the b-jit stencils' call rows
-#[inline(always)]
-pub(crate) fn set_body_top<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, depth: S::Word) {
-    stage.store_u64(Region::Frame.mutable(), tops.body_top_at, 0, depth);
+pub fn set_plain<S: Stage>(stage: &mut S, plain_at: S::Word, depth: S::Word, registers: S::Word) {
+    stage.store_u64(Region::Payload.mutable(), plain_at, super::frame::PLAIN_DEPTH_AT as i32, depth);
+    stage.store_u64(Region::Payload.mutable(), plain_at, super::frame::PLAIN_REGISTERS_AT as i32, registers);
 }
 
 /// The header words a body frame writes below its window (the call protocol v2 context block).
 #[derive(Clone, Copy)]
-pub(crate) struct BodyHeader<W> {
-    pub(crate) call: W,
-    pub(crate) caller_registers: W,
-    pub(crate) caller_base: W,
-    pub(crate) packed: W,
-    pub(crate) callee: W,
+pub struct BodyHeader<W> {
+    pub call: W,
+    pub caller_registers: W,
+    pub caller_base: W,
+    pub packed: W,
+    pub callee: W,
 }
 
 /// Writes a body frame's header at `window`: each word at its `frame::CONTEXT_*` index counted down from
 /// register 0. The receiver and captures words are the caller's to write (`CONTEXT_THIS`, `CONTEXT_BODY`).
 #[allow(dead_code)] // the b-jit stencils' call rows
 #[inline(always)]
-pub(crate) fn push_body_header<S: Stage>(stage: &mut S, window: S::Word, header: BodyHeader<S::Word>) {
+pub fn push_body_header<S: Stage>(stage: &mut S, window: S::Word, header: BodyHeader<S::Word>) {
     use super::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED};
     let at = |index: usize| -((index * core::mem::size_of::<u64>()) as i32);
     stage.store_u64(Region::Frame.mutable(), window, at(CONTEXT_CALL), header.call);
