@@ -2789,6 +2789,16 @@ impl Vm {
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
+    /// The matchers of `program`'s RegExp literals, compiled as a VM compiles them (`compile_regexp`),
+    /// for an ahead image's native searches (`aot_image::regexps`); a literal that does not compile has none.
+    pub fn regexp_literal_matchers(program: &ResidualProgram) -> Vec<quench_regexp::Regex> {
+        let text = |index: u32| match program.constants.get(index as usize)? { Constant::String(text) => Some(Rc::clone(text)), _ => None };
+        program.regexp_literal_sites.iter().filter_map(|site| {
+            let (source, flags) = (text(site.pattern_constant)?, text(site.flags_constant)?);
+            Self::compile_regexp(&JsString::from(&*source), &flags, PatternValidity::EarlyChecked).ok()
+        }).collect()
+    }
+
     pub(super) fn compile_regexp(
         source: &JsString,
         flags: &str,

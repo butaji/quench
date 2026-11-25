@@ -100,7 +100,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals), lexical: false,
-        capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
+        capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None, bound: Default::default(),
     });
     let root_method = vm.compile_lane_method(&program, root_target.function,
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();

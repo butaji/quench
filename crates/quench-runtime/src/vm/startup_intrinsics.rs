@@ -37,6 +37,10 @@ struct SealedHolder {
     holder: Value,
     shape: u32,
     values: Box<[Value]>,
+    /// The sealed shape's symbol keys and accessor functions (`Vm::shape_roots`): fixed once
+    /// sealed, so derived then rather than walked at every collection, and per holder, so
+    /// resealing one holder derives only its own.
+    roots: Box<[Value]>,
 }
 
 /// A property holding its original during the outermost `enter_startup_intrinsics`, with the
@@ -50,11 +54,8 @@ struct SwappedProperty {
 
 #[derive(Default)]
 pub(super) struct StartupIntrinsics {
+    /// The sealed holders; they, their values and their shapes' roots are roots read from here.
     holders: Vec<SealedHolder>,
-    /// The sealed shapes' symbol keys and accessor functions: fixed once sealed, so derived
-    /// then rather than walked at every collection. The holders and their values are roots
-    /// read from `holders` itself, not copied here.
-    shape_roots: Box<[Value]>,
     /// Open `enter_startup_intrinsics` calls; only the outermost one swaps.
     depth: usize,
     swapped: Vec<SwappedProperty>,
@@ -119,8 +120,7 @@ impl Vm {
         intrinsics
             .holders
             .iter()
-            .flat_map(|sealed| std::iter::once(sealed.holder).chain(sealed.values.iter().copied()))
-            .chain(intrinsics.shape_roots.iter().copied())
+            .flat_map(|sealed| std::iter::once(sealed.holder).chain(sealed.values.iter().copied()).chain(sealed.roots.iter().copied()))
             .chain(
                 intrinsics
                     .swapped
@@ -129,17 +129,12 @@ impl Vm {
             )
     }
 
-    fn shape_roots(&self, holders: &[SealedHolder]) -> Box<[Value]> {
+    fn shape_roots(&self, shape: u32) -> Box<[Value]> {
         let mut roots = Vec::new();
-        for sealed in holders {
-            for (key, attributes) in super::gc::active_shape_attributes(&self.shapes, sealed.shape)
-                .into_iter()
-                .flatten()
-            {
-                // `values` already holds a slot getter.
-                let (getter, setter) = attributes.functions(&self.shape_accessors, || (None, None));
-                roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
-            }
+        for (key, attributes) in super::gc::active_shape_attributes(&self.shapes, shape).into_iter().flatten() {
+            // `values` already holds a slot getter.
+            let (getter, setter) = attributes.functions(&self.shape_accessors, || (None, None));
+            roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
         }
         roots.into_boxed_slice()
     }
@@ -173,7 +168,6 @@ impl Vm {
             .into_iter()
             .filter_map(|holder| self.sealed_holder(holder))
             .collect();
-        self.startup_intrinsics.shape_roots = self.shape_roots(&sealed);
         self.startup_intrinsics.holders = sealed;
         self.startup_intrinsics.roots_old = false;
     }
@@ -185,9 +179,6 @@ impl Vm {
             return;
         }
         let sealed = self.sealed_holder(holder).expect("initialized intrinsic has shape slots");
-        let mut roots = std::mem::take(&mut self.startup_intrinsics.shape_roots).into_vec();
-        roots.extend(self.shape_roots(std::slice::from_ref(&sealed)));
-        self.startup_intrinsics.shape_roots = roots.into_boxed_slice();
         self.startup_intrinsics.holders.push(sealed);
         self.startup_intrinsics.roots_old = false;
     }
@@ -203,11 +194,7 @@ impl Vm {
                     .unwrap_or(Value::UNDEFINED)
             })
             .collect();
-        Some(SealedHolder {
-            holder,
-            shape,
-            values,
-        })
+        Some(SealedHolder { holder, shape, values, roots: self.shape_roots(shape) })
     }
 
     /// Whether sealed holder `index` is still in its sealed shape with its sealed values.
@@ -285,20 +272,14 @@ impl Vm {
         if self.startup_intrinsics.depth > 0 {
             return Ok(());
         }
-        let mut resealed = false;
         for index in 0..self.startup_intrinsics.holders.len() {
             if !self.holder_unchanged(index) {
                 let holder = self.startup_intrinsics.holders[index].holder;
                 if let Some(sealed) = self.sealed_holder(holder) {
                     self.startup_intrinsics.holders[index] = sealed;
                     self.startup_intrinsics.roots_old = false;
-                    resealed = true;
                 }
             }
-        }
-        if resealed {
-            self.startup_intrinsics.shape_roots = self.shape_roots(&self.startup_intrinsics.holders);
-            self.startup_intrinsics.roots_old = false;
         }
         // The swap list stays traced until every script value is back in place.
         let swapped = self.startup_intrinsics.swapped.clone();
@@ -388,24 +369,24 @@ impl StartupIntrinsics {
     /// The sealed holders for a snapshot (`crate::snapshot`); a snapshot is taken outside every
     /// `enter_startup_intrinsics`, so nothing is swapped.
     pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let Self { holders, shape_roots, depth, swapped, regexp, roots_old: _ } = self;
+        let Self { holders, depth, swapped, regexp, roots_old: _ } = self;
         if *depth != 0 || !swapped.is_empty() || regexp.is_some() {
             return Err(crate::snapshot::SnapshotError::unsupported("a startup intrinsics scope"));
         }
         writer.len(holders.len());
-        for SealedHolder { holder, shape, values } in holders {
+        for SealedHolder { holder, shape, values, roots } in holders {
             writer.value(*holder);
             writer.u32(*shape);
             writer.values(values);
+            writer.values(roots);
         }
-        writer.values(shape_roots);
         Ok(())
     }
 
     pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let holders = crate::snapshot::read_list(reader, |reader| {
-            Ok(SealedHolder { holder: reader.value()?, shape: reader.u32()?, values: reader.values()?.into() })
+            Ok(SealedHolder { holder: reader.value()?, shape: reader.u32()?, values: reader.values()?.into(), roots: reader.values()?.into() })
         })?;
-        Ok(Self { holders, shape_roots: reader.values()?.into(), depth: 0, swapped: Vec::new(), regexp: None, roots_old: false })
+        Ok(Self { holders, depth: 0, swapped: Vec::new(), regexp: None, roots_old: false })
     }
 }

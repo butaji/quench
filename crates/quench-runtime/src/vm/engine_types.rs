@@ -1520,6 +1520,32 @@ pub struct DirectCallee {
     /// initializer, which runs with the receiver the constructor's plan allocates and
     /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
     pub forwarder: Option<SkippedForwarder>,
+    /// The closure of the function the site calls now and its capture word, which a u-jit call reads at run time.
+    pub bound: BoundClosure,
+}
+
+/// A direct call's closure and capture word (`DirectCallee::bound`): its own `callee` and captures, until the site's
+/// helper call resolves another closure of the same function and rebinds them (`direct_callee::rebind_closure`), so a
+/// closure made per call of the caller misses once, not per call. `read` says the code reads them (a Cranelift call
+/// guarded by them, `call_frames::EmitFrame::rebinds`). A collection unbinds a dead closure (`unbind_dead`): the words
+/// then name none, never a reused locator, and the next call misses once and rebinds.
+#[derive(Clone, Default, Debug)]
+#[repr(C)]
+pub struct BoundClosure {
+    pub callee: std::cell::Cell<u64>,
+    pub captures: std::cell::Cell<u64>,
+    pub read: std::cell::Cell<bool>,
+}
+
+impl BoundClosure {
+    pub fn new(callee: u64, captures: u64) -> Self {
+        Self { callee: std::cell::Cell::new(callee), captures: std::cell::Cell::new(captures), read: std::cell::Cell::new(false) }
+    }
+
+    /// Unbinds the closure if `live` says it died (`Value::DELETED` names no closure).
+    pub fn unbind_dead(&self, live: &impl Fn(Value) -> bool) {
+        if self.callee.get() != Value::DELETED.to_bits() && !live(Value::from_bits(self.callee.get())) { self.callee.set(Value::DELETED.to_bits()); }
+    }
 }
 
 pub use super::fact_edge::{ExitFact, FactMissing};
@@ -2238,6 +2264,13 @@ pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
     pub direct: Box<[DirectCallee]>,
     pub records: Vec<Box<CallRecord>>,
+    /// The callees its records were rebound to after their planned closure's guard missed
+    /// (`dispatch_fast::rebind_region_call`): each record's descriptor word names one of these, which
+    /// stay allocated for the code's life, as a frame running an earlier one keeps reading it.
+    pub rebound: std::cell::RefCell<Vec<Box<DirectCallee>>>,
+    /// The callee identities its entry checks once (`Held::Captured`): code that names one by a constant, so its
+    /// death retires the code. Any other callee a record names is guarded at each call (`names_dead`).
+    pub held: Box<[u64]>,
     /// The registers of the function the region belongs to: its inlined callees' follow them.
     pub caller_registers: u16,
     pub recovery: LaneRecoverySpace,
@@ -2779,6 +2812,15 @@ pub struct AotImage {
     pub calls: Vec<CallSite>,
     /// A Wasm program's stitched rows, which the instance's Wasm tier links in place of stitching.
     pub wasm: Option<WasmRows>,
+    /// The native searches of the program's RegExp literals (`aot_image::regexps`).
+    pub regexps: Vec<AotRegexp>,
+}
+
+/// A RegExp literal's native search in an image: its pattern's key (`quench_regexp::backtrack::native::AheadKey`)
+/// and its code, which names no address (`regexp_native::compile`), so it runs wherever it is placed.
+pub struct AotRegexp {
+    pub key: quench_regexp::backtrack::native::AheadKey,
+    pub code: Box<[u8]>,
 }
 
 /// A Wasm program's rows in its image (`compiled::wasm_image`): the memory slot their entry reads
@@ -2807,6 +2849,9 @@ pub struct LiveImage {
     pub bases: Box<[usize]>,
     /// Each function's lane body, where it has one.
     pub lanes: Box<[Option<usize>]>,
+    /// Each lane helper's address by number, as the system linker bound the helpers the image names
+    /// (0 for the rest); `None` for an image placed in process, whose helpers are the process's table.
+    pub helpers: Option<&'static [usize]>,
 }
 
 /// One function of the image.
@@ -3203,6 +3248,10 @@ pub struct LinkedTable {
     pub bases: &'static [usize],
     pub file: &'static [u8],
     pub calls: *mut CallRecord,
+    /// The lane helpers the image names, by number (`LiveImage::helpers`).
+    pub helpers: &'static [usize],
+    /// The native search of each of the image's RegExp literals (`AotImage::regexps`), by index.
+    pub regexps: &'static [usize],
 }
 
 /// Every body starts on a cache line, which also satisfies each target's function alignment.
@@ -3542,6 +3591,9 @@ pub struct LaneContext {
     /// (`region_payload_in_lane`): the heap bases a call it makes may move are reloaded there too
     /// (`region_call_in_lane`).
     pub region_payload: usize,
+    /// The `CallCode` of the native loop region running on this activation, zero for none: a call its
+    /// direct row missed rebinds the row's record there (`rebind_region_call`).
+    pub region_calls: usize,
 }
 
 /// The activation of a native's callback for calls passing `argc` values (`push_callback_in_lane`),
@@ -4111,7 +4163,30 @@ impl CallCode {
     /// Whether the code names a callee `live` says died.
     #[inline]
     pub fn names_dead(&self, live: impl Fn(Value) -> bool) -> bool {
-        names_dead_callee(&self.inlined, &self.direct, &live)
+        if names_dead_callee(&self.inlined, &[], &live) || self.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
+            return true;
+        }
+        // A dead callee a record's guard compares at each call only unbinds that record: its row misses from then on
+        // (`Value::DELETED` names no closure) and the helper rebinds it to the next closure it calls
+        // (`dispatch_fast::rebind_region_call`). One an entry check holds by a constant retires the code.
+        let unbind = |word: u64| for record in self.records.iter().filter(|record| record.callee == word) {
+            // SAFETY: the records are read in place by the code on this thread, which no collection runs inside.
+            unsafe { (*std::ptr::from_ref(&**record).cast_mut()).callee = Value::DELETED.to_bits() };
+        };
+        // A planned callee whose site has no record is named by constants (a Cranelift region's guard and capture
+        // words), as is one an entry check holds: its death retires the code.
+        // One whose code reads its closure from its bound words (`BoundClosure::read`) was unbound instead (`unbind_dead`).
+        let constant = self.direct.iter().filter(|callee| !live(callee.callee)).any(|callee| {
+            let word = callee.callee.to_bits();
+            if self.held.contains(&word) { return true; }
+            if callee.bound.read.get() { return false; }
+            if !self.records.iter().any(|record| record.call == callee.call as u64) { return true; }
+            unbind(word);
+            false
+        });
+        if constant { return true; }
+        self.rebound.borrow().iter().filter(|callee| !live(callee.callee)).for_each(|callee| unbind(callee.callee.to_bits()));
+        false
     }
 }
 

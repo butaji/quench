@@ -353,7 +353,8 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }
-    let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
+    let held = calls.callees.captured_identities(region.header as usize..=region.backedge as usize).map(|(_, callee)| callee).collect();
+    let calls = CallCode { held, ..CallCode::of((frames, calls.callees.owned, records), registers, invalidation) };
     let facts = OsrFacts { stable: StableFacts { globals: stable, holders, chains, instanceofs, atoms, layouts, slots: slot_types, ..Default::default() },
         calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
