@@ -9,6 +9,8 @@
 #[macro_use]
 #[path = "../stencils/row_catalog.rs"]
 mod row_catalog;
+/// The C twin of each catalog row (`row_catalog.rs`): the benchmark kernel it is measured against.
+pub mod c_twin;
 pub mod class;
 pub mod patch;
 #[cfg(test)]

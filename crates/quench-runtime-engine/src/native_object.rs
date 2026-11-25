@@ -310,8 +310,8 @@ mod tests {
                 colocated: false,
                 patchable: false,
             });
-            let call = builder.ins().call(target, &[]);
-            builder.inst_results(call)[0]
+            // The program's entry, a direct call the machine makes (`MachineAccess::call_function`).
+            quench_runtime::staged::machine::MachineAccess::call_function(crate::compiled::emit_machine::raw(&mut builder), target, &[])[0]
         } else {
             builder.ins().iconst(types::I32, PROGRAM_EXIT_STATUS)
         };

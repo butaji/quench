@@ -2327,6 +2327,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "iced-x86",
  "libc",
  "object 0.39.1",
  "oxc_ast",

@@ -52,6 +52,14 @@ impl LoopTier {
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
+    /// A callee its code calls by the helper got a body after it compiled (`record_late_call`): the
+    /// code goes where a compilation remains, and the next one calls the callee by its entry.
+    pub(crate) fn late_callee(&mut self, tiers: &Tiers) -> bool {
+        let retires = self.compilations < tiers.loops.max_compilations && self.code.is_some();
+        if retires && let Some(code) = self.code.take() { code.retire(); }
+        retires
+    }
+
     pub(crate) fn weigh_declines(&mut self, declines: u32) {
         self.declined = self.declined.saturating_add(declines);
     }

@@ -59,12 +59,15 @@ view_handler! {
             sibling!(crate::dispatch_fast::row_set_field_classify::<OP, false>, r, ip, Carried::script_in(script, view))
         }} }
         if property && !store {
-            // The site fact names the base (`own_site`), `this` or a register, and the lane admits
-            // the record only without result flags: stated so the decode's tests fold.
+            // Other result flags than a returning site's return go to the general step.
+            let flags = if const { crate::dispatch_fast::returning_field_site(FLAG) } { quench_runtime::bytecode::RETURN_REGISTER } else { 0 };
+            if const { !crate::dispatch_fast::sink_site(FLAG) } && i.a & !quench_runtime::bytecode::REGISTER_MASK & !flags != 0 {
+                sibling!(general_step_in_lane, r, ip, view)
+            }
+            // The site fact names the base (`own_site`), `this` or a register: stated so the decode folds.
             unsafe {
-                // A sinking read's `a` carries its store flag (`LaneFields::wide`).
                 if const { !crate::dispatch_fast::sink_site(FLAG) } {
-                    std::hint::assert_unchecked(i.a <= quench_runtime::bytecode::REGISTER_MASK);
+                    std::hint::assert_unchecked(i.a & !flags <= quench_runtime::bytecode::REGISTER_MASK);
                 }
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::THIS.0);
@@ -110,6 +113,11 @@ view_handler! {
                 }
                 None => property_miss!(),
             }
+        }
+        // A record whose result carries flags is the general step's.
+        if const { LaneFields::<OP, FLAG>::OPCODE.result_layout().allowed_flags() != 0 && !crate::dispatch_fast::sink_site(FLAG)
+            && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } && i.a > quench_runtime::bytecode::REGISTER_MASK {
+            sibling!(general_step_in_lane, r, ip, view)
         }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);
@@ -390,10 +398,7 @@ view_handler! {
                 // (`lane_return_value!`), so it writes no register.
                 let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { quench_runtime::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
                 let script: *mut LaneContext = view.memory.bytes.cast();
-                if let Some(resumed) = by_leaf!(crate::dispatch_fast::returning_leaf(FLAG), |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(script, value)) {
-                    resume!(script, resumed)
-                }
-                resume!(script, crate::dispatch_fast::return_value_general_in_lane(script, ip, value));
+                lane_return_value!(script, ip, value, crate::dispatch_fast::returning_leaf(FLAG))
             }
             Step::Value(value) if property => {
                 // The read's value, a slot word decoded where the form may hold a raw double.

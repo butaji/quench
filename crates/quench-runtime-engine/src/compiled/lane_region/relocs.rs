@@ -62,11 +62,6 @@ pub(crate) fn atom_symbol(builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::V
     crate::symbol_words::symbol_address(builder, RelocKind::Atom as u32, atom)
 }
 
-/// The address of `helper` as the symbol a frameless Number region's loader resolves.
-pub(crate) fn helper_symbol(builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
-    crate::symbol_words::symbol_address(builder, RelocKind::Helper as u32, helper as u32)
-}
-
 impl Lowering<'_, '_> {
     /// The word of `atom`: its id now for a live lowering, its symbol for a linking one.
     pub(crate) fn atom_word(&mut self, atom: u32) -> ir::Value {
@@ -81,7 +76,6 @@ impl Lowering<'_, '_> {
         let atom = self.atom_word(atom);
         crate::symbol_words::atom_unnamed(&mut self.builder, (words, length), atom)
     }
-
 
     /// The address of `kind` for `key`, which is `live` now (`address`).
     pub(crate) fn reloc(&mut self, kind: RelocKind, key: u32, live: u64) -> ir::Value {

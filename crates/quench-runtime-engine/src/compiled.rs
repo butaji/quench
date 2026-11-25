@@ -463,7 +463,7 @@ pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -807,6 +807,13 @@ fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, o
     object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
+/// The lane helper the dispatch payload holds `offset` bytes in, as a call target (`EngineEntry::LaneHelper`).
+fn emit_js_payload_target(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
+    use quench_runtime::staged::{machine::MachineAccess, region::Region};
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    object_slots::emit(builder).entry_target(crate::compiled::slow_paths::EngineEntry::LaneHelper, regions::flags(Region::Dispatch.mutable()), payload, offset)
+}
+
 /// A header word (`staged::frame`'s `CONTEXT_*`, counted down from register 0) of the window at `window`.
 fn emit_frame_word(builder: &mut FunctionBuilder<'_>, window: ir::Value, index: usize) -> ir::Value {
     use quench_runtime::staged::region::Region;
@@ -844,14 +851,14 @@ fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value
 }
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
-fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-    object_slots::emit(builder).call_words(quench_runtime::staged::machine::CallTarget::entry(helper, crate::compiled::slow_paths::EngineEntry::LaneHelper), arguments)
+fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: quench_runtime::staged::machine::CallTarget<ir::Value>, arguments: &[ir::Value]) -> ir::Value {
+    object_slots::emit(builder).call_words(helper, arguments)
 }
 
 fn emit_lane_helper_call(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
-    helper: ir::Value,
+    helper: quench_runtime::staged::machine::CallTarget<ir::Value>,
     arguments: &[ir::Value],
 ) -> ir::Value {
     let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.vm));
@@ -884,18 +891,7 @@ fn emit_unlogged_property_store_guard(
     stage: &mut object_slots::Emit<'_, '_>, list: quench_runtime::staged::barrier::MarkList, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
-    use quench_runtime::staged::barrier::unmarked;
-    pub use quench_runtime::value::ValueLayout;
-    // An immediate value names no heap record and joins no log; a heap value's owner is
-    // tested in its mark block. Marks and block bases are refreshed after each callout.
-    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-    let heap = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
-    let (marked, write) = (stage.new_block(), stage.new_block());
-    stage.branch_if(heap, (marked, &[]), (write, &[]));
-    stage.enter(marked);
-    unmarked(stage, payload, list, record_id, fallback).expect("an Emit guard always continues");
-    stage.goto(write, &[]);
-    stage.enter(write);
+    quench_runtime::staged::barrier::value_unlogged(stage, payload, list, record_id, value, fallback).expect("an Emit guard always continues");
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
@@ -1017,6 +1013,14 @@ macro_rules! lane_helper_inventory {
             pub(crate) fn addresses() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
+        }
+        // A lane helper is a declared call target: by this process's address (a slow path), read
+        // from a bound table, or by its linked symbol (`LaneHelpers::target`).
+        impl quench_runtime::staged::machine::slow_path_seal::Declared for LaneHelper {}
+        impl quench_runtime::staged::machine::EntrySource for LaneHelper {}
+        impl quench_runtime::staged::machine::SlowPath for LaneHelper {
+            #[inline]
+            fn address(self) -> usize { Self::addresses()[self as usize] as usize }
         }
 
         /// Defines the symbol `quench_lane_helper_<Name>` of every lane helper: a tail
@@ -1157,6 +1161,8 @@ lane_helper_inventory! {
     /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
     /// (`dispatch_fast::lane_body_step_packed`).
     StepPacked => crate::dispatch_fast::lane_body_step_packed,
+    /// A loop's interpreter kernel on the loop's entry edge, which the b-jit plans before its head (`base_region::kernel_entries`).
+    KernelStep => base_body::kernel_step_in_lane,
     /// ToBoolean of a value its cell decides (`truthy_in_lane`).
     Truthy => truthy_in_lane,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
@@ -1182,6 +1188,42 @@ lane_helper_inventory! {
     Decide => crate::dispatch_fast::decide_comparison,
     /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::handler_edge`).
     HandlerEdge => crate::dispatch_fast::handler_edge,
+    /// The runtime's Number remainder leaf (`RuntimeSlowPath::NumberRemainder`), which a body naming
+    /// its helpers by symbol calls by this one (`slow_path_symbol`).
+    NumberRemainder => quench_runtime::vm::operations::number_remainder,
+}
+
+thread_local! {
+    /// While a body names its helpers by symbol (`LaneHelpers::names_symbols`): whether it folded a slow
+    /// path no helper names, an address of this process its code must not hold.
+    static NAMING_SYMBOLS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// A lowering whose code names its helpers by symbol: the slow paths it calls become helper symbols
+/// (`slow_path_symbol`), and one that has no helper fails it (`folded`).
+pub(crate) struct NamingSymbols(Option<bool>);
+
+impl NamingSymbols {
+    pub(crate) fn enter(helpers: LaneHelpers) -> Self {
+        Self(NAMING_SYMBOLS.with(|naming| naming.replace(helpers.names_symbols().then_some(false))))
+    }
+    /// Whether the lowering folded a slow path's process address.
+    pub(crate) fn folded(&self) -> bool { NAMING_SYMBOLS.with(|naming| naming.get() == Some(true)) }
+}
+
+impl Drop for NamingSymbols {
+    fn drop(&mut self) { NAMING_SYMBOLS.with(|naming| naming.set(self.0)); }
+}
+
+/// The helper symbol a body naming its helpers by symbol calls slow path `address` by, or `None` where it
+/// takes the address itself (a live body, or a slow path no helper names, which fails the lowering).
+pub(crate) fn slow_path_symbol(func: &mut ir::Function, address: usize) -> Option<ir::GlobalValue> {
+    NAMING_SYMBOLS.with(|naming| {
+        naming.get()?;
+        let helper = LaneHelper::addresses().iter().position(|helper| *helper as usize == address);
+        if helper.is_none() { naming.set(Some(true)); }
+        Some(quench_runtime::vm::jit_backend::declare_symbol(func, RelocKind::Helper as u32, helper? as u32))
+    })
 }
 
 unsafe extern "C" fn interrupt_owner_in_lane(context: u64) -> u64 {
@@ -1263,15 +1305,17 @@ impl LaneHelpers {
         }
     }
 
-    /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
+    /// `helper` as a call target: its symbol, or the table's entry (a symbol per use in live lane
     /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
-    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
-        if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
+    fn target(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
+        if self.names_symbols() {
+            let symbol = quench_runtime::vm::jit_backend::declare_symbol(builder.func, RelocKind::Helper as u32, helper as u32);
+            return object_slots::emit(builder).symbol_target(helper, symbol);
+        }
         let mut stage = object_slots::emit(builder);
         match self.table_address(helper) {
-            HelperAddress::Embedded(address) => stage.raw_const(quench_runtime::staged::machine::Lane::I64, address),
-            HelperAddress::Loaded { table, offset } =>
-                stage.raw_load(quench_runtime::staged::machine::Lane::I64, invariant(), table, offset),
+            HelperAddress::Embedded => stage.slow_path_target(helper),
+            HelperAddress::Loaded { table, offset } => stage.entry_target(helper, invariant(), table, offset),
         }
     }
 
@@ -1285,7 +1329,7 @@ impl LaneHelpers {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
-            Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
+            Self::Process(_) => HelperAddress::Embedded,
             Self::Bound(table, _) => HelperAddress::Loaded {
                 table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
@@ -1296,7 +1340,7 @@ impl LaneHelpers {
 /// Where a helper's address is: a constant, or an entry of the table a region bound.
 #[derive(Clone, Copy)]
 enum HelperAddress {
-    Embedded(i64),
+    Embedded,
     Loaded { table: ir::Value, offset: i32 },
 }
 
@@ -1522,7 +1566,6 @@ pub(crate) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: 
 }
 
 pub use quench_runtime::vm::engine_types::ExecutionMode;
-
 
 
 /// A value's width inside compiled code. Each register has an integer and a
@@ -1920,7 +1963,6 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 pub(crate) use quench_runtime::vm::engine_types::CallContext;
 
 use quench_runtime::vm::engine_types::CallContextFields;
-
 
 
 
@@ -4101,6 +4143,14 @@ pub(crate) fn take_lane_exit_line() -> u64 {
 }
 
 #[inline]
+/// Whether a lane body runs on this thread now: its entry's words are the thread's lane frame's
+/// (`LaneEntry::residual`), which another body's entry must keep (`Vm::run_nested_lane_method`).
+pub(crate) fn body_running_in_lane() -> bool {
+    let frame = frame_in_lane();
+    // SAFETY: as `frame_in_lane`; the words are read and dropped here.
+    unsafe { LaneEntry::of(&(*frame).dispatch) }.residual != 0
+}
+
 fn frame_in_lane() -> *mut BodyRunContext {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -6010,19 +6060,9 @@ impl<'b> RegionCore<'b> {
         self.builder
     }
 
-    /// Read the call context's interrupt flag. A JS region uses the result to
-    /// take its exact-PC callout; scalar regions use it for termination exits.
-    fn interrupt_requested(&mut self) -> ir::Value {
-        use quench_runtime::staged::machine::{Lane, Relation};
-        let context = self.context;
-        let pointer = native_interrupt_pointer(&mut self.builder, context, false);
-        let requested = self.raw_atomic_load(Lane::I8, MemFlagsData::trusted(), pointer);
-        self.raw_compare_imm(Relation::NotEqual, requested, 0)
-    }
-
     /// Checks for a termination request: a read of the poll page, which faults once one is
-    /// made and resumes as the terminated status (`guard_fault`), else a test of the context's
-    /// flag that branches to `termination_block`.
+    /// made and resumes as the terminated status (`guard_fault`), else the shared back-edge poll
+    /// (`staged::poll::back_edge_poll`) of the context's flag, which leaves to `termination_block`.
     fn interrupt_safepoint(&mut self) {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
@@ -6030,19 +6070,11 @@ impl<'b> RegionCore<'b> {
             self.raw_atomic_load(quench_runtime::staged::machine::Lane::I8, MemFlagsData::trusted(), poll);
             return;
         }
-        let stop = self.interrupt_requested();
-        let termination = match self.termination_block {
-            Some(block) => block,
-            None => {
-                let block = self.builder.create_block();
-                self.termination_block = Some(block);
-                block
-            }
-        };
-        let next = self.builder.create_block();
-        self.branch_if(stop, (termination, &[]), (next, &[]));
-        self.builder.switch_to_block(next);
-        self.builder.seal_block(next);
+        let context = self.context;
+        let flag = native_interrupt_pointer(&mut self.builder, context, false);
+        let termination = *self.termination_block.get_or_insert_with(|| self.builder.create_block());
+        // The poll is no speculation: the forced-deopt switch leaves it alone (`unforced`).
+        unforced(|| quench_runtime::staged::poll::back_edge_poll(&mut object_slots::emit(&mut self.builder), flag, termination)).expect("a guard always emits");
     }
 }
 
@@ -6474,10 +6506,10 @@ impl Emitter<'_, '_> {
             }
         };
         let context = self.body.core.context;
-        let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
+        let target = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmCallOut, invariant(), context, CONTEXT_CALLOUT);
         let function = self.raw_const(Lane::I64, i64::from(function));
         let roots = self.root();
-        let status = self.call_signature(callout_signature, quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmCallOut), &[context, function, args, out])[0];
+        let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
         self.unroot(roots);
         self.propagate(status);
         let destination = instruction.result_register();
@@ -7138,8 +7170,8 @@ impl<'a> Analysis<'a> {
             });
         }
         let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
-        let target = stage.raw_load(Lane::I64, MemFlagsData::trusted(), table, (index * 8) as i32);
-        let results = stage.call_signature(target_signature, quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmFunctionEntry), &call_args);
+        let target = stage.entry_target(crate::compiled::slow_paths::EngineEntry::WasmFunctionEntry, MemFlagsData::trusted(), table, (index * 8) as i32);
+        let results = stage.call_signature(target_signature, target, &call_args);
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
                 Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),
@@ -7623,10 +7655,10 @@ impl Vm {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its
-        // size and mode: its image body is compiled already, so there is no compile to amortize, and
-        // an execution-only build has nothing else to run it with.
-        if self.programs.js_jit_lane_methods_enabled() && self.programs.ahead_images(id, program).is_some() {
+        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size and mode: its
+        // image body is compiled already, so there is no compile to amortize, and an execution-only build has nothing else
+        // to run it with.
+        if self.images_run_in_lane() && self.programs.ahead_images(id, program).is_some() {
             return true;
         }
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
@@ -7890,7 +7922,7 @@ impl Vm {
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
+        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);

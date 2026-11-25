@@ -1583,9 +1583,8 @@ impl Vm {
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
     fn enters_in_lane(view: *const crate::vm::engine_types::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
-    /// Whether a frame entry may run the lane: execution-only support never interprets (it runs a
-    /// linked ahead image's bodies, whose misses step one record from packed code), and instruction
-    /// profiling must observe every PC.
+    /// Whether a frame entry may run the lane: execution-only support runs it only for a program
+    /// with a loaded AOT image (`Vm::may_run_in_lane`), and instruction profiling must observe every PC.
     const FRAME_ENTRY_LANE_RUNS: bool = crate::DYNAMIC_EXECUTION_ENABLED
         && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
 
@@ -1779,8 +1778,8 @@ impl Vm {
         };
         let (_stack, raised) = self.enter_general_loop_stack(p.kind, raised)?;
         // Parameter-initialization stops observe every PC, so they run the general path only. An
-        // execution-only build enters the lane for a linked ahead image, whose bodies are the only
-        // code it has (`Vm::admits_in_lane`).
+        // execution-only build enters the lane for a program with a loaded AOT image, whose bodies are
+        // the only code it has (`Vm::may_run_in_lane`).
         let fast_lane = !STOPS && stop_pc.is_none()
             && (Self::FRAME_ENTRY_LANE_RUNS || self.programs.ahead_images(executing_program, p).is_some());
         let initial_function = self.frames[frame].function as usize;
@@ -1873,9 +1872,10 @@ impl Vm {
             }
             // An execution-only build runs a record only where the lane may run its program: a
             // linked image's body takes the record, or the record it left steps and the lane takes
-            // the next one (`Vm::lane_may_run`). Without such an image nothing may run it.
-            if native_step.is_none() && !self.lane_may_run(executing_program, p)
+            // the next one (`Vm::may_run_in_lane`). Without such an image nothing may run it.
+            if native_step.is_none() && !self.may_run_in_lane(executing_program, p)
                 && !(STOPS && stop_pc == Some(pc))
+                && !(!resumed && Self::enters_in_lane(cursor.lane, pc, entering_after_lane_exit))
             {
                 return Err(self.native_execution_rejected(p, frame, pc));
             }
@@ -2124,9 +2124,9 @@ impl Vm {
             let ins = cursor.instruction(instruction_pc);
             let step = if let Some(step) = native_step {
                 step.result
-            } else if !self.lane_may_run(cursor.program, p) {
-                // An execution-only build steps only a record a linked ahead image left to it
-                // (`lane_may_run`); without such an image nothing may run the program.
+            } else if !self.may_run_in_lane(cursor.program, p) {
+                // An execution-only build steps only a record a loaded AOT image's body left at
+                // (`Vm::may_run_in_lane`); without such an image nothing may run the program.
                 return Err(self.interpreter_unavailable());
             } else {
             #[cfg(feature = "profile-memory")]

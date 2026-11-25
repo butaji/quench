@@ -76,7 +76,7 @@ pub(crate) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] pub(crate) mod captures;
 #[path = "lane_region/compare_jumps.rs"] pub(crate) mod compare_jumps;
 #[path = "lane_region/relocs.rs"] pub(crate) mod relocs;
-use relocs::RelocKind; pub(crate) use relocs::{atom_symbol, helper_symbol, numeric_symbol};
+use relocs::RelocKind; pub(crate) use relocs::{atom_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] pub(crate) mod constructions;
 #[path = "lane_region/virtual_objects.rs"] pub(crate) mod virtual_objects;
@@ -1893,6 +1893,7 @@ pub(crate) fn lower(
             frames: unit.frames.clone(), markers: unit.markers.clone(), caller_registers: unit.caller_registers,
             registers: unit.registers, end: unit.end });
     let unit = residual.as_ref().unwrap_or(unit);
+    let naming = super::NamingSymbols::enter(helpers);
     crate::dispatch_fast::lane_body_stats::lowering_function(function_id);
     let function = program.function_get(function_id as usize)?;
     let numeric = completion.numeric();
@@ -1943,6 +1944,7 @@ pub(crate) fn lower(
             signature, colocated: false, patchable: false });
         LaneHelpers::Bound(emit(&mut builder).call_function(target, &[])[0], narrow_table)
     } else { helpers };
+    let interrupt_owner = fault_poll.then(|| polls::interrupt_owner_call(&mut builder, helpers, context, isa));
     let count = usize::from(unit.registers);
     let live = if unit.registers > quench_runtime::compile::liveness::ROOT_MAP_REGISTERS {
         Liveness::Frames {
@@ -2109,7 +2111,7 @@ pub(crate) fn lower(
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
-        let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::CallBudget);
+        let helper = lowering.helpers.target(&mut lowering.builder, LaneHelper::CallBudget);
         lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
     }
     if coverage.selected_entry() {
@@ -2376,21 +2378,14 @@ pub(crate) fn lower(
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
     let reentries = std::mem::take(&mut lowering.reentries);
-    let helpers = lowering.helpers;
     let stable = lowering.stable.take();
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
     super::jit_backend::builder::keep_context(builder_context);
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
-    if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
-    // A body whose definitions wrote the wrong representation is no well-formed lowering: its
-    // registers' variables are per representation, and nothing may publish what the builder had to
-    // convert (`register_define`, `note_mismatch`).
-    if mismatched() {
-        declined("a definition's lane disagrees with its representation", usize::MAX);
-        return None;
-    }
+    if let Some(owner) = interrupt_owner { specialize_closed_polls(&mut native, &reentries, &mut polls, owner); }
+    if naming.folded() { declined("a slow path no helper names", usize::MAX); return None; }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types, exits })
 }
 
@@ -3027,7 +3022,7 @@ impl Lowering<'_, '_> {
     fn slot_writes_admitted_as(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, raw_double: bool) -> (ir::Value, Type) {
         let domain = quench_runtime::typed_ir::SlotType::from_type(writes);
         let encoded = self.raw_const(Lane::I64, domain as i64 | if raw_double { RAW_DOUBLE_WRITES as i64 } else { 0 });
-        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldWriteAdmission);
+        let helper = self.helpers.target(&mut self.builder, LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         (self.raw_compare_imm(Relation::NotEqual, admitted, 0), domain.ty())
     }
@@ -3289,7 +3284,7 @@ impl Lowering<'_, '_> {
 
     /// A helper's call, by its address in the running image's table (`LaneHelpers::address`).
     fn helper_call(&mut self, helper: LaneHelper, arguments: &[ir::Value]) -> ir::Value {
-        let address = self.helpers.address(&mut self.builder, helper);
+        let address = self.helpers.target(&mut self.builder, helper);
         emit_lane_helper_call(&mut self.builder, self.payload, address, arguments)
     }
 

@@ -269,7 +269,7 @@ impl Vm {
         // An image's base body does not run a lane activation (`fbits9`), so it installs nothing:
         // a function without a usable lane body runs its records in the general loop, which
         // resumes the lane at the next record it can take (`ExecutionMode::NativeOnly` admits
-        // that one step, `Vm::lane_may_run`).
+        // that one step, `Vm::may_run_in_lane`).
         let Some(method) = lanes_allowed.then(|| self.ahead_lane_method(program, &images, function)).flatten() else {
             if traced { eprintln!("aot-lanes: install function {function}: no lane body, its records step"); }
             return None;
@@ -288,10 +288,10 @@ impl Vm {
 
     /// `function`'s lane body from `images`, linked at the address it will run.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
-        let Some(linked_live) = images.linked.as_ref() else { refuse_lane(function, "the image did not link"); return None; };
+        let refused = |why: &str| if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
+        let Some(linked_live) = images.linked.as_ref() else { refused("the image did not link"); return None };
         let Some(lane) = images.image.functions.get(function as usize).and_then(|function| function.lane.as_ref()) else {
-            refuse_lane(function, "the image holds no lane body for it");
-            return None;
+            refused("the image holds no lane body for it"); return None;
         };
         let fault_poll = lane.fault_poll;
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
@@ -372,15 +372,9 @@ impl Vm {
     /// compiled from, whenever it runs.
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
         let linked = live::install(&images.image, self);
-        if let Err(why) = &linked
-            && quench_runtime::trace::Channel::AotLanes.on()
-        {
-            eprintln!("aot-lanes: image did not link: {why}");
-        }
+        if let Err(why) = &linked && quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: image did not link: {why}"); }
         images.linked = linked.ok();
-        let installed = images.linked.is_some();
         self.programs.add_ahead_images(images);
-        if installed { self.programs.enable_ahead_lane_bodies(); }
     }
 
     /// Keeps the image the system linker placed at `table` for the program it was compiled from

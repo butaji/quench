@@ -12,12 +12,12 @@ use quench_runtime::staged::{Allocation, InlineEmpty};
 use cranelift_codegen::ir;
 use quench_runtime::Value;
 use cranelift_codegen::ir::types;
-use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use quench_runtime::staged::machine::{Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use super::super::object_slots::emit;
 use crate::compiled::regions;
 
-/// A fault-polling body records its poll instruction; any other leaves at the miss edge when
-/// the flag is set.
+/// A fault-polling body records its poll instruction: the poll page's fault takes it at a set flag. A body that polls
+/// by compare runs the staged back-edge poll instead (`staged::poll::back_edge_poll`, `Lowering::interrupt_check`).
 pub(crate) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
     safepoint_parts(stage.builder, frame.polls, proof)
 }
@@ -49,17 +49,10 @@ pub(crate) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
 pub(crate) fn safepoint_parts(builder: &mut cranelift_frontend::FunctionBuilder<'_>,
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
     proof: EmitProof) -> Option<()> {
-    let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
+    let EmitProof::Safepoint { interrupt } = proof else { return None };
     let requested = emit(builder).raw_atomic_load(Lane::I8, regions::dispatch(), interrupt);
-    if fault_poll {
-        let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
-        polls.push(inst);
-    } else {
-        let miss = miss?;
-        let requested = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I32), requested);
-        let clear = emit(builder).raw_compare_imm(Relation::Equal, requested, 0);
-        emit_js_guard(builder, clear, miss);
-    }
+    let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
+    polls.push(inst);
     Some(())
 }
 
@@ -77,7 +70,7 @@ pub(crate) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
 pub(crate) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
     (base, key, value): (ir::Value, ir::Value, ir::Value), miss: ir::Block) {
     let payload = frame.payload;
-    let address = frame.helpers.address(&mut stage.builder, LaneHelper::IndexSet);
+    let address = frame.helpers.target(&mut stage.builder, LaneHelper::IndexSet);
     let stored = emit_lane_helper_call(stage.builder, payload, address, &[base, key, value]);
     let hit = stage.raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(stage.builder, hit, miss);
@@ -203,41 +196,23 @@ const EMPTY_ARRAY: Template = Template {
 /// first, and a spent run is refilled only there, so every run is checked once before it is used.
 fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, template: Template,
     helper: LaneHelper, arguments: &[ir::Value], proof: EmitProof) -> Option<ir::Value> {
-    use quench_runtime::tier_surface::{NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR};
-    use quench_runtime::staged::region::Region;
-    use quench_runtime::staged::Stage;
+    use quench_runtime::staged::bump::{bump_record, Template as Bump};
     let EmitProof::Allocation { miss } = proof else { return None };
     let payload = frame.payload;
-    let (next_at, limit_at) = (CURSOR.next_offset as i32, CURSOR.limit_offset as i32);
     let cursor = emit_js_record_base(stage.builder, payload, template.cursor);
-    let next = stage.load_u32(Region::HeapMeta.mutable(), cursor, next_at);
-    let limit = stage.load_u32(Region::HeapMeta.mutable(), cursor, limit_at);
     let layout = emit_js_payload_word(stage.builder, payload, template.layout);
     let words = emit_js_payload_word(stage.builder, payload, template.words);
-    let room = stage.ult(next, limit);
-    let templated = stage.ne_imm(layout, 0u64);
-    let inline = stage.raw_binary(Binary::And, room, templated);
-    let fast = stage.builder.create_block();
+    let records = emit_js_record_base(stage.builder, payload, template.records);
     let slow = stage.builder.create_block();
     let joined = stage.builder.create_block();
     let made = stage.builder.append_block_param(joined, types::I64);
-    stage.branch_if(inline, (fast, &[]), (slow, &[]));
-
-    stage.builder.switch_to_block(fast);
-    stage.builder.seal_block(fast);
-    let bumped = stage.add_imm(next, 1u64);
-    stage.store_u32(Region::HeapMeta.mutable(), cursor, next_at, bumped);
-    let records = emit_js_record_base(stage.builder, payload, template.records);
-    let stride = stage.mul_imm(next, template.record_size as u64);
-    let record = stage.add(records, stride);
-    stage.store_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32, words);
-    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, layout);
-    let value = stage.or_imm(next, template.tag);
+    let bump = Bump { records, record_size: template.record_size as u64, layout, words, tag: template.tag };
+    let value = bump_record(stage, cursor, bump, slow).expect("an Emit guard always continues");
     stage.goto(joined, &[value]);
 
     stage.builder.switch_to_block(slow);
     stage.builder.seal_block(slow);
-    let address = frame.helpers.address(&mut stage.builder, helper);
+    let address = frame.helpers.target(&mut stage.builder, helper);
     // The allocators take the payload after the VM and residual (`compiled_new_object`, `new_array_in_lane`), as `allocate` passes it.
     let value = emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
     stage.goto(joined, &[value]);
@@ -255,7 +230,7 @@ pub(crate) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     let payload = frame.payload;
     let atom = atom_word(frame, stage, atom);
     let site = stage.raw_const(Lane::I64, i64::from(site));
-    let set = frame.helpers.address(&mut stage.builder, LaneHelper::FieldSet);
+    let set = frame.helpers.target(&mut stage.builder, LaneHelper::FieldSet);
     let stored = emit_lane_helper_call(stage.builder, payload, set, &[object, atom, site, value]);
     let ok = stage.raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(stage.builder, ok, miss);
@@ -274,7 +249,7 @@ fn atom_site_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, si
 pub(crate) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
     site: u16, miss: ir::Block) -> ir::Value {
     let packed = atom_site_word(frame, stage, atom, site);
-    let get = frame.helpers.address(&mut stage.builder, LaneHelper::FieldGet);
+    let get = frame.helpers.target(&mut stage.builder, LaneHelper::FieldGet);
     let value = emit_lane_helper_call(stage.builder, frame.payload, get, &[object, packed]);
     guard_word(frame, stage, value, Relation::NotEqual, Value::DELETED, miss);
     value
@@ -285,7 +260,7 @@ pub(crate) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
 pub(crate) fn field_add(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
     site: u16, value: ir::Value, miss: ir::Block) {
     let write = atom_site_word(frame, stage, atom, site);
-    let add = frame.helpers.address(&mut stage.builder, LaneHelper::FieldAdd);
+    let add = frame.helpers.target(&mut stage.builder, LaneHelper::FieldAdd);
     let stored = emit_lane_helper_call(stage.builder, frame.payload, add, &[frame.payload, object, write, value]);
     let hit = stage.raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(stage.builder, hit, miss);
@@ -294,7 +269,7 @@ pub(crate) fn field_add(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, obj
 /// The lane's own global-name read word (`LaneHelper::GlobalGet`): `Value::DELETED` where it misses.
 fn global_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
     let (atom, site) = (atom_word(frame, stage, atom), stage.raw_const(Lane::I64, i64::from(site)));
-    let get = frame.helpers.address(&mut stage.builder, LaneHelper::GlobalGet);
+    let get = frame.helpers.target(&mut stage.builder, LaneHelper::GlobalGet);
     emit_lane_helper_call(stage.builder, frame.payload, get, &[atom, site])
 }
 
@@ -389,7 +364,7 @@ impl EmitFrame<'_> {
         proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Allocation { miss } = proof else { return None };
         let payload = self.payload;
-        let address = self.helpers.address(&mut stage.builder, helper);
+        let address = self.helpers.target(&mut stage.builder, helper);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
         finish_allocation(stage, self, destination, value, miss);
         Some(value)

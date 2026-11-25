@@ -4073,7 +4073,13 @@ impl AheadImages {
     #[inline]
     pub fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
-        let Ok(images) = Self::compile(program) else { return };
+        let images = match Self::compile(program) {
+            Ok(images) => images,
+            Err(why) => {
+                if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} records no image: {why}", program.source_name); }
+                return;
+            }
+        };
         if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
     }
 }
@@ -4423,6 +4429,13 @@ impl LaneStack {
 }
 
 impl LaneView {
+
+    /// Admits every record as a lane entry: a body compiled ahead (`AheadImages`) leaves at any record it does not
+    /// make, and the lane takes the record on there (`ExecutionMode::NativeOnly` has nothing else to run it with). The
+    /// derived set keeps only the records a straight-line run from a jump target repays, which an image body need not be.
+    pub fn admit_every_record(&mut self) {
+        self.entries.fill(u64::MAX);
+    }
 
     /// Its lane-body tier state, made on first use.
     #[inline]

@@ -35,11 +35,11 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_run_offe
 fn quench_engine_vm_js_jit_compiled_call(this: &mut Vm, program: &ResidualProgram, arg1: (ProgramId, u32), returns: bool, arguments: &[Value]) -> Option<Value> { <Vm as CompiledVm4>::js_jit_compiled_call(this, program, arg1, returns, arguments) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_js_jit_compiled_call = quench_engine_vm_js_jit_compiled_call;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_lane_may_run(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool { <Vm as DispatchFastVm2>::lane_may_run(this, program, code) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_lane_may_run = quench_engine_vm_lane_may_run;
-#[unsafe(no_mangle)]
 fn quench_engine_vm_admits_in_lane(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool { <Vm as DispatchFastVm2>::admits_in_lane(this, program, code) }
+#[unsafe(no_mangle)]
+fn quench_engine_vm_may_run_in_lane(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool { <Vm as DispatchFastVm2>::may_run_in_lane(this, program, code) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_admits_in_lane = quench_engine_vm_admits_in_lane;
+const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_may_run_in_lane = quench_engine_vm_may_run_in_lane;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_entry_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView { <Vm as DispatchFastVm6>::entry_lane_view(this, program, function) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_entry_lane_view = quench_engine_vm_entry_lane_view;

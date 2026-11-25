@@ -301,8 +301,8 @@ const WORK_PER_ITERATION: u64 = 4;
 
 #[quench_macros::ext(LoopKernelOps2)]
 impl LoopKernel {
-    /// Runs the loop from the registers' current state (module documentation).
-    pub(crate) unsafe fn run(&self, cx: *mut LaneContext, r: Registers, ip: Ip) {
+    /// Runs the loop from the registers' current state (module documentation): whether it ran any iteration.
+    pub(crate) unsafe fn run(&self, cx: *mut LaneContext, r: Registers, ip: Ip) -> bool {
         // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
         let state: &mut State = unsafe { &mut **(*self.state.get()).get_or_insert_with(|| Box::new(State::EMPTY)) };
         let Some(()) = self.enter(cx, r, state) else {
@@ -314,7 +314,7 @@ impl LoopKernel {
             if quench_runtime::trace::Channel::LoopKernel.on() {
                 eprintln!("loop-kernel: entry declined ({} declines)", self.declines.get());
             }
-            return;
+            return false;
         };
         // SAFETY: the kernel's scratch, used by one run at a time.
         let scratch = unsafe { &mut *self.scratch.get() };
@@ -339,12 +339,11 @@ impl LoopKernel {
                 break;
             }
         }
-        if done == 0 {
-            return;
-        }
+        if done == 0 { return false; }
         // The work clock counts the iterations the kernel ran in place of the records.
         quench_runtime::clock::charge_work(done * WORK_PER_ITERATION);
         self.write_back(state, r, done);
+        true
     }
 
     /// The run's entry facts, or `None` where the kernel runs nothing.

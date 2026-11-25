@@ -145,6 +145,19 @@ impl Planned {
         self
     }
 
+    /// The run with `next`'s parts laid out after its own at the same PC: `next`'s own parts (`Branch::Part`) shift past them.
+    pub(crate) fn then_run(&mut self, mut next: Planned) {
+        let shift = self.pre.len() + 1 + self.post.len();
+        let (pre, post) = (std::mem::take(&mut next.pre), std::mem::take(&mut next.post));
+        self.owned.append(&mut next.owned);
+        self.post.extend(pre.into_iter().chain(std::iter::once(next)).chain(post).map(|mut part| {
+            if let Some(Branch::Part(index)) = &mut part.branch {
+                *index += shift;
+            }
+            part
+        }));
+    }
+
     pub(crate) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
         Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS }
     }

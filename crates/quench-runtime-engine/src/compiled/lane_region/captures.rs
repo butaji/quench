@@ -97,7 +97,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
     let (payload, helpers) = reach;
     let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.vm));
     let slot = emit(builder).raw_const(Lane::I64, i64::from(at.1));
-    let helper = helpers.address(builder, LaneHelper::FunctionCapture);
+    let helper = helpers.target(builder, LaneHelper::FunctionCapture);
     let read = emit_lane_call(builder, helper, &[vm, callee, slot]);
     let hit = emit(builder).raw_compare_imm(Relation::NotEqual, read, Value::DELETED.to_bits() as i64);
     emit_js_guard(builder, hit, exit);
@@ -134,7 +134,7 @@ fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (dept
 /// `helper`'s call by its address in the running image's table (`LaneHelpers::address`).
 fn call_helper(builder: &mut FunctionBuilder<'_>, (payload, helpers): Reach, helper: LaneHelper,
     arguments: &[ir::Value]) -> ir::Value {
-    let address = helpers.address(builder, helper);
+    let address = helpers.target(builder, helper);
     emit_lane_helper_call(builder, payload, address, arguments)
 }
 

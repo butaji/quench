@@ -363,8 +363,7 @@ impl Vm {
     /// (`Vm::job_frame`), looked up by the caller. `None` changes nothing.
     fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, sent: Value) -> Option<JobWindow> {
         // `code` is the active program's (`run_lane_job`).
-        let program = self.active_program;
-        if !self.admits_in_lane(program, code) || code.kind == quench_runtime::bytecode::ProgramKind::Wasm {
+        if !self.admits_in_lane(self.active_program, code) || code.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
         // SAFETY: the owner holds the frame boxed, which nothing moves or drops before the resume

@@ -55,7 +55,7 @@ impl Emitter<'_, '_> {
     fn call_in_instance(
         &mut self,
         record: ir::Value,
-        body: ir::Value,
+        body: quench_runtime::staged::machine::CallTarget<ir::Value>,
         signature: &quench_runtime::WasmSignature,
         buffers: (ir::Value, ir::Value),
     ) -> ir::Value {
