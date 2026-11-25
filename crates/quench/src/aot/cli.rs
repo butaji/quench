@@ -171,8 +171,11 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
     let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
-    // The host operations the startup heap holds, from which the image's table starts.
-    let held: (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>) = runtime.held_host_operations();
+    // The host operations the startup heap holds, from which the image's table starts. No
+    // opcodes: the entry's functions lower as they run, to opcodes their bytecode does not name
+    // yet, so an image that runs its entry installs every lane row (`resumes_at_rest`).
+    let (operations, lazy) = runtime.held_host_operations();
+    let held: super::prefix::HeldOperations = (operations, lazy, Vec::new());
     fs::write(output.with_extension("operations"), serde_json::to_vec(&held).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
@@ -249,7 +252,7 @@ fn prepare_saved_waits(runs: &[super::strict::Answers], work: &Path, native_entr
 
 /// The catalog's `RESUMES_AT_REST` (`image_driver`): each saved run, which an image whose
 /// answers hold as it starts resumes.
-fn resumes_at_rest(saved: &[SavedWait]) -> String {
+fn resumes_at_rest(saved: &[SavedWait], lane_opcodes: Option<&[u16]>) -> String {
     let runs = saved.iter().map(|wait| {
         let answers = wait.answers.iter().map(|(question, answer)| format!("({:?}, {answer})", question.key())).collect::<Vec<_>>().join(", ");
         let writes = wait.effects.iter().map(|(descriptor, bytes)| format!("({descriptor}, &{bytes:?})")).collect::<Vec<_>>().join(", ");
@@ -257,14 +260,17 @@ fn resumes_at_rest(saved: &[SavedWait]) -> String {
     }).collect::<Vec<_>>().join(", ");
     // The runs answer every yes-or-no input the build-time evaluation asked, each both ways
     // (`strict::specialize`), so one always holds: an image with saved runs links no other start.
-    // An image that only resumes them installs lane handlers for the opcodes their programs
-    // hold, any other running on the general path; one that also runs its entry, every one.
-    let mut opcodes: Vec<u16> = saved.iter().flat_map(|wait| wait.held.2.iter().copied()).collect();
-    opcodes.sort_unstable();
-    opcodes.dedup();
+    // An image that only resumes them installs lane handlers for `lane_opcodes`, those its
+    // heaps' programs hold, any other running on the general path; one that runs its entry,
+    // every one.
     let group = crate::LANE_ROW_GROUP;
-    let rows = opcodes.iter().map(|op| format!("&quench::lane_rows::g{}::R{}", op / group, op % group)).collect::<Vec<_>>().join(", ");
-    let lanes = if saved.is_empty() { "quench::install_all_lane_rows()".to_owned() } else { format!("quench::install_lane_rows(&[{rows}])") };
+    let lanes = match lane_opcodes {
+        Some(opcodes) => {
+            let rows = opcodes.iter().map(|op| format!("&quench::lane_rows::g{}::R{}", op / group, op % group)).collect::<Vec<_>>().join(", ");
+            format!("quench::install_lane_rows(&[{rows}])")
+        }
+        None => "quench::install_all_lane_rows()".to_owned(),
+    };
     format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\nfn install_lanes() {{ {lanes} }}\n", !saved.is_empty())
 }
 
@@ -381,17 +387,23 @@ fn compile(options: Options) -> Result<(), String> {
     // A program whose build-time runs wait for input before reading any resumes the run whose
     // answers hold as it starts: no entry run and no installation, so no startup snapshot.
     let saved_waits = prepare_saved_waits(&waits, &work.0, &native_entry, &mut report);
-    fs::OpenOptions::new().append(true).open(inputs.catalog())
-        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\n", resumes_at_rest(&saved_waits), makes_code(&graph), runs_wasm(&graph)).as_bytes())).map_err(|error| error.to_string())?;
     let (inputs, startup_held) = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { (inputs, None) };
-    // The heaps the image starts from: each saved run's, else the startup snapshot's.
-    let heaps: Vec<(Vec<u32>, Vec<(Vec<String>, Vec<u32>)>)> = match startup_held {
-        Some(held) => vec![held],
-        None => saved_waits.iter().map(|wait| (wait.held.0.clone(), wait.held.1.clone())).collect(),
-    };
     // A strict image whose entry reads a process input runs it from the startup snapshot alone.
+    let restored = options.strict && startup_held.is_some();
+    // The heaps the image starts from: each saved run's, else the startup snapshot's.
+    let heaps: Vec<super::prefix::HeldOperations> = match startup_held {
+        Some(held) => vec![held],
+        None => saved_waits.iter().map(|wait| wait.held.clone()).collect(),
+    };
+    let lane_opcodes = (!saved_waits.is_empty()).then(|| {
+        let mut opcodes: Vec<u16> = heaps.iter().flat_map(|heap| heap.2.iter().copied()).collect();
+        opcodes.sort_unstable();
+        opcodes.dedup();
+        opcodes
+    });
     fs::OpenOptions::new().append(true).open(inputs.catalog())
-        .and_then(|mut catalog| writeln!(catalog, "const RESTORED: bool = {};", options.strict && saved_waits.is_empty() && !heaps.is_empty())).map_err(|error| error.to_string())?;
+        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\nconst RESTORED: bool = {restored};\n",
+            resumes_at_rest(&saved_waits, lane_opcodes.as_deref()), makes_code(&graph), runs_wasm(&graph)).as_bytes())).map_err(|error| error.to_string())?;
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
     // global's module): every one the graph names.
@@ -755,7 +767,7 @@ fn operation_table(graph: &super::graph::DependencyGraph, kept: Option<&std::col
 /// snapshot cannot be prepared; the catalog gains the start's constants either way.
 /// Also the host operations the snapshot's heap holds (`build_bootstrap`).
 fn bootstrap_inputs(graph: &super::graph::DependencyGraph, work: &Path, native_entry: &Path, inputs: quench_runtime::native_link::NativeImageInputs, report: &mut Value)
-    -> Result<(quench_runtime::native_link::NativeImageInputs, Option<(Vec<u32>, Vec<(Vec<String>, Vec<u32>)>)>), String> {
+    -> Result<(quench_runtime::native_link::NativeImageInputs, Option<super::prefix::HeldOperations>), String> {
     let bootstrap = work.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])

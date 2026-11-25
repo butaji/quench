@@ -548,7 +548,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
             .iter()
             .any(|argument| matches!(argument.as_str(), "-i" | "--interactive"));
     if interactive {
-        context.scoped(crate::modules::repl::start_interactive)?;
+        let start = super::source_route(|routes| routes.interactive)
+            .ok_or_else(|| RootedError::host("this binary has no interactive REPL: it compiles no source"))?;
+        context.scoped(start)?;
     }
     // Node exposes these web and timer globals as enumerable own properties.
     // The host bindings and several bootstrap polyfills use non-enumerable
