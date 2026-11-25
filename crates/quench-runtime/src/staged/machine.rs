@@ -142,14 +142,15 @@ pub trait MachineAccess: MachineScalar {
     fn call_words(&mut self, target: Self::Word, arguments: &[Self::Word]) -> Self::Word;
     /// A call of the code at `target` whose `signature` is its parameter lanes and its result lane.
     fn call_lanes(&mut self, target: Self::Word, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word;
-    /// A call of the leaf at address `leaf` on word `arguments`: its word.
-    fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word {
-        let target = self.raw_const(Lane::I64, leaf as i64);
+    /// A call of the slow path `leaf` on word `arguments`: its word. A leaf is one its crate's
+    /// inventory declares (`slow_paths!`), never a bare address.
+    fn call_leaf(&mut self, leaf: impl SlowPath, arguments: &[Self::Word]) -> Self::Word {
+        let target = self.raw_const(Lane::I64, leaf.address() as i64);
         self.call_words(target, arguments)
     }
-    /// A call of the leaf at address `leaf` under `signature` (parameter lanes and result lane).
-    fn call_leaf_lanes(&mut self, leaf: usize, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word {
-        let target = self.raw_const(Lane::I64, leaf as i64);
+    /// A call of the slow path `leaf` under `signature` (parameter lanes and result lane).
+    fn call_leaf_lanes(&mut self, leaf: impl SlowPath, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word {
+        let target = self.raw_const(Lane::I64, leaf.address() as i64);
         self.call_lanes(target, signature, arguments)
     }
     /// A function the machine calls directly, linked where the code is placed.
@@ -245,4 +246,45 @@ pub trait MachineVector: MachineAccess {
     fn spill_operand(&mut self, slot: Self::Slot, at: usize, value: Self::Word);
     /// The value of type `ty` the word position `at` of `slot` holds.
     fn reload_result(&mut self, slot: Self::Slot, at: usize, ty: WasmType) -> Self::Word;
+}
+
+/// A slow path compiled code may call (TOD-2194): a helper its crate's inventory declares
+/// (`slow_paths!`), the only name a leaf call (`MachineAccess::call_leaf`) takes. A bare address
+/// is no slow path, so a call to any other code does not type-check.
+pub trait SlowPath: Copy + slow_path_seal::Declared {
+    /// The helper's entry.
+    fn address(self) -> usize;
+}
+
+/// The seal of `SlowPath`: implemented by the `slow_paths!` inventories alone.
+#[doc(hidden)]
+pub mod slow_path_seal {
+    pub trait Declared {}
+}
+
+/// Declares a crate's slow paths: the enum that names each helper compiled code may call, and its
+/// entry (`SlowPath`). Each crate keeps one inventory, so the helpers its compiled code reaches are
+/// one list.
+#[macro_export]
+macro_rules! slow_paths {
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($(#[$attr:meta])* $variant:ident => $helper:path),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        $vis enum $name { $($(#[$attr])* $variant),+ }
+        impl $crate::staged::machine::slow_path_seal::Declared for $name {}
+        impl $crate::staged::machine::SlowPath for $name {
+            #[inline(always)]
+            fn address(self) -> usize {
+                match self { $(Self::$variant => $helper as *const () as usize),+ }
+            }
+        }
+    };
+}
+
+slow_paths! {
+    /// The slow paths of the runtime's Number machine rows (the RegExp machine's are `regexp::machine::RegexpSlowPath`).
+    pub enum RuntimeSlowPath {
+        /// The Number remainder (`vm::operations::number_remainder`), which libm computes.
+        NumberRemainder => crate::vm::operations::number_remainder,
+    }
 }

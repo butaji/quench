@@ -9,7 +9,7 @@ use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
     Analysis, AnalysisState, Emitter, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
-    SIMD_KERNEL_RIGHT, SIMD_KERNEL_WORDS, Slot, VECTOR_IR, compiled_simd_kernel,
+    SIMD_KERNEL_RIGHT, SIMD_KERNEL_WORDS, Slot, VECTOR_IR,
 };
 use quench_runtime::WasmType;
 use quench_runtime::bytecode::{Function, WideInstruction};
@@ -82,7 +82,7 @@ impl Emitter<'_, '_> {
         }
         let signature = crate::compiled::call_signature::typed_signature(self.call_conv, &[types::I64, types::I64], &[]);
         let signature = self.body.core.builder.import_signature(signature);
-        let target = self.constant(Width::I64, compiled_simd_kernel as *const () as usize as i64);
+        let target = self.constant(Width::I64, quench_runtime::staged::machine::SlowPath::address(crate::compiled::slow_paths::EngineSlowPath::SimdKernel) as i64);
         let selector = self.constant(Width::I64, i64::from(selector));
         let words = self.slot_address(slot, 0);
         self.call_signature(signature, target, &[selector, words]);
