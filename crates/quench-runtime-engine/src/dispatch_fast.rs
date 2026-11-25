@@ -13206,11 +13206,19 @@ pub(crate) unsafe fn region_payload_in_lane(context: usize, payload: usize) -> u
 ///
 /// # Safety
 /// `context` is the running lane's, which the region entered (`region_payload_in_lane`), and `call_pc` a call record of its function.
-pub(crate) unsafe extern "C" fn region_call_in_lane(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(crate) unsafe extern "C" fn region_call_in_lane(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
-    let status = unsafe { body_calls::body_call_helper(vm, residual, context, call_pc) };
-    // SAFETY: as above.
-    unsafe { refresh_region_bases_of(context) };
+    let (status, in_place) = unsafe { body_calls::body_call_status(context, call_pc) };
+    let cx = context as usize as *mut LaneContext;
+    let payload = unsafe { (*cx).region_payload };
+    if in_place {
+        // An in-place native pushed nothing: the stacks stand, only the heap bases may have moved.
+        // SAFETY: a region's payload lives for its run.
+        if let Some(payload) = unsafe { (payload as *mut quench_runtime::vm::engine_types::JsStepDispatch).as_mut() } { payload.refresh_object_bases(unsafe { self::vm(cx) }); }
+    } else {
+        // SAFETY: as above.
+        unsafe { refresh_region_bases_of(context) };
+    }
     status
 }
 
