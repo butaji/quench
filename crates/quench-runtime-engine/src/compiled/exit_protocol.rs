@@ -151,6 +151,8 @@ pub(crate) use quench_runtime::vm::engine_types::ExitSite;
 
 pub(crate) use quench_runtime::vm::engine_types::ExitTable;
 
+pub(crate) use quench_runtime::vm::engine_types::{Fact, FactMissing};
+
 #[quench_macros::ext(ExitTableOps1)]
 impl ExitTable {
     /// The table of the places `unit`'s PCs leave at. `stored` is the emitter's store set of a
@@ -166,12 +168,24 @@ impl ExitTable {
                 }
             };
             let sig = table.intern(&mut known, sig);
-            table.add(exit, sig, unit_pc);
+            let fact = unit.instructions.get(unit_pc).map_or(Fact::Unclassified, Fact::of);
+            table.add(exit, sig, unit_pc, fact);
         }
         table.sigs.shrink_to_fit();
         table.sites.shrink_to_fit();
+        table.crossings = (0..table.sites.len()).map(|_| std::cell::Cell::new(0)).collect();
         table
     }
+
+    /// Counts a run that left at `exit`, and answers its typed edge; a leave at no site (an entry,
+    /// a callee's activation) has none.
+    pub(crate) fn cross(&self, exit: LaneExit) -> Option<FactMissing> {
+        let site = self.site(exit)?;
+        let crossed = self.crossings.get(site.id as usize)?;
+        crossed.set(crossed.get().saturating_add(1));
+        Some(FactMissing { fact: site.fact, site: site.id })
+    }
+
 
     fn intern(&mut self, known: &mut HashMap<ExitSig, usize>, sig: ExitSig) -> usize {
         if let Some(&index) = known.get(&sig) { return index; }
@@ -181,13 +195,13 @@ impl ExitTable {
     }
 
     /// Adds the leave `exit` unless an earlier unit PC already leaves there.
-    fn add(&mut self, exit: LaneExit, sig: usize, unit_pc: usize) {
+    fn add(&mut self, exit: LaneExit, sig: usize, unit_pc: usize, fact: Fact) {
         let word = exit.word();
         let Err(at) = self.sites.binary_search_by_key(&word, |site| site.word) else { return };
         let id = self.sites.len() as u32;
         let sig = u32::try_from(sig).expect("a unit interns fewer sigs than a u32 holds");
         let unit_pc = u32::try_from(unit_pc).expect("a unit has fewer PCs than a u32 holds");
-        self.sites.insert(at, ExitSite { word, sig, id, unit_pc });
+        self.sites.insert(at, ExitSite { word, sig, id, unit_pc, fact });
     }
 
     /// The site at the place `exit` leaves, which only a leave at a PC has.
@@ -201,11 +215,12 @@ impl ExitTable {
     pub(crate) fn describe(&self, exit: LaneExit) -> String {
         let Some(site) = self.site(exit) else { return String::new() };
         let sig = &self.sigs[site.sig as usize];
-        if sig.kind != ExitKind::Inlined { return format!(" s{}", site.id); }
+        let fact = Fact::NAMES[site.fact as usize];
+        if sig.kind != ExitKind::Inlined { return format!(" s{} {fact}", site.id); }
         let stores = sig.live.iter().map(|value| match value.source {
             Source::Scratch(at) => format!("{}>{at}", value.slot),
         });
-        format!(" s{} {}", site.id, stores.collect::<Vec<_>>().join(","))
+        format!(" s{} {fact} {}", site.id, stores.collect::<Vec<_>>().join(","))
     }
 }
 

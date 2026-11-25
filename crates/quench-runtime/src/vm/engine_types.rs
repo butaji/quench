@@ -1522,13 +1522,16 @@ pub struct DirectCallee {
     pub forwarder: Option<SkippedForwarder>,
 }
 
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per
-/// compile and kept by the body it publishes, so its tables hold no capacity past their length.
+pub use super::fact_edge::{Fact, FactMissing};
+/// A unit's leaves, each place once, ordered by leave word, over its interned sigs, and per site its crossings
+/// (`FactMissing`). Built once per compile and kept by the body it publishes; its tables hold no spare capacity.
 #[derive(Default)]
 pub struct ExitTable {
     pub sigs: Vec<ExitSig>,
     pub sites: Vec<ExitSite>,
+    pub crossings: Box<[std::cell::Cell<u32>]>,
 }
+
 
 /// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
 /// then one per lean row.
@@ -2113,16 +2116,12 @@ pub struct ExitSig {
     pub live: Box<[LiveValue]>,
 }
 
-/// One leave of a unit: its sig, its place, its dense site id, and the first unit PC that
-/// leaves there.
+/// One leave of a unit: its sig, its place, its dense site id, the first unit PC that leaves there, and its missing fact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExitSite {
-    /// The leave's word (`LaneExit::word`), which `LaneExit::decode` reads back; the table's key.
-    /// Kept as a word, not a `LaneExit`, which holds a `Value` and is three words wide.
+    /// The leave's word (`LaneExit::word`, read back by `decode`), the table's key; not a `LaneExit`, three words wide.
     pub word: u64,
-    pub sig: u32,
-    pub id: u32,
-    pub unit_pc: u32,
+    pub sig: u32, pub id: u32, pub unit_pc: u32, pub fact: Fact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
