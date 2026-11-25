@@ -14,16 +14,14 @@
 //! helper row there, which makes the call. No row leaves through an exit or makes a call.
 
 use crate::heap_rows::{payload, word_at};
-use crate::staged::Stage;
 use crate::layout::call_record::CallRecord;
-use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
 use crate::layout::{
     JS_STEP_ARMED_ARRAY_PROOFS, JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS, JS_STEP_ARRAY_RECORD_BASE,
     JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE,
 };
 use crate::stage::StencilStage;
-use crate::staged::region::Region;
-use crate::staged::{builtins, call_native, elements, object, strings};
+use crate::staged::call_native;
+use crate::staged::native_row::{self, NativeRow};
 use crate::words::{S, hole64};
 use crate::Row;
 use core::mem::{offset_of, transmute};
@@ -57,82 +55,45 @@ unsafe fn record_register(record: usize, field: usize) -> u16 {
     unsafe { ((record + field) as *const u16).read() }
 }
 
-/// The builtin a row runs: its in-place body (`call_native::InPlaceBody`) over the operands the
-/// shared step reads, with the dispatch payload's words its natives need.
-#[derive(Clone, Copy)]
-enum Builtin {
-    CharCodeAt,
-    CharAt,
-    IsInteger,
-    Imul,
-    Push,
-    Pop,
+/// Where a row's words live in a stencil: the dispatch payload's records and proofs.
+struct PayloadEnv<'a> {
+    s: &'a S,
 }
 
-/// A row's body: which builtin, over the row's state (for the dispatch payload's words).
+impl native_row::RowEnv<StencilStage> for PayloadEnv<'_> {
+    // SAFETY (each): the dispatch payload's words name the thread's records and tables, live for the thread.
+    #[inline(always)]
+    fn string_records(&mut self, _stage: &mut StencilStage) -> u64 {
+        unsafe { word_at(payload(self.s), JS_STEP_STRING_RECORD_BASE) }
+    }
+    #[inline(always)]
+    fn ascii_unit_strings(&mut self, _stage: &mut StencilStage) -> u64 {
+        unsafe { word_at(payload(self.s), JS_STEP_ASCII_UNIT_STRINGS) }
+    }
+    #[inline(always)]
+    fn array_records(&mut self, _stage: &mut StencilStage) -> u64 {
+        unsafe { word_at(payload(self.s), JS_STEP_ARRAY_RECORD_BASE) }
+    }
+    #[inline(always)]
+    fn index_free_chain(&mut self, _stage: &mut StencilStage) -> u64 {
+        unsafe { word_at(word_at(payload(self.s), JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS) as usize, 0) }
+    }
+    #[inline(always)]
+    fn armed_array_proofs(&mut self, _stage: &mut StencilStage) -> u64 {
+        unsafe { word_at(word_at(payload(self.s), JS_STEP_ARMED_ARRAY_PROOFS) as usize, 0) }
+    }
+}
+
+/// A row's body: the shared row (`native_row::step_native_row`) over the payload's words.
 struct BuiltinBody<'a> {
     s: &'a S,
-    builtin: Builtin,
+    builtin: NativeRow,
 }
 
 impl call_native::InPlaceBody<StencilStage> for BuiltinBody<'_> {
-    /// The builtin's value for `receiver` and the argument window at `arguments`: its operands
-    /// prepared from the dispatch payload's records (a flat string, a dense array's backing), then
-    /// the interpreter's own native step. `charCodeAt` and `charAt` read a flat string's unit
-    /// (`strings::step_string_native_of`); `Number.isInteger` and `Math.imul` are
-    /// `call_native::step_number_native_of`; `push` and `pop` are `builtins::step_array_native_of`.
-    /// A `push` holds the index-free prototype chain proof (`JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS`)
-    /// and stores only a value no write barrier logs; a `pop` misses while array storage proofs are
-    /// armed (`JS_STEP_ARMED_ARRAY_PROOFS`), which a row cannot retire.
     #[inline(always)]
     fn in_place_value(&mut self, stage: &mut StencilStage, receiver: u64, arguments: u64, miss: ()) -> Option<u64> {
-        let argument = |stage: &mut StencilStage, index: u16| stage.load_u64(Region::Frame.mutable(), arguments, crate::staged::word_offset(index));
-        // SAFETY: the dispatch payload's words name the thread's records and tables, live for the
-        // thread; the backing's header is live with its record.
-        unsafe {
-            let payload = payload(self.s);
-            match self.builtin {
-                Builtin::CharCodeAt => {
-                    let string = strings::flat_string(stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), receiver, miss)?;
-                    let index = argument(stage, 0);
-                    strings::step_string_native_of(stage, strings::StringNative::CharCodeAt { string, index }, miss)
-                }
-                Builtin::CharAt => {
-                    let string = strings::flat_string(stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), receiver, miss)?;
-                    let (index, table) = (argument(stage, 0), word_at(payload, JS_STEP_ASCII_UNIT_STRINGS));
-                    strings::step_string_native_of(stage, strings::StringNative::CharAt { string, index, table }, miss)
-                }
-                Builtin::IsInteger => {
-                    let value = argument(stage, 0);
-                    call_native::step_number_native_of(stage, call_native::NumberNative::IsInteger, &[value], miss)
-                }
-                Builtin::Imul => {
-                    let args = [argument(stage, 0), argument(stage, 1)];
-                    call_native::step_number_native_of(stage, call_native::NumberNative::Math(call_native::MathCall::Imul), &args, miss)
-                }
-                Builtin::Push => {
-                    let backing = elements::array_backing(stage, word_at(payload, JS_STEP_ARRAY_RECORD_BASE), receiver, miss)?;
-                    let object = stage.add_imm(backing.record, ARRAY.object_offset as u64);
-                    let chain = word_at(word_at(payload, JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS) as usize, 0);
-                    if chain == 0 || object::proto_link(stage, object) != chain {
-                        return None;
-                    }
-                    // The room is the capacity word under its mask, read as `elements::append_in_room` reads it.
-                    let word = stage.load_u32(Region::Elements.mutable(), backing.header, ARRAY.header_capacity_offset as i32);
-                    let room = stage.and_imm(word, u64::from(ARRAY.capacity_mask));
-                    let value = argument(stage, 0);
-                    builtins::unreferenced(stage, value, miss)?;
-                    builtins::step_array_native_of(stage, builtins::ArrayNative::Push { room, value }, backing, miss)
-                }
-                Builtin::Pop => {
-                    if word_at(word_at(payload, JS_STEP_ARMED_ARRAY_PROOFS) as usize, 0) != 0 {
-                        return None;
-                    }
-                    let backing = elements::array_backing(stage, word_at(payload, JS_STEP_ARRAY_RECORD_BASE), receiver, miss)?;
-                    builtins::step_array_native_of(stage, builtins::ArrayNative::Pop, backing, miss)
-                }
-            }
-        }
+        native_row::step_native_row(stage, &mut PayloadEnv { s: self.s }, self.builtin, receiver, arguments, miss)
     }
 }
 
@@ -140,7 +101,7 @@ impl call_native::InPlaceBody<StencilStage> for BuiltinBody<'_> {
 /// (`call_native::step_in_place_call_of`, the interpreter's `lane_call_in_place`) over the frame,
 /// admitted against the identity the record holds, its value stored to the result register.
 #[inline(always)]
-unsafe fn builtin_call(s: &S, record: usize, builtin: Builtin) -> Option<u64> {
+unsafe fn builtin_call(s: &S, record: usize, builtin: NativeRow) -> Option<u64> {
     // SAFETY: the record is the chain's; its registers are the live frame's, canonical after the
     // spills before the row; the call passes the arguments the row reads (`BuiltinRow::arguments`).
     unsafe {
@@ -178,9 +139,10 @@ macro_rules! builtin_row {
     };
 }
 
-builtin_row!(builtin_char_code_at, |s, record| builtin_call(s, record, Builtin::CharCodeAt));
-builtin_row!(builtin_char_at, |s, record| builtin_call(s, record, Builtin::CharAt));
-builtin_row!(builtin_is_integer, |s, record| builtin_call(s, record, Builtin::IsInteger));
-builtin_row!(builtin_imul, |s, record| builtin_call(s, record, Builtin::Imul));
-builtin_row!(builtin_push, |s, record| builtin_call(s, record, Builtin::Push));
-builtin_row!(builtin_pop, |s, record| builtin_call(s, record, Builtin::Pop));
+/// One stencil per row of the table (`native_row_table::with_native_rows`).
+macro_rules! builtin_stencils {
+    ($( $(#[$doc:meta])* $row:ident = $symbol:literal, $stencil:ident, $arguments:literal; )*) => {
+        $( builtin_row!($stencil, |s, record| builtin_call(s, record, NativeRow::$row)); )*
+    };
+}
+crate::staged::native_row_table::with_native_rows!(builtin_stencils);
