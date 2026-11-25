@@ -101,14 +101,15 @@ fn at_position(index: i32, length: usize) -> Option<usize> {
 
 /// The index a `lastIndexOf` search starts from in an array of `length`: the last index when
 /// `fromIndex` is absent, else the int32 `fromIndex` clamped as the spec clamps it (a negative one
-/// counts from the end). Negative when nothing is searched; `None` for any other `fromIndex`,
-/// whose ToIntegerOrInfinity could run guest code.
+/// counts from the end), as the staged row `array_search::last_index_start_row` answers. Negative
+/// when nothing is searched; `None` for any other `fromIndex`, whose ToIntegerOrInfinity could run
+/// guest code.
 #[inline(always)]
 fn last_index_start(from: Option<Value>, length: usize) -> Option<isize> {
-    let last = length as isize - 1;
-    let Some(from) = from else {
-        return Some(last);
+    let (present, from) = match from {
+        None => (false, 0),
+        Some(from) => (true, i64::from(from.as_int()?)),
     };
-    let from = from.as_int()? as isize;
-    Some(if from >= 0 { from.min(last) } else { length as isize + from })
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    Some(crate::staged::array_search::last_index_start_row(&mut stage, present, from as u64, length as u64) as i64 as isize)
 }
