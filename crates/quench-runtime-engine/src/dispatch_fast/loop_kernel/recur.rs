@@ -237,6 +237,7 @@ impl Recurrence {
     pub(crate) fn interprets(&self) -> bool {
         matches!(self.pass, Pass::Machine(_))
     }
+    pub(crate) fn closed_form(&self) -> bool { matches!(&self.pass, Pass::Fold(fold) if fold.exact.is_some() || (fold.int32 && (fold.words.is_some() || matches!(fold.operand, Arg::Scalar(_))))) } // a chunk in closed form or on integer words
 
     /// The pass of a single recurrence whose cycle is a chain (`cycle`), whose other nodes
     /// read columns only.
