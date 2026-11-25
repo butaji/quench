@@ -3250,6 +3250,8 @@ pub struct LinkedTable {
     pub calls: *mut CallRecord,
     /// The lane helpers the image names, by number (`LiveImage::helpers`).
     pub helpers: &'static [usize],
+    /// The native search of each of the image's RegExp literals (`AotImage::regexps`), by index.
+    pub regexps: &'static [usize],
 }
 
 /// Every body starts on a cache line, which also satisfies each target's function alignment.
