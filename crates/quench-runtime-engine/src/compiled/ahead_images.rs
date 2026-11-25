@@ -125,7 +125,8 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     // A lane body's call through the VM's call helper steps its callee's records, where the base
     // body binds and enters the callee's body: richards' IdleTask.run (`this.scheduler.release(packet)`)
     // cost 5x the whole run as a lane.
-    if calls_through_helper(&code) { return Err("calls through the VM's helper"); }
+    // A member of a global name (`Math.sqrt`) is left out: the helper runs a native in place.
+    if calls_through_helper(&code) && calls_script(&unit, &proven) { return Err("calls through the VM's helper"); }
     // A lane body that polls and calls enters its callee's body through the VM's call helper, where
     // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
     // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
@@ -137,6 +138,22 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
 fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
+}
+
+/// Whether `unit` makes a call `proven` does not name whose callee may be a script function: any
+/// but a member read of a global name (`Math.sqrt(x)`), which is a native wherever the program
+/// writes no such member (the base body would call it through the same helper).
+fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) -> bool {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    let defined = |register, before: usize| (0..before).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == register));
+    let global_member = |pc: usize, callee| defined(callee, pc).is_some_and(|read| {
+        let field = unit.instructions[read];
+        let base = super::meaning_compiled::is_get_field(field).then(|| field.field_lookup()).flatten();
+        let Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) = base else { return false };
+        base.register_index().and_then(|object| defined(object, read)).is_some_and(|load| unit.instructions[load].op().loads_name())
+    });
+    unit.instructions.iter().enumerate().any(|(pc, instruction)| (means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall))
+        && !proven.contains_key(&pc) && !global_member(pc, instruction.register_b()))
 }
 
 /// Whether `code` calls the VM's call helper (`LaneHelper::Call`), the lowering's own record of a
