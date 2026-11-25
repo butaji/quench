@@ -106,7 +106,7 @@ lane_handler! {
             match read {
                 Some(value) => {
                     // The general read's word decodes as the staged row decodes its value (`own_site_decodes`).
-                    let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { quench_runtime::value_vec::decode_staged_word(value.to_bits()) } else { value };
+                    let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value.to_bits()) } else { value };
                     r.set(i.a, value);
                     next!(script, r, following(ip), Carried::script_in(script, view))
                 }
@@ -395,13 +395,13 @@ lane_handler! {
             Step::Value(value) if property && const { crate::dispatch_fast::returning_field_site(FLAG) } => {
                 // A returning read's value completes its activation as a returning record does
                 // (`lane_return_value!`), so it writes no register.
-                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { quench_runtime::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
+                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value) } else { Value::from_bits(value) };
                 let script: *mut LaneContext = view.memory.bytes.cast();
                 lane_return_value!(script, ip, value, crate::dispatch_fast::returning_leaf(FLAG))
             }
             Step::Value(value) if property => {
                 // The read's value, a slot word decoded where the form may hold a raw double.
-                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { quench_runtime::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
+                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value) } else { Value::from_bits(value) };
                 let script: *mut LaneContext = view.memory.bytes.cast();
                 // A sinking read stores its value to `this` before its register is written: a refused
                 // store repeats the read from the registers as they were.

@@ -4726,6 +4726,14 @@ pub(crate) const fn own_site_decodes(site: u8) -> bool {
         && form != quench_runtime::value_vec::NARROW_FORM)
 }
 
+/// The value of the slot word `word` an own-field read at a decoding site took: a form fixed
+/// untagged runs only where slots hold raw doubles (`own_formed_handler`), so it decodes a
+/// Number's word without testing the switch; an unfixed form tests it (`decode_staged_word`).
+#[inline(always)]
+pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
+    if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
+}
+
 /// Every generated own-field read: `$each!(site)` for each site, `this` and register alike.
 macro_rules! own_sites {
     ($each:ident) => {
