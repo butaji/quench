@@ -808,6 +808,13 @@ fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, o
     object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
+/// The lane helper the dispatch payload holds `offset` bytes in, as a call target (`EngineEntry::LaneHelper`).
+fn emit_js_payload_target(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
+    use quench_runtime::staged::{machine::MachineAccess, region::Region};
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    object_slots::emit(builder).entry_target(crate::compiled::slow_paths::EngineEntry::LaneHelper, regions::flags(Region::Dispatch.mutable()), payload, offset)
+}
+
 /// A header word (`staged::frame`'s `CONTEXT_*`, counted down from register 0) of the window at `window`.
 fn emit_frame_word(builder: &mut FunctionBuilder<'_>, window: ir::Value, index: usize) -> ir::Value {
     use quench_runtime::staged::region::Region;
@@ -845,14 +852,14 @@ fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value
 }
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
-fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-    object_slots::emit(builder).call_words(quench_runtime::staged::machine::CallTarget::entry(helper, crate::compiled::slow_paths::EngineEntry::LaneHelper), arguments)
+fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: quench_runtime::staged::machine::CallTarget<ir::Value>, arguments: &[ir::Value]) -> ir::Value {
+    object_slots::emit(builder).call_words(helper, arguments)
 }
 
 fn emit_lane_helper_call(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
-    helper: ir::Value,
+    helper: quench_runtime::staged::machine::CallTarget<ir::Value>,
     arguments: &[ir::Value],
 ) -> ir::Value {
     let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.vm));
@@ -1020,6 +1027,14 @@ macro_rules! lane_helper_inventory {
             pub(crate) fn addresses() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
+        }
+        // A lane helper is a declared call target: by this process's address (a slow path), read
+        // from a bound table, or by its linked symbol (`LaneHelpers::target`).
+        impl quench_runtime::staged::machine::slow_path_seal::Declared for LaneHelper {}
+        impl quench_runtime::staged::machine::EntrySource for LaneHelper {}
+        impl quench_runtime::staged::machine::SlowPath for LaneHelper {
+            #[inline]
+            fn address(self) -> usize { Self::addresses()[self as usize] as usize }
         }
 
         /// Defines the symbol `quench_lane_helper_<Name>` of every lane helper: a tail
@@ -1238,15 +1253,17 @@ impl LaneHelpers {
         }
     }
 
-    /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
+    /// `helper` as a call target: its symbol, or the table's entry (a symbol per use in live lane
     /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
-    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
-        if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
+    fn target(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
+        if self.names_symbols() {
+            let symbol = quench_runtime::vm::jit_backend::declare_symbol(builder.func, RelocKind::Helper as u32, helper as u32);
+            return object_slots::emit(builder).symbol_target(helper, symbol);
+        }
         let mut stage = object_slots::emit(builder);
         match self.table_address(helper) {
-            HelperAddress::Embedded(address) => stage.raw_const(quench_runtime::staged::machine::Lane::I64, address),
-            HelperAddress::Loaded { table, offset } =>
-                stage.raw_load(quench_runtime::staged::machine::Lane::I64, invariant(), table, offset),
+            HelperAddress::Embedded => stage.slow_path_target(helper),
+            HelperAddress::Loaded { table, offset } => stage.entry_target(helper, invariant(), table, offset),
         }
     }
 
@@ -1260,7 +1277,7 @@ impl LaneHelpers {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
-            Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
+            Self::Process(_) => HelperAddress::Embedded,
             Self::Bound(table, _) => HelperAddress::Loaded {
                 table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
@@ -1271,7 +1288,7 @@ impl LaneHelpers {
 /// Where a helper's address is: a constant, or an entry of the table a region bound.
 #[derive(Clone, Copy)]
 enum HelperAddress {
-    Embedded(i64),
+    Embedded,
     Loaded { table: ir::Value, offset: i32 },
 }
 
@@ -6437,10 +6454,10 @@ impl Emitter<'_, '_> {
             }
         };
         let context = self.body.core.context;
-        let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
+        let target = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmCallOut, invariant(), context, CONTEXT_CALLOUT);
         let function = self.raw_const(Lane::I64, i64::from(function));
         let roots = self.root();
-        let status = self.call_signature(callout_signature, quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmCallOut), &[context, function, args, out])[0];
+        let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
         self.unroot(roots);
         self.propagate(status);
         let destination = instruction.result_register();
@@ -7101,8 +7118,8 @@ impl<'a> Analysis<'a> {
             });
         }
         let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
-        let target = stage.raw_load(Lane::I64, MemFlagsData::trusted(), table, (index * 8) as i32);
-        let results = stage.call_signature(target_signature, quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmFunctionEntry), &call_args);
+        let target = stage.entry_target(crate::compiled::slow_paths::EngineEntry::WasmFunctionEntry, MemFlagsData::trusted(), table, (index * 8) as i32);
+        let results = stage.call_signature(target_signature, target, &call_args);
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
                 Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),

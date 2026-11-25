@@ -146,6 +146,19 @@ pub trait MachineAccess: MachineScalar {
     fn slow_path_target(&mut self, leaf: impl SlowPath) -> CallTarget<Self::Word> {
         CallTarget(self.raw_const(Lane::I64, leaf.address() as i64))
     }
+    /// The call target `source` declares, the word `offset` bytes from `base`. With `slow_path_target`
+    /// and `symbol_target`, the only ways to a target: the machine makes the read, so no other word is one.
+    fn entry_target(&mut self, _source: impl EntrySource, flags: Self::Flags, base: Self::Word, offset: i32) -> CallTarget<Self::Word> {
+        CallTarget(self.load_word(Width::I64, flags, base, offset))
+    }
+    /// The call target `source` declares at the linked `symbol` (a helper a loader resolves).
+    fn symbol_target(&mut self, _source: impl EntrySource, symbol: Self::Symbol) -> CallTarget<Self::Word> {
+        CallTarget(self.symbol_address(symbol))
+    }
+    /// `then` where `cond` holds, else `otherwise`: a target either way.
+    fn select_target(&mut self, cond: Self::Word, then: CallTarget<Self::Word>, otherwise: CallTarget<Self::Word>) -> CallTarget<Self::Word> {
+        CallTarget(self.raw_select(cond, then.0, otherwise.0))
+    }
     /// A call of the slow path `leaf` on word `arguments`: its word. A leaf is one its crate's
     /// inventory declares (`slow_paths!`), never a bare address.
     fn call_leaf(&mut self, leaf: impl SlowPath, arguments: &[Self::Word]) -> Self::Word {
@@ -229,7 +242,7 @@ pub trait MachineVariables: Machine {
 #[cfg(not(stencil_build))]
 pub trait MachineTail: MachineAccess + MachineFlow {
     fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
-    fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);
+    fn tail_call_indirect(&mut self, signature: Self::Signature, target: CallTarget<Self::Word>, arguments: &[Self::Word]);
 }
 
 /// A machine with vector registers: lane-wise operations by a (lane shape, operator) row, views
@@ -267,15 +280,12 @@ pub trait SlowPath: Copy + slow_path_seal::Declared {
 pub trait EntrySource: Copy + slow_path_seal::Declared {}
 
 /// A word compiled code may call (`MachineAccess::call_words`, `call_lanes`, `call_signature`): a
-/// slow path's entry (`MachineAccess::slow_path_target`), or a word read from a declared
-/// `EntrySource`. No other word is a call target, so a call to undeclared code does not type-check.
+/// slow path's entry (`MachineAccess::slow_path_target`), or a word the machine read from a declared
+/// `EntrySource` (`entry_target`, `symbol_target`). No other word is a call target, so a call to undeclared code does not type-check.
 #[derive(Clone, Copy, Debug)]
 pub struct CallTarget<W>(W);
 
 impl<W: Copy> CallTarget<W> {
-    /// The target `word`, read from `source`.
-    #[inline]
-    pub fn entry(word: W, _source: impl EntrySource) -> Self { Self(word) }
     /// The target's word, for the backend that emits the call.
     #[inline]
     pub fn word(self) -> W { self.0 }

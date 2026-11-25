@@ -344,7 +344,7 @@ impl Lowering<'_, '_> {
         let signature = quench_runtime::vm::jit_backend::signature_ref(self.builder.func, signature);
         let cell = self.reloc(RelocKind::EntryCell, self.function_id, cell as u64);
         let mut stage = emit(&mut self.builder);
-        let entry = stage.load_u64(CELL, cell, quench_runtime::staged::call::ENTRY_CELL.scalar_offset);
+        let entry = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(CELL), cell, quench_runtime::staged::call::ENTRY_CELL.scalar_offset);
         let (status, word) = stage.call_entry(signature, entry, &arguments);
         let returned = stage.raw_compare_imm(Relation::Equal, status, 0);
         let result = stage.raw_unary(Unary::Narrow(Lane::I32), word);

@@ -2164,13 +2164,14 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
     }
     #[inline(always)]
     fn wide(self) -> WideInstruction {
-        // SAFETY: the view admits a record only with its register fields inside the function's
-        // registers (`fields_fit_in_lane`), which `REGISTER_MASK` bounds; stated so a row's operand
-        // kind test folds.
+        // SAFETY: registers fit (`fields_fit_in_lane`); flagged records are stripped here or missed first.
+        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
+            self.0.a & quench_runtime::bytecode::REGISTER_MASK
+        } else { self.0.a };
         unsafe {
-            // A record whose result register carries flags runs the general step instead
-            // (`derive_lane_view`), and an input register field carries none.
-            if Self::RESULT_A || Self::REGISTER_A { std::hint::assert_unchecked(self.0.a <= quench_runtime::bytecode::REGISTER_MASK) }
+            // Past the flags its layout allows, a result is a register (a call's row decodes its return).
+            if Self::RESULT_A { std::hint::assert_unchecked(a & !Self::OPCODE.result_layout().allowed_flags() <= quench_runtime::bytecode::REGISTER_MASK) }
+            else if Self::REGISTER_A { std::hint::assert_unchecked(a <= quench_runtime::bytecode::REGISTER_MASK) }
             if Self::REGISTER_B { std::hint::assert_unchecked(self.0.b <= quench_runtime::bytecode::REGISTER_MASK) }
             if Self::REGISTER_C { std::hint::assert_unchecked(self.0.c <= quench_runtime::bytecode::REGISTER_MASK) }
         }
@@ -2185,9 +2186,8 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
             (false, FLAG_SET) => self.0.imm() & u32::from(u16::MAX),
             (false, _) => self.0.imm(),
         };
-        // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's; the
-        // read decodes by its register alone.
-        let a = if const { FLAG == super::SINK_SITE } { self.0.a & quench_runtime::bytecode::REGISTER_MASK } else { self.0.a };
+        // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's, and a returning
+        // record's its row's completion: each decodes by its register alone (`a` above).
         // Both operands of a two-operand arithmetic row the view proved registers (`FLAG_REGISTERS`):
         // their tags are the register tag, so the decode's operand kind tests fold.
         let (b, c) = if FLAG == FLAG_REGISTERS {
@@ -2257,6 +2257,8 @@ pub(crate) const FLAG_KEPT_OBJECT: u8 = 18;
 /// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`, `NumericMultiply`) whose operands
 /// are both registers (`specialize_register_operands`): the row reads them without testing their tags.
 pub(crate) const FLAG_REGISTERS: u8 = 19;
+/// `LaneFields`' `FLAG` for a record whose row completes its result itself (`returning_row`).
+pub(crate) const FLAG_COMPLETING: u8 = 20;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2420,7 +2422,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { OP == quench_runtime::bytecode::TIER_PROLOGUE as u16 || OP == quench_runtime::bytecode::BODY_ENTRY as u16 } {
         // A prologue record enters the activation's function in the lane context `cx` (`tier_prologue_resumed`,
-        // `body_entry_resumed`), erased of its host so the frame names no `H`.
+        // `body_calls::enter_published_body`), erased of its host so the frame names no `H`.
         let entry = EntryHost {
             cx: cx.cast(),
             ip,
@@ -3434,6 +3436,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
         if const { call_form(MISS).is_some() } {
             // A call row's records are JavaScript, whose view carries its context (`script_handler!`).
             debug_assert_eq!(view.memory.bytes.cast::<LaneContext>(), context_in_lane(), "a JavaScript view carries its context");
+            // The call decoder reads a returning call's flag itself (`Invocation::of`).
             let fields = LaneFields::<OP>(i);
             let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
                 Some(quench_runtime::bytecode::Decoder::Call) =>
@@ -3464,16 +3467,14 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
                 Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
             }
         }
+        // A record whose result carries flags is its miss's (`returning_row` completes a return).
+        if const { LaneFields::<OP>::OPCODE.result_layout().allowed_flags() != 0 } && i.a > quench_runtime::bytecode::REGISTER_MASK {
+            sibling!(const { protocol_miss(MISS) }, r, ip, view)
+        }
         let fields = LaneFields::<OP>(i);
         let Some(operation) = row_decode!(OP, FLAG_UNREAD, fields) else {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         };
-        // A returning record's value is `returning_row`'s to complete: this row never computes it.
-        if const { LaneFields::<OP>::OPCODE.result_layout().allowed_flags() & quench_runtime::bytecode::RETURN_REGISTER != 0 }
-            && i.a & quench_runtime::bytecode::RETURN_REGISTER != 0
-        {
-            sibling!(const { protocol_miss(MISS) }, r, ip, view)
-        }
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
@@ -3634,25 +3635,27 @@ sharded_handler! { script_handler, returning_row_shards, returning_row_handler, 
     /// only a record whose flags are exactly the return reaches its row. Any other record, and any step
     /// but a value, takes the record's protocol miss, which completes the returning value itself.
     pub(crate) fn returning_row<OP: u16, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
-        let fields = LaneFields::<OP>(i);
+        // Only flags exactly the return reach the row; a generic `Binary` takes its miss (2x cheaper).
+        if const { quench_runtime::staged::computes_binary(LaneFields::<OP>::OPCODE) }
+            || i.a & !quench_runtime::bytecode::REGISTER_MASK != quench_runtime::bytecode::RETURN_REGISTER
+        {
+            sibling!(const { protocol_miss(MISS) }, r, ip, view)
+        }
+        let fields = LaneFields::<OP, FLAG_COMPLETING>(i);
         // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
         let decoded = if const { quench_runtime::staged::super_const_array_family(LaneFields::<OP>::OPCODE) } {
-            Operation::decode_literal_completed_with(quench_runtime::staged::Fields::wide(fields), unsafe { crate::dispatch_fast::super_parts_in_lane(cx, i.imm() as usize) }, ())
+            Operation::decode_literal_with(quench_runtime::staged::Fields::wide(fields), unsafe { crate::dispatch_fast::super_parts_in_lane(cx, i.imm() as usize) }, ())
         } else {
-            Operation::decode_completed(quench_runtime::staged::Fields::wide(fields), quench_runtime::staged::DecodeContext::EMPTY)
+            Operation::decode(quench_runtime::staged::Fields::wide(fields), quench_runtime::staged::DecodeContext::EMPTY)
         };
-        let Some((operation, _)) = decoded.filter(|(_, flags)| *flags == quench_runtime::bytecode::RETURN_REGISTER) else {
+        let Some(operation) = decoded else {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
-                let value = Value::from_bits(value);
-                if let Some(resumed) = by_leaf!(LEAF, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) {
-                    resume!(cx, resumed)
-                }
-                resume!(cx, crate::dispatch_fast::return_value_general_in_lane(cx, ip, value));
+                lane_return_value!(cx, ip, Value::from_bits(value), LEAF)
             }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
         }

@@ -39,8 +39,16 @@ pub fn watch_inputs() {
 #[inline]
 pub fn note_input(what: &'static str) {
     if INPUTS_WATCHED.load(Ordering::Relaxed) {
-        FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(what);
+        note_watched_input(what);
     }
+}
+
+/// The watched half of `note_input`, out of line so a run that watches nothing (every run but a
+/// strict AOT build) pays the one load and branch, not the lock's code in its clock read.
+#[cold]
+#[inline(never)]
+fn note_watched_input(what: &'static str) {
+    FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(what);
 }
 
 /// The first environment input a watched run read, if any.

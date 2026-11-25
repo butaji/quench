@@ -274,9 +274,12 @@ impl Vm {
 
     /// `function`'s lane body from `images`, linked to this VM.
     fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
-        let linked_live: &LiveImage = images.linked.as_ref()?;
-        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll;
         let refused = |why: &str| if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: image lane refused, {why}"); };
+        let Some(linked_live) = images.linked.as_ref() else { refused("the image did not link"); return None };
+        let Some(lane) = images.image.functions.get(function as usize).and_then(|function| function.lane.as_ref()) else {
+            refused("the image holds no lane body for it"); return None;
+        };
+        let fault_poll = lane.fault_poll;
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;
         };
@@ -348,7 +351,9 @@ impl Vm {
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
-        images.linked = live::install(&images.image, self).ok();
+        let linked = live::install(&images.image, self);
+        if let Err(why) = &linked && quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: image did not link: {why}"); }
+        images.linked = linked.ok();
         self.programs.add_ahead_images(images);
     }
 

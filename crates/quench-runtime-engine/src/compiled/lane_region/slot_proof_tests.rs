@@ -26,7 +26,7 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true)
+        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true)
         .unwrap().function
 }
 

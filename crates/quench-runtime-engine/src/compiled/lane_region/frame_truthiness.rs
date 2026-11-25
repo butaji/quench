@@ -48,7 +48,7 @@ fn cell_truthiness(builder: &mut FunctionBuilder<'_>, payload: ir::Value, helper
         let flat = quench_runtime::staged::string_length::flat_truth(stage, records, bits);
         let unknown = stage.eq_imm(flat, 2u64);
         stage.choose_cold(unknown, |stage| {
-            let address = helpers.address(stage.builder, LaneHelper::Truthy);
+            let address = helpers.target(stage.builder, LaneHelper::Truthy);
             crate::compiled::emit_lane_helper_call(stage.builder, payload, address, &[bits])
         }, |_| flat)
     }, |stage| {

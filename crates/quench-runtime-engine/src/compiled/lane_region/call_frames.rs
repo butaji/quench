@@ -200,17 +200,17 @@ impl EmitFrame<'_> {
     /// The entry a direct call enters: the callee's proven entry where the call's arguments are proved to have its
     /// parameter types (`arguments_proven`) and the cell publishes the very body the call pinned (`DirectCallee::body`,
     /// `EntryCell::proven_body`), else the cell's entry. A cell that holds no proven entry, or another body's, enters `entry`.
-    fn entry_target(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, cell: ir::Value, entry: ir::Value) -> ir::Value {
+    fn proven_entry(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, cell: ir::Value, entry: quench_runtime::staged::machine::CallTarget<ir::Value>) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
         let DirectSite::Owned(callee) = callee else { return entry };
         let (true, Some(body)) = (self.proven_arguments.get(), callee.body.as_ref()) else { return entry };
-        let proven = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_entry)));
+        let proven = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), cell, field(std::mem::offset_of!(EntryCell, proven_entry)));
         let owner = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_body)));
         let pinned = stage.constant(std::rc::Rc::as_ptr(body).addr() as u64);
         let same_body = stage.sub(owner, pinned);
         let same_body = stage.eq_imm(same_body, 0_u64);
-        let present = stage.ne_imm(proven, 0_u64);
+        let present = stage.ne_imm(proven.word(), 0_u64);
         let holds = stage.all(same_body, present);
-        stage.select(holds, proven, entry)
+        stage.select_target(holds, proven, entry)
     }
 
     /// The total frame count a native header is indexed by (one-frame-one-call.md F5): the frames
@@ -322,7 +322,7 @@ impl EmitFrame<'_> {
         stage.builder.switch_to_block(check_flag);
         stage.builder.ins().brif(native, plain_header, &[], observed, &[]);
         stage.builder.switch_to_block(observed);
-        let helper = self.helpers.address(&mut stage.builder, LaneHelper::PopObservedHeader);
+        let helper = self.helpers.target(&mut stage.builder, LaneHelper::PopObservedHeader);
         emit_lane_helper_call(stage.builder, self.payload, helper, &[]);
         stage.builder.ins().jump(popped, &[]);
         stage.builder.switch_to_block(plain_header);
@@ -382,10 +382,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         if let Some(CallSite { initializing: Some((first, count)), registers, .. }) = self.call_site() {
             let arguments = stage.add_imm(registers, quench_runtime::staged::word_bytes(first));
             let argc = stage.constant(u64::from(count));
-            let helper = self.helpers.address(&mut stage.builder, LaneHelper::Construct);
+            let helper = self.helpers.target(&mut stage.builder, LaneHelper::Construct);
             return Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, arguments, argc]));
         }
-        let helper = self.helpers.address(&mut stage.builder, LaneHelper::ConstructReceiver);
+        let helper = self.helpers.target(&mut stage.builder, LaneHelper::ConstructReceiver);
         Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor]))
     }
 
@@ -432,8 +432,8 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             return Some(Entered { status: returned, word: this, unfinished });
         }
         self.push_native(stage, callee, this, call.registers, room);
-        let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
-        let entry = self.entry_target(stage, callee, room.cell, entry);
+        let entry = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), room.cell, field(std::mem::offset_of!(EntryCell, entry)));
+        let entry = self.proven_entry(stage, callee, room.cell, entry);
         let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = match callee {
@@ -505,7 +505,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let which = if site.constructs() { LaneHelper::ConstructCall } else { LaneHelper::Call };
         let context = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
         let record = stage.raw_const(Lane::I64, i64::from(call.record));
-        let address = self.helpers.address(&mut stage.builder, which);
+        let address = self.helpers.target(&mut stage.builder, which);
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);
         // The status dispatch, generated from the shared outcome table: each test but the first
         // is cold where a direct entry was emitted; the last miss leaves with the status.
