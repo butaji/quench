@@ -93,11 +93,10 @@ impl Vm {
 }
 
 /// The element index `at(index)` reads in an array of `length` for an int32 `index`: a negative
-/// index counts from the end; `None` past either end.
+/// index counts from the end; `None` past either end (`staged::strings::relative_index_row`).
 #[inline(always)]
 fn at_position(index: i32, length: usize) -> Option<usize> {
-    let relative = if index < 0 { length as i64 + i64::from(index) } else { i64::from(index) };
-    usize::try_from(relative).ok().filter(|position| *position < length)
+    crate::staged::strings::relative_index(i64::from(index), length, true)
 }
 
 /// The index a `lastIndexOf` search starts from in an array of `length`: the last index when

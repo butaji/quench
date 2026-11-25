@@ -210,23 +210,76 @@ pub fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: 
     step_string_native_of(&mut stage, StringNative::CharAt { string, index: index.to_bits(), table: table as u64 }, ()).map(Value::from_bits)
 }
 
-/// The unit index that `String.prototype.at` (`from_end`) or `codePointAt` reads for the relative
-/// `index`: a negative `at` index counts back from the end, and any other index is taken as given.
-/// `None` where the index lies outside `units`. Plain over `Units`, which the stencils do not
-/// name, so the row callers stay on the runtime.
-#[cfg(not(stencil_build))]
-pub(crate) fn relative_unit(units: Units<'_>, index: i64, from_end: bool) -> Option<usize> {
-    let index = if from_end && index < 0 { units.len() as i64 + index } else { index };
-    usize::try_from(index).ok().filter(|&index| index < units.len())
+/// The position a relative `index` (an integer word) names in a run of `length` elements or
+/// units, and whether it lies inside: a negative index counts back from the end where `from_end`
+/// (`at`), and is outside otherwise (`codePointAt`). The one body of `String.prototype.at`,
+/// `codePointAt`, `Array.prototype.at` and `with` for every tier.
+#[inline(always)]
+pub fn relative_index_row<S: Stage>(stage: &mut S, index: S::Word, length: S::Word, from_end: bool) -> (S::Cond, S::Word) {
+    let position = if from_end {
+        let sign = stage.shr_imm(index, 63u64);
+        let below = stage.ne_imm(sign, 0u64);
+        let counted = stage.add(length, index);
+        stage.select(below, counted, index)
+    } else {
+        index
+    };
+    // A position below zero is a huge unsigned word, past any length.
+    (stage.ult(position, length), position)
 }
 
-/// The code point that `codePointAt` answers at the unit `index` of `units`: the supplementary
-/// code point of a high surrogate followed by a low one, else the unit itself. `None` past the end.
+/// `relative_index_row` on `Concrete`: the position `index` names in a run of `length`, or `None`.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn relative_index(index: i64, length: usize, from_end: bool) -> Option<usize> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let (inside, position) = relative_index_row(&mut stage, index as u64, length as u64, from_end);
+    inside.then_some(position as usize)
+}
+
+/// The unit index that `String.prototype.at` (`from_end`) or `codePointAt` reads for the relative
+/// `index` of `units` (`relative_index_row`); `None` where it lies outside.
+#[cfg(not(stencil_build))]
+pub(crate) fn relative_unit(units: Units<'_>, index: i64, from_end: bool) -> Option<usize> {
+    relative_index(index, units.len(), from_end)
+}
+
+/// The code point that `codePointAt` answers at the unit `index` (inside the `length` units at
+/// `units`, two bytes a unit where `wide`): the supplementary code point of a high surrogate
+/// followed by a low one, else the unit itself. The one body for every tier.
+#[inline(always)]
+pub fn code_point_at_row<S: Stage>(stage: &mut S, wide: bool, units: S::Word, length: S::Word, index: S::Word) -> S::Word {
+    let first = super::code_units::code_unit(stage, wide, units, index);
+    if !wide {
+        return first;
+    }
+    let from_high = stage.add_imm(first, 0xD800u64.wrapping_neg());
+    let span = stage.constant(0x400);
+    let high = stage.ult(from_high, span);
+    let next = stage.add_imm(index, 1u64);
+    let room = stage.ult(next, length);
+    let pairable = stage.all(high, room);
+    stage.choose(pairable, #[inline(always)] |stage| {
+        let second = super::code_units::code_unit(stage, true, units, next);
+        let from_low = stage.add_imm(second, 0xDC00u64.wrapping_neg());
+        let span = stage.constant(0x400);
+        let low = stage.ult(from_low, span);
+        let upper = stage.mul_imm(from_high, 0x400u64);
+        let joined = stage.add(upper, from_low);
+        let point = stage.add_imm(joined, 0x10000u64);
+        stage.select(low, point, first)
+    }, #[inline(always)] |_| first)
+}
+
+/// `code_point_at_row` on `Concrete` over `units`; `None` past the end.
 #[cfg(not(stencil_build))]
 pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
-    let first = units.get(index)?;
-    let pair = units.get(index + 1).and_then(|low| crate::unicode::decode_surrogate_pair(first, low));
-    Some(pair.unwrap_or_else(|| u32::from(first)))
+    if index >= units.len() {
+        return None;
+    }
+    let span = super::spans::concrete_span(units);
+    let mut stage = super::Concrete::new(std::ptr::null());
+    Some(code_point_at_row(&mut stage, span.form.wide(), span.units, span.length, index as u64) as u32)
 }
 
 /// The code unit `String.fromCharCode` stores for an argument whose ToNumber is `number`: its
