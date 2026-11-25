@@ -33,15 +33,13 @@ impl Variant {
     }
 }
 
-/// The variant a compile links. `strict` refuses every demand that receives source at
-/// run time; otherwise the explicit support choice and the demands decide, where a
+/// The variant a compile links: `strict` evaluates the program at build time
+/// (`aot::strict`), where source it makes and evaluates is the build's, so its demands
+/// decide nothing; otherwise the explicit support choice and the demands decide, where a
 /// dynamic load counts as a demand for full support.
 pub fn select(strict: bool, explicit: Option<NativeImageSupport>, graph: &DependencyGraph) -> Result<Variant, String> {
     if strict {
-        return match source_demand(graph) {
-            Some(demand) => Err(format!("strict AOT refuses {demand}: strict support has no interpreter or JIT")),
-            None => Ok(Variant::Strict),
-        };
+        return Ok(Variant::Strict);
     }
     let dynamic_load = graph.requirements.iter().any(GraphRequirement::is_dynamic_load);
     match NativeImageSupport::select(explicit, graph.requires_dynamic_source || dynamic_load) {
@@ -54,17 +52,4 @@ pub fn select(strict: bool, explicit: Option<NativeImageSupport>, graph: &Depend
 /// dynamic requires and imports; every other unresolved requirement still blocks.
 pub fn blocks(variant: Variant, requirement: &GraphRequirement) -> bool {
     !(variant == Variant::Full && requirement.is_dynamic_load())
-}
-
-/// The first demand that may receive source at run time, named for a refusal.
-fn source_demand(graph: &DependencyGraph) -> Option<String> {
-    let kinds = [
-        ("eval", &graph.dynamic_eval_sites),
-        ("Function constructor", &graph.dynamic_function_sites),
-        ("reflective access", &graph.dynamic_reflective_sites),
-    ];
-    kinds
-        .into_iter()
-        .find_map(|(kind, sites)| sites.first().map(|(file, offset)| format!("{kind} at {}:{offset}", file.display())))
-        .or_else(|| graph.requirements.iter().find_map(GraphRequirement::dynamic_load_demand))
 }
