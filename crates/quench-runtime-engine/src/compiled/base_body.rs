@@ -217,6 +217,9 @@ impl Vm {
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        if !cfg!(feature = "jit") {
+            return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
+        }
         let _ = unit;
         // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, 0);

@@ -277,6 +277,11 @@ pub fn compile_function<T>(
         &cranelift_codegen::ir::Function,
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
+    // A build without the JIT (a static image's support) links no code generator: its native code is
+    // the image's, lowered by `quench compile`.
+    if !cfg!(feature = "jit") {
+        return Err(NativeCompileRejection::Cranelift);
+    }
     crate::vm::engine_calls::declare_regions(&mut function);
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
