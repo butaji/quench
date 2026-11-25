@@ -296,6 +296,8 @@ impl Stage for Emit<'_, '_> {
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         self.choose_arms(cond, then, otherwise, false)
     }
+    fn effect_if(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self), cold: impl FnOnce(&mut Self)) { self.effect_arms(cond, None::<fn(&mut Self) -> ir::Value>, then, cold) }
+    fn effect_if_both(&mut self, first: ir::Value, second: impl FnOnce(&mut Self) -> ir::Value, then: impl FnOnce(&mut Self), cold: impl FnOnce(&mut Self)) { self.effect_arms(first, Some(second), then, cold) }
     fn guard_status(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         let passed = self.builder.create_block();
         self.branch_if(cond, (passed, &[]), (miss, &[]));
@@ -494,3 +496,4 @@ impl NumericStage for Emit<'_, '_> {
 
 #[cfg(all(test, feature = "jit"))]
 pub(crate) mod tests;
+mod effects;
