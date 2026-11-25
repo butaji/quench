@@ -37,6 +37,11 @@ fn run() -> Result<std::process::ExitCode, String> {
     // A run saved at its first wait for input, whose answers hold, resumes from there
     // (`RESUMES_AT_REST`); else the entry runs, from the startup snapshot where there is one.
     // An image with saved runs has one for every start (`RESUME_ONLY`) and links no entry run.
+    // The source frontend links only where the program can make code (`MAKES_CODE`) or the
+    // entry runs from its start, compiling what it loads.
+    if MAKES_CODE || !RESUME_ONLY {
+        quench::host::enable_dynamic_source();
+    }
     let result = match quench::aot::saved_wait(RESUMES_AT_REST) {
         Some(wait) => quench::aot::resume_native_process_entry(host, &entry, SUPPORT, wait),
         None if RESUME_ONLY => Err("no saved run answers this start".into()),

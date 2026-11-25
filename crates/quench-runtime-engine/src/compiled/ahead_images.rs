@@ -282,7 +282,7 @@ impl Vm {
             refused("the image holds no lane body for it"); return None;
         };
         let fault_poll = lane.fault_poll;
-        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
+        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.closed))) else {
             refused("no unit"); return None;
         };
         // An image has no lowering to ask which registers a leave inside an inlined frame stores.
@@ -337,7 +337,7 @@ impl Vm {
         let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
         let Some(live) = images.linked.as_ref() else { return "unlinked" };
         let Some(key) = live.calls.key((function, pc)) else { return "unproven-site" };
-        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program));
+        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.closed));
         if facts.function_facts(function).call_target(pc) != Some(target.function) { return "other-function" }
         let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
         let Some(view) = views.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return "no-view" };

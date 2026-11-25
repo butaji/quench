@@ -64,6 +64,15 @@ fn only_trivia(source: &str) -> bool {
 impl Vm {
     #[inline(always)]
     pub(super) fn require_source_compilation(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        if crate::compile::source_routes::routes().is_none() {
+            // A binary whose program makes no code links no source frontend (`source_routes`):
+            // code generation from strings is disallowed, as under Node's
+            // `--disallow-code-generation-from-strings`.
+            let message = "Code generation from strings disallowed for this context";
+            let text = self.heap.alloc_string(JsString::from_str(message));
+            let error = self.construct_error_native(p, Native::EvalError, &[text]).unwrap_or(Value::UNDEFINED);
+            return Err(JsError::thrown(error, message.into()));
+        }
         if self.execution_mode.allows_dynamic_execution() {
             Ok(())
         } else {

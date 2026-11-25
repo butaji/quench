@@ -84,6 +84,7 @@ pub struct NativeJsCompiler {
 
 impl NativeJsCompiler {
     pub fn new(specialized: bool) -> Self {
+        super::source_routes::enable();
         Self {
             atoms: Rc::new(AtomSequence::new(AtomTable::default())),
             index: FxHashMap::default(),

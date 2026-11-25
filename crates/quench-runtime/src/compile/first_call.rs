@@ -179,6 +179,17 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         run: Option<&super::statement_stream::StreamRun>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        // Without the source routes (`source_routes`) a first-call stub cannot compile.
+        super::source_routes::routes().map_or(Err(Vec::new()), |routes| (routes.first_call_chunk)(program, function, span, atom_prefix, run))
+    }
+
+    pub(crate) fn specialize_first_call_chunk_source(
+        program: &ResidualProgram,
+        function: u32,
+        span: crate::bytecode::SourceSpan,
+        atom_prefix: &dyn AtomPrefix,
+        run: Option<&super::statement_stream::StreamRun>,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let name = program.source_name.as_str();
         let source = program.source.as_ref().filter(|source| source.base == 0);
         fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&super::statement_stream::StreamRun>, method: bool) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
