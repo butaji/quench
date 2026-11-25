@@ -30,8 +30,8 @@ pub(crate) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
     }
     match () {
         _ if crate::compiled::meaning_compiled::is_return(instruction) && plain && instruction.register_a() < sites.registers => returned(instruction.register_a()),
-        _ => locals::fast_row(sites.function, sites.id, instruction, sites.ending)
-            .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)),
+        _ => Decoded { owner: instruction.without_return().op().steps_on_owner(), ..locals::fast_row(sites.function, sites.id, instruction, sites.ending)
+            .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)) },
     }
 }
 

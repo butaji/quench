@@ -157,13 +157,13 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call
 pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => leave(pc),
-        Step::Helper => plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers)),
+        Step::Helper => plan_helper(layout, pc, decoded, (step_helper(decoded, helpers), helpers)),
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
         Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
-        Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
+        Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (step_helper(decoded, helpers), helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
             let register = match decoded.a {
@@ -177,6 +177,12 @@ pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         }
         Step::Call(shape) => plan_call(layout, shape, pc, helpers),
     }
+}
+
+/// The helper that makes the general step of `decoded`: an owner step's own helper (`LaneHelper::OwnerStep`, which
+/// runs the owner step alone over the running window or frame) where the table has it, else the general step.
+fn step_helper(decoded: &Decoded, helpers: LaneHelpers) -> LaneHelper {
+    if decoded.owner && decoded.packed.is_none() && call_plan::helper_address(helpers, LaneHelper::OwnerStep).is_some() { LaneHelper::OwnerStep } else { LaneHelper::Step }
 }
 
 /// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest
