@@ -7724,20 +7724,10 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
-            let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
+            // The same derivation as every entry's (`derived_view`): an image's view takes on every record.
+            let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                derive_lane_view(
-                    function,
-                    code,
-                    constants,
-                    vm.heap_reads(),
-                    kind,
-                    live,
-                    sites,
-                    crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                    diagnostics,
-                    tiers,
-                )
+                vm.derived_view(function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
