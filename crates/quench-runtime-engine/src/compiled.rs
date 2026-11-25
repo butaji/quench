@@ -469,7 +469,7 @@ pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding, slot: Option<(quench_runtime::vm::global_facts::GlobalSlot, quench_runtime::staged::ShapeFact)> }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place

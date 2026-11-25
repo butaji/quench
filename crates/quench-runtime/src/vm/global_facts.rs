@@ -191,7 +191,10 @@ impl Vm {
         if !self.global_name_hintable(atom) { return None; }
         let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
         let table = self.heap.object_mut(globals).map(crate::heap::Object::global_values_table)?;
-        let held = crate::heap::global_value_fact(table, GlobalCell::Slot(u32::from(hint.slot))).is_some();
+        let cell = GlobalCell::Slot(u32::from(hint.slot));
+        // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
+        while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
+        let held = crate::heap::global_value_fact(table, cell).is_some();
         let inherited = self.heap.object(globals)?.was_used_as_prototype();
         if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
         let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));

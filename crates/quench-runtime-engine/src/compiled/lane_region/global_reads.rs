@@ -17,13 +17,14 @@ impl Lowering<'_, '_> {
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
+        let mut held_slot = None;
         if let (GlobalBinding::Typed { .. }, Some(&(GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. })), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
-            self.hold_global_slot(state, exit, slot);
+            held_slot = Some((slot, self.hold_global_slot(state, exit, slot)));
         }
         if let (GlobalBinding::Lexical { .. }, Some(&GlobalRead::Lexical(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
             self.hold_lexical(state, exit, slot);
         }
-        let proof = super::EmitProof::GlobalRead { miss: exit, binding };
+        let proof = super::EmitProof::GlobalRead { miss: exit, binding, slot: held_slot };
         let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
         let row = quench_runtime::staged::Operation::decode_load_name(instruction, proof).expect("a global read is a name read");
         self.step(state, edges, row);
@@ -40,10 +41,11 @@ impl Lowering<'_, '_> {
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
+        let mut held_slot = None;
         if let (GlobalBinding::Typed { .. }, Some(&(GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. })), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
-            self.hold_global_slot(state, exit, slot);
+            held_slot = Some((slot, self.hold_global_slot(state, exit, slot)));
         }
-        let proof = super::EmitProof::GlobalRead { miss: exit, binding };
+        let proof = super::EmitProof::GlobalRead { miss: exit, binding, slot: held_slot };
         let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
         let row = quench_runtime::staged::Operation::decode_load_name(instruction, proof)?;
         self.step(state, edges, row);
@@ -59,8 +61,9 @@ impl Lowering<'_, '_> {
                 (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
             GlobalRead::Lexical(slot) => (GlobalBinding::Lexical { address: slot.address as u64 }, None),
-            GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
-            GlobalRead::Slot(_) | GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } | GlobalRead::NativeSlot { .. } => (GlobalBinding::Dynamic, None),
+            // A slot read live under the layout: of its observed type where a dependency holds it, else of any.
+            GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } => (GlobalBinding::Typed { ty: if slot.dependency.is_some() { slot.ty } else { Type::ANY } }, None),
+            GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
         };
         if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
     }
