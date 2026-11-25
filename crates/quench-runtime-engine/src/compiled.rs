@@ -4074,6 +4074,14 @@ pub(crate) fn take_lane_exit_line() -> u64 {
 }
 
 #[inline]
+/// Whether a lane body runs on this thread now: its entry's words are the thread's lane frame's
+/// (`LaneEntry::residual`), which another body's entry must keep (`Vm::run_nested_lane_method`).
+pub(crate) fn body_running_in_lane() -> bool {
+    let frame = frame_in_lane();
+    // SAFETY: as `frame_in_lane`; the words are read and dropped here.
+    unsafe { LaneEntry::of(&(*frame).dispatch) }.residual != 0
+}
+
 fn frame_in_lane() -> *mut BodyRunContext {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -7596,17 +7604,18 @@ impl Vm {
         id: ProgramId,
         function: u32,
     ) -> bool {
+        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size and mode: its
+        // image body is compiled already, so there is no compile to amortize, and an execution-only build has nothing else
+        // to run it with.
+        if self.images_run_in_lane() && self.programs.ahead_images(id, program).is_some() {
+            return true;
+        }
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
             cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT),
             base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::compiled::admission::Tier::Base]),
             wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
-        }
-        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its
-        // image body is compiled already, so there is no compile to amortize, and its callers' bodies are native.
-        if self.programs.js_jit_lane_methods_enabled() && self.programs.ahead_images(id, program).is_some() {
-            return true;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;

@@ -119,9 +119,6 @@ pub(crate) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
 /// caches is the one the interpreter would call. Any other callee or case is a miss, which leaves
 /// the body at the call, before any effect.
 pub(crate) unsafe extern "C" fn body_call_helper(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    // Static regions recover ordinary calls through their linked semantic operation.
-    // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext;
     if quench_runtime::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
@@ -246,8 +243,6 @@ unsafe fn body_read_answer(cx: *mut LaneContext, call: &BodyCall, target: &Scrip
 /// than store fields, its activation, whose completion yields its returned object or the
 /// receiver. A returned construction takes the plan only. Its results are `body_call_helper`'s.
 pub(crate) unsafe extern "C" fn body_construct_helper(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    // As `body_call_helper`: static regions recover constructions through their semantic operation.
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext;
     let mut moved = true;
     if quench_runtime::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
@@ -535,4 +530,58 @@ fn body_returned_in_lane(cx: *mut LaneContext, call: &BodyCall, completed: Optio
     let Some(kept) = kept else { return LANE_CALL_COMPLETED };
     concrete_write_call_result(registers, call.site.result, kept);
     LANE_CALL_RAISED
+}
+
+/// The one entry of `function`'s published body, from a prologue record `ip` or a frame's first instruction
+/// (`enter_frame_body`); an AOT image's body installs at the first entry. The lane continues where the run ends.
+pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, view: Carried, function: u32, binds_this: bool) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the activation just set the context to its own function's.
+    let (program, base, code) = unsafe { ((*cx).program, (*cx).base, &*(*cx).code) };
+    // SAFETY: the program's views outlive the lane run; this record is the view's.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
+        .expect("a published body's entry runs in its view");
+    // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
+    if own.audit_entry(true, || vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base)) {
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    }
+    // A function of a program with a loaded AOT image takes the image's body at its first entry, no warm-up.
+    if own.cell_body().is_none() && own.body_view_in_lane().is_none() && vm.programs.ahead_images(program, code).is_some() {
+        specialize_in_lane(cx, own, function, true, &[], None);
+    }
+    // A body a lifecycle edge retired gives its prologue back and warms again.
+    let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else { own.settle_retired_body(); return Resumed::At(r, base, Carried::script_in(cx, view)) };
+    // A body whose rows write past the frame's registers runs where the frame's storage reaches them.
+    let reaches = frame_reaches_in_lane(cx, method.caller_registers(), method.frame_reach());
+    if !reaches || !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) {
+        if reaches && body_prepare_recovery_in_lane(cx, &method) { return Resumed::Exit(exit(base)); }
+        drop(method);
+        body_refused_in_lane(vm, own);
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    }
+    let receiver = entry_receiver_in_lane(cx, binds_this);
+    // SAFETY: the activation just set the context to its own captures.
+    let captures = capture_reads(unsafe { (*cx).registers }.capture());
+    // A frame entered while another body runs keeps that body's entry words (`run_nested_lane_method`).
+    let left = if crate::compiled::body_running_in_lane() {
+        vm.run_nested_lane_method(&method, program, code, r.0, receiver, captures, cx.cast())
+    } else {
+        vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast())
+    };
+    body_concluded_in_lane(cx, r, ip, own, &method, left, function)
+}
+
+/// A root frame's start at its first instruction where the program has an AOT image: the record or exit
+/// the run continues at after `enter_published_body`; `None` without an image.
+pub(crate) fn enter_frame_body(cx: *mut LaneContext, function: u32) -> Option<Ip> {
+    // SAFETY: the context is the root frame's (`context_for_start`); the program's views outlive the lane run.
+    let (program, base, code, registers, views) = unsafe { ((*cx).program, (*cx).base, &*(*cx).code, (*cx).registers, &*(*cx).views) };
+    unsafe { vm(cx) }.programs.ahead_images(program, code)?;
+    views.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
+    let binds_this = code.function_get(function as usize).is_some_and(|body| !body.is_arrow);
+    Some(match enter_published_body(cx, base, registers, Carried::script(cx), function, binds_this) {
+        Resumed::Exit(ip) => ip,
+        // SAFETY: the lane dispatches from the context's state (`dispatch_in_lane`).
+        Resumed::At(r, ip, carried) => unsafe { (*cx).registers = r; (*cx).resumed_acc = carried.acc; ip },
+    })
 }

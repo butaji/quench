@@ -4413,6 +4413,13 @@ impl LaneStack {
 
 impl LaneView {
 
+    /// Admits every record as a lane entry: a body compiled ahead (`AheadImages`) leaves at any record it does not
+    /// make, and the lane takes the record on there (`ExecutionMode::NativeOnly` has nothing else to run it with). The
+    /// derived set keeps only the records a straight-line run from a jump target repays, which an image body need not be.
+    pub fn admit_every_record(&mut self) {
+        self.entries.fill(u64::MAX);
+    }
+
     /// Its lane-body tier state, made on first use.
     #[inline]
     pub fn tier(&self) -> &LaneTier {
