@@ -33,6 +33,8 @@ pub(crate) mod bound;
 pub(crate) mod live;
 #[path = "aot_image/file.rs"]
 pub(crate) mod file;
+#[path = "aot_image/demand.rs"]
+pub(crate) mod demand;
 
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;
@@ -71,7 +73,11 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         let leaves: usize = functions.iter().map(|function| function.base.generic_rows()).sum();
         eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body; base bodies leave at {leaves} records", program.source_name, functions.len());
     }
-    assemble(program, functions, symbols.finish(), &sites)
+    let image = assemble(program, functions, symbols.finish(), &sites)?;
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
+    }
+    Ok(image)
 }
 
 /// The image of `program`: its `functions`, with what their bodies name (`symbols`), each named call
@@ -128,6 +134,9 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
     }).collect();
     let mut image = assemble(program, functions, symbols.finish(), &std::collections::BTreeMap::new())?;
     image.wasm = wasm;
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
+    }
     Ok(image)
 }
 
