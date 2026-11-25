@@ -974,34 +974,28 @@ fn require_for_module_inner(
             return cached_builtin(context, BuiltinModule::Dgram);
         }
         Some(BuiltinModule::InternalDgram) => {
-            return crate::modules::dgram_shared_vm::internal_module(context);
+            return uncached_builtin(context, "internal/dgram");
         }
         Some(BuiltinModule::InternalBlockList) => {
-            let module = context.object_rooted()?;
-            let (constructor, _) = crate::modules::net_block_list::classes(context)?;
-            set(context, module, "BlockList", constructor)?;
-            return Ok(module);
+            return uncached_builtin(context, "internal/blocklist");
         }
         Some(BuiltinModule::InternalSocketAddress) => {
-            let module = context.object_rooted()?;
-            let (_, constructor) = crate::modules::net_block_list::classes(context)?;
-            set(context, module, "SocketAddress", constructor)?;
-            return Ok(module);
+            return uncached_builtin(context, "internal/socketaddress");
         }
         Some(BuiltinModule::Assert) => {
-            return crate::modules::assert_shared_vm::module(context);
+            return uncached_builtin(context, "assert");
         }
         Some(BuiltinModule::AssertStrict) => {
-            return crate::modules::assert_shared_vm::strict_module(context);
+            return uncached_builtin(context, "assert/strict");
         }
         Some(BuiltinModule::Path) => {
-            return crate::modules::path_shared_vm::module(context);
+            return uncached_builtin(context, "path");
         }
         Some(BuiltinModule::PathPosix) => {
-            return crate::modules::path_shared_vm::posix(context);
+            return uncached_builtin(context, "path/posix");
         }
         Some(BuiltinModule::PathWin32) => {
-            return crate::modules::path_shared_vm::win32(context);
+            return uncached_builtin(context, "path/win32");
         }
         Some(BuiltinModule::Url) => {
             return cached_builtin(context, BuiltinModule::Url);
@@ -1043,13 +1037,13 @@ fn require_for_module_inner(
             return if specifier.strip_prefix("node:").unwrap_or(&specifier)
                 == "internal/async_hooks"
             {
-                crate::modules::domain_trampoline::internal_hooks(context)
+                uncached_builtin(context, "internal/async_hooks")
             } else {
-                crate::modules::async_hooks_shared_vm::module(context)
+                uncached_builtin(context, "async_hooks")
             };
         }
         Some(BuiltinModule::DiagnosticsChannel) => {
-            return crate::modules::diagnostics_channel_shared_vm::module(context);
+            return uncached_builtin(context, "diagnostics_channel");
         }
         Some(BuiltinModule::Dns) => {
             return cached_builtin(context, BuiltinModule::Dns);
@@ -1388,6 +1382,25 @@ impl BuiltinModule {
         })
     }
 
+    /// The builder key of a builtin with no shared cache entry (`uncached_builtin`), as
+    /// `specifier` names it.
+    fn uncached_key(self, specifier: &str) -> Option<&'static str> {
+        Some(match self {
+            Self::Assert => "assert",
+            Self::AssertStrict => "assert/strict",
+            Self::Path => "path",
+            Self::PathPosix => "path/posix",
+            Self::PathWin32 => "path/win32",
+            Self::AsyncHooks if specifier.trim_start_matches("node:") == "internal/async_hooks" => "internal/async_hooks",
+            Self::AsyncHooks => "async_hooks",
+            Self::DiagnosticsChannel => "diagnostics_channel",
+            Self::InternalDgram => "internal/dgram",
+            Self::InternalBlockList => "internal/blocklist",
+            Self::InternalSocketAddress => "internal/socketaddress",
+            _ => return None,
+        })
+    }
+
     fn cache_key(self) -> Option<&'static str> {
         match self {
             Self::Internal(name) => Some(name),
@@ -1646,6 +1659,15 @@ fn cached_builtin(
     keyed_builtin(context, key, operation)
 }
 
+/// The builtin `key` (a module with no shared cache entry: it keeps its own, or makes a fresh
+/// object) built by its builder operation, so `require` links only the builders a program reaches.
+fn uncached_builtin(context: &mut Context<'_>, key: &str) -> Result<RootId, RootedError> {
+    let operation = builtin_operation(key).ok_or_else(|| RootedError::host(format!("node:{key} has no builder")))?;
+    let build = context.host_as::<crate::host::NodeHost>().operations[operation.0 as usize];
+    let undefined = context.undefined();
+    build(context, undefined, &[])
+}
+
 /// The host operation that builds the builtin `key` names, if any.
 pub(crate) fn builtin_operation(key: &str) -> Option<quench_runtime::HostFunctionId> {
     named_operation(&format!("builtin:{key}"))
@@ -1671,7 +1693,8 @@ pub(crate) fn named_operation(name: &str) -> Option<quench_runtime::HostFunction
 
 /// The builder operation of the builtin `specifier` names, if any (`aot::cli` keeps it).
 pub(crate) fn builtin_operation_of(specifier: &str) -> Option<quench_runtime::HostFunctionId> {
-    BuiltinModule::from_specifier(specifier)?.cache_key().and_then(builtin_operation)
+    let module = BuiltinModule::from_specifier(specifier)?;
+    module.cache_key().or_else(|| module.uncached_key(specifier)).and_then(builtin_operation)
 }
 
 pub(crate) fn keyed_builtin(
@@ -2090,6 +2113,49 @@ pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[Roo
 /// the builders its code names (`shared_vm::MarkedOperation`).
 pub(super) mod builders {
     use super::*;
+
+    /// `assert`.
+    pub(crate) fn assert(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::assert_shared_vm::module(context) }
+
+    /// `assert/strict`.
+    pub(crate) fn assert_strict(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::assert_shared_vm::strict_module(context) }
+
+    /// `path`.
+    pub(crate) fn path(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::path_shared_vm::module(context) }
+
+    /// `path/posix`.
+    pub(crate) fn path_posix(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::path_shared_vm::posix(context) }
+
+    /// `path/win32`.
+    pub(crate) fn path_win32(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::path_shared_vm::win32(context) }
+
+    /// `async_hooks`.
+    pub(crate) fn async_hooks(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::async_hooks_shared_vm::module(context) }
+
+    /// `internal/async_hooks`.
+    pub(crate) fn internal_async_hooks(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::domain_trampoline::internal_hooks(context) }
+
+    /// `diagnostics_channel`.
+    pub(crate) fn diagnostics_channel(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::diagnostics_channel_shared_vm::module(context) }
+
+    /// `internal/dgram`.
+    pub(crate) fn internal_dgram(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::dgram_shared_vm::internal_module(context) }
+
+    /// `internal/blocklist`: a fresh object holding the `BlockList` class.
+    pub(crate) fn internal_blocklist(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let module = context.object_rooted()?;
+        let (constructor, _) = crate::modules::net_block_list::classes(context)?;
+        set(context, module, "BlockList", constructor)?;
+        Ok(module)
+    }
+
+    /// `internal/socketaddress`: a fresh object holding the `SocketAddress` class.
+    pub(crate) fn internal_socketaddress(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let module = context.object_rooted()?;
+        let (_, constructor) = crate::modules::net_block_list::classes(context)?;
+        set(context, module, "SocketAddress", constructor)?;
+        Ok(module)
+    }
 
     /// `internal/options`.
     pub(crate) fn internal_options(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::cli_options_shared_vm::internal::module(context) }
