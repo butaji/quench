@@ -348,6 +348,10 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     // An image's direct rows name the site's record (`name_records`).
     if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, crate::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
+    if choice != Choice::Direct && quench_runtime::fallback::on() {
+        quench_runtime::fallback::note_at_focus(quench_runtime::fallback::Fallback::HelperCall,
+            format_args!("call through the helper row"), layout.id, shape.call_pc);
+    }
     #[cfg(test)]
     if choice == Choice::Direct { super::note_fast(shape.op); }
     chained(parts, spills.len(), record)

@@ -95,6 +95,25 @@ impl Refusal {
             _ => return None,
         })
     }
+
+    /// Whether the refusal is an expensive fallback (`quench_runtime::fallback`): a unit that wanted
+    /// to compile and could not. The tier model's pricing and the compile bound decide that a
+    /// compile does not pay, which is policy, not a fallback.
+    fn is_fallback(self) -> bool {
+        !matches!(self, Self::NotAmortized | Self::CompileBound)
+    }
+
+    /// The refusal's report name, with the operation an unsupported instruction names.
+    pub(crate) fn describe(self) -> String {
+        let name = Self::NAMES[self.slot()];
+        match self {
+            Self::UnsupportedInstruction(op) => match quench_runtime::bytecode::Op::from_index(usize::from(op)) {
+                Some(op) => format!("{name} {op:?}"),
+                None => format!("{name} {op}"),
+            },
+            _ => name.to_owned(),
+        }
+    }
 }
 
 /// Refusals counted since the process started, one per `Refusal::slot`. Atomics rather than
@@ -111,6 +130,9 @@ fn reporting() -> bool {
 /// Counts `refusal`, and registers the exit report on the first count when reporting is on.
 pub(crate) fn record(refusal: Refusal) {
     COUNTS[refusal.slot()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if quench_runtime::fallback::on() && refusal.is_fallback() {
+        quench_runtime::fallback::note_in_focus(quench_runtime::fallback::Fallback::JitReject, format_args!("{}", refusal.describe()));
+    }
     if reporting() {
         REPORT.call_once(|| {
             // SAFETY: `report` is a plain function that outlives the process.

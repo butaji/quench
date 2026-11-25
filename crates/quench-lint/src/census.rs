@@ -51,6 +51,8 @@ const COMPILED: &str = "crates/quench-runtime-engine/src/compiled";
 const LOWERING_FRAGMENTS: &[&str] = &["lower", "region"];
 const RUNTIME: &str = "crates/quench-runtime/src";
 const ENGINE: &str = "crates/quench-runtime-engine/src";
+/// The expensive fallbacks the corpus reaches (quench-gate step `fallbacks`), one `kind operation (reason)` per line.
+const FALLBACKS: &str = "crates/quench-tier-corpus/fallbacks.txt";
 const LANE_DISPATCH: &str = "crates/quench-runtime-engine/src/dispatch_fast";
 
 const METRICS: &[Metric] = &[
@@ -160,10 +162,55 @@ const METRICS: &[Metric] = &[
         extract: Extract::Text(extract::runtime_internals),
     },
     Metric {
+        name: "fallback_jit_rejects",
+        direction: Direction::Down,
+        sources: &[Source::File(FALLBACKS)],
+        extract: Extract::Text(extract::fallback_jit_rejects),
+    },
+    Metric {
+        name: "fallback_helper_calls",
+        direction: Direction::Down,
+        sources: &[Source::File(FALLBACKS)],
+        extract: Extract::Text(extract::fallback_helper_calls),
+    },
+    Metric {
+        name: "fallback_deopts",
+        direction: Direction::Down,
+        sources: &[Source::File(FALLBACKS)],
+        extract: Extract::Text(extract::fallback_deopts),
+    },
+    Metric {
+        name: "fallback_opaque_natives",
+        direction: Direction::Down,
+        sources: &[Source::File(FALLBACKS)],
+        extract: Extract::Text(extract::fallback_opaque_natives),
+    },
+    Metric {
         name: "lane_dispatch_lines",
         direction: Direction::Down,
         sources: &[Source::File("crates/quench-runtime-engine/src/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
         extract: Extract::Text(extract::text_lines),
+    },
+    // The duplication guards' allowances (SSOT 2, TOD-2232), each shrink-only in its own test: the
+    // hand copies of a JS meaning (`semantics_duplication.rs`), the opcode and family names of the
+    // derivation debt (`coverage.rs`), and the fixpoint drivers beside `dataflow::solve` (`fixpoint_drivers.rs`).
+    Metric {
+        name: "semantics_debt_lines",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/staged/semantics_debt.txt")],
+        extract: Extract::Text(extract::text_lines),
+    },
+    Metric {
+        name: "opcode_name_debt",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/staged/derivation_debt.txt")],
+        extract: Extract::Text(extract::opcode_name_debt),
+    },
+    Metric {
+        name: "fixpoint_drivers",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/staged/fixpoint_debt.txt")],
+        extract: Extract::Text(extract::debt_total),
     },
 ];
 

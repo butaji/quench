@@ -2363,6 +2363,9 @@ pub struct JsStepDispatch {
     /// `epoch`, and the admission a site whose entry misses asks.
     pub call_cache: usize,
     pub layout_seen: u64, // `Heap::native_layout_epoch` at the last reread of the bases (`refresh_object_bases`); `u64::MAX`: never
+    /// The VM whose bases the last reread read (`refresh_object_bases`), apart from `vm`, the VM whose storage the
+    /// dispatch is bound to (`bind_lane_storage`): a region's dispatch refreshes its bases without that binding.
+    pub bases_vm: usize,
     pub frameless: usize,
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
@@ -4070,14 +4073,16 @@ impl AheadImages {
     /// Adds `program`'s image while recording; a program that does not lower adds none.
     #[inline]
     pub fn record(program: &ResidualProgram) {
-        if recorded().is_none() { return; }
+        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
+        if !cfg!(feature = "jit") || recorded().is_none() { return; }
         Self::keep(program, Self::compile(program));
     }
 
     /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
     #[inline]
     pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
-        if recorded().is_none() { return; }
+        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
+        if !cfg!(feature = "jit") || recorded().is_none() { return; }
         Self::keep(program, Self::compile_wasm(vm, id, program, bindings));
     }
 

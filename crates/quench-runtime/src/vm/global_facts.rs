@@ -46,6 +46,8 @@ pub struct StableCell {
     pub fact: GlobalFact,
     pub global: Value,
     pub realm_offset: i32,
+    /// The value the cell held when the code was compiled: code that holds no cell compares a live read with it.
+    pub value: Value,
 }
 
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).

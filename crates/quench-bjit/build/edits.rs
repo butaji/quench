@@ -456,10 +456,14 @@ pub fn changed_items(old: &str, new: &str) -> Option<BTreeSet<(String, bool)>> {
     }
     // A function removed and added under one name is a changed header.
     let removed_functions: BTreeSet<&str> = removed.iter().filter_map(|item| item.body.map(|index| old_bodies[index].name)).collect();
-    for (items, bodies, is_added) in [(&removed, &old_bodies, false), (&added, &new_bodies, true)] {
+    for (items, bodies, outline, is_added) in [(&removed, &old_bodies, &old_outline, false), (&added, &new_bodies, &new_outline, true)] {
         for item in items {
             match (item.body.map(|index| &bodies[index]), &item.names) {
                 (Some(body), _) if body.is_const || (is_added && removed_functions.contains(body.name)) => return None,
+                // An exported function (`no_mangle`, `export_name`) is a row or entry root: a shard's reach lists what
+                // its existing roots reach, so no reach names a root added or removed, and the shard would be kept
+                // without it (or with it).
+                (Some(_), _) if exported(&outline[item.range.clone()]) => return None,
                 (Some(body), _) => {
                     names.insert((body.name.to_string(), body.free));
                 }
@@ -470,6 +474,12 @@ pub fn changed_items(old: &str, new: &str) -> Option<BTreeSet<(String, bool)>> {
         }
     }
     Some(names)
+}
+
+/// Whether an item's outline tokens carry an export attribute (`#[no_mangle]`, `#[unsafe(no_mangle)]`,
+/// `#[export_name = ..]`, `#[unsafe(export_name = ..)]`), which makes the function a symbol root.
+fn exported(item: &[&Token<'_>]) -> bool {
+    item.iter().any(|token| matches!(token, Token::Word("no_mangle" | "export_name")))
 }
 
 /// A function or `use` item of an outline: its tokens there, its place (the count of the outline's other tokens
@@ -609,5 +619,17 @@ mod tests {
         assert_eq!(changed_functions(&helper, BASE).map(|set| set.into_iter().collect::<Vec<_>>()), Some(vec!["alpha".to_string(), "helper".to_string()]));
         assert_eq!(names(BASE.replace("impl S {", "impl S { #[inline] pub fn epsilon(&self) {}")), Some(vec!["epsilon".to_string()]));
         assert_eq!(names(BASE.replace("impl S { fn gamma(&self) -> char { '}' } }", "impl S { }")), Some(vec!["gamma".to_string()]));
+    }
+
+    /// A row is an exported root: no shard's reach names one that is new, so adding or removing it is structural
+    /// (a shard kept by reach would miss the new row, Engine A 2026-11-25).
+    #[test]
+    fn exported_functions_added_or_removed_are_structural() {
+        let row = BASE.replace("const fn beta", "#[unsafe(no_mangle)]\npub extern \"C\" fn row_new(x: u64) -> u64 { x }\nconst fn beta");
+        assert_eq!(changed_functions(BASE, &row), None, "a row added");
+        assert_eq!(changed_functions(&row, BASE), None, "a row removed");
+        let named = BASE.replace("const fn beta", "#[unsafe(export_name = \"row_named\")]\nextern \"C\" fn named() {}\nconst fn beta");
+        assert_eq!(changed_functions(BASE, &named), None, "an export_name row added");
+        assert_eq!(changed_functions(&row, &row.replace("{ x }", "{ x + 1 }")).map(|set| set.into_iter().collect::<Vec<_>>()), Some(vec!["row_new".to_string()]), "an existing row's body is still an edit");
     }
 }

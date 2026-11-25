@@ -741,6 +741,7 @@ pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.
     let (code, args) = unsafe { (&*(*cx).code, call.values()) };
+    if quench_runtime::fallback::on() { crate::compiled::fallback_sites::opaque_native(cx, call, code, native); }
     let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args) else {
         // A returning call the native makes out of line is the lane's to complete.
         if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
