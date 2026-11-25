@@ -1669,6 +1669,10 @@ pub struct LaneBodyHistory {
     /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
     /// (Lindy: a function that ran this long runs on), rather than starting again from none.
     pub runs: u32,
+    /// Whether a u-jit body of it gave up (no run completed, or its leaves outweighed its runs) where
+    /// the stencil tier also runs: the tier below serves it from then on (`tier_model::Pick::Base`), so
+    /// the default mode never runs it costlier than `--b-jit` would.
+    pub base_fallback: bool,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps

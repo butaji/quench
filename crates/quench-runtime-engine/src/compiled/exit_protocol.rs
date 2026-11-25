@@ -37,6 +37,11 @@ const _: () = assert!(ExitKind::Callee.word(0) == quench_bjit::call_record::CALL
 
 #[quench_macros::ext(LaneExitOps2)]
 impl LaneExit {
+    /// Whether it leaves at an instruction: a PC of the body's function or of a callee it inlined.
+    pub(crate) fn at_place(self) -> bool {
+        matches!(self, Self::At(_) | Self::Inlined { .. })
+    }
+
     /// Whether the run ended the activation, by its return or by an exception, rather than
     /// leaving it to the lane.
     #[inline]
@@ -215,7 +220,7 @@ impl ExitTable {
 
     /// The site at the place `exit` leaves, which only a leave at a PC has.
     pub(crate) fn site(&self, exit: LaneExit) -> Option<&ExitSite> {
-        if !matches!(exit, LaneExit::At(_) | LaneExit::Inlined { .. }) { return None; }
+        if !exit.at_place() { return None; }
         self.sites.binary_search_by_key(&exit.word(), |site| site.word).ok().map(|index| &self.sites[index])
     }
 

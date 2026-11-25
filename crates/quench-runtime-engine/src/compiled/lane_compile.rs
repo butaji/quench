@@ -537,7 +537,9 @@ impl Vm {
         // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
-        if let Some(entries) = observed && !optimize {
+        // A function the u-jit gave up on takes the tier below's body (`LaneBodyHistory::base_fallback`).
+        if caller.tier().history.get().base_fallback { pick = Some(super::tier_model::Pick::Base); }
+        if let Some(entries) = observed && !optimize && pick.is_none() {
             let ir = estimated;
             pick = Some(pays_compile(tiers, program, function, entries, ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {

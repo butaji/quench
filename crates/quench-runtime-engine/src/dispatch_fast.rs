@@ -632,12 +632,6 @@ impl LaneView {
         }
     }
 
-    /// Whether the view's body is retired to `Declined` (`LaneBody::Declined`): a call of the view has no body to enter.
-    fn declined_in_lane(&self) -> bool {
-        // SAFETY: as `body_view_in_lane`; read only.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Declined)
-    }
-
     /// The published closed body a direct caller pins (`compiled::DirectCallee::method`, `body`), which a
     /// caller of the function itself, or of one with none, leaves to the entry cell it calls through
     /// (the stub enters nothing).
@@ -13074,7 +13068,7 @@ fn frames_resumed_in_lane(
     let (r, own, method) = resumed_activation_in_lane(cx, r, (own, root), callee);
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    match exit.resumed() {
+    own.resumed_leave(cx, (root, method), exit, match exit.resumed() {
         // SAFETY: the record that raised is one of the activation's function.
         crate::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         crate::compiled::LaneExit::Terminated | crate::compiled::LaneExit::Entry | crate::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
@@ -13096,7 +13090,7 @@ fn frames_resumed_in_lane(
         }
         // SAFETY: the record that completes the activation is one of its function's.
         crate::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
-    }
+    })
 }
 
 /// Reloads the heap bases the running body's rows read through the payload (`Vm::refresh_body_bases`), as

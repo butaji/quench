@@ -9,7 +9,7 @@ use crate::layout::{
     JS_STEP_STORES_SPECIALIZED,
     LAYOUT_TABLE_BASE, PROPERTY_BUFFER_BASE,
 };
-use crate::staged::barrier::{store_unlogged, MarkList};
+use crate::staged::barrier::{held_unlogged, store_unlogged, MarkList};
 use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
@@ -258,6 +258,15 @@ impl Stage for StencilStage {
         };
         let payload = self.payload;
         store_unlogged(self, payload, JS_STEP_STORE_WATCH, list, record_id, value, ()).is_some()
+    }
+    #[inline(always)]
+    fn held_store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
+        let list = match space {
+            StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
+            StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
+        };
+        let payload = self.payload;
+        held_unlogged(self, payload, (JS_STEP_STORE_WATCH, crate::layout::STORE_WATCH_COUNTS), list, record_id, value, ()).is_some()
     }
     #[inline(always)]
     fn immediate_store_open(&mut self) -> bool {

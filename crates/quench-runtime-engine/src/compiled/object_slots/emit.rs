@@ -166,20 +166,12 @@ impl Stage for Emit<'_, '_> {
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
     /// the store leaves at its miss.
     fn store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
-        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
-        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(logged);
-        let open = self.builder.append_block_param(join, types::I8);
-        let watch = std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch);
-        quench_runtime::staged::barrier::store_unlogged(self, payload, watch, super::super::store_mark_list(space), record_id, value, logged)
-            .expect("an Emit guard always continues");
-        let yes = self.raw_const(Lane::I8, 1);
-        self.goto(join, &[yes]);
-        self.builder.switch_to_block(logged);
-        let no = self.raw_const(Lane::I8, 0);
-        self.goto(join, &[no]);
-        self.builder.switch_to_block(join);
-        open
+        self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged))
+    }
+    /// `store_gate` of a value the slot's type holds: the barrier's log alone (`barrier::held_unlogged`).
+    fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        let counts = quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS;
+        self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::held_unlogged(stage, payload, (watch, counts), super::super::store_mark_list(space), record_id, value, logged))
     }
     /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
     /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
@@ -496,5 +488,7 @@ impl NumericStage for Emit<'_, '_> {
 #[cfg(all(test, feature = "jit"))]
 pub(crate) mod tests;
 mod effects;
+mod gate;
 #[cfg(all(test, feature = "jit"))] mod tier_homomorphism_tests;
 #[cfg(all(test, feature = "jit", target_arch = "x86_64"))] mod ir_predict_tests;
+
