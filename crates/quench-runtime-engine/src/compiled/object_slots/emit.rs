@@ -335,8 +335,8 @@ impl FlowStage for Emit<'_, '_> {
     fn branch(&mut self, cond: ir::Value, then: (ir::Block, &[ir::Value]), otherwise: (ir::Block, &[ir::Value])) {
         self.branch_if(cond, then, otherwise);
     }
-    fn call_entry(&mut self, signature: ir::SigRef, entry: ir::Value, args: &[ir::Value]) -> (ir::Value, ir::Value) {
-        let results = self.call_signature(signature, quench_runtime::staged::machine::CallTarget::entry(entry, crate::compiled::slow_paths::EngineEntry::CompiledEntry), args);
+    fn call_entry(&mut self, signature: ir::SigRef, entry: quench_runtime::staged::machine::CallTarget<ir::Value>, args: &[ir::Value]) -> (ir::Value, ir::Value) {
+        let results = self.call_signature(signature, entry, args);
         (results[0], results[1])
     }
     fn ret(&mut self, values: &[ir::Value]) { self.leave(values); }

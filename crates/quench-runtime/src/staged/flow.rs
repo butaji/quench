@@ -15,7 +15,7 @@ pub trait FlowStage: Stage {
     fn branch(&mut self, cond: Self::Cond, then: (Self::Block, &[Self::Word]), otherwise: (Self::Block, &[Self::Word]));
     /// Calls the entry address `entry` as `signature` with `args`, and answers the status and result
     /// words it returns.
-    fn call_entry(&mut self, signature: Self::Signature, entry: Self::Word, args: &[Self::Word]) -> (Self::Word, Self::Word);
+    fn call_entry(&mut self, signature: Self::Signature, entry: crate::staged::machine::CallTarget<Self::Word>, args: &[Self::Word]) -> (Self::Word, Self::Word);
     /// Leaves the function with `values`.
     fn ret(&mut self, values: &[Self::Word]);
 }

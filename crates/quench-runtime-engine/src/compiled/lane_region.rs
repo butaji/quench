@@ -76,7 +76,7 @@ pub(crate) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] pub(crate) mod captures;
 #[path = "lane_region/compare_jumps.rs"] pub(crate) mod compare_jumps;
 #[path = "lane_region/relocs.rs"] pub(crate) mod relocs;
-use relocs::RelocKind; pub(crate) use relocs::{atom_symbol, helper_symbol, numeric_symbol};
+use relocs::RelocKind; pub(crate) use relocs::{atom_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] pub(crate) mod constructions;
 #[path = "lane_region/virtual_objects.rs"] pub(crate) mod virtual_objects;
@@ -2087,7 +2087,7 @@ pub(crate) fn lower(
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
-        let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::CallBudget);
+        let helper = lowering.helpers.target(&mut lowering.builder, LaneHelper::CallBudget);
         lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
     }
     if coverage.selected_entry() {
@@ -2998,7 +2998,7 @@ impl Lowering<'_, '_> {
     fn slot_writes_admitted_as(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, raw_double: bool) -> (ir::Value, Type) {
         let domain = quench_runtime::typed_ir::SlotType::from_type(writes);
         let encoded = self.raw_const(Lane::I64, domain as i64 | if raw_double { RAW_DOUBLE_WRITES as i64 } else { 0 });
-        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldWriteAdmission);
+        let helper = self.helpers.target(&mut self.builder, LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         (self.raw_compare_imm(Relation::NotEqual, admitted, 0), domain.ty())
     }
@@ -3264,7 +3264,7 @@ impl Lowering<'_, '_> {
 
     /// A helper's call, by its address in the running image's table (`LaneHelpers::address`).
     fn helper_call(&mut self, helper: LaneHelper, arguments: &[ir::Value]) -> ir::Value {
-        let address = self.helpers.address(&mut self.builder, helper);
+        let address = self.helpers.target(&mut self.builder, helper);
         emit_lane_helper_call(&mut self.builder, self.payload, address, arguments)
     }
 
