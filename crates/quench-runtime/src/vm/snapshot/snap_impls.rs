@@ -134,74 +134,132 @@ mod transition_tag {
     pub(super) const DICTIONARY: u8 = 9;
 }
 
-impl Snap for ShapeTransition {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        match *self {
-            Self::Root => writer.u8(transition_tag::ROOT),
-            Self::FunctionName { name } => {
-                writer.u8(transition_tag::FUNCTION_NAME);
-                writer.u32(name);
-            }
-            Self::FunctionNameReconfigured => writer.u8(transition_tag::FUNCTION_NAME_RECONFIGURED),
-            Self::FunctionLengthReconfigured => writer.u8(transition_tag::FUNCTION_LENGTH_RECONFIGURED),
-            Self::Constructed { constructor, new_target_is_base } => {
-                writer.u8(transition_tag::CONSTRUCTED);
-                writer.value(constructor);
-                writer.bool(new_target_is_base);
-            }
-            Self::Add { key, slot, attributes } => {
-                writer.u8(transition_tag::ADD);
-                key.snap(writer)?;
-                writer.u32(slot);
-                attributes.snap(writer)?;
-            }
-            Self::Delete { key, slot } => {
-                writer.u8(transition_tag::DELETE);
-                key.snap(writer)?;
-                writer.u32(slot);
-            }
-            Self::Vacant => writer.u8(transition_tag::VACANT),
-            Self::Descriptor { slot, attributes } => {
-                writer.u8(transition_tag::DESCRIPTOR);
-                writer.u32(slot);
-                attributes.snap(writer)?;
-            }
-            Self::Dictionary { trigger } => {
-                writer.u8(transition_tag::DICTIONARY);
-                trigger.snap(writer)?;
-            }
-        }
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(match reader.u8()? {
-            transition_tag::ROOT => Self::Root,
-            transition_tag::FUNCTION_NAME => Self::FunctionName { name: reader.u32()? },
-            transition_tag::FUNCTION_NAME_RECONFIGURED => Self::FunctionNameReconfigured,
-            transition_tag::FUNCTION_LENGTH_RECONFIGURED => Self::FunctionLengthReconfigured,
-            transition_tag::CONSTRUCTED => Self::Constructed {
-                constructor: reader.value()?,
-                new_target_is_base: reader.bool()?,
-            },
-            transition_tag::VACANT => Self::Vacant,
-            tag => return Self::unsnap_keyed(tag, reader),
-        })
+/// The bytes of one shape's record in a snapshot (`shape_record`): fixed-width, so the table
+/// reads back as one span with no per-field decoding.
+pub(super) const SHAPE_RECORD: usize = 40;
+
+/// `PropertyKey` kinds in a shape record's flag byte, above the attribute bits.
+const KEY_SHIFT: u32 = 4;
+
+/// The two words a property key takes in a shape record: its atom and its value.
+fn key_words(key: property_key::PropertyKey) -> (u8, u32, u64) {
+    match key {
+        property_key::PropertyKey::String(atom) => (property_key_tag::STRING, atom, 0),
+        property_key::PropertyKey::Symbol(symbol) => (property_key_tag::SYMBOL, 0, symbol.to_bits()),
+        property_key::PropertyKey::Private(home, atom) => (property_key_tag::PRIVATE, atom, home.to_bits()),
     }
 }
 
-impl ShapeTransition {
-    /// The transition of `tag` that names a property or a dictionary trigger.
-    fn unsnap_keyed(tag: u8, reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(match tag {
-            transition_tag::ADD => Self::Add {
-                key: Snap::unsnap(reader)?,
-                slot: reader.u32()?,
-                attributes: Snap::unsnap(reader)?,
+fn key_of_words(kind: u8, atom: u32, value: u64) -> SnapshotResult<property_key::PropertyKey> {
+    Ok(match kind {
+        property_key_tag::STRING => property_key::PropertyKey::String(atom),
+        property_key_tag::SYMBOL => property_key::PropertyKey::Symbol(Value::from_bits(value)),
+        property_key_tag::PRIVATE => property_key::PropertyKey::Private(Value::from_bits(value), atom),
+        _ => return Err(SnapshotError("invalid snapshot property key".into())),
+    })
+}
+
+fn data_bits(attributes: DataAttributes) -> u8 {
+    u8::from(attributes.writable) | u8::from(attributes.enumerable) << 1 | u8::from(attributes.configurable) << 2
+}
+
+fn data_of_bits(bits: u8) -> DataAttributes {
+    DataAttributes { writable: bits & 1 != 0, enumerable: bits & 2 != 0, configurable: bits & 4 != 0 }
+}
+
+/// Shape `shape` as its record: the parent, storage length, latest child and facts as the
+/// table holds them, then the transition's tag, flags and operands. The memo and lookup index
+/// are derived again after a restore.
+pub(super) fn shape_record(shape: &Shape) -> [u8; SHAPE_RECORD] {
+    let (tag, flags, atom, slot, value, extra) = match shape.transition {
+        ShapeTransition::Root => (transition_tag::ROOT, 0, 0, 0, 0, 0),
+        ShapeTransition::FunctionName { name } => (transition_tag::FUNCTION_NAME, 0, name, 0, 0, 0),
+        ShapeTransition::FunctionNameReconfigured => (transition_tag::FUNCTION_NAME_RECONFIGURED, 0, 0, 0, 0, 0),
+        ShapeTransition::FunctionLengthReconfigured => (transition_tag::FUNCTION_LENGTH_RECONFIGURED, 0, 0, 0, 0, 0),
+        ShapeTransition::Constructed { constructor, new_target_is_base } => {
+            (transition_tag::CONSTRUCTED, u8::from(new_target_is_base), 0, 0, constructor.to_bits(), 0)
+        }
+        ShapeTransition::Add { key, slot, attributes } => {
+            let (kind, atom, value) = key_words(key);
+            (transition_tag::ADD, data_bits(attributes) | kind << KEY_SHIFT, atom, slot, value, 0)
+        }
+        ShapeTransition::Delete { key, slot } => {
+            let (kind, atom, value) = key_words(key);
+            (transition_tag::DELETE, kind << KEY_SHIFT, atom, slot, value, 0)
+        }
+        ShapeTransition::Vacant => (transition_tag::VACANT, 0, 0, 0, 0, 0),
+        ShapeTransition::Descriptor { slot, attributes } => {
+            let bits = u8::from(attributes.writable) | u8::from(attributes.enumerable) << 1
+                | u8::from(attributes.configurable) << 2 | u8::from(attributes.accessor) << 3;
+            (transition_tag::DESCRIPTOR, bits, 0, slot, 0, attributes.accessors)
+        }
+        ShapeTransition::Dictionary { trigger } => (transition_tag::DICTIONARY, trigger as u8, 0, 0, 0, 0),
+    };
+    let mut record = [0; SHAPE_RECORD];
+    record[0..4].copy_from_slice(&shape.parent.to_le_bytes());
+    record[4..8].copy_from_slice(&shape.storage_len.to_le_bytes());
+    record[8..12].copy_from_slice(&shape.last_child.get().to_le_bytes());
+    record[12..14].copy_from_slice(&shape.facts.0.to_le_bytes());
+    record[14] = tag;
+    record[15] = flags;
+    record[16..20].copy_from_slice(&atom.to_le_bytes());
+    record[20..24].copy_from_slice(&slot.to_le_bytes());
+    record[24..32].copy_from_slice(&value.to_le_bytes());
+    record[32..36].copy_from_slice(&extra.to_le_bytes());
+    record
+}
+
+/// The shape `shape_record` wrote.
+pub(super) fn shape_of_record(record: &[u8; SHAPE_RECORD]) -> SnapshotResult<Shape> {
+    let word = |at: usize| u32::from_le_bytes([record[at], record[at + 1], record[at + 2], record[at + 3]]);
+    let (flags, atom, slot, extra) = (record[15], word(16), word(20), word(32));
+    let value = u64::from_le_bytes([
+        record[24], record[25], record[26], record[27], record[28], record[29], record[30], record[31],
+    ]);
+    let transition = match record[14] {
+        transition_tag::ROOT => ShapeTransition::Root,
+        transition_tag::FUNCTION_NAME => ShapeTransition::FunctionName { name: atom },
+        transition_tag::FUNCTION_NAME_RECONFIGURED => ShapeTransition::FunctionNameReconfigured,
+        transition_tag::FUNCTION_LENGTH_RECONFIGURED => ShapeTransition::FunctionLengthReconfigured,
+        transition_tag::CONSTRUCTED => ShapeTransition::Constructed {
+            constructor: Value::from_bits(value),
+            new_target_is_base: flags & 1 != 0,
+        },
+        transition_tag::ADD => ShapeTransition::Add {
+            key: key_of_words(flags >> KEY_SHIFT, atom, value)?,
+            slot,
+            attributes: data_of_bits(flags),
+        },
+        transition_tag::DELETE => ShapeTransition::Delete { key: key_of_words(flags >> KEY_SHIFT, atom, value)?, slot },
+        transition_tag::VACANT => ShapeTransition::Vacant,
+        transition_tag::DESCRIPTOR => ShapeTransition::Descriptor {
+            slot,
+            attributes: ShapeAttributes {
+                writable: flags & 1 != 0,
+                enumerable: flags & 2 != 0,
+                configurable: flags & 4 != 0,
+                accessor: flags & 8 != 0,
+                accessors: extra,
             },
-            transition_tag::DELETE => Self::Delete { key: Snap::unsnap(reader)?, slot: reader.u32()? },
-            transition_tag::DESCRIPTOR => Self::Descriptor { slot: reader.u32()?, attributes: Snap::unsnap(reader)? },
-            transition_tag::DICTIONARY => Self::Dictionary { trigger: Snap::unsnap(reader)? },
-            _ => return Err(SnapshotError("invalid snapshot shape transition".into())),
-        })
-    }
+        },
+        transition_tag::DICTIONARY => ShapeTransition::Dictionary {
+            trigger: match flags {
+                0 => DictionaryTrigger::PropertyCount,
+                1 => DictionaryTrigger::DeletionPattern,
+                2 => DictionaryTrigger::PrototypeUse,
+                3 => DictionaryTrigger::ModuleNamespace,
+                _ => return Err(SnapshotError("invalid snapshot dictionary trigger".into())),
+            },
+        },
+        _ => return Err(SnapshotError("invalid snapshot shape transition".into())),
+    };
+    Ok(Shape {
+        parent: word(0),
+        transition,
+        storage_len: word(4),
+        facts: ShapeFacts(u16::from_le_bytes([record[12], record[13]])),
+        memo: std::cell::Cell::new(ShapeMemo::INITIAL),
+        lookup_index: std::cell::OnceCell::new(),
+        last_child: std::cell::Cell::new(word(8)),
+    })
 }
