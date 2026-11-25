@@ -14,7 +14,7 @@ guest_reentries 147
 wall_clock_reads 36
 stable_epoch_reads 4
 tier_runtime_internals 193
-lane_dispatch_lines 38674
-semantics_debt_lines 57
+lane_dispatch_lines 38684
+semantics_debt_lines 56
 opcode_name_debt 0
-fixpoint_drivers 4
+fixpoint_drivers 3
