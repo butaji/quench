@@ -892,18 +892,7 @@ fn emit_unlogged_property_store_guard(
     stage: &mut object_slots::Emit<'_, '_>, list: quench_runtime::staged::barrier::MarkList, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
-    use quench_runtime::staged::barrier::unmarked;
-    pub use quench_runtime::value::ValueLayout;
-    // An immediate value names no heap record and joins no log; a heap value's owner is
-    // tested in its mark block. Marks and block bases are refreshed after each callout.
-    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-    let heap = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
-    let (marked, write) = (stage.new_block(), stage.new_block());
-    stage.branch_if(heap, (marked, &[]), (write, &[]));
-    stage.enter(marked);
-    unmarked(stage, payload, list, record_id, fallback).expect("an Emit guard always continues");
-    stage.goto(write, &[]);
-    stage.enter(write);
+    quench_runtime::staged::barrier::value_unlogged(stage, payload, list, record_id, value, fallback).expect("an Emit guard always continues");
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
