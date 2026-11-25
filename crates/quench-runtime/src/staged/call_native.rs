@@ -285,6 +285,12 @@ pub enum NumberNative {
     Math(MathCall),
     /// `Number.isInteger` of its one argument.
     IsInteger,
+    /// `Number.isSafeInteger` of its one argument.
+    IsSafeInteger,
+    /// `Number.isNaN` of its one argument.
+    IsNaN,
+    /// `Number.isFinite` of its one argument.
+    IsFinite,
 }
 
 /// The value word `native` answers for the value words `args`: the one step of a native of
@@ -295,21 +301,44 @@ pub fn step_number_native_of<S: NumericStage>(stage: &mut S, native: NumberNativ
     -> Option<S::Word> {
     match native {
         NumberNative::Math(call) => math_call(stage, call, args, miss),
-        NumberNative::IsInteger => {
+        NumberNative::IsInteger | NumberNative::IsSafeInteger | NumberNative::IsNaN | NumberNative::IsFinite => {
             let &[value] = args else { return None };
             let int = is_int(stage, value);
             stage.choose_leaving(int, #[inline(always)] |stage| {
+                // Every int32 is a finite, safe integer and no NaN.
                 let payload = stage.narrow(value);
                 let integral = super::builtins::is_integral(stage, Domain::Int32, payload);
-                Some(boolean_word(stage, integral))
+                let answer = if matches!(native, NumberNative::IsNaN) { stage.not(integral) } else { integral };
+                Some(boolean_word(stage, answer))
             }, #[inline(always)] |stage| {
                 let number = number_word(stage, value, miss)?;
-                let integral = super::builtins::is_integral(stage, Domain::Float64, number);
-                Some(boolean_word(stage, integral))
+                let answer = match native {
+                    NumberNative::IsNaN => {
+                        let ordered = stage.relation(NumberRelation::Equal, Domain::Float64, number, number);
+                        stage.not(ordered)
+                    }
+                    NumberNative::IsFinite => {
+                        // Only an infinity or a NaN differs from itself by something other than zero.
+                        let spread = stage.float_arithmetic(NumberArithmetic::Subtract, number, number);
+                        stage.relation(NumberRelation::Equal, Domain::Float64, spread, spread)
+                    }
+                    NumberNative::IsSafeInteger => {
+                        let integral = super::builtins::is_integral(stage, Domain::Float64, number);
+                        let magnitude = stage.float_unary(FloatUnary::Abs, number);
+                        let limit = stage.f64_constant(MAX_SAFE_INTEGER);
+                        let safe = stage.relation(NumberRelation::LessEqual, Domain::Float64, magnitude, limit);
+                        stage.all(integral, safe)
+                    }
+                    _ => super::builtins::is_integral(stage, Domain::Float64, number),
+                };
+                Some(boolean_word(stage, answer))
             })
         }
     }
 }
+
+/// The largest integer a double holds exactly with all smaller ones, 2^53 - 1.
+const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
 
 /// The boolean value word of `cond`.
 #[inline(always)]
