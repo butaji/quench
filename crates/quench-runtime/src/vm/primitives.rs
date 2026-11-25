@@ -142,53 +142,28 @@ impl Vm {
     ) -> Result<Value, JsError> {
         match native {
             Native::StringRaw => self.string_raw(p, args),
-            Native::StringIsWellFormed => {
+            // A narrow string holds no surrogate; a wide one is scanned in place for a lone one
+            // (`strings::lone_surrogate_row`), and a well-formed one is its own `toWellFormed`.
+            Native::StringIsWellFormed | Native::StringToWellFormed => {
                 let text = self.string_receiver_text(this)?;
-                let wide = text.units().wide();
-                let units: &[u16] = &wide;
-                let mut index = 0;
-                while index < units.len() {
-                    let unit = units[index];
-                    if (0xD800..=0xDBFF).contains(&unit) {
-                        if !units
-                            .get(index + 1)
-                            .is_some_and(|low| (0xDC00..=0xDFFF).contains(low))
-                        {
-                            return Ok(Value::FALSE);
-                        }
-                        index += 1;
-                    } else if (0xDC00..=0xDFFF).contains(&unit) {
-                        return Ok(Value::FALSE);
-                    }
-                    index += 1;
+                let span = crate::staged::spans::concrete_span(text.units());
+                let mut stage = crate::staged::Concrete::new(std::ptr::null());
+                let lone = if span.form.wide() {
+                    crate::staged::strings::lone_surrogate_row(&mut stage, span.units, span.length, 0)
+                } else {
+                    span.length
+                };
+                if native == Native::StringIsWellFormed {
+                    return Ok(Value::boolean(lone == span.length));
                 }
-                Ok(Value::TRUE)
-            }
-            Native::StringToWellFormed => {
-                let text = self.string_receiver_text(this)?;
-                let wide = text.units().wide();
-                let units: &[u16] = &wide;
-                let mut well_formed = Vec::with_capacity(units.len());
-                let mut index = 0;
-                while index < units.len() {
-                    let unit = units[index];
-                    if (0xD800..=0xDBFF).contains(&unit) {
-                        if let Some(low) = units
-                            .get(index + 1)
-                            .filter(|low| (0xDC00..=0xDFFF).contains(*low))
-                        {
-                            well_formed.extend([unit, *low]);
-                            index += 1;
-                        } else {
-                            well_formed.push(0xFFFD);
-                        }
-                    } else if (0xDC00..=0xDFFF).contains(&unit) {
-                        well_formed.push(0xFFFD);
-                    } else {
-                        well_formed.push(unit);
-                    }
-                    index += 1;
+                if lone == span.length {
+                    return Ok(this);
                 }
+                let mut well_formed = Vec::<u16>::with_capacity(span.length as usize);
+                crate::staged::strings::to_well_formed_row(&mut stage, span.units, span.length, well_formed.as_mut_ptr() as u64);
+                // SAFETY: the row writes every one of the `length` units: each run is copied and
+                // each lone surrogate replaced.
+                unsafe { well_formed.set_len(span.length as usize) };
                 self.string_from_units(&well_formed)
             }
             Native::BigIntValueOf => self.bigint_value_of(p, this),
