@@ -27,6 +27,7 @@ macro_rules! for_each_typed_array {
 }
 pub(crate) use for_each_typed_array;
 
+#[quench_macros::test_visible]
 /// What one typed-array kind is: its constructor intrinsic, that constructor's name and the
 /// element width in bytes.
 pub struct TypedArrayRow {

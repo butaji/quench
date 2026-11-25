@@ -80,10 +80,11 @@ impl ArrayStorageProofs {
         true
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     /// The present element `base[index]` through the proof in `register`'s slot; `None`
     /// where the slot does not prove `base`, past the length, or at a hole.
     #[inline(always)]
+    #[quench_macros::test_visible]
     pub(crate) fn element(&self, register: u16, base: Value, index: usize) -> Option<Value> {
         let slot = Self::slot(register);
         let bound = self.readable[slot];

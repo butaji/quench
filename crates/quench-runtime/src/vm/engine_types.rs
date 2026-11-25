@@ -479,7 +479,7 @@ pub struct CompiledJsFunction {
     pub result: NativeNumberResult,
     pub params: usize,
     pub mapped_bytes: usize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub native_entries: std::cell::Cell<u64>,
 }
 
@@ -792,9 +792,9 @@ pub struct CompiledFunction {
     pub entry: WasmEntry,
     pub params: Vec<crate::WasmType>,
     pub result: Option<crate::WasmType>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub native_entries: std::cell::Cell<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub direct_reference_entries: std::cell::Cell<u64>,
 }
 
@@ -2885,8 +2885,9 @@ pub struct Held {
 /// A lane body compiled ahead: its code, and what its lowering proved about the entry ABI.
 pub struct LaneImage {
     pub code: RelocatableCode,
-    /// The fault-poll offset the lowering reported (`LaneRegion::fault_poll`).
-    pub fault_poll: Option<u32>,
+    /// Whether its back edges poll by fault (`LoweredRegion::fault_poll`): the runner maps the poll page
+    /// for it, as for a JIT lane body, and a fault lands at the entry's termination.
+    pub fault_poll: bool,
 }
 
 /// Where the records live: in the loader's own allocation (`aot_image::live::install`), or in the

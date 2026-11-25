@@ -37,6 +37,7 @@ impl Form {
     }
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// How packed values are read: from the record at each read, since a store may reach them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PackedAccess {
@@ -351,6 +352,7 @@ pub fn arena_slot_address<S: Stage>(stage: &mut S, values: S::Word, length: S::W
     Some(stage.add(values, offset))
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The layout of the object record at `record`, whose exact shape the caller proved and which
 /// holds `storage_len` values in `form`; `inline` is its `inline_storage`.
 ///
@@ -509,6 +511,7 @@ pub(crate) fn narrow_run<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
     stage.ne_imm(tag, 0u32)
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Value `slot` of an object of `layout`, which holds it, as the word its owner's `rep` encodes:
 /// a `Value`'s bits for `Representation::Tagged` and `Representation::Int32`, the IEEE double for `Representation::Float64`
 /// (`value_word` makes a `Value` of either). Only an arena slot holds a raw double: a packed or

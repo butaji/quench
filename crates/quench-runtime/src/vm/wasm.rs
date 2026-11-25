@@ -120,6 +120,7 @@ impl Vm {
         self.instantiate_wasm_module(&function.module)
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn instantiate_wasm_module(
         &mut self,
         module: &crate::WasmModule,
@@ -665,6 +666,7 @@ impl Vm {
         }
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn invoke_wasm(
         &mut self,
         instance: &crate::WasmInstance,
@@ -789,6 +791,7 @@ impl Vm {
             .ok_or_else(|| JsError::wasm_link("invalid Wasm table export binding"))
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn wasm_global(
         &self,
         instance: &crate::WasmInstance,

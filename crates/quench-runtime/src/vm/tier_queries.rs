@@ -405,6 +405,7 @@ impl<'a> FactWatch<'a> {
     pub(crate) fn parts(&mut self) -> (&mut Heap, &mut crate::code_dependencies::CodeReaders) { (self.heap, self.readers) }
     /// A watch over `heap` and `readers`, for the runtime's own publications.
     #[inline(always)]
+    #[quench_macros::test_visible]
     pub(crate) fn of(heap: &'a mut Heap, readers: &'a mut crate::code_dependencies::CodeReaders) -> Self { Self { heap, readers } }
 }
 

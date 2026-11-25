@@ -228,6 +228,7 @@ pub unsafe fn double_write_run(words: *mut u64, (first, step): (i64, i64), len: 
         unsafe { *words.add((first + step * k as i64) as usize) = double_word(numbers(k)) };
     }
 }
+#[quench_macros::test_visible]
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
 #[allow(unused_imports)]
@@ -250,7 +251,7 @@ mod external;
 mod float_slots;
 mod slot_words;
 #[cfg(test)] mod float_slot_tests;
-#[cfg(test)] mod access_tests;
+#[cfg(any(test, feature = "test-support"))] mod access_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -1358,6 +1359,7 @@ impl Heap {
         &self.dependencies
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)]
     pub(crate) fn dependencies_mut(&mut self) -> &mut dependencies::Dependencies {
         &mut self.dependencies
@@ -2152,6 +2154,7 @@ impl Heap {
         self.note_object_slots(owner, values.len());
     }
 
+    #[quench_macros::test_visible]
     /// Storage for an object's first property `values`: inline where they fit and `inline`
     /// allows it, else the arena.
     pub(crate) fn initial_object_storage(
@@ -2173,6 +2176,7 @@ impl Heap {
             )
         }
     }
+    #[quench_macros::test_visible]
     /// Registers `shape`, of `length` slots, made from `parent` and its length, whose slot
     /// owners it extends (`ValueArena::register_derived_shape`).
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize, parent: Option<(u32, usize)>) {
@@ -2232,6 +2236,7 @@ impl Heap {
         self.recode_all_slots();
     }
 
+    #[quench_macros::test_visible]
     /// Keeps slot representations from now on (`ValueArena::track`), over the shape table
     /// `layouts` (`register_shape_layouts`), from what live objects hold.
     pub(crate) fn track_slot_representations(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {

@@ -460,23 +460,23 @@ use unary_values::{unary_value, unary_values};
 use list_calls::{apply_activation_in_lane, list_activation_in_lane, spread_native_call_in_lane};
 
 #[cfg(all(test, feature = "bench-primitives"))]
-#[path = "../../quench-runtime/src/vm/primitive_bench/windows.rs"]
+#[path = "dispatch_fast/primitive_bench/windows.rs"]
 pub(crate) mod window_primitives;
 
 #[cfg(test)]
-#[path = "../../quench-runtime/src/vm/primitive_bench/activations.rs"]
+#[path = "dispatch_fast/primitive_bench/activations.rs"]
 pub(crate) mod activation_primitives;
 
 #[cfg(test)]
-#[path = "../../quench-runtime/src/vm/primitive_bench/commutative_reads.rs"]
+#[path = "dispatch_fast/primitive_bench/commutative_reads.rs"]
 pub(crate) mod commutative_read_primitives;
 
 #[cfg(test)]
-#[path = "../../quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs"]
+#[path = "dispatch_fast/primitive_bench/indexed_forwarding.rs"]
 pub(crate) mod indexed_forwarding_primitives;
 
 #[cfg(all(test, feature = "bench-primitives"))]
-#[path = "../../quench-runtime/src/vm/primitive_bench/indexed_compositions.rs"]
+#[path = "dispatch_fast/primitive_bench/indexed_compositions.rs"]
 pub(crate) mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
@@ -2880,13 +2880,8 @@ fn plain_local_operand(cx: *mut LaneContext, slot: u16) -> Option<Value> {
 /// integer that does not overflow; `None` for any other value.
 #[inline(always)]
 pub(crate) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
-    // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
-    let offset = value.int_key_offset();
-    let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
-    if stepped < (1 << 31) - usize::from(DECREMENT) {
-        return Some(stepped as i32);
-    }
+    // `Value::int_key_offset` is crate-private to quench-runtime; `as_int` is the public
+    // int32 view and gives the same result for every value.
     let integer = value.as_int()?;
     if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
 }

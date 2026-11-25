@@ -862,8 +862,8 @@ impl Operation<u64, ()> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
-            Op::TierPrologue => Self::Prologue { function: instruction.imm(), parameters: instruction.register_a() },
-            Op::BodyEntry => Self::BodyEntry { function: instruction.imm(), binds_this: instruction.register_b() != 0 },
+            Op::TierPrologue => Self::Prologue { function: instruction.imm(), parameters: instruction.a() },
+            Op::BodyEntry => Self::BodyEntry { function: instruction.imm(), binds_this: instruction.b() != 0 },
             _ => return None,
         })
     }

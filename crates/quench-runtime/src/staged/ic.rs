@@ -93,6 +93,7 @@ impl<W, C> Reached<W, C> {
     }
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The value `ops` read from `start`, prototypes found in the record table at `records`, or
 /// `miss` where a guard fails. `None` where the stage leaves at `miss`, or the list ends
 /// before a load.

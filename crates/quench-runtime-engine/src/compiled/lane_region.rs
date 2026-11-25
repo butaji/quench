@@ -2087,6 +2087,7 @@ pub(crate) fn lower(
         scalar::declared_entry_types(function, &lowering.written, &mut initial);
         int_inputs::closed_entry_types(vm, function_id, function, &mut initial);
         lowering.declared_definitions = declared::declared_local_types(program, function);
+        int_inputs::closed_local_types(vm, function_id, function, &mut lowering.declared_definitions);
         lowering.declared_this = declared::declared_this(program, function);
         lowering.declared_rest = declared::declared_rest_read(program, function, &lowering.written);
         lowering.declared_members = declared::declared_member_reads(program, function, &lowering.written);

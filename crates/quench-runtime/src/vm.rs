@@ -241,7 +241,7 @@ pub mod object_shape_adopt;
 #[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod object_tests; #[cfg(test)] mod shape_attribute_tests;
 #[cfg(test)] mod native_frame_tests;
-#[cfg(test)] mod catch_tests; #[cfg(test)] mod test_oracle; #[cfg(test)] mod shape_stability_tests;
+#[cfg(test)] mod catch_tests; #[cfg(test)] mod shape_stability_tests;
 pub mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
@@ -320,6 +320,7 @@ enum CallbackProof {
     General,
 }
 
+#[quench_macros::test_visible]
 #[derive(Clone)]
 pub struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
@@ -364,6 +365,7 @@ pub struct Frame {
 }
 /// A frame's innermost capture slots, valid for `env` until the collection after `epoch`
 /// (`Vm::cached_direct_capture`).
+#[quench_macros::test_visible]
 #[derive(Clone, Copy)]
 pub(super) struct CaptureCache {
     env: Value,
@@ -414,6 +416,7 @@ impl Frame {
         if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
     }
 
+    #[quench_macros::test_visible]
     fn empty(program: ProgramId, with_base: usize) -> Self {
         Self {
             context: CallContext::Internal,
@@ -1104,6 +1107,7 @@ struct FieldCacheSet {
     entries: [FieldCache; crate::vm::tier_policy::POLYMORPHISM],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
+#[quench_macros::test_visible]
 #[derive(Clone, Copy)]
 struct MethodCache {
     shape: u32,
@@ -1113,6 +1117,7 @@ struct MethodCache {
     guard: MethodGuard,
     target: Option<CallTarget>,
 }
+#[quench_macros::test_visible]
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct MethodGuard {
     owner: Value,
@@ -1906,6 +1911,7 @@ pub(crate) fn push_child(shapes: &mut Vec<Shape>, child: Shape) {
     }
     shapes.push(child);
 }
+#[quench_macros::test_visible]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
     User(ProgramId, u32, Value),
@@ -1984,6 +1990,7 @@ const EMPTY_METHOD_GUARD: MethodGuard = MethodGuard {
     slot: 0,
     depth: 0,
 };
+#[quench_macros::test_visible]
 const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     shape: u32::MAX,
     atom: u32::MAX,
@@ -2025,6 +2032,7 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     getter: None,
     setter: None,
 };
+#[quench_macros::test_visible]
 pub struct Vm {
     /// Typed array views' element addresses by view (`typed_array_access::TypedViewCache`).
     typed_views: typed_array_access::TypedViewCache,
@@ -2917,6 +2925,7 @@ impl Vm {
         self.run_main(program, drain_jobs)
     }
 
+    #[quench_macros::test_visible]
     /// Installs the realm and the host as `execute_deferred_jobs` does, without running the
     /// program: the state a startup snapshot is taken from (`write_snapshot`).
     pub(crate) fn initialize_for_snapshot(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -3563,6 +3572,7 @@ impl Vm {
         }
     }
 
+    #[quench_macros::test_visible]
     /// Only native code (Cranelift's or `--b-jit`'s stencils) reads slot representations, so only a runtime that
     /// runs lane bodies keeps them, from its shape table and what its live objects hold: once its builtins
     /// exist or its realm is restored.

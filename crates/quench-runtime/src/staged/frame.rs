@@ -54,6 +54,7 @@ struct ContextWords {
     this: usize,
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 pub(crate) const CONTEXT_WORDS: usize = size_of::<ContextWords>() / WORD_BYTES;
 
 /// A context field's index, counted down from register 0: the last field is word 1 and the

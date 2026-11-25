@@ -6,6 +6,7 @@
 
 /// The conservative `others` marker native code stores for uncounted writes.
 pub const OTHERS_UNKNOWN: u32 = u32::MAX;
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The length word's flag that marks a narrow run of values.
 pub(crate) const NARROW_LEN: u32 = 1 << 31;
 /// The length word's flag that marks a run of doubles.

@@ -18,7 +18,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
     let mut frame = super::super::BodyRunContext::new();
-    let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
     frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
@@ -106,7 +106,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
     ).unwrap();
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter_map(|instruction| {
-        if instruction.op().class().eq(Class::GetField)
+        if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
@@ -163,7 +163,7 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
     let program = quench_runtime::Engine::specialize(source, "shape-tests.js").unwrap();
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter_map(|instruction| {
-        if instruction.op().class().eq(Class::GetField)
+        if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
@@ -192,12 +192,12 @@ fn a_shape_the_owner_already_proved_is_not_tested_again() {
 #[test]
 fn own_field_reads_take_no_arena_bound() {
     let program = quench_runtime::Engine::specialize(
-        include_str!("../../../../tests/fixtures/own-slot-proofs.js"), "own-slot-proofs.js",
+        include_str!("../../../../quench-runtime/tests/fixtures/own-slot-proofs.js"), "own-slot-proofs.js",
     ).unwrap();
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|name| &program.atoms[name as usize] == "readPair")).unwrap();
     let fields = flat_table(program.function(id).instructions().filter_map(|instruction| {
-        if instruction.op().class().eq(Class::GetField)
+        if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
@@ -226,7 +226,7 @@ fn own_field_reads_take_no_arena_bound() {
 #[test]
 fn number_loops_keep_f64_values_and_proofs_across_the_backedge() {
     let program = quench_runtime::Engine::specialize(
-        include_str!("../../../../tests/fixtures/typed-lane-numbers.js"), "typed-lane-numbers.js",
+        include_str!("../../../../quench-runtime/tests/fixtures/typed-lane-numbers.js"), "typed-lane-numbers.js",
     ).unwrap();
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();

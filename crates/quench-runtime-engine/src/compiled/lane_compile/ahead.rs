@@ -13,8 +13,8 @@ mod tests {
     fn an_ahead_lane_body_runs_as_the_interpreter_does() {
         let program = quench_runtime::Engine::specialize(
             "var o = {x: 7}; function get(p){return p.x;} function add(a,b){return a+b;}", "ahead-body.js").unwrap();
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(TestHost::default());
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let find = |name: &str| program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let (get, add) = (find("get"), find("add"));
@@ -50,12 +50,12 @@ mod tests {
     fn output_with(source: &str, images: Option<&[u8]>) -> Vec<String> {
         let program = quench_runtime::Engine::specialize(source, "ahead-run.js").unwrap();
         let lines = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(lines.clone()));
+        let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(lines.clone()));
         if let Some(file) = images {
             vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
             vm.load_ahead_images(AheadImages::from_bytes(file).unwrap());
         }
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let lines = lines.borrow().clone();
         lines
     }
@@ -83,7 +83,7 @@ mod tests {
         let other = quench_runtime::Engine::specialize("function add(a,b){return a-b;}", "ahead-b.js").unwrap();
         let file = AheadImages::compile(&program).unwrap().to_bytes();
         for (served, expected) in [(&program, true), (&other, false)] {
-            let mut vm = Vm::new(TestHost::default());
+            let mut vm = quench_runtime::test_support::vm(TestHost::default());
             vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
             assert_eq!(vm.install_ahead_body(crate::compiled::admission::ahead_unit(1).unwrap(), served, 1, None, &[]).is_some(), expected);
         }
@@ -107,8 +107,8 @@ mod tests {
         let program = quench_runtime::Engine::specialize(source, "ahead-atoms.js").unwrap();
         let images = AheadImages::compile(&program).unwrap();
         let file = images.to_bytes();
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(TestHost::default());
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
         let put = program.functions.iter().position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "put")).unwrap();
         let method = vm.install_ahead_body(crate::compiled::admission::ahead_unit(put as u32).unwrap(), &program, put as u32, None, &[]).expect("an ahead body for put");

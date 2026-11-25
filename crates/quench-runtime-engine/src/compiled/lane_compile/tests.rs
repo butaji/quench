@@ -3,8 +3,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::LaneDependencies;
-use quench_runtime::code_dependencies::{CodeReaders, DependentCode, PublishedCode, SlotDependency};
-use quench_runtime::{heap::Heap, tier_surface::Object};
+use quench_runtime::code_dependencies::{DependentCode, PublishedCode, SlotDependency};
+use quench_runtime::{library_surface::Heap, tier_surface::Object};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::Value;
 use std::rc::Rc;
@@ -24,7 +24,8 @@ fn an_entry_leave_round_trips_and_resumes_at_the_first_record() {
 /// the first record.
 #[test]
 fn a_stub_entry_is_its_own_exit_kind_and_resumes_at_the_first_record() {
-    use super::{entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED}, BodyEntry, LaneExit};
+    use super::{entry_cell::EntryCell, BodyEntry, LaneExit};
+    use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
     let stub: BodyEntry = unsafe { std::mem::transmute::<usize, BodyEntry>(EntryCell::stub()) };
     // SAFETY: the stub reads none of its arguments.
     let returned = unsafe { stub(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
@@ -51,7 +52,8 @@ fn lane_dependencies_retire_at_holder_departures_only() {
             callees: Vec::new(),
         };
         let code: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));
-        assert!(dependencies.subscribe(&Default::default(), &code, &mut heap, &mut CodeReaders::default()));
+        let mut readers = quench_runtime::code_dependencies::CodeReaders::default();
+        assert!(dependencies.subscribe(&Default::default(), &code, &mut quench_runtime::vm::tier_queries::FactWatch::of(&mut heap, &mut readers)));
         heap.set_object_shape(object, 2);
         assert_eq!(code.is_published(), !retires, "holder={holder}");
     }
@@ -78,7 +80,8 @@ fn chain_dependencies_retire_at_their_own_prototypes_only() {
         let code = Rc::new(PublishedCode::new(()));
         let reader: Rc<dyn DependentCode> = code.clone();
         let stable = super::super::lane_region::StableFacts { chains: Box::new([chain]), ..Default::default() };
-        assert!(LaneDependencies::default().subscribe(&stable, &reader, heap, &mut CodeReaders::default()));
+        let mut readers = quench_runtime::code_dependencies::CodeReaders::default();
+        assert!(LaneDependencies::default().subscribe(&stable, &reader, &mut quench_runtime::vm::tier_queries::FactWatch::of(heap, &mut readers)));
         code
     };
     let through_middle = PrototypeChain { link: quench_runtime::tier_surface::ProtoLink::of(middle).bits(), depth: 2 };
@@ -108,8 +111,8 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
     /// The CLIF instructions of the scalar entry's hot blocks, a loose bound on a call's cost.
     const HOT_INSTRUCTIONS: usize = 80;
     let program = quench_runtime::Engine::specialize("function fib(n){return n<2?n:fib(n-1)+fib(n-2);} fib(3);", "scalar-entry.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(quench_runtime::test_host::TestHost::default());
-    vm.execute(&program).unwrap();
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     vm.programs.enable_js_lane_methods();
     let atom = vm.intern_atom("fib");
     let callee = vm.own_property(vm.realm.globals, atom).unwrap();

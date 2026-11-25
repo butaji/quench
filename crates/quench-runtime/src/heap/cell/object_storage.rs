@@ -153,6 +153,7 @@ impl Object {
         }
     }
 
+    #[quench_macros::test_visible]
     /// Inlined: most callers pass constant inline values (`Object::new`), which then pack
     /// to a constant payload word.
     #[inline(always)]
@@ -190,6 +191,7 @@ impl Object {
         Self { head: ObjectHead { payload: u64::from(start), layout: header.layout } }
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)]
     pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
         (self.meta() & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_values())

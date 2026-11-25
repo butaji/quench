@@ -39,7 +39,7 @@ pub(crate) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         _ => {}
     }
     // `-x` and `+x`: the Number unary the interpreter's operations name (`NumberUnary`).
-    if let Some(operation) = quench_runtime::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.unary_operator()) {
+    if let Some(operation) = quench_runtime::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.imm()) {
         return Some(unary_row(instruction, operation).filter(|_| plain));
     }
     if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {

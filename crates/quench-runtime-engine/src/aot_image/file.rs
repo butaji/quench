@@ -144,7 +144,7 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
     match &function.lane {
         Some(lane) => {
             out.push(1);
-            put_option(out, lane.fault_poll);
+            out.push(u8::from(lane.fault_poll));
             put_code(out, &lane.code);
         }
         None => out.push(0),
@@ -165,15 +165,6 @@ fn put_halves(out: &mut Vec<u8>, values: &[u32]) {
     }
 }
 
-fn put_option(out: &mut Vec<u8>, value: Option<u32>) {
-    match value {
-        Some(value) => {
-            out.push(1);
-            out.extend(value.to_le_bytes());
-        }
-        None => out.push(0),
-    }
-}
 
 fn put_code(out: &mut Vec<u8>, code: &RelocatableCode) {
     put_count(out, code.code.len());
@@ -254,9 +245,8 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
     let lane = match words.byte()? {
         0 => None,
         _ => {
-            let fault_poll = read_option(words)?;
-            let code = read_code(words)?;
-            Some(LaneImage { code, fault_poll })
+            let fault_poll = words.byte()? != 0;
+            Some(LaneImage { code: read_code(words)?, fault_poll })
         }
     };
     Ok(AotFunction { id, base, lane })
@@ -274,12 +264,6 @@ fn read_halves(words: &mut Words<'_>) -> Result<Box<[u32]>, String> {
     (0..words.half()?).map(|_| words.half()).collect()
 }
 
-fn read_option(words: &mut Words<'_>) -> Result<Option<u32>, String> {
-    Ok(match words.byte()? {
-        0 => None,
-        _ => Some(words.half()?),
-    })
-}
 
 fn read_code(words: &mut Words<'_>) -> Result<RelocatableCode, String> {
     let length = words.half()? as usize;

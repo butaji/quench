@@ -204,7 +204,7 @@ mod tests {
     fn a_body_that_inlines_its_calls_asks_iterations_for_its_own_size() {
         // 8,000 instructions planned (12 ms) and compiled (24 ms at full wall) work through 1,000
         // bytecodes an iteration, 7 us saved: some 20,000 iterations, though the span is 10.
-        let outlay = quench_runtime::vm::tier_model::outlay_ns(8_000, PRIORS.plan_ns_per_ir, COST, PER_MILLE);
+        let outlay = crate::compiled::tier_model::outlay_ns(8_000, PRIORS.plan_ns_per_ir, COST, PER_MILLE);
         let taken = body_required_taken(&PRIORS, body_work(&LOOPS, 10, 8_000), outlay);
         assert!(taken > 19_000 && taken < 22_000, "{taken}");
         assert_eq!(body_work(&LOOPS, 10, 40), 10);

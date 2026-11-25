@@ -41,6 +41,7 @@ impl Heap {
         self.properties.holds_raw_doubles(shape, slot)
     }
 
+    #[quench_macros::test_visible]
     /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.
     pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> crate::typed_ir::Type {
         if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
@@ -49,6 +50,7 @@ impl Heap {
         self.properties.slot_observation(shape, slot).ty()
     }
 
+    #[quench_macros::test_visible]
     /// The slots of live object records whose value its owner's representation does not hold
     /// (`ValueArena::slot_observation`): zero while every write joins its value's class;
     /// zero too where representations are not kept.

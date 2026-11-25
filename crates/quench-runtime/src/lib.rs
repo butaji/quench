@@ -17,6 +17,8 @@
 
 #[doc(hidden)]
 pub mod execution_interrupt;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 /// Numeric facts shared by the runtime and its hosts.
 pub mod units {
     pub use quench_temporal::units::*;
@@ -67,6 +69,10 @@ pub mod folded_roots;
 #[doc(hidden)]
 pub mod float_layout;
 #[doc(hidden)]
+#[cfg(feature = "test-support")]
+pub mod heap;
+#[doc(hidden)]
+#[cfg(not(feature = "test-support"))]
 pub(crate) mod heap;
 /// What the tier crates may name of the heap (`tier_surface`).
 pub mod tier_surface;
@@ -169,7 +175,7 @@ pub use api::{
 #[cfg(test)]
 #[doc(hidden)]
 pub mod host_stack_tests;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_host;
 #[cfg(test)]

@@ -164,7 +164,6 @@ impl Vm {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use quench_runtime::{Engine, test_host::TestHost};
     use std::{cell::RefCell, rc::Rc};
 
@@ -253,9 +252,9 @@ mod tests {
           });
         "#;
         let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         let program = Engine::specialize(source, "lane-stack-captures.js").unwrap();
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let rounds = concat!(
             "inner,middle,outer,round,run|viaCapture,round,run",
             "|TypeError: Cannot read properties of undefined (reading 'x')@readField,viaUndefinedField,round",

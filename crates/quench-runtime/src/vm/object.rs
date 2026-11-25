@@ -4531,6 +4531,7 @@ impl Vm {
         true
     }
 
+    #[quench_macros::test_visible]
     /// The raw address for a warmed, own-data store site whose exact receiver shape still
     /// matches. Shared native execution admits `writes` once, without allocation,
     /// collection, or guest calls; misses stay on the ordinary path before the store.

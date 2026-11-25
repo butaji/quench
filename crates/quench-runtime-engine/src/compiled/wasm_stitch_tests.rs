@@ -3,7 +3,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::{CallContext, CodeMemory};
+use quench_runtime::vm::CallContext;
+use crate::compiled::CodeMemory;
 use quench_runtime::vm::Vm;
 use quench_runtime::{Engine, WasmCallableType, WasmFunctionBody, WasmTypes, WasmValue};
 use wasmparser::{BinaryReaderError, FuncType, Operator, ValType};
@@ -123,7 +124,7 @@ fn interpreted(vm: &mut Vm, instance: &quench_runtime::WasmInstance, index: u32,
 #[test]
 fn a_stitched_function_computes_and_traps_as_the_interpreter() {
     let module = module();
-    let mut vm = Vm::new(quench_runtime::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let instance = vm.instantiate_wasm_module(&module).unwrap();
     let (_sum_code, sum) = stitched(&vm, &module, 0);
     for n in [0, 1, 10, 1000, -5] {
@@ -172,7 +173,7 @@ fn memory_module() -> quench_runtime::WasmModule {
 #[test]
 fn stitched_loads_and_stores_check_and_move_as_the_interpreter() {
     let module = memory_module();
-    let mut vm = Vm::new(quench_runtime::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let instance = vm.instantiate_wasm_module(&module).unwrap();
     let mut memory = vec![0u8; 1 << 16];
     let (_store_code, store) = stitched(&vm, &module, 0);
@@ -222,7 +223,7 @@ fn float_module() -> quench_runtime::WasmModule {
 #[test]
 fn stitched_float_select_and_unreachable_rows_agree_with_the_interpreter() {
     let module = float_module();
-    let mut vm = Vm::new(quench_runtime::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let instance = vm.instantiate_wasm_module(&module).unwrap();
     let (_code, f64s) = stitched(&vm, &module, 0);
     for (a, b) in [(1.5_f64, 2.0_f64), (-3.25, 0.5), (f64::NAN, 1.0), (1e300, 1e10), (0.0, -0.0)] {
@@ -272,7 +273,7 @@ fn bulk_module() -> quench_runtime::WasmModule {
 #[test]
 fn stitched_bulk_memory_rows_fill_copy_and_trap_as_the_interpreter() {
     let module = bulk_module();
-    let mut vm = Vm::new(quench_runtime::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let instance = vm.instantiate_wasm_module(&module).unwrap();
     // The interpreter runs over the instance's memory; the rows over this mirror, kept equal by
     // running the same calls in the same order.

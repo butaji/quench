@@ -225,8 +225,8 @@ fn main() {
     // `VARIANTS` are x86-64 cpu levels; another target has the one baseline table, built without a
     // `-C target-cpu` (which for an AArch64 target is not a cpu at all).
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { if builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] } } else { &[("BASELINE", None)] };
-    // Each family's sources as rustc reads them, from the first instance file of the family; the fixed shard's (every
-    // module) are the rerun triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
+    // Each family's sources as rustc reads them, from the first instance file of the family, are the rerun
+    // triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
     // the opcode table reach a shard only through its instance file, and the flags file through its arguments.
     let first = |family: Family| parts.iter().position(|(of, _)| *of == family);
     // Beside each family's key, the key it had under the sources of the last finished build (`snapshot`) and the
@@ -238,9 +238,6 @@ fn main() {
     for family in Family::ALL {
         let Some(shard) = first(family) else { continue };
         let watched = stencil_sources(&out, family, shard).unwrap_or_else(|| sources::watched(manifest));
-        if family == Family::Fixed {
-            watch(&watched);
-        }
         let now = cache::sources_key(&rustc(), manifest, &watched, &[]);
         let since = snapshot.covers(&watched).then(|| {
             let was = cache::sources_key_of(&rustc(), manifest, &watched, &[], |file| snapshot.get(file).expect("a covered file").to_vec());
@@ -249,6 +246,9 @@ fn main() {
         keys.push((family, now, since));
         all_watched.extend(watched);
     }
+    // Every family's sources are rerun triggers: a family's own modules (the regexp stage, the
+    // Wasm rows) sit behind its `stencil_family` cfg, so the fixed shard does not read them.
+    watch(&all_watched);
     let key_of = |family: Family| keys.iter().find(|(of, ..)| *of == family).map(|(_, key, since)| (*key, since.clone())).expect("a family key");
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
     for family in Family::ALL {
