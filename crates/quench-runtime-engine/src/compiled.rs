@@ -110,6 +110,7 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
+pub(crate) mod fallback_sites;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};

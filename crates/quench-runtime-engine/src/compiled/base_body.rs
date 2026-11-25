@@ -218,6 +218,8 @@ impl Vm {
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         let _ = unit;
+        // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
+        let _focus = quench_runtime::fallback::focus(program, function, 0);
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
@@ -323,6 +325,7 @@ pub(crate) struct ImageBody {
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
 pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quench_runtime::compile::aot_facts::AotFacts) -> Result<ImageBody, String> {
+    let _focus = quench_runtime::fallback::focus(program, function, 0);
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
     // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree

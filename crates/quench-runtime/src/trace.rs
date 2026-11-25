@@ -196,5 +196,10 @@ setting! {
         /// Emitted direct calls take the helper row instead of pushing native headers
         /// (one-frame-one-call.md F5), which is the default: to compare against the old path.
         NoNativeFrames = "no-native-frames",
+        /// Every expensive fallback (a refused compile, a helper call, a deopt, an opaque native
+        /// in compiled code) stops the process naming its operation and source location;
+        /// `=report` lists them all at exit instead, `=deopt+helper-call` stops at those kinds
+        /// only (`crate::fallback`). Not an experiment: the development check that keeps them out.
+        StrictFallback = "strict-fallback",
     }
 }
