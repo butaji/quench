@@ -87,7 +87,11 @@ impl LaneView {
     /// `self.tiers.lane_body.reoptimize_exits` leaves, doubled per recompile, it takes its
     /// `verdict`. A body it compiles past keeps its code for the direct callers that name it.
     /// Whether the run retired the body.
-    pub(crate) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) -> bool {
+    /// Notes the end of a run of this body. A body it would retire is kept where `replace` is false
+    /// — an execution-only build has no body to replace it with, and its image body is the only
+    /// code the function has.
+    pub(crate) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, replace: bool,
+        left_new: impl FnOnce((Option<u32>, usize))) -> bool {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return false };
@@ -118,6 +122,8 @@ impl LaneView {
             // A body that keeps leaving where no other body would, and has never completed a
             // run, gains nothing from its entry: its function runs in the lane again.
             let costly = runs >= u64::from(self.tiers.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(self.tiers.lane_body.retire_share);
+            // Nothing would replace the body: it keeps running, and the records it leaves step.
+            if !replace { return false; }
             if !completed.get() || costly {
                 self.retire_body(body, LaneBody::Declined);
                 self.release_from_tier();
@@ -125,6 +131,7 @@ impl LaneView {
             }
             return false;
         };
+        if !replace { return false; }
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         self.retire_body(body, next);
         true
