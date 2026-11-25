@@ -22,6 +22,7 @@ mod ir_budget;
 mod ir_floor;
 mod ir_predict;
 mod suite_budgets;
+mod suite_order;
 mod known_lists;
 mod lint;
 mod no_jit_ir;
