@@ -382,10 +382,29 @@ fn install_exit_code(
     Ok(())
 }
 
-/// Whether the stream's descriptor is a terminal, as `isTTY`.
+/// Whether the stream's descriptor is a terminal, as `isTTY`. A build-time evaluation keeps
+/// it lazy, as it keeps the process identity: whether a descriptor is a terminal is the
+/// running process's, and its gate refuses the initializer.
 fn install_terminal(context: &mut NativeContext<'_>, stream: RootId, fd: i32) -> Result<(), RootedError> {
+    if crate::aot::prefix::active() {
+        let data = context.number(f64::from(fd));
+        let initializer = context.host_function_with_data(crate::host::shared_vm::operation!("processStreamTerminal"), data)?;
+        return context.define_lazy_data_properties_rooted(stream, &["isTTY"], true, initializer);
+    }
     let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
     install(context, stream, "isTTY", tty)
+}
+
+/// `install_terminal`'s lazy initializer, whose data is the stream's descriptor.
+pub(crate) fn initialize_terminal(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let fd = context.rooted_value(data).and_then(|value| value.as_number()).ok_or_else(|| RootedError::host("invalid process stream descriptor"))? as i32;
+    let process = process_root(context)?;
+    let key = context.string_rooted(if fd == STDERR_FD { "stderr" } else { "stdout" });
+    let stream = context.get_property_rooted(process, key)?;
+    let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
+    install(context, stream, "isTTY", tty)?;
+    Ok(context.undefined())
 }
 
 fn create_stream(

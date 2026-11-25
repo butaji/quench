@@ -84,6 +84,13 @@ pub(crate) fn arm(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
             refuse(format!("process.{name} (read during start-up)"));
         }
     }
+    for name in ["stdout", "stderr"] {
+        let key = context.string_rooted(name);
+        let stream = context.get_property_rooted(process, key)?;
+        if !context.is_pending_lazy_data_property_rooted(stream, "isTTY")? {
+            refuse(format!("process.{name}.isTTY (read during start-up)"));
+        }
+    }
     quench_runtime::clock::watch_inputs();
     ARMED.store(true, Ordering::Relaxed);
     Ok(())

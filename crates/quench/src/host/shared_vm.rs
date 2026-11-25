@@ -715,6 +715,7 @@ node_bindings! {
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
         method "processIdentityInitialize" (0) => crate::modules::process_shared_vm::initialize_identity,
+        method "processStreamTerminal" (0) => crate::modules::process_shared_vm::initialize_terminal,
         method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
