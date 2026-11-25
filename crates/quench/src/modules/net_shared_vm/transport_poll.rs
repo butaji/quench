@@ -493,10 +493,10 @@ pub(crate) fn poll(
                             .armed_mut()
                             .transport_errors
                             .push_back((socket, stack.clone()));
+                        // Only an encrypted socket fails with a TLS stack, and encrypting one
+                        // marks this operation (`net_shared_vm::encrypt`).
                         let callback = runtime
-                            .host_function(crate::host::shared_vm::operation!(
-                                "tlsSocketTransportError",
-                            ))
+                            .host_function(crate::host::shared_vm::static_operation("tlsSocketTransportError"))
                             .map_err(|error| error.to_string())?;
                         let receiver = runtime.root(
                             runtime

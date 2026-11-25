@@ -146,7 +146,9 @@ fn exchange(config: &Config, server: &Server, name: &str, kind: RecordType, time
 
 fn query_id() -> u16 {
     let mut bytes = [0u8; 2];
-    if openssl::rand::rand_bytes(&mut bytes).is_err() {
+    // The kernel's randomness, which links nothing of OpenSSL into an image that resolves names.
+    // SAFETY: `bytes` is writable for its length.
+    if unsafe { libc::getrandom(bytes.as_mut_ptr().cast(), bytes.len(), 0) } != bytes.len() as isize {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.subsec_nanos());

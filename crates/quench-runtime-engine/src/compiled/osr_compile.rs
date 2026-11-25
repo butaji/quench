@@ -396,10 +396,33 @@ fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32,
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
-/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
+/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access), or
+/// without the JIT's routes (`jit_routes`).
 /// A Cranelift region is planned here and lowered on the code generator's thread with its code
 /// (`LoopJob`): lowering on the loop's own thread stalled it as compiling did.
 pub(crate) fn start_osr_region(
+    region: &LoopRegion, views: super::ElementViews,
+    observation: &Observation<'_>,
+    tiers: &'static Tiers,
+    program: &ResidualProgram,
+    function_id: u32,
+    helpers: LaneHelpers,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
+    widened_stores: (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
+    calls: RegionCalls,
+    base: bool,
+    admitted: super::admission::CompiledUnit,
+    online: Option<OsrOnline<'_>>,
+) -> Option<PendingOsrRegion> {
+    (crate::jit_routes::jit()?.region)(region, views, observation, tiers, program, function_id, helpers, global_reads, widened_stores, calls, base, admitted, online)
+}
+
+/// `start_osr_region`'s route, which `jit_routes` installs.
+pub(crate) type RegionStart = fn(&LoopRegion, super::ElementViews, &Observation<'_>, &'static Tiers, &ResidualProgram, u32, LaneHelpers,
+    &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
+    (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>), RegionCalls, bool, super::admission::CompiledUnit, Option<OsrOnline<'_>>) -> Option<PendingOsrRegion>;
+
+pub(crate) fn compile_osr_region(
     region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
     tiers: &'static Tiers,

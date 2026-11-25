@@ -946,7 +946,19 @@ pub(crate) fn start(
     }
     Ok(context.undefined())
 }
-pub(crate) fn start_for_write(
+/// `start_for_write` as the operation a socket's write calls where a session registered it
+/// (`sessions::register`): an image whose code makes no TLS socket links none of this.
+pub(crate) fn start_for_write_operation(
+    context: &mut NativeContext<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    start_for_write(context, args.first().copied().unwrap_or(undefined))?;
+    Ok(undefined)
+}
+
+fn start_for_write(
     context: &mut NativeContext<'_>,
     socket: RootId,
 ) -> Result<(), RootedError> {

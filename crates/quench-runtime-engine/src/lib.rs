@@ -17,6 +17,7 @@ pub mod native_program;
 pub mod native_object;
 #[cfg(feature = "jit")]
 pub mod regexp_native;
+pub(crate) mod jit_routes;
 pub(crate) mod engine_calls;
 pub(crate) mod engine_calls2;
 pub(crate) mod lifted;

@@ -1672,7 +1672,8 @@ pub(crate) fn write_operation(
         .copied()
         .ok_or_else(|| RootedError::host("socket write callback is missing"))?;
     if !bytes.is_empty() {
-        crate::modules::tls_shared_vm::socket::start_for_write(context, socket)?;
+        // A TLS session's first write starts its handshake (`tlsStartForWrite`).
+        crate::host::shared_vm::call_linked(context, crate::host::shared_vm::static_operation("tlsStartForWrite"), &[socket])?;
     }
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
     if !state.borrow().net_sockets.contains_key(&id) {
@@ -2366,6 +2367,8 @@ pub(crate) fn encrypt(
     let referenced = socket.referenced;
     match encrypted::EncryptedStream::new(ssl, raw, role, started) {
         Ok(tls) => {
+            // Its transport errors reach the TLS socket (`transport_poll`).
+            let _ = crate::host::shared_vm::operation!("tlsSocketTransportError");
             socket.stream = SocketStream::Encrypted(Box::new(tls));
             transport.sockets.insert(id, socket);
             Ok(())

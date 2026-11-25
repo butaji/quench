@@ -30,7 +30,15 @@ pub(crate) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
 
 /// The numeric function's image, compiling on the code generator's thread (`NumericImage::start`);
 /// `None` where `compile` would decline before compiling.
+/// Declines without the JIT's routes (`jit_routes`).
 pub(crate) fn start(program: &ResidualProgram, function_id: u32, unit: crate::compiled::admission::CompiledUnit) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<crate::compiled::NumericImage>>> {
+    (crate::jit_routes::jit()?.numeric)(program, function_id, unit)
+}
+
+/// `start`'s route, which `jit_routes` installs.
+pub(crate) type NumericStart = fn(&ResidualProgram, u32, crate::compiled::admission::CompiledUnit) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<crate::compiled::NumericImage>>>;
+
+pub(crate) fn start_numeric(program: &ResidualProgram, function_id: u32, unit: crate::compiled::admission::CompiledUnit) -> Option<quench_runtime::vm::jit_backend::OffThread<Option<crate::compiled::NumericImage>>> {
     admitted(program, function_id)?;
     crate::compiled::NumericImage::start(program, function_id, unit)
 }

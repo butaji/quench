@@ -1486,6 +1486,7 @@ node_bindings! {
         #[cfg(quench_openssl_provider)]
         method "cryptoStructuredClone" (1) => crate::modules::crypto_node::clone::structured_clone,
         method "tlsReusableHandle" (1) => crate::modules::tls_shared_vm::handle::reusable_handle,
+        method "tlsStartForWrite" (1) => crate::modules::tls_shared_vm::socket::start_for_write_operation,
         #[cfg(quench_openssl_provider)]
         method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
         #[cfg(quench_openssl_provider)]

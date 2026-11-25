@@ -31,6 +31,8 @@ pub(crate) fn register(
 ) -> Result<(), RootedError> {
     // A session's socket reuses its handle, which the transport finds unmarked (`create_handle`).
     let _ = crate::host::shared_vm::operation!("tlsReusableHandle");
+    // Its first write starts its handshake (`net_shared_vm::write_operation`).
+    let _ = crate::host::shared_vm::operation!("tlsStartForWrite");
     let identity = context.host_weak_root(socket)?;
     context
         .host_as::<crate::host::NodeHost>()
