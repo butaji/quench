@@ -38,51 +38,11 @@ pub enum CallRow {
     Builtin(BuiltinRow),
 }
 
-/// The builtins a call row runs on their staged rows (`stencils/builtin_rows.rs`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum BuiltinRow {
-    /// `String.prototype.charCodeAt` of a flat string.
-    CharCodeAt,
-    /// `String.prototype.charAt` of a flat string, at an index of an ASCII unit.
-    CharAt,
-    /// `Number.isInteger` of a Number.
-    IsInteger,
-    /// `Math.imul` of two int32 operands.
-    Imul,
-    /// `Array.prototype.push` of one value onto a dense array (`staged::builtins::array_push_one`).
-    Push,
-    /// `Array.prototype.pop` of a dense array (`staged::builtins::array_pop`).
-    Pop,
-}
-
-impl BuiltinRow {
-    /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 6] = [
-        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Imul,
-        BuiltinRow::Push, BuiltinRow::Pop,
-    ];
-
-    /// The row's name in the stencil object, after `builtin_`.
-    pub const fn symbol(self) -> &'static str {
-        match self {
-            BuiltinRow::CharCodeAt => "char_code_at",
-            BuiltinRow::CharAt => "char_at",
-            BuiltinRow::IsInteger => "is_integer",
-            BuiltinRow::Imul => "imul",
-            BuiltinRow::Push => "push",
-            BuiltinRow::Pop => "pop",
-        }
-    }
-
-    /// The arguments the builtin reads after its receiver's window: the count the planner must match.
-    pub const fn arguments(self) -> u16 {
-        match self {
-            BuiltinRow::Imul => 2,
-            BuiltinRow::Pop => 0,
-            _ => 1,
-        }
-    }
-}
+/// The builtin rows: the runtime's table of natives run on staged rows (`staged::native_row_table`),
+/// read here so the planner and the stencils name the same rows.
+#[path = "../../quench-runtime/src/staged/native_row_table.rs"]
+mod native_row_table;
+pub use native_row_table::NativeRow as BuiltinRow;
 
 /// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
 /// global for nullish (sloppy), or none for an arrow, whose body reads its environment's (lexical).

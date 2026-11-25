@@ -6,8 +6,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::tier_surface::Native;
-use quench_runtime::staged::call_native::MathCall;
-use quench_runtime::vm::number::math_call;
 use quench_bjit::call::BuiltinRow;
 
 /// A call whose callee the code guards as the builtin `row`: its identity is the word the callee
@@ -20,18 +18,7 @@ pub(crate) struct BuiltinCall {
     pub(crate) row: BuiltinRow,
 }
 
-/// The row `native` runs on, if the b-jit runs it on one.
+/// The row `native` runs on, if the b-jit runs it on one: the runtime's one map (`staged::native_row`).
 pub(crate) fn of(native: Native) -> Option<BuiltinRow> {
-    match native {
-        Native::StringCharCodeAt => return Some(BuiltinRow::CharCodeAt),
-        Native::StringCharAt => return Some(BuiltinRow::CharAt),
-        Native::NumberIsInteger => return Some(BuiltinRow::IsInteger),
-        Native::ArrayPush => return Some(BuiltinRow::Push),
-        Native::ArrayPop => return Some(BuiltinRow::Pop),
-        _ => {}
-    }
-    match math_call(native)? {
-        MathCall::Imul => Some(BuiltinRow::Imul),
-        _ => None,
-    }
+    quench_runtime::staged::native_row::native_row_of(native)
 }
