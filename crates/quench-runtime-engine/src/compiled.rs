@@ -1018,6 +1018,8 @@ macro_rules! lane_helper_inventory {
             const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
             const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
+            /// The name of helper number `index` (`Symbol::Helper`), as an image's demand lists it.
+            pub(crate) fn name(index: usize) -> Option<&'static str> { Self::NAMES.get(index).copied() }
             pub(crate) fn addresses() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
