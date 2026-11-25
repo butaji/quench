@@ -10,6 +10,7 @@ use crate::bytecode::Function;
 
 unsafe extern "Rust" {
     safe fn quench_engine2_aheadimages_compile(program: &ResidualProgram) -> Result<AheadImages, String>;
+    safe fn quench_engine2_aheadimages_compile_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) -> Result<AheadImages, String>;
     safe fn quench_engine2_laneview_invalidate_shape_bindings(this: &LaneView) -> ();
     safe fn quench_engine2_fn_function_candidate(function: &Function, program: &ResidualProgram) -> bool;
     safe fn quench_engine2_fn_pays_native_entry(body: &crate::bytecode::Function) -> bool;
@@ -22,10 +23,13 @@ unsafe extern "Rust" {
 /// The engine methods of `AheadImages` the core calls.
 pub trait EngineAheadImages {
     fn compile(program: &ResidualProgram) -> Result<AheadImages, String>;
+    fn compile_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) -> Result<AheadImages, String>;
 }
 impl EngineAheadImages for AheadImages {
     #[inline(always)]
     fn compile(program: &ResidualProgram) -> Result<AheadImages, String> { quench_engine2_aheadimages_compile(program) }
+    #[inline(always)]
+    fn compile_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) -> Result<AheadImages, String> { quench_engine2_aheadimages_compile_wasm(vm, id, program, bindings) }
 }
 
 /// The engine methods of `LaneView` the core calls.
@@ -59,6 +63,7 @@ pub fn is_call_rejection(opcode: u16) -> bool { quench_engine2_fn_is_call_reject
 pub mod signatures {
     use super::*;
     #[allow(non_camel_case_types)] pub type quench_engine2_aheadimages_compile = fn(&ResidualProgram) -> Result<AheadImages, String>;
+    #[allow(non_camel_case_types)] pub type quench_engine2_aheadimages_compile_wasm = fn(&Vm, ProgramId, &ResidualProgram, &[crate::WasmBindingType]) -> Result<AheadImages, String>;
     #[allow(non_camel_case_types)] pub type quench_engine2_laneview_invalidate_shape_bindings = fn(&LaneView) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine2_fn_function_candidate = fn(&Function, &ResidualProgram) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine2_fn_pays_native_entry = fn(&crate::bytecode::Function) -> bool;
