@@ -212,6 +212,7 @@ mod property_write;
 pub use property::{NoPlans, PropertyFrame};
 pub mod value;
 pub mod poll;
+pub mod bump;
 mod guard;
 mod steps;
 mod control;
@@ -258,7 +259,7 @@ pub use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub use region::Access;
 #[allow(unused_imports)]
-pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_global_field_hit, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 #[allow(unused_imports)]
 pub use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 

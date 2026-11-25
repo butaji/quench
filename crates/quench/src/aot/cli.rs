@@ -373,8 +373,14 @@ fn compile(options: Options) -> Result<(), String> {
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(resumes_at_rest(&saved_waits).as_bytes())).map_err(|error| error.to_string())?;
     let inputs = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { inputs };
-    // An image that only resumes saved runs starts from the operations their heaps hold.
-    let held: Option<std::collections::BTreeSet<u32>> = (!saved_waits.is_empty()).then(|| saved_waits.iter().flat_map(|wait| wait.held.iter().copied()).collect());
+    // An image that only resumes saved runs starts from the operations their heaps hold, and
+    // the builders of the builtins its program may name only as it runs (`require`, a lazy
+    // global's module): every one the graph names.
+    let held: Option<std::collections::BTreeSet<u32>> = (!saved_waits.is_empty()).then(|| {
+        let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned));
+        let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
+        saved_waits.iter().flat_map(|wait| wait.held.iter().copied()).chain(builders).collect()
+    });
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -626,7 +632,7 @@ fn link_with_reached_operations(
             report["operation_links"] = json!(links);
             return Ok(audit);
         };
-        let marks = quench_runtime::native_link::section_words(staged, "quench_operation_marks")?;
+        let marks = quench_runtime::native_link::marked_words(staged, "QUENCH_OPERATION_MARK")?;
         let before = operations.len();
         operations.extend(marks);
         if operations.len() == before {

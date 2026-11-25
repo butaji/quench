@@ -196,7 +196,7 @@ fn well_known_constructors(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let global = c.global_root()?;
         WELL_KNOWN_CONSTRUCTORS.iter().map(|name| get(c, global, name)).collect::<Result<Vec<_>, _>>()
     })?;
-    let buffer = crate::host::shared_vm::commonjs::builtin_require(c, "buffer")?;
+    let buffer = crate::host::shared_vm::commonjs::builtin!(c, "buffer")?;
     constructors.push(get(c, buffer, "Buffer")?);
     let list = c.array_rooted(&constructors)?;
     let list = c.retain(list)?;
@@ -427,8 +427,12 @@ impl Comparison {
                     return Ok(false);
                 }
             }
-            let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
-            let key_object = get(c, crypto, "KeyObject")?;
+            // Two CryptoKeys are the built crypto module's.
+            #[cfg(quench_openssl_provider)]
+            let key_object = crate::modules::crypto_node::built_class(c, crate::modules::crypto_node::Class::KeyObject);
+            #[cfg(not(quench_openssl_provider))]
+            let key_object = None;
+            let key_object = key_object.ok_or_else(|| RootedError::host("a CryptoKey without the crypto module"))?;
             let from = get(c, key_object, "from")?;
             let left_key = c.call_rooted(from, key_object, &[left])?;
             let right_key = c.call_rooted(from, key_object, &[right])?;

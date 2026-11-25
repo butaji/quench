@@ -59,26 +59,27 @@ fn caller_loops(cx: *mut LaneContext, call: &PendingGeneralCall) -> bool {
     vm.programs.function_loops(program, vm.frames[call.caller].function)
 }
 
-/// A call the running body made through the helper path to a callee it could call by its
-/// entry: its site first ran after the body compiled, so the compile knew no callee for it.
-/// Past `TIERS.lane_body.late_call_calls` of them the body specializes again, which finds
-/// the callee in the site's history (`LaneView::respecialize`).
-/// A site whose caller counted past the threshold without specializing again
-/// (`LaneContext::late_settled`) counts nothing more in this run: only a count reaching the
-/// threshold acts.
-pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) {
-    if unsafe { (*cx).late_settled } == ip { return; }
+/// A helper call to a callee the caller's code could call by its entry, which it compiled before: past
+/// `late_call_calls` the body specializes again and a calling loop region's code goes (`LoopTier::late_callee`),
+/// answered true so the call leaves the region. A settled site (`LaneContext::late_settled`) counts no more.
+pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) -> bool {
+    if unsafe { (*cx).late_settled } == ip { return false; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
     let function = match vm.lane_stack.top_frame() {
         Some(activation) => activation.function(),
-        None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return }; frame.function }
+        None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return false }; frame.function }
     };
-    let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };
-    if !caller.owns_record(ip) { return; }
+    let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return false };
+    if !caller.owns_record(ip) { return false; }
     if caller.note_late_call() {
-        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
-    } else if caller.late_calls_settled() {
-        unsafe { (*cx).late_settled = ip };
-    }
+        // A callee still warming toward its body is called by its entry once it has one: count again until then.
+        if unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view).is_some_and(|own| own.warming()) { caller.recount_late_calls(); return false; }
+        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_none() { return false; }
+        caller.respecialize();
+        let (pc, region) = (unsafe { ip.offset_from(caller.records()) } as u32, unsafe { (*cx).region_payload } != 0);
+        return caller.loops.iter().filter(|site| region && (site.header..=site.backedge).contains(&pc))
+            .fold(false, |left, site| site.tier.borrow_mut().late_callee(site.tiers) | left);
+    } else if caller.late_calls_settled() { unsafe { (*cx).late_settled = ip } }
+    false
 }

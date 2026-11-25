@@ -86,6 +86,9 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     if let Some(intrinsics) = state(c).borrow().crypto.intrinsics {
         return Ok(intrinsics.module);
     }
+    // The keys this module makes travel through `structuredClone` by this operation, which
+    // the clone names without marking it (`shared_vm::call_linked`).
+    let _ = crate::host::shared_vm::operation!("cryptoStructuredClone");
     let undefined = c.undefined();
     let handle = c.private_symbol_rooted(Some("kHandle"));
     let handle = c.retain(handle)?;

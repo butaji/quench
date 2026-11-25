@@ -405,8 +405,15 @@ pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> R
     }
     let global = c.global_root()?;
     let constructor = if class == "KeyObject" {
-        let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
-        get(c, crypto, class)?
+        // A value is no key of a crypto module not yet built.
+        #[cfg(quench_openssl_provider)]
+        let key_object = crate::modules::crypto_node::built_class(c, crate::modules::crypto_node::Class::KeyObject);
+        #[cfg(not(quench_openssl_provider))]
+        let key_object = None;
+        match key_object {
+            Some(key_object) => key_object,
+            None => return Ok(false),
+        }
     } else {
         get(c, global, class)?
     };
@@ -428,7 +435,7 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         LegacyTest::Array => c.is_array_rooted(value)?,
         LegacyTest::Boolean => kind == ValueType::Boolean,
         LegacyTest::Buffer => {
-            let buffer = crate::host::shared_vm::commonjs::builtin_require(c, "buffer")?;
+            let buffer = crate::host::shared_vm::commonjs::builtin!(c, "buffer")?;
             let buffer = get(c, buffer, "Buffer")?;
             let is_buffer = get(c, buffer, "isBuffer")?;
             let result = c.call_rooted(is_buffer, buffer, &[value])?;

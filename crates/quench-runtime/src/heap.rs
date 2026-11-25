@@ -4372,6 +4372,14 @@ impl Heap {
         // SAFETY: the caller's; the staged hit takes the arena form first, on one compare.
         unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
     }
+    /// `own_field_hit` of the global object, whose values may live behind extras
+    /// (`staged::concrete_global_field_hit`).
+    /// # Safety
+    /// As for `own_field_hit`.
+    #[inline(always)]
+    pub(crate) unsafe fn global_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
+        unsafe { crate::staged::concrete_global_field_hit(object, self.properties.values_base(), shape, slot) }
+    }
     /// `own_field_hit` through a lane record's own-field hint (`Object::hint_shape`): `None`
     /// on another exact shape or storage form.
     /// # Safety
