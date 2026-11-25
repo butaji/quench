@@ -20,10 +20,8 @@ pub(crate) struct SymbolSite {
 /// offsets from the code's start, `head` bytes past the entry thunk; a field must be an absolute word.
 fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Vec<SymbolSite>, String> {
     let named = |row: usize, hole: u32| symbols.get(row).into_iter().flatten().flatten().find(|(index, _)| u32::from(*index) == hole).map(|(_, symbol)| *symbol);
-    quench_bjit::symbolic_fields(rows, |row, hole| named(row, hole).is_some()).into_iter().map(|field| -> Result<SymbolSite, String> {
-        if field.class != quench_bjit::ABS64 {
-            return Err("a symbolic hole is not an absolute word".to_string());
-        }
+    let fields = quench_bjit::absolute_symbolic_fields(rows, |row, hole| named(row, hole).is_some()).ok_or("a symbolic hole is not an absolute word")?;
+    fields.into_iter().map(|field| -> Result<SymbolSite, String> {
         let symbol = named(field.row, field.hole).ok_or("a symbolic field has no symbol")?;
         Ok(SymbolSite { offset: head + field.offset, symbol })
     }).collect()

@@ -32,10 +32,10 @@ pub(crate) struct WasmImageRows {
 pub(crate) fn rows(vm: &Vm, id: ProgramId, code: &ResidualProgram, declared: &[quench_runtime::WasmBindingType]) -> Vec<Option<WasmImageRows>> {
     let count = code.function_count();
     let analysis = Analysis {
-        vm, program: id, code, env: Value::UNDEFINED, callouts: true, experimental_root_compilation: false, root_only: false,
-        compile_rejections: None, unrolls: false,
         // A memory an instance may share counts as growing under every function (`wasm_growth`).
-        grows_memory: wasm_growth::growing_functions(code, count, true), declared: Some(declared),
+        grows_memory: wasm_growth::growing_functions(code, count, true),
+        declared: Some(declared),
+        ..Analysis::new(vm, id, code, Value::UNDEFINED)
     };
     let (full_plans, memory_slot) = analysis.settle_callable(&quench_runtime::bitset::BitSet::from_fn(count, |_| true));
     let plans: Vec<Option<Plan>> = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
@@ -50,11 +50,10 @@ pub(crate) fn rows(vm: &Vm, id: ProgramId, code: &ResidualProgram, declared: &[q
     }
 }
 
-/// Function `index`'s rows, its World naming only image symbols.
+/// Function `index`'s rows, its World (`Analysis::with_world`) naming only image symbols.
 fn function_rows(analysis: &Analysis<'_>, index: usize, (plans, callable): (&[Option<Plan>], &[bool]), memory_slot: Option<u32>, full_plan: &Plan)
     -> Option<WasmImageRows> {
-    let (vm, program, code) = (analysis.vm, analysis.program, analysis.code);
-    let function = code.function_get(index)?;
+    let function = analysis.code.function_get(index)?;
     let symbols = std::cell::RefCell::new(Vec::<Symbol>::new());
     let name = |symbol: Symbol| -> u64 {
         let mut symbols = symbols.borrow_mut();
@@ -62,53 +61,19 @@ fn function_rows(analysis: &Analysis<'_>, index: usize, (plans, callable): (&[Op
         SYMBOL_WORDS + at as u64
     };
     let symbolic = |value: u64| value.wrapping_sub(SYMBOL_WORDS) < SYMBOL_RANGE;
-    let constant = |at: usize| {
-        let value = vm.programs.constant(program, at)?;
-        if vm.heap_reads().v128(value).is_some() { return None; }
-        let bits = vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32()));
-        (!symbolic(bits)).then_some(bits)
-    };
     let callee = |callee: usize| callable.get(callee).copied()?.then(|| name(Symbol::EntryCell(callee as u32)));
-    let global = |pc: usize| -> Option<(u32, quench_runtime::staged::wasm_instance::Storage)> {
-        if !full_plan.reachable(pc) { return None; }
-        let Slot::Binding(slot) = full_plan.operand(pc) else { return None };
-        Some((slot, quench_runtime::staged::wasm_instance::Storage::of(analysis.global_type(slot)?)))
-    };
-    let vector_constant = |at: usize| vm.heap_reads().v128(vm.programs.constant(program, at)?);
-    let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
-    let table_bindings = |pc: usize| -> Option<(Option<u32>, Option<u32>)> {
-        if !full_plan.reachable(pc) { return None; }
-        let first = match full_plan.operand(pc) { Slot::Binding(slot) => Some(slot), _ => None };
-        let second = match full_plan.seconds[pc] { Some(Slot::Binding(slot)) => Some(slot), _ => None };
-        Some((first, second))
-    };
-    let references = |pc: usize| -> Vec<u16> { full_plan.references.get(pc).cloned().unwrap_or_default() };
-    let gc_reads = |pc: usize| -> Vec<(u16, u64)> {
-        full_plan.gc_reads.get(pc).map_or_else(Vec::new, |reads| reads.iter().map(|(register, kind)| (*register, *kind as u64)).collect())
-    };
-    let world = wasm_stitch::World {
-        constant: &constant,
-        memory_slot,
+    let naming = wasm_world::Naming {
+        constant: &|bits| !symbolic(bits),
+        callee: &callee,
+        indirect: &|_| None,
         // An instance's memory may move when it grows: the image takes no reservation as given.
         memory_stable: false,
-        callee: &callee,
-        grows_memory: &analysis.grows_memory,
-        vm_call: UNNAMED,
-        global: &global,
-        globals_offset: CONTEXT_GLOBALS as u64,
-        indirect: &|_| None,
-        table_callout: UNNAMED,
-        gc_callout: UNNAMED,
-        allocate_callout: UNNAMED,
-        references: &references,
-        gc_reads: &gc_reads,
-        table_bindings: &table_bindings,
-        registers: function.registers,
-        vector_constant: &vector_constant,
-        vector_move: &vector_move,
+        callouts: wasm_world::Callouts::all(UNNAMED),
     };
     let returns = plans.get(index)?.as_ref()?.result.is_some();
-    let (code, named) = wasm_stitch::stitch_naming(function, usize::from(function.params), returns, &world, &symbolic)?;
+    let (code, named) = analysis.with_world(function, full_plan, memory_slot, naming, |world| {
+        wasm_stitch::stitch_naming(function, usize::from(function.params), returns, world, &symbolic)
+    })?;
     let symbols = symbols.into_inner();
     let named = named.into_iter().map(|(offset, value)| symbols.get(usize::try_from(value - SYMBOL_WORDS).ok()?).map(|symbol| (offset, *symbol)))
         .collect::<Option<Vec<_>>>()?;

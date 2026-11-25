@@ -477,9 +477,8 @@ pub(crate) fn stitch_naming(function: &Function, params: usize, returns: bool, w
     let (code, routines, _) = stitcher::stitch_behind((&entry, &entry_holes), &[&trap], &placed, Behind::Routine(0)).ok()?;
     // The rows follow the entry and the trap routine (`stitch_behind`).
     let rows_at = routines.last().map_or(entry.code.len(), |at| at + trap.code.len());
-    let named = quench_bjit::symbolic_fields(&placed, |row, hole| flat[row].holes.get(hole as usize).is_some_and(|value| symbolic(*value)));
-    let named = named.into_iter().map(|field| (field.class == quench_bjit::ABS64).then(|| (rows_at + field.offset, flat[field.row].holes[field.hole as usize])))
-        .collect::<Option<Vec<_>>>()?;
+    let named = quench_bjit::absolute_symbolic_fields(&placed, |row, hole| flat[row].holes.get(hole as usize).is_some_and(|value| symbolic(*value)))?;
+    let named = named.into_iter().map(|field| (rows_at + field.offset, flat[field.row].holes[field.hole as usize])).collect();
     Some((code, named))
 }
 

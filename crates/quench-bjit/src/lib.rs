@@ -293,6 +293,13 @@ pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> V
     fields
 }
 
+/// The symbolic fields of `rows` (`symbolic_fields`) where each is an absolute word a loader fills
+/// (`ABS64`); `None` where one is not.
+pub fn absolute_symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> Option<Vec<SymbolicField>> {
+    let fields = symbolic_fields(rows, symbolic);
+    fields.iter().all(|field| field.class == ABS64).then_some(fields)
+}
+
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
 // The library tests read the stencil tables, which `quench-stencils` defines.
 #[cfg(test)]
