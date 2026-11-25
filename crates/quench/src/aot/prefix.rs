@@ -151,6 +151,15 @@ pub(crate) fn admits(name: &str) -> bool {
     STATIC_OPERATIONS.contains(&name) || STATIC_MODULES.iter().any(|module| name.starts_with(module))
 }
 
+/// The dynamic input host operation `name` reads, as a diagnostic names it.
+pub(crate) fn input_of(name: &str) -> String {
+    match name {
+        "processIdentityInitialize" => "the process identity (process.argv, execPath, pid)".into(),
+        "processEnvInitialize" => "the environment (process.env)".into(),
+        _ => format!("the host operation {name}"),
+    }
+}
+
 /// Notes the first dynamic input of the run.
 pub(crate) fn refuse(what: String) {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(what);

@@ -78,28 +78,39 @@ struct Variant {
     exit: i32,
 }
 
+/// What a strict compile made: a strict image, or nothing, because a build-time run read the
+/// named dynamic input, which strict images do not yet keep code for; the compile then links
+/// the program's support variant (`aot::cli`).
+pub(super) enum Outcome {
+    Image,
+    Dynamic,
+}
+
 /// Compiles `entry` to a strict image at `output`, in the build directory `work`; `report`
 /// gains what the evaluations left.
-pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Value) -> Result<(), String> {
+pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Value) -> Result<Outcome, String> {
     let mut variants = Vec::new();
-    specialize(entry, work, Vec::new(), &mut variants)?;
+    if let Some(input) = specialize(entry, work, Vec::new(), &mut variants)? {
+        report["strict"] = json!({"status": "dynamic_input", "input": input});
+        return Ok(Outcome::Dynamic);
+    }
     let source = work.join("strict_image.rs");
     fs::write(&source, replay_source(&variants)).map_err(|error| error.to_string())?;
     let mut rustc = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
     rustc.args(["--edition", "2024", "--crate-type", "bin", "-C", "panic=abort", "-C", "opt-level=s", "-C", "strip=symbols", "-C", "link-arg=-lc"])
         .arg("-o").arg(output).arg(&source);
     quench_runtime::native_link::checked_output(&mut rustc, "strict image link")?;
-    report["evaluation"] = json!(variants.iter().map(|variant| json!({
+    report["strict"] = json!({"status": "image", "evaluation": variants.iter().map(|variant| json!({
         "terminals": variant.terminals, "writes": variant.effects.len(),
         "bytes": variant.effects.iter().map(|(_, bytes)| bytes.len()).sum::<usize>(), "exit": variant.exit,
-    })).collect::<Vec<_>>());
+    })).collect::<Vec<_>>()});
     report["engine_linked"] = json!(false);
-    Ok(())
+    Ok(Outcome::Image)
 }
 
 /// Evaluates `entry` under `terminals`, and once per answer of each terminal question the
-/// run asks, adding each completed run to `variants`.
-fn specialize(entry: &Path, work: &Path, terminals: Vec<(i32, bool)>, variants: &mut Vec<Variant>) -> Result<(), String> {
+/// run asks, adding each completed run to `variants`; or the first dynamic input a run read.
+fn specialize(entry: &Path, work: &Path, terminals: Vec<(i32, bool)>, variants: &mut Vec<Variant>) -> Result<Option<String>, String> {
     let journal = work.join(format!("evaluation-{}.json", variants.len()));
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", EVALUATION_WORKER_OPTION]).arg(entry).arg(&journal)
@@ -112,28 +123,23 @@ fn specialize(entry: &Path, work: &Path, terminals: Vec<(i32, bool)>, variants: 
         Some("effects") => {
             let effects = serde_json::from_value(left["effects"].clone()).map_err(|error| error.to_string())?;
             variants.push(Variant { terminals, effects, exit: left["exit"].as_i64().unwrap_or(0) as i32 });
-            Ok(())
+            Ok(None)
         }
         Some("terminal") if terminals.len() < MOST_TERMINAL_CHOICES => {
             let fd = left["fd"].as_i64().ok_or("build-time evaluation journal: terminal without its descriptor")? as i32;
             for answer in [false, true] {
                 let mut assumed = terminals.clone();
                 assumed.push((fd, answer));
-                specialize(entry, work, assumed, variants)?;
+                if let Some(input) = specialize(entry, work, assumed, variants)? {
+                    return Ok(Some(input));
+                }
             }
-            Ok(())
+            Ok(None)
         }
-        Some("waiting") => Err(format!(
-            "strict AOT: {} waits for input after {} write(s), and strict images do not yet resume from the saved wait ({} bytes)",
-            entry.display(),
-            left["effects"].as_array().map_or(0, Vec::len),
-            left["rest_bytes"].as_u64().unwrap_or(0),
-        )),
-        _ => Err(format!(
-            "strict AOT: {} reads {} at build time, and strict images do not yet keep code for dynamic inputs",
-            entry.display(),
-            left["input"].as_str().unwrap_or("whether more descriptors are terminals"),
-        )),
+        Some("terminal") => Ok(Some(format!("whether more than {MOST_TERMINAL_CHOICES} descriptors are terminals"))),
+        Some("waiting") => Ok(Some("standard input, after it waits for it".into())),
+        Some("dynamic") => Ok(Some(left["input"].as_str().unwrap_or("an unnamed input").to_owned())),
+        _ => Err(format!("build-time evaluation journal: unknown status {}", left["status"])),
     }
 }
 
