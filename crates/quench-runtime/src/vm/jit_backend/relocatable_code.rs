@@ -60,19 +60,31 @@ impl RelocatableCode {
     /// The code `compiled` holds, each relocation resolved to its symbol; `None` where one
     /// names anything but a user symbol or cannot be patched.
     pub fn extract(compiled: &CompiledCode, function: &ir::Function) -> Option<Self> {
+        Self::extract_or_reason(compiled, function).ok()
+    }
+
+    /// `extract`, naming the first relocation it cannot carry: its target is no user symbol, the
+    /// function's table does not hold its name, or its kind is one an image cannot patch.
+    pub fn extract_or_reason(compiled: &CompiledCode, function: &ir::Function) -> Result<Self, String> {
         let names = function.params.user_named_funcs();
-        let relocations = compiled.buffer.relocs().iter().map(|relocation| {
-            let RelocTarget::ExternalName(ir::ExternalName::User(name)) = &relocation.target else { return None };
-            let name = names.get(*name)?;
-            patchable(relocation.kind).then_some(Relocation {
-                offset: usize::try_from(relocation.offset).ok()?,
+        let mut relocations = Vec::with_capacity(compiled.buffer.relocs().len());
+        for relocation in compiled.buffer.relocs() {
+            let RelocTarget::ExternalName(ir::ExternalName::User(name)) = &relocation.target else {
+                return Err(format!("relocation {:#x} targets no user symbol ({:?})", relocation.offset, relocation.target));
+            };
+            let name = names.get(*name).ok_or_else(|| format!("relocation {:#x} names a symbol the function does not hold", relocation.offset))?;
+            if !patchable(relocation.kind) {
+                return Err(format!("relocation {:#x} names {:?}, which an image cannot patch", relocation.offset, relocation.kind));
+            }
+            relocations.push(Relocation {
+                offset: usize::try_from(relocation.offset).map_err(|_| format!("relocation {:#x} is out of range", relocation.offset))?,
                 kind: relocation.kind,
                 namespace: name.namespace,
                 key: name.index,
                 addend: relocation.addend,
-            })
-        }).collect::<Option<Box<[_]>>>()?;
-        Some(Self { code: compiled.code_buffer().into(), relocations })
+            });
+        }
+        Ok(Self { code: compiled.code_buffer().into(), relocations: relocations.into_boxed_slice() })
     }
 
     /// The code patched for `address`, each symbol resolved by `resolve`; an error names the

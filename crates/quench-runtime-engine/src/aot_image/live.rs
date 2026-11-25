@@ -1,9 +1,9 @@
 //! The live linker: an `AotImage` placed in this process's executable memory. Every base and lane
 //! body sits in one code block whose layout fixes every address before any code is linked, so a
-//! base PC leave resolves to its final address. Every other symbol resolves now: helpers,
-//! semantic entries, operand records (the image's table, kept with the code), atoms, the
-//! invalidation word, heap values and shapes (`symbols::resolve_recipe`), and the records of the
-//! calls the closed world proves (`BoundCalls`, kept with the code).
+//! base PC leave resolves to its final address. Every other symbol resolves now: helpers, the
+//! image's value table (each atom's id, heap value's bits and shape's id, placed beside the code
+//! so an `adrp` reaches it), the invalidation word, and the records of the calls the closed world
+//! proves (`BoundCalls`, kept with the code).
 //! A function's entry is its lane body where it has one, else its base body.
 //!
 //! Owner: one pipeline.
@@ -33,23 +33,36 @@ struct Layout {
 }
 
 /// The addresses symbols resolve to that the image's own data fixes: each function's base body,
-/// the invalidation word and the call records.
+/// the invalidation word, the value table and the call records.
 struct Places<'a> {
     bases: &'a [u64],
     invalidation: usize,
     calls: &'a [UnsafeCell<CallRecord>],
+    /// The address of the value table (`Symbol::Atom`, `HeapValue`, `Shape`): one 64-bit word per
+    /// atom (its id), heap value (its bits) and shape (its id), placed beside the code so an
+    /// `adrp` reaches it and a value relocation can load it.
+    values: u64,
+    /// How many words that table holds, per section.
+    value_counts: (usize, usize, usize),
 }
 
-/// Links `image` into `vm`: its code placed, every symbol resolved.
+/// Links `image` into `vm`: its code and value table placed, every symbol resolved.
 pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String> {
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
-    let code = CodeMemory::assemble(layout.length, |pointer, out| {
+    let value_bytes = value_words(image) * std::mem::size_of::<u64>();
+    let code = CodeMemory::assemble(layout.length + value_bytes, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
-        let places = Places { bases: &bases, invalidation: invalidation.address(), calls: calls.records() };
-        place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
+        let values = pointer.addr() + layout.length;
+        let unresolved = place_values(image, vm, out, layout.length)?;
+        // A base body names only what the image itself fixes; a lane body may name a heap value the
+        // program has not made yet, which `place` leaves unplaced until it is published.
+        for function in &image.functions { require_placed(&function.base.code, &unresolved)?; }
+        let places = Places { bases: &bases, invalidation: invalidation.address(), calls: calls.records(),
+            values: values as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
+        place(image, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()), &unresolved)
     })?;
     let start = code.pointer().addr();
     let bases: Box<[usize]> = layout.bases.iter().map(|at| start + at).collect();
@@ -103,22 +116,100 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
         entries: table.entries.into(), bases: table.bases.into(), lanes })
 }
 
-/// The lane body of `function` linked against `live`, at address 0 for a copy into a new body
-/// (`LanePlan::finish`), with the heap values it names (`HeapValueRecipe::Global`, `PrototypeOf`, `ClosureOf`),
-/// which its publication keeps alive (`PublishedCode::hold_roots`): a collected object's id is
-/// reused, and the code would take the next object for it. `None` where the function has no lane
-/// body or a symbol does not link.
-pub(crate) fn link_lane(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
-    let lane = image.functions.get(function as usize)?.lane.as_ref()?;
+/// Links `function`'s lane body at `address`, where it will run, writing its code and value table
+/// to `out`: its `adrp`/`add` pairs and branches are page- and displacement-relative to that
+/// address, so a body linked anywhere else faults or refuses to link. The returned roots are the
+/// heap identities the code embeds, which its publication keeps alive.
+pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32, address: u64, out: &mut [u8]) -> Result<FoldedRoots, String> {
+    let lane = image.functions.get(function as usize).and_then(|function| function.lane.as_ref())
+        .ok_or_else(|| "no lane body".to_owned())?;
+    let code_len = lane.code.code.len();
+    let value_bytes = value_words(image) * std::mem::size_of::<u64>();
+    if out.len() < code_len + value_bytes { return Err("lane body is larger than its placement".to_owned()) }
+    // The value table follows the code in the same block, so its `adrp` is in range.
+    let unresolved = place_values(image, vm, out, code_len)?;
+    require_placed(&lane.code, &unresolved)?;
+    // The symbols resolve to the table's slots, so a heap value's identity is the word it holds.
+    let heap_values = placed_heap_values(image, out, code_len);
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, invalidation: live.invalidation.address(), calls: live.calls.records() };
+    let places = Places { bases: &bases, invalidation: live.invalidation.address(), calls: live.calls.records(),
+        values: address + code_len as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
     let mut roots = FoldedRoots::default();
-    let code = lane.code.link(0, |namespace, key| {
-        let word = resolve(image, vm, &places, namespace, key)?;
-        if let Some(Symbol::HeapValue(_)) = SymbolTable::decode(image, namespace, key) { roots.embed_heap_identity(quench_runtime::Value::from_bits(word)); }
+    let mut symbol = None;
+    let code = lane.code.link(address, |namespace, key| {
+        symbol = SymbolTable::decode(image, namespace, key);
+        let word = resolve(image, &places, namespace, key)?;
+        if let Some(Symbol::HeapValue(heap)) = symbol {
+            roots.embed_heap_identity(quench_runtime::Value::from_bits(heap_values[heap as usize]));
+        }
         Some(word)
-    }).ok()?;
-    Some((code, roots.settled()))
+    }).map_err(|error| format!("{error} [{symbol:?}]"))?;
+    out[..code_len].copy_from_slice(&code);
+    Ok(roots.settled())
+}
+
+/// The words the value table holds: one per atom, heap value and shape.
+pub(crate) fn value_words(image: &AotImage) -> usize {
+    image.atoms.len() + image.heap_values.len() + image.shapes.len()
+}
+
+/// The slot of value `index` (atom, then heap value, then shape) in `places`' table.
+fn value_slot(places: &Places<'_>, index: u32) -> Option<u64> {
+    let (atoms, heap, shapes) = places.value_counts;
+    ((index as usize) < atoms + heap + shapes).then(|| places.values + u64::from(index) * std::mem::size_of::<u64>() as u64)
+}
+
+/// Fills the value table at `at`: each atom's id, heap value's bits and shape's id, as this VM
+/// resolved them, so a linking lowering's `adrp` loads the word it names. A recipe the running
+/// program has not made yet keeps `undefined` and is reported, so a body that names it is not
+/// placed (`require_placed`) until the program makes it.
+fn place_values(image: &AotImage, vm: &mut Vm, out: &mut [u8], at: usize) -> Result<Vec<(u32, u32)>, String> {
+    let size = std::mem::size_of::<u64>();
+    let table = out.get_mut(at..at + value_words(image) * size).ok_or("AOT image block is too small for its values")?;
+    let mut words = table.chunks_exact_mut(size);
+    for text in &image.atoms {
+        words.next().expect("the table holds every atom").copy_from_slice(&u64::from(vm.intern_atom(text)).to_le_bytes());
+    }
+    let mut unresolved = Vec::new();
+    for key in 0..image.heap_values.len() as u32 {
+        let value = symbols::resolve_recipe(Symbol::HeapValue(key), image, vm).unwrap_or_else(|| {
+            unresolved.push((super::super::compiled::RelocKind::HeapValue as u32, key));
+            quench_runtime::Value::UNDEFINED.to_bits()
+        });
+        words.next().expect("the table holds every heap value").copy_from_slice(&value.to_le_bytes());
+    }
+    for key in 0..image.shapes.len() as u32 {
+        let shape = symbols::resolve_recipe(Symbol::Shape(key), image, vm).unwrap_or_else(|| {
+            unresolved.push((super::super::compiled::RelocKind::Shape as u32, key));
+            0
+        });
+        words.next().expect("the table holds every shape").copy_from_slice(&shape.to_le_bytes());
+    }
+    Ok(unresolved)
+}
+
+/// The heap values the table at `at` holds, as the bits a linked body loads from it: a root keeps
+/// the object itself, not the address of the word that names it.
+fn placed_heap_values(image: &AotImage, out: &[u8], at: usize) -> Box<[u64]> {
+    let size = std::mem::size_of::<u64>();
+    let first = at + image.atoms.len() * size;
+    (0..image.heap_values.len()).map(|key| {
+        let word = &out[first + key * size..first + (key + 1) * size];
+        u64::from_le_bytes(word.try_into().expect("a value word is eight bytes"))
+    }).collect()
+}
+
+/// Fails where `code` names a value `unresolved` (`(namespace, key)`) could not fill.
+pub(crate) fn require_placed(code: &RelocatableCode, unresolved: &[(u32, u32)]) -> Result<(), String> {
+    match unresolved.iter().copied().find(|&(namespace, key)| code.relocations.iter()
+        .any(|relocation| relocation.namespace == namespace && relocation.key == key))
+    {
+        Some((namespace, key)) if namespace == super::super::compiled::RelocKind::Shape as u32 => {
+            Err(format!("an AOT image shape {key} does not resolve"))
+        }
+        Some((_, key)) => Err(format!("an AOT image heap value {key} does not resolve")),
+        None => Ok(()),
+    }
 }
 
 /// The offsets of every body, each aligned, and the block's length.
@@ -138,14 +229,15 @@ fn layout(image: &AotImage) -> Layout {
 /// `places`, and marks in `linked` each lane body that linked. A base body names only symbols the
 /// image fixes at load, so one that does not link fails the image; a lane body may name what the
 /// program makes as it runs (`HeapValueRecipe::PrototypeOf`, a callee's entry cell), which
-/// resolves when it is published (`link_lane`), so one that does not link yet is left unplaced.
-fn place(image: &AotImage, vm: &mut Vm, layout: &Layout, (start, places): (usize, &Places<'_>),
-    (out, linked): (&mut [u8], &mut [bool])) -> Result<(), String> {
-    let mut address = |namespace: u32, key: u32| resolve(image, vm, places, namespace, key);
+/// resolves when it is published (`link_lane_at`), so one that does not link yet is left unplaced.
+fn place(image: &AotImage, layout: &Layout, (start, places): (usize, &Places<'_>),
+    (out, linked): (&mut [u8], &mut [bool]), unresolved: &[(u32, u32)]) -> Result<(), String> {
+    let mut address = |namespace: u32, key: u32| resolve(image, places, namespace, key);
     for (function, body) in image.functions.iter().enumerate() {
         link_into(out, start, layout.bases[function], &body.base.code, &mut address)?;
         if let (Some(lane), Some(at)) = (&body.lane, layout.lanes[function]) {
-            linked[function] = link_into(out, start, at, &lane.code, &mut address).is_ok();
+            linked[function] = require_placed(&lane.code, unresolved).is_ok()
+                && link_into(out, start, at, &lane.code, &mut address).is_ok();
         }
     }
     Ok(())
@@ -159,17 +251,18 @@ fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, re
 }
 
 /// The address of symbol `(namespace, key)` in this process, or `None` where it resolves to none yet.
-fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
+fn resolve(image: &AotImage, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
     let symbol = SymbolTable::decode(image, namespace, key)?;
     match symbol {
         Symbol::Helper(helper) => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
-        Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
+        Symbol::Atom(atom) => value_slot(places, image.atoms.get(atom as usize).map(|_| u32::from(atom))?),
+        Symbol::HeapValue(key) => value_slot(places, u32::from(key) + image.atoms.len() as u32),
+        Symbol::Shape(key) => value_slot(places, u32::from(key) + (image.atoms.len() + image.heap_values.len()) as u32),
         Symbol::Invalidation => Some(places.invalidation as u64),
         Symbol::NarrowUpperWords => Some(quench_runtime::value::NarrowLayout::upper_words() as u64),
         Symbol::Attention => Some(quench_runtime::execution_interrupt::attention_address()),
         Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
-        Symbol::HeapValue(_) | Symbol::Shape(_) => symbols::resolve_recipe(symbol, image, vm),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
 }

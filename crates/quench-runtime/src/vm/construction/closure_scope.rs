@@ -167,13 +167,10 @@ impl Vm {
     }
 
     /// Whether a closure of `id` must be findable by `cached_functions`: a top-level closure, or one
-    /// the loaded image's value table names (`ClosureOf`).
+    /// the loaded image's value table names (`ClosureOf`). The image's table is read at a body's
+    /// link, so a closure it names must be found whether or not a body has been installed yet.
     pub(super) fn records_closure(&self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32) -> bool {
-        // Only a closure an image's value table names is recorded beyond the top-level ones, and
-        // only while that image's bodies install (`QUENCH_DEV=ahead-bodies`): the table is read at
-        // a body's link, which the experiment gates.
-        let named = crate::trace::Dev::AheadBodies.on()
-            && self.programs.ahead_images(self.active_program, p).is_some_and(|images| images.names_closure(id));
+        let named = self.programs.ahead_images(self.active_program, p).is_some_and(|images| images.names_closure(id));
         !p.is_module() && (plan.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID) || named)
     }
 

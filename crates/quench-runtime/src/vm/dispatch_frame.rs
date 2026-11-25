@@ -209,7 +209,7 @@ impl Vm {
     ) -> GeneralCodeCursor {
         let function_code = program.function(function as usize);
         let interprets = self.execution_mode.allows_dynamic_execution();
-        let admitted = interprets && lane && self.admits_in_lane(program);
+        let admitted = lane && self.admits_in_lane(program_id, program);
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         // Native transitions read only boundary metadata from packed code;
         // they must not warm or allocate an interpreter dispatch expansion.
@@ -539,11 +539,11 @@ impl Vm {
     /// (`ProgramStore::call_may_derive_in_lane`); null where the general loop runs it.
     pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const crate::vm::engine_types::LaneView {
         let program = self.active_program;
-        let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
+        let runs_in_lane = (Self::FRAME_ENTRY_LANE_RUNS || self.programs.ahead_images(program, p).is_some())
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
-            || !self.admits_in_lane(p)
+            || !self.admits_in_lane(program, p)
             || !self.programs.call_may_derive_in_lane(program, id, false, false)
         {
             return std::ptr::null();
@@ -1583,8 +1583,9 @@ impl Vm {
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
     fn enters_in_lane(view: *const crate::vm::engine_types::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
-    /// Whether a frame entry may run the lane: execution-only support never
-    /// interprets, and instruction profiling must observe every PC.
+    /// Whether a frame entry may run the lane: execution-only support never interprets (it runs a
+    /// linked ahead image's bodies, whose misses step one record from packed code), and instruction
+    /// profiling must observe every PC.
     const FRAME_ENTRY_LANE_RUNS: bool = crate::DYNAMIC_EXECUTION_ENABLED
         && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
 
@@ -1777,8 +1778,11 @@ impl Vm {
             None
         };
         let (_stack, raised) = self.enter_general_loop_stack(p.kind, raised)?;
-        // Parameter-initialization stops observe every PC, so they run the general path only.
-        let fast_lane = !STOPS && stop_pc.is_none() && Self::FRAME_ENTRY_LANE_RUNS;
+        // Parameter-initialization stops observe every PC, so they run the general path only. An
+        // execution-only build enters the lane for a linked ahead image, whose bodies are the only
+        // code it has (`Vm::admits_in_lane`).
+        let fast_lane = !STOPS && stop_pc.is_none()
+            && (Self::FRAME_ENTRY_LANE_RUNS || self.programs.ahead_images(executing_program, p).is_some());
         let initial_function = self.frames[frame].function as usize;
         let mut cursor = self.general_cursor(
             executing_program,
@@ -1869,6 +1873,7 @@ impl Vm {
             }
             if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
                 && !(STOPS && stop_pc == Some(pc))
+                && !(!resumed && Self::enters_in_lane(cursor.lane, pc, entering_after_lane_exit))
             {
                 return Err(self.native_execution_rejected(p, frame, pc));
             }
@@ -2117,7 +2122,9 @@ impl Vm {
             let ins = cursor.instruction(instruction_pc);
             let step = if let Some(step) = native_step {
                 step.result
-            } else if !crate::DYNAMIC_EXECUTION_ENABLED {
+            } else if !self.lane_may_run(cursor.program, p) {
+                // An execution-only build steps only a record a linked ahead image left to it
+                // (`lane_may_run`); without such an image nothing may run the program.
                 return Err(self.interpreter_unavailable());
             } else {
             #[cfg(feature = "profile-memory")]

@@ -7753,20 +7753,9 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
-            let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
+            let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                derive_lane_view(
-                    function,
-                    code,
-                    constants,
-                    vm.heap_reads(),
-                    kind,
-                    live,
-                    sites,
-                    crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                    diagnostics,
-                    tiers,
-                )
+                vm.derived_view(function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
@@ -8385,7 +8374,7 @@ impl Vm {
         let code: &ResidualProgram = if cross {
             // SAFETY: as above; no program is installed or retired while a call resolves.
             let callee_code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
-            if !self.admits_in_lane(callee_code) { return None; }
+            if !self.admits_in_lane(program, callee_code) { return None; }
             callee_code
         } else { code };
         // The JavaScript tier enters a frameless activation at its prologue as it enters a
@@ -8641,8 +8630,17 @@ impl Vm {
         program.kind == quench_runtime::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
     }
 
-    pub(crate) fn admits_in_lane(&self, program: &ResidualProgram) -> bool {
-        self.execution_mode.allows_dynamic_execution() && self.specialized_operations_enabled(program)
+    /// Whether the lane may run code of program `id`: every program where this build executes
+    /// dynamically, and in an execution-only build only a program with a linked ahead image. That
+    /// image's bodies are compiled already, and a record its body leaves runs from the packed code
+    /// (`GeneralCodeCursor::instruction`), which needs no interpreter expansion.
+    pub(crate) fn lane_may_run(&self, id: ProgramId, code: &ResidualProgram) -> bool {
+        self.execution_mode.allows_dynamic_execution()
+            || self.programs.ahead_images(id, code).is_some_and(|images| images.linked.is_some())
+    }
+
+    pub(crate) fn admits_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
+        self.lane_may_run(id, code) && self.specialized_operations_enabled(code)
     }
 
     /// The words a lane run's direct calls push onto (`compiled::DirectCallee`): the addresses
@@ -8697,22 +8695,11 @@ impl Vm {
 
     /// The lane view of `function`, derived on first use.
     pub(crate) fn view_any_in_lane(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
-        if !self.runs_lane || !self.execution_mode.allows_dynamic_execution() { return None; }
-        let diagnostics = self.programs.reports_on_drop();
-        let tiers = self.programs.tiers();
+        let Some(code) = self.programs.residual(program) else { return None };
+        if !self.runs_lane || !self.lane_may_run(program, code) { return None; }
+        let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view(
-                function,
-                code,
-                constants,
-                self.heap_reads(),
-                kind,
-                live,
-                sites,
-                crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                diagnostics,
-                tiers,
-            )
+            self.derived_view(function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -15715,7 +15702,7 @@ fn push_frame_call_in_lane(
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
     // A callee of another program runs in the lane only where the lane admits its program.
     if target.0 != unsafe { (*cx).program }
-        && !vm.programs.residual(target.0).is_some_and(|callee_code| vm.admits_in_lane(callee_code))
+        && !vm.programs.residual(target.0).is_some_and(|callee_code| vm.admits_in_lane(target.0, callee_code))
     {
         return Resumed::Exit(exit(ip));
     }
@@ -15867,7 +15854,7 @@ fn frame_construct_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneI
                     code.function_get(*id as usize).is_some_and(admits)
                 } else {
                     vm.programs.residual(*program).is_some_and(|callee_code| {
-                        vm.admits_in_lane(callee_code)
+                        vm.admits_in_lane(*program, callee_code)
                             && callee_code
                                 .function_get(*id as usize)
                                 .is_some_and(admits)
@@ -18170,28 +18157,31 @@ impl Vm {
     /// The lane view a general-loop entry of `function` runs with, or null when it runs
     /// without one (`ProgramStore::entry_lane_view`).
     pub(crate) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
-        if !self.runs_lane || !self.execution_mode.allows_dynamic_execution() { return std::ptr::null(); }
-        let diagnostics = self.programs.reports_on_drop();
-        let tiers = self.programs.tiers();
-        // A Wasm function that may loop gets its view at entry; a JavaScript one derives it
-        // once a loop turns hot (`Vm::note_back_edge`).
-        let wasm = self.programs.residual(program).is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
+        let Some(code) = self.programs.residual(program) else { return std::ptr::null() };
+        if !self.runs_lane || !self.lane_may_run(program, code) { return std::ptr::null(); }
+        // An ahead image's bodies run from entry, so a function it covers takes its view at entry
+        // like a Wasm one that may loop; every other JavaScript function derives it once a loop
+        // turns hot (`Vm::note_back_edge`).
+        let wasm = code.kind == quench_runtime::bytecode::ProgramKind::Wasm;
+        let image = self.programs.ahead_images(program, code).is_some();
         self.programs
-            .entry_lane_view(program, function, |code| wasm && may_loop(code), |code, constants, kind, live, sites| {
-                derive_lane_view(
-                    function,
-                    code,
-                    constants,
-                    self.heap_reads(),
-                    kind,
-                    live,
-                    sites,
-                    crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                    diagnostics,
-                    tiers,
-                )
+            .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
+                self.derived_view(function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
+    }
+
+    /// `function`'s view of `code`, derived with this VM's facts; an image's body may be entered
+    /// at any record (`LaneView::admit_every_record`).
+    fn derived_view<'a>(&self, function: u32, code: &quench_runtime::bytecode::Function, constants: &[Value],
+        kind: quench_runtime::bytecode::ProgramKind,
+        live: &dyn Fn() -> Option<&'a std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
+        sites: &[quench_runtime::bytecode::FieldSite], image: bool) -> LaneView {
+        let mut view = derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites,
+            crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
+            self.programs.reports_on_drop(), self.programs.tiers());
+        if image { view.admit_every_record(); }
+        view
     }
 
     /// Whether a lane run of `program` credits its functions' loop work: a Wasm program in
@@ -18208,8 +18198,7 @@ impl Vm {
     #[inline(always)]
     pub(crate) fn runs_in_lane(view: *const LaneView, pc: usize) -> bool {
         // SAFETY: a non-null view has an entry for every validated PC.
-        quench_runtime::DYNAMIC_EXECUTION_ENABLED
-            && !view.is_null()
+        !view.is_null()
             && unsafe {
                 let entries: &[u64] = &(*view).entries;
                 *entries.get_unchecked(pc / u64::BITS as usize)
@@ -18222,7 +18211,7 @@ impl Vm {
     #[inline(always)]
     pub(crate) fn runs_call_in_lane(view: *const LaneView) -> bool {
         // SAFETY: a non-null view lives with its program.
-        Self::runs_in_lane(view, 0) || quench_runtime::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { (*view).returns_from_entry }
+        Self::runs_in_lane(view, 0) || !view.is_null() && unsafe { (*view).returns_from_entry }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the

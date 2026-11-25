@@ -1920,7 +1920,10 @@ pub(crate) fn lower(
     let mut stage = emit(&mut builder);
     let payload = if numeric { stage.raw_const(Lane::I64, 0) } else {
         stage.raw_load(Lane::I64, regions::dispatch(), context, std::mem::offset_of!(CallContext, head.adapter_payload) as i32) };
-    let fault_poll = match coverage { Coverage::Loop { poll, .. } => poll, _ => true }
+    // An image body is linked away from its compile, so a fault poll would name the compiling
+    // process's fault address: its back edge polls `context.interrupt` instead (no trapping check).
+    let fault_poll = !matches!(helpers, LaneHelpers::Ahead)
+        && match coverage { Coverage::Loop { poll, .. } => poll, _ => true }
         && super::FAULT_POLL_SUPPORTED && quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).next().is_some();
     let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
     let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
