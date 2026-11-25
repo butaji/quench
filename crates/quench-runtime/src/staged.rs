@@ -136,9 +136,7 @@ pub mod slot_store;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
 pub mod strings;
-/// The natives every tier runs on a staged row: the table (`native_row_table`, which the runtime
-/// reads through `quench_bjit::call`, so planner and runtime share one type) and the bodies.
-#[cfg(stencil_build)]
+/// The natives run in place by identity: the table (`native_row_table`) and the map to it (`native_row`).
 pub mod native_row_table;
 pub mod native_row;
 pub mod string_length;
@@ -214,6 +212,7 @@ mod property_write;
 pub use property::{NoPlans, PropertyFrame};
 pub mod value;
 pub mod poll;
+pub mod bump;
 mod guard;
 mod steps;
 mod control;
@@ -260,7 +259,7 @@ pub use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub use region::Access;
 #[allow(unused_imports)]
-pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_global_field_hit, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 #[allow(unused_imports)]
 pub use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 

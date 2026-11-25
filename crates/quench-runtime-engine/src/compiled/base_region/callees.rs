@@ -192,8 +192,8 @@ impl Callees {
     /// The builtin each call site runs on its row, by PC: a site whose callee is a native the b-jit runs on one.
     pub(crate) fn builtins(&self) -> Vec<Option<BuiltinCall>> {
         self.natives.iter().map(|native| {
-            let (value, native, _) = (*native)?;
-            Some(BuiltinCall { identity: value.to_bits(), row: builtin::of(native)? })
+            let (_, native, _) = (*native)?;
+            Some(BuiltinCall { row: builtin::of(native)? })
         }).collect()
     }
 

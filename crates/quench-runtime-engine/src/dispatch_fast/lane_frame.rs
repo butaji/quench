@@ -3939,7 +3939,7 @@ unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<V
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
-        NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
+        NameRead::Field(hint) => vm.global_field_hint_hit(hint),
         NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
     }
 }
