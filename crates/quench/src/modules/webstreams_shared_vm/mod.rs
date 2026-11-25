@@ -136,7 +136,6 @@ pub(crate) mod key {
     pub(crate) const ARRAY_BUFFER: &str = "ArrayBuffer";
     pub(crate) const BUFFER: &str = "Buffer";
     pub(crate) const MODULE: &str = "module";
-    pub(crate) const TEXT_DECODER: &str = "TextDecoder";
     /// Node's `kCloseSentinel`, made on first use.
     pub(crate) const CLOSE_SENTINEL: &str = "closeSentinel";
     /// The shared errors a released reader or writer reports, made on first use.
@@ -342,7 +341,7 @@ fn build_intrinsics(c: &mut Context<'_>) -> Outcome {
         let value = get(c, symbol, member)?;
         put(c, table, member, value)?;
     }
-    for name in [key::UINT8_ARRAY, key::DATA_VIEW, key::ARRAY_BUFFER, key::TEXT_DECODER] {
+    for name in [key::UINT8_ARRAY, key::DATA_VIEW, key::ARRAY_BUFFER] {
         let value = get(c, global, name)?;
         put(c, table, name, value)?;
     }
@@ -352,6 +351,8 @@ fn build_intrinsics(c: &mut Context<'_>) -> Outcome {
         let value = get(c, array_buffer_prototype, name)?;
         put(c, table, name, value)?;
     }
+    // A lazy global read by name: its getter is linked with this read.
+    let _ = crate::host::shared_vm::operation!("bufferGlobalGet");
     let buffer = get(c, global, key::BUFFER)?;
     put(c, table, key::BUFFER, buffer)?;
     // Node's `AsyncIterator`: `{ __proto__: AsyncIteratorPrototype, next, return }`.

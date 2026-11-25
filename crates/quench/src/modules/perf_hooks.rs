@@ -375,6 +375,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
 }
 
 fn performance_class(c: &mut Context<'_>, global: RootId) -> Outcome {
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let event_target = intrinsic(c, global, "EventTarget")?;
     let class = class(c, "Performance", crate::host::shared_vm::marked_operation!("perfConstructor"), 0.0, Some(event_target))?;
     let prototype = get(c, class, "prototype")?;
@@ -405,6 +407,8 @@ fn create_performance(c: &mut Context<'_>, class: RootId) -> Outcome {
     let prototype = get(c, class, "prototype")?;
     c.set_prototype_rooted(performance, prototype)?;
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let event_target = intrinsic(c, global, "EventTarget")?;
     let maximum = get(c, event_target, "defaultMaxListeners")?;
     super::event_target_shared_vm::initialize_target(c, performance, maximum)?;

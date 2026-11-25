@@ -377,8 +377,6 @@ fn compile(options: Options) -> Result<(), String> {
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
     // global's module): every one the graph names.
     let held: Option<std::collections::BTreeSet<u32>> = (!saved_waits.is_empty()).then(|| {
-        let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned));
-        let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
         // What the global object holds only for globals no loaded code names (a pending lazy
         // global's initializer, an accessor's getter) runs only when code reads one of those
         // names: code the program holds names it, code it loads may, and so may a computed read
@@ -386,6 +384,13 @@ fn compile(options: Options) -> Result<(), String> {
         let names_any = loads_code(&graph) || graph.script_reads_this
             || graph.builtins.iter().any(|name| name.trim_start_matches("node:") == "vm")
             || super::graph::GLOBAL_OBJECT_NAMES.iter().any(|alias| graph.global_names.contains(*alias));
+        // A compression stream builds `zlib` by name (`commonjs::zlib_module_named`): kept where
+        // the program can reach the class, by its global or `stream/web`.
+        let compresses = names_any || ["CompressionStream", "DecompressionStream"].iter().any(|name| graph.global_names.contains(*name))
+            || graph.builtins.iter().chain(&graph.esm_builtins).any(|name| name.trim_start_matches("node:") == "stream/web");
+        let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned))
+            .chain(compresses.then(|| "zlib".to_owned()));
+        let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
         report["unnamed_globals"] = json!(saved_waits.iter().flat_map(|wait| &wait.held.1).map(|(names, operations)| json!({
             "names": names, "operations": operations.len(),
             "kept": names_any || names.iter().any(|name| graph.global_names.contains(name)),

@@ -1769,6 +1769,13 @@ pub(crate) fn zlib_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     builtin!(context, "zlib")
 }
 
+/// `zlib`, found by name (`cached_builtin`): a compression stream builds it, which an image
+/// keeps where its program can name one (`aot::cli`), so building every web stream class marks
+/// no compressor.
+pub(crate) fn zlib_module_named(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Zlib)
+}
+
 pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     builtin!(context, "stream")
 }

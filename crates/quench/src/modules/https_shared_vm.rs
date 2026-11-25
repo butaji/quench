@@ -475,6 +475,8 @@ fn request(c: &mut Context<'_>, module: RootId, args: &[RootId]) -> Outcome {
         if c.string_text(first)?.is_some() {
             rest.next();
             let global = c.global_root()?;
+            // A lazy global read by name: its initializer is linked with this read.
+            let _ = crate::host::shared_vm::operation!("utilLazyPropertyInitialize");
             let url_class = get(c, global, "URL")?;
             let url = c.construct_rooted(url_class, url_class, &[first])?;
             let undefined = c.undefined();

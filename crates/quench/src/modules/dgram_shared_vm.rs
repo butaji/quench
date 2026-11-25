@@ -847,6 +847,8 @@ fn is_view(c: &Context<'_>, value: RootId) -> bool {
 
 fn buffer_class(c: &mut Context<'_>) -> Outcome {
     let global = c.global_root()?;
+    // A lazy global read by name: its getter is linked with this read.
+    let _ = crate::host::shared_vm::operation!("bufferGlobalGet");
     get(c, global, "Buffer")
 }
 

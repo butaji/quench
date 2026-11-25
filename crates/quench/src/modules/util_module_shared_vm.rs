@@ -911,6 +911,8 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
     line.extend(message);
     let line = c.string_units_rooted(&line);
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("consoleGlobalInitialize");
     let console = get(c, global, "console")?;
     let log = get(c, console, "log")?;
     c.call_rooted(log, console, &[line])?;
@@ -921,6 +923,8 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
 pub(crate) fn transferable_abort_signal(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let signal = argument(c, args, 0);
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let class = get(c, global, "AbortSignal")?;
     if !c.is_object_rooted(signal)? || !c.instance_of_rooted(signal, class)? {
         return Err(super::util_shared_vm::argument_type_error(c, signal, "signal", "AbortSignal")?);
@@ -931,6 +935,8 @@ pub(crate) fn transferable_abort_signal(c: &mut Context<'_>, _: RootId, args: &[
 /// `util.transferableAbortController()`.
 pub(crate) fn transferable_abort_controller(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let class = get(c, global, "AbortController")?;
     c.construct_rooted(class, class, &[])
 }

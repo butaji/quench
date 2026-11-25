@@ -135,6 +135,8 @@ fn reference_path(c: &mut Context<'_>, scope: &str, reference: RootId) -> Result
         return Ok(Some(text));
     }
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("utilLazyPropertyInitialize");
     let url = get(c, global, "URL")?;
     if c.is_object_rooted(reference)? && c.is_callable_rooted(url)? && c.instance_of_rooted(reference, url)? {
         if !path_scope(scope) {

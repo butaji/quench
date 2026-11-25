@@ -709,6 +709,8 @@ fn signal(c: &mut Context<'_>, id: NodeId) -> Result<RootId, RootedError> {
         return Ok(signal);
     }
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let controller = get(c, global, "AbortController")?;
     let controller = c.construct_rooted(controller, controller, &[])?;
     let signal = get(c, controller, "signal")?;
