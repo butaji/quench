@@ -21,12 +21,11 @@ impl MemoryStorage {
         (!bytes.0.is_null()).then_some((bytes, guard))
     }
 
-    /// Whether code may address the memory's bytes in place (`direct_view`): an unshared
-    /// memory, or a shared one whose bytes never move.
+    /// Whether code may address the memory's bytes in place (`direct_view`, `addressable_in_place`).
     pub fn is_direct(&self) -> bool {
         match self {
-            Self::Unshared(_) => true,
-            Self::Shared(memory) => memory.0.lock().bytes.guard().is_some(),
+            Self::Unshared(_) => addressable_in_place(false, false),
+            Self::Shared(memory) => addressable_in_place(true, memory.0.lock().bytes.guard().is_some()),
         }
     }
 }
@@ -44,4 +43,11 @@ impl LinearBytes {
         let pages = (self.len() / page_size) as u64;
         self.grow_to(length).then_some(pages)
     }
+}
+
+/// Whether code may address a memory's bytes in place: an unshared memory, or a shared one whose bytes
+/// never move (a guarded reservation). The one rule an instance's memory (`MemoryStorage::is_direct`) and a
+/// module's declaration (`WasmModule::binding_types`, which knows no reservation ahead of an instance) read.
+pub fn addressable_in_place(shared: bool, guarded: bool) -> bool {
+    !shared || guarded
 }

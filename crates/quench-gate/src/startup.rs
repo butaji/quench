@@ -175,6 +175,9 @@ fn write_scripts(scratch: &Path) -> Result<BTreeMap<&'static str, PathBuf>, Stri
     let dir = scratch.join("scripts");
     let module = dir.join("module");
     fs::create_dir_all(&module).map_err(|error| format!("{}: {error}", module.display()))?;
+    // The scratch sits inside the repo, whose package.json says "type": "module": the scripts are
+    // CommonJS, so their own package.json says so (otherwise `require` is undefined in module).
+    write_file(&dir.join("package.json"), "{\"type\": \"commonjs\"}\n")?;
     let empty = dir.join("empty.js");
     write_file(&empty, "")?;
     let hello = dir.join("hello.js");

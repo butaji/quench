@@ -22,13 +22,10 @@ pub(crate) enum WasmTierChoice<'s, 'a> {
     },
     /// The b-jit: the function's stitched rows, which are its entry (`stitched_entry`).
     Baseline {
-        vm: &'s Vm,
-        program_id: ProgramId,
-        env: Value,
+        analysis: &'s Analysis<'a>,
         memory_slot: Option<u32>,
         entry_cells: &'s [std::cell::Cell<usize>],
         callable: &'s [bool],
-        grows_memory: &'s quench_runtime::bitset::BitSet,
     },
 }
 
@@ -82,16 +79,9 @@ impl Specializer for WasmSpecializer<'_, '_> {
                 let body = body.ok_or_else(|| format!("function {index} does not build a body"))?;
                 Ok(WasmResidual::Compiled(body, entry))
             }
-            WasmTierChoice::Baseline { vm, program_id, env, memory_slot, entry_cells, callable, grows_memory } => {
-                stitched_entry(
-                    vm,
-                    program_id,
-                    program,
-                    index,
-                    (plans, entry_cells, callable, grows_memory),
-                    memory_slot,
-                    (full_plan, reference_site_ids, env),
-                )
+            WasmTierChoice::Baseline { analysis, memory_slot, entry_cells, callable } => {
+                let _ = program;
+                stitched_entry(analysis, index, (plans, entry_cells, callable), memory_slot, (full_plan, reference_site_ids))
                 .map(WasmResidual::Rows)
                 .ok_or_else(|| format!("function {index} does not stitch"))
             }

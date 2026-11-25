@@ -217,6 +217,26 @@ pub trait Stage: crate::projection::Sealed {
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
+    /// Runs `then` where `cond` holds, else `cold` (the rare path), for their effects alone: no word joins them.
+    /// A specializer lays `cold` out of line; the interpreter takes one as a plain `if`.
+    #[inline(always)]
+    fn effect_if(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self), cold: impl FnOnce(&mut Self)) {
+        self.choose(cond, #[inline(always)] |stage| { then(stage); stage.constant(0) }, #[inline(always)] |stage| { cold(stage); stage.constant(0) });
+    }
+    /// `effect_if` on two conditions where the second is computed only past the first: `then` runs where `first`
+    /// holds and then `second` does, else `cold`, which a specializer lays out once, out of line.
+    #[inline(always)]
+    fn effect_if_both(&mut self, first: Self::Cond, second: impl FnOnce(&mut Self) -> Self::Cond, then: impl FnOnce(&mut Self),
+        cold: impl FnOnce(&mut Self)) {
+        // Where the stage knows the first condition (the interpreter's and the stencils' words), the second is
+        // computed only past it; a specializer overrides this with a branch to one cold block.
+        let both = match self.known(first) {
+            Some(false) => first,
+            Some(true) => second(self),
+            None => { let second = second(self); self.all(first, second) }
+        };
+        self.effect_if(both, then, cold);
+    }
     /// A do-while over `N` loop-carried words, from `init`: `body` runs on the state and returns whether the loop
     /// goes on and the next state; the loop returns the state it last computed. The body is emitted once: a
     /// specializer's loop is a block whose parameters are the state, the interpreter's a Rust loop.
