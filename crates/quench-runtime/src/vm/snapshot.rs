@@ -270,8 +270,12 @@ impl Vm {
         writer.len(atom_text.len());
         atom_text.iter().for_each(|name| writer.str(name));
         writer.len(atom_sequence.appended_len());
+        // Each appended name with its text hash, which a restore indexes it by instead of
+        // hashing it again: the hash is a function of the text alone.
         for offset in 0..atom_sequence.appended_len() {
-            atom_sequence.appended(offset).write_snapshot(&mut writer);
+            let name = atom_sequence.appended(offset);
+            name.write_snapshot(&mut writer);
+            writer.u32(name.units().text_hash());
         }
         heap.write_snapshot(&mut writer)?;
         writer.value(*globals);
@@ -549,7 +553,7 @@ impl Vm {
         }
         for _ in 0..appended {
             let name = JsString::read_snapshot(reader)?;
-            let hash = Self::atom_hash_units(name.units());
+            let hash = crate::vm::wtf16::table_hash(reader.u32()?);
             self.insert_dynamic_atom(name, hash);
         }
         Ok(())
