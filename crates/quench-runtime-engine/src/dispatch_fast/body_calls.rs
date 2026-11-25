@@ -187,7 +187,52 @@ fn body_call(cx: *mut LaneContext, call: &BodyCall) -> (u64, bool) {
     };
     super::proven_callees::rebind_body_call(cx, vm, call.argc(), target);
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    unsafe { rebind_region_call(cx, vm, call, &*target) };
+    // SAFETY: as above.
     (body_script_call(cx, call, unsafe { &*target }, receiver), false)
+}
+
+/// The most closures one region's records rebind to (`rebind_region_call`): past it the site's calls keep the
+/// helper, so code calling a fresh closure each time does not grow its descriptors without end.
+const REGION_REBINDS: usize = 64;
+
+/// Rebinds the running loop region's record of `call` (`LaneContext::region_calls`) to `target`, a closure of the
+/// function the record was planned for whose identity guard missed: the record's run-time words become the new
+/// closure's (its identity, captures, receiver binding, context words and descriptor), as `BoundCalls::bind` makes
+/// an image's, so its row calls this closure by its entry from now on instead of this helper. A closure made per
+/// call of the region's function (`const f = (x) => ..` above the loop) is the common case.
+///
+/// # Safety
+/// `target` is the resolved script target of `call`, a call of the running region's activation.
+unsafe fn rebind_region_call(cx: *mut LaneContext, vm: &Vm, call: &BodyCall, target: &ScriptCallTarget) {
+    let calls = unsafe { (*cx).region_calls } as *const quench_runtime::vm::engine_types::CallCode;
+    // SAFETY: the region's code (and its `CallCode`) outlives its run, which named it.
+    let Some(calls) = (unsafe { calls.as_ref() }) else { return };
+    let site = call.ip.addr() as u64;
+    let Some(record) = calls.records.iter().find(|record| record.call == site && record.callee != 0) else { return };
+    if record.callee == target.callee.to_bits() || record.packed & u64::from(u32::MAX) != u64::from(target.function) { return; }
+    let mut rebound = calls.rebound.borrow_mut();
+    if rebound.len() >= REGION_REBINDS { return; }
+    // SAFETY: the context's decoded site is the call being made.
+    let Some((_, function, pc, _)) = (unsafe { (*cx).body_site }) else { return };
+    let Some(view) = (unsafe { &*(*cx).views }).get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return };
+    let Some(mut direct) = super::direct_callee_in_lane(vm, view, function, pc as usize, call.argc(), *target) else { return };
+    if direct.call as u64 != site || direct.cell as u64 != record.cell { return; }
+    (direct.method, direct.body) = (None, None);
+    rebound.push(Box::new(direct));
+    let Some(direct) = rebound.last() else { return };
+    let (env, capture) = direct.target.context_words();
+    let words = std::ptr::from_ref(&**record).cast_mut();
+    // SAFETY: the record is the region's, read in place by its code on this thread, none of which runs while
+    // its helper does; the descriptor is boxed in `rebound`, which keeps it for the code's life.
+    unsafe {
+        (*words).captures = direct.capture_word();
+        (*words).global_this = direct.sloppy.map_or(0, Value::to_bits);
+        (*words).descriptor = std::ptr::from_ref(&**direct) as u64;
+        (*words).env = env;
+        (*words).capture = capture;
+        (*words).callee = direct.callee.to_bits();
+    }
 }
 
 /// Whether the lane admits a body's call of `callee` at all: it may activate script calls, the

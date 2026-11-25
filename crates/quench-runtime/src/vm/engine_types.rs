@@ -2238,6 +2238,13 @@ pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
     pub direct: Box<[DirectCallee]>,
     pub records: Vec<Box<CallRecord>>,
+    /// The callees its records were rebound to after their planned closure's guard missed
+    /// (`dispatch_fast::rebind_region_call`): each record's descriptor word names one of these, which
+    /// stay allocated for the code's life, as a frame running an earlier one keeps reading it.
+    pub rebound: std::cell::RefCell<Vec<Box<DirectCallee>>>,
+    /// The callee identities its entry checks once (`Held::Captured`): code that names one by a constant, so its
+    /// death retires the code. Any other callee a record names is guarded at each call (`names_dead`).
+    pub held: Box<[u64]>,
     /// The registers of the function the region belongs to: its inlined callees' follow them.
     pub caller_registers: u16,
     pub recovery: LaneRecoverySpace,
@@ -3532,6 +3539,9 @@ pub struct LaneContext {
     /// (`region_payload_in_lane`): the heap bases a call it makes may move are reloaded there too
     /// (`region_call_in_lane`).
     pub region_payload: usize,
+    /// The `CallCode` of the native loop region running on this activation, zero for none: a call its
+    /// direct row missed rebinds the row's record there (`rebind_region_call`).
+    pub region_calls: usize,
 }
 
 /// The activation of a native's callback for calls passing `argc` values (`push_callback_in_lane`),
@@ -4099,7 +4109,23 @@ impl CallCode {
     /// Whether the code names a callee `live` says died.
     #[inline]
     pub fn names_dead(&self, live: impl Fn(Value) -> bool) -> bool {
-        names_dead_callee(&self.inlined, &self.direct, &live)
+        if names_dead_callee(&self.inlined, &[], &live) || self.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
+            return true;
+        }
+        // A dead callee a record's guard compares at each call only unbinds that record: its row misses from then on
+        // (`Value::DELETED` names no closure) and the helper rebinds it to the next closure it calls
+        // (`dispatch_fast::rebind_region_call`). One an entry check holds by a constant retires the code.
+        let rebound = self.rebound.borrow();
+        let mut dead = self.direct.iter().map(|callee| callee.callee).chain(rebound.iter().map(|callee| callee.callee)).filter(|callee| !live(*callee));
+        dead.any(|callee| {
+            let word = callee.to_bits();
+            if self.held.contains(&word) { return true; }
+            for record in self.records.iter().filter(|record| record.callee == word) {
+                // SAFETY: the records are read in place by the code on this thread, which no collection runs inside.
+                unsafe { (*std::ptr::from_ref(&**record).cast_mut()).callee = Value::DELETED.to_bits() };
+            }
+            false
+        })
     }
 }
 
