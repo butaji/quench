@@ -378,7 +378,7 @@ fn char_code_at_row<const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(frame.s, int_word(unit as u32 as i32))
 }
 
-/// `parseInt` of the flat string in the frame slot at hole 1, in radix 10: the int32 `parse_int::decimal_int32` answers over its
+/// `parseInt` of the flat string in the frame slot at hole 1, in radix 10: the int32 `parse_int::decimal_int32_row` answers over its
 /// code units. Any other text leaves with nothing written.
 #[inline(always)]
 fn parse_int_row<const D: u8>(s: S, payload: usize) -> Out {
@@ -387,7 +387,8 @@ fn parse_int_row<const D: u8>(s: S, payload: usize) -> Out {
     let base = frame.read(&mut stage, LEFT);
     let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
     let (units, wide) = (string.units, string.wide != 0);
-    let value = need!(frame.s, parse_int::decimal_int32((0..string.length).map(|index| code_units::code_unit(&mut stage, wide, units, index) as u16)));
+    let (parsed, value) = parse_int::decimal_int32_row(&mut stage, wide, units, string.length);
+    let value = need!(frame.s, parsed.then_some(value as i32));
     deliver::<D>(frame.s, int_word(value))
 }
 
