@@ -32,6 +32,8 @@ const ENTRY_TABLE_RECORD: usize = 1;
 const CALL_RECORDS_RECORD: u32 = 2;
 /// The object's copy of the narrow decode's upper-word table (`Symbol::NarrowUpperWords`), after the call records.
 const NARROW_WORDS_RECORD: u32 = 3;
+/// The lane helpers' addresses by number (`helper_data`), after the narrow words.
+const HELPERS_RECORD: u32 = 4;
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
 
@@ -55,6 +57,7 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
         signature: ir::Signature::new(isa.default_call_conv()),
     }];
     let imports = import_symbols(image, isa, &mut functions)?;
+    let helpers = helper_data(namespace, image, &imports);
     let first = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let bases = base_declarations(image, first)?;
     let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
@@ -62,7 +65,7 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
     functions.extend(definitions);
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), file.len())?;
-    let data = vec![image_data(namespace, file), table, call_data(namespace, image), narrow_data(namespace)];
+    let data = vec![image_data(namespace, file), table, call_data(namespace, image), narrow_data(namespace), helpers];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
@@ -74,10 +77,13 @@ fn codes(function: &AotFunction) -> impl Iterator<Item = &RelocatableCode> {
 }
 
 /// Declares the helper and semantic-entry symbols the code names, after `functions`' existing
-/// declarations, and returns their declaration indices.
+/// declarations, and returns their declaration indices: the base bodies' every symbol, and the helpers a
+/// lane body names, which the VM links it to from the helper record (`helper_data`).
 fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<NativeFunction>) -> Result<BTreeMap<(u32, u32), u32>, String> {
     let mut imports = BTreeMap::new();
-    for reloc in image.functions.iter().flat_map(codes).flat_map(|code| code.relocations.iter()) {
+    let lanes = image.functions.iter().filter_map(|function| function.lane.as_ref()).flat_map(|lane| lane.code.relocations.iter())
+        .filter(|reloc| matches!(SymbolTable::decode(image, reloc.namespace, reloc.key), Some(Symbol::Helper(_))));
+    for reloc in image.functions.iter().flat_map(codes).flat_map(|code| code.relocations.iter()).chain(lanes) {
         let key = (reloc.namespace, reloc.key);
         if imports.contains_key(&key) {
             continue;
@@ -160,6 +166,24 @@ fn image_data(namespace: &str, file: Vec<u8>) -> NativeData {
     }
 }
 
+/// Each lane helper's address by number, bound by the system linker for the helpers the image names (`imports`) and 0
+/// for the rest: a lane body links its helpers from it (`live::link_lane`), so the executable keeps only these.
+fn helper_data(namespace: &str, image: &AotImage, imports: &BTreeMap<(u32, u32), u32>) -> NativeData {
+    let pointer = std::mem::size_of::<usize>();
+    let function_addresses = imports.iter().filter_map(|(&(namespace, key), &function)| match SymbolTable::decode(image, namespace, key) {
+        Some(Symbol::Helper(helper)) => Some(NativeFunctionAddress { offset: helper * pointer as u32, function }),
+        _ => None,
+    }).collect();
+    NativeData {
+        name: format!("{namespace}_helpers"),
+        bytes: vec![0; crate::compiled::LaneHelper::COUNT * pointer],
+        alignment: pointer as u64,
+        writable: false,
+        function_addresses,
+        data_addresses: Vec::new(),
+    }
+}
+
 /// The narrow decode's upper words by code (`NarrowLayout::upper_words`), the runtime's own constant
 /// table: a base body's field and element reads decode a narrow value through it.
 fn narrow_data(namespace: &str) -> NativeData {
@@ -205,8 +229,8 @@ fn record_bytes(record: &CallRecord) -> Vec<u8> {
 
 /// The entry table (`crate::native_program::LinkedTable` reads it): the ABI header word; one
 /// entry per function, each the address of its entry definition (`first` plus the ID); one base body
-/// address per function (`bases`, by declaration); then the image file's address and length and the
-/// call records' address.
+/// address per function (`bases`, by declaration); then the image file's address and length, the
+/// call records' address, and the helper record's address and count.
 fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u32), file_length: usize) -> Result<NativeData, String> {
     let pointer_bytes = usize::from(isa.pointer_bytes());
     if pointer_bytes != std::mem::size_of::<usize>() {
@@ -223,9 +247,11 @@ fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u3
     let data_addresses = vec![
         NativeDataAddress { offset: offset(tail)?, data: IMAGE_RECORD, addend: 0 },
         NativeDataAddress { offset: offset(tail + 2)?, data: CALL_RECORDS_RECORD, addend: 0 },
+        NativeDataAddress { offset: offset(tail + 3)?, data: HELPERS_RECORD, addend: 0 },
     ];
-    let mut bytes = vec![0; (tail + 3) * pointer_bytes];
+    let mut bytes = vec![0; (tail + 5) * pointer_bytes];
     bytes[(tail + 1) * pointer_bytes..(tail + 2) * pointer_bytes].copy_from_slice(&file_length.to_ne_bytes());
+    bytes[(tail + 4) * pointer_bytes..(tail + 5) * pointer_bytes].copy_from_slice(&crate::compiled::LaneHelper::COUNT.to_ne_bytes());
     Ok(NativeData {
         name: format!("{namespace}_entries"),
         bytes,
