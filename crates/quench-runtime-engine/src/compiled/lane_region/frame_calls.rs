@@ -12,12 +12,12 @@ use quench_runtime::staged::{Allocation, InlineEmpty};
 use cranelift_codegen::ir;
 use quench_runtime::Value;
 use cranelift_codegen::ir::types;
-use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use super::super::object_slots::emit;
 use crate::compiled::regions;
 
-/// A fault-polling body records its poll instruction; any other leaves at the miss edge when
-/// the flag is set.
+/// A fault-polling body records its poll instruction: the poll page's fault takes it at a set flag. A body that polls
+/// by compare runs the staged back-edge poll instead (`staged::poll::back_edge_poll`, `Lowering::interrupt_check`).
 pub(crate) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
     safepoint_parts(stage.builder, frame.polls, proof)
 }
@@ -49,17 +49,10 @@ pub(crate) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
 pub(crate) fn safepoint_parts(builder: &mut cranelift_frontend::FunctionBuilder<'_>,
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
     proof: EmitProof) -> Option<()> {
-    let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
+    let EmitProof::Safepoint { interrupt } = proof else { return None };
     let requested = emit(builder).raw_atomic_load(Lane::I8, regions::dispatch(), interrupt);
-    if fault_poll {
-        let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
-        polls.push(inst);
-    } else {
-        let miss = miss?;
-        let requested = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I32), requested);
-        let clear = emit(builder).raw_compare_imm(Relation::Equal, requested, 0);
-        emit_js_guard(builder, clear, miss);
-    }
+    let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
+    polls.push(inst);
     Some(())
 }
 

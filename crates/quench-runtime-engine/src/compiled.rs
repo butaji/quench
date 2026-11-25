@@ -464,7 +464,7 @@ pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -5991,19 +5991,9 @@ impl<'b> RegionCore<'b> {
         self.builder
     }
 
-    /// Read the call context's interrupt flag. A JS region uses the result to
-    /// take its exact-PC callout; scalar regions use it for termination exits.
-    fn interrupt_requested(&mut self) -> ir::Value {
-        use quench_runtime::staged::machine::{Lane, Relation};
-        let context = self.context;
-        let pointer = native_interrupt_pointer(&mut self.builder, context, false);
-        let requested = self.raw_atomic_load(Lane::I8, MemFlagsData::trusted(), pointer);
-        self.raw_compare_imm(Relation::NotEqual, requested, 0)
-    }
-
     /// Checks for a termination request: a read of the poll page, which faults once one is
-    /// made and resumes as the terminated status (`guard_fault`), else a test of the context's
-    /// flag that branches to `termination_block`.
+    /// made and resumes as the terminated status (`guard_fault`), else the shared back-edge poll
+    /// (`staged::poll::back_edge_poll`) of the context's flag, which leaves to `termination_block`.
     fn interrupt_safepoint(&mut self) {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
@@ -6011,19 +6001,11 @@ impl<'b> RegionCore<'b> {
             self.raw_atomic_load(quench_runtime::staged::machine::Lane::I8, MemFlagsData::trusted(), poll);
             return;
         }
-        let stop = self.interrupt_requested();
-        let termination = match self.termination_block {
-            Some(block) => block,
-            None => {
-                let block = self.builder.create_block();
-                self.termination_block = Some(block);
-                block
-            }
-        };
-        let next = self.builder.create_block();
-        self.branch_if(stop, (termination, &[]), (next, &[]));
-        self.builder.switch_to_block(next);
-        self.builder.seal_block(next);
+        let context = self.context;
+        let flag = native_interrupt_pointer(&mut self.builder, context, false);
+        let termination = *self.termination_block.get_or_insert_with(|| self.builder.create_block());
+        // The poll is no speculation: the forced-deopt switch leaves it alone (`unforced`).
+        unforced(|| quench_runtime::staged::poll::back_edge_poll(&mut object_slots::emit(&mut self.builder), flag, termination)).expect("a guard always emits");
     }
 }
 
