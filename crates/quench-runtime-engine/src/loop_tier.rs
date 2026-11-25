@@ -14,6 +14,7 @@ impl LoopTier {
     /// Weighs a run that took `backedges` backward edges; `left` where it left inside the loop rather than at its
     /// exit. Runs that each leave before their first backward edge, `widen_after_leaves` in a row, pay their entry
     /// for nothing: the code goes and the site compiles no more, so its backward jump stays the interpreter's.
+    /// A run that keeps the code may move it to u-jit (`promote`).
     pub(crate) fn weigh_run(&mut self, tiers: &Tiers, backedges: u64, left: bool) {
         self.runs = self.runs.saturating_add(1);
         self.entry_misses = 0;
@@ -23,6 +24,7 @@ impl LoopTier {
             self.compilations = tiers.loops.max_compilations;
             if let Some(code) = self.code.take() { code.retire(); }
         }
+        self.promote(tiers);
     }
 
     /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations reach

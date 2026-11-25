@@ -30,7 +30,6 @@ impl super::LoopSite {
         self.declines_in_row.set(0);
         let mut tier = self.tier.borrow_mut();
         tier.weigh_run(self.tiers, backedges, left);
-        tier.promote(self.tiers);
         self.settle(&mut tier);
     }
 
