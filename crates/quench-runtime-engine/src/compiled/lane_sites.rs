@@ -286,7 +286,7 @@ impl Vm {
     fn native_member(&mut self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
         let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
         let cell = match *read {
-            GlobalRead::Stable { fact, global, realm_offset, .. } => Some(StableCell { fact, global, realm_offset }),
+            GlobalRead::Stable { fact, global, realm_offset, value, .. } => Some(StableCell { fact, global, realm_offset, value }),
             _ => None,
         };
         let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);
