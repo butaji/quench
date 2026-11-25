@@ -204,6 +204,7 @@ mod property_write;
 pub use property::{NoPlans, PropertyFrame};
 pub mod value;
 pub mod poll;
+pub mod bump;
 mod guard;
 mod steps;
 mod control;
