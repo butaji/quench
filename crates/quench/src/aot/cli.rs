@@ -371,7 +371,7 @@ fn compile(options: Options) -> Result<(), String> {
     // answers hold as it starts: no entry run and no installation, so no startup snapshot.
     let saved_waits = prepare_saved_waits(&waits, &work.0, &native_entry, &mut report);
     fs::OpenOptions::new().append(true).open(inputs.catalog())
-        .and_then(|mut catalog| catalog.write_all(resumes_at_rest(&saved_waits).as_bytes())).map_err(|error| error.to_string())?;
+        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\n", resumes_at_rest(&saved_waits), makes_code(&graph)).as_bytes())).map_err(|error| error.to_string())?;
     let inputs = if saved_waits.is_empty() { bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)? } else { inputs };
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
@@ -672,6 +672,19 @@ fn link_with_reached_operations(
 fn loads_code(graph: &super::graph::DependencyGraph) -> bool {
     graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. }))
         || !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty()
+}
+
+/// Whether the program can make code as it runs, so its image links the source frontend
+/// (`quench::host::enable_dynamic_source`): it loads code (`loads_code`), evaluates an
+/// `import()`, names eval, `Function` or `Reflect`, imports a module that compiles source, or
+/// reads the global object by a computed name. An image of any other program refuses code
+/// generation from strings, as Node does under `--disallow-code-generation-from-strings`.
+fn makes_code(graph: &super::graph::DependencyGraph) -> bool {
+    const COMPILING_MODULES: &[&str] = &["vm", "repl", "module", "worker_threads", "inspector"];
+    const CODE_NAMES: &[&str] = &["eval", "Function", "Reflect", "WebAssembly", "Worker", "ShadowRealm"];
+    loads_code(graph) || graph.imports_at_run_time || graph.script_reads_this
+        || graph.builtins.iter().chain(&graph.esm_builtins).any(|name| COMPILING_MODULES.contains(&name.trim_start_matches("node:")))
+        || CODE_NAMES.iter().chain(super::graph::GLOBAL_OBJECT_NAMES).any(|name| graph.global_names.contains(*name))
 }
 
 /// The modules whose host operations an image links only when its program imports them by

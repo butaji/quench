@@ -428,6 +428,11 @@ fn goal_after_wrapper_syntax_error(path: &Path, text: &str) -> quench_runtime::S
 /// unsupported compile keeps its error, so it is no ES module; a failure that is not a compile
 /// diagnostic (a stack exhaustion, a host failure) decides by full detection, as before.
 fn failed_wrapper_goal(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
+    // A wrapper fails to compile only where the source frontend links (`enable_dynamic_source`).
+    super::source_route(|routes| routes.failed_wrapper_goal).map_or(quench_runtime::SourceKind::Script, |goal| goal(error, path, text))
+}
+
+pub(super) fn failed_wrapper_goal_parsed(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
     match error.compile_failure() {
         Some(quench_runtime::CompileFailureKind::Syntax) => goal_after_wrapper_syntax_error(path, text),
         Some(quench_runtime::CompileFailureKind::Unsupported) => quench_runtime::SourceKind::Script,

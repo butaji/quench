@@ -2762,6 +2762,9 @@ pub struct AotImage {
     /// The program the image is valid for (`ahead_images::fingerprint`) and the build it came from.
     pub fingerprint: u64,
     pub build_id: u64,
+    /// Whether the program adds no code at run time (`aot_facts::closed_world`) as its compile
+    /// found: its facts derive again from this (`aot_facts::analyze_as`).
+    pub closed: bool,
     /// By function id, ascending; every function of the program has one.
     pub functions: Vec<AotFunction>,
     /// The shapes the code folds, by `Symbol::Shape` key.

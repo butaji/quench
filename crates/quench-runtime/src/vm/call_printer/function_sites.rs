@@ -14,11 +14,18 @@ pub(super) fn call_site_callee(source: &crate::bytecode::ProgramSource, span: Op
         sites.binary_search_by_key(&site, |found| (found.offset, found.construct)).ok().map(|index| sites[index].callee.clone())
     };
     if crate::DYNAMIC_EXECUTION_ENABLED && source.call_sites.get().is_none()
-        && let Some(callee) = span.and_then(|span| function_call_sites(source, span)).or_else(|| top_level_call_sites(source, site.0)).and_then(|sites| lookup(&sites))
+        && let Some(routes) = crate::compile::source_routes::routes()
+        && let Some(callee) = (routes.unfrozen_call_sites)(source, span, site.0).and_then(|sites| lookup(&sites))
     {
         return Some(callee);
     }
     lookup(frozen_call_sites(source)?)
+}
+
+/// The call sites of the throwing function's text, else of the top level at `offset`, parsed
+/// now (`source_routes`).
+pub(crate) fn unfrozen_call_sites(source: &crate::bytecode::ProgramSource, span: Option<crate::bytecode::SourceSpan>, offset: u32) -> Option<Vec<crate::bytecode::CallSiteDescription>> {
+    span.and_then(|span| function_call_sites(source, span)).or_else(|| top_level_call_sites(source, offset))
 }
 
 /// The call sites of the function whose text is `span` of `source`, parsed alone at its

@@ -78,6 +78,8 @@ pub struct DependencyGraph {
     pub dynamic_reflective_sites: Vec<(PathBuf, u32)>,
     /// `SourceDemands::requires_dynamic_source` of any module in the graph.
     pub requires_dynamic_source: bool,
+    /// The program holds an `import()`, whose module evaluates as the program runs.
+    pub imports_at_run_time: bool,
 }
 
 impl DependencyGraph {
@@ -366,6 +368,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         for offset in requests.dynamic_requires {
             graph.requirements.push(GraphRequirement::DynamicRequire { from: name.clone().into(), offset: offset + base });
         }
+        graph.imports_at_run_time |= !requests.dynamic_imports.is_empty() || !requests.literal_imports.is_empty();
         for offset in requests.dynamic_imports {
             graph.requirements.push(GraphRequirement::DynamicImport { from: name.clone().into(), offset: offset + base });
         }

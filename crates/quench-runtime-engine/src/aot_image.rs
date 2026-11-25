@@ -77,6 +77,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
     Ok(AotImage {
         fingerprint: crate::compiled::ahead_program_fingerprint(program),
         build_id: crate::compiled::AHEAD_BUILD_ID,
+        closed: quench_runtime::compile::aot_facts::closed_world(program),
         functions,
         shapes,
         heap_values,

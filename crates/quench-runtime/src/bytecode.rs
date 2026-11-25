@@ -4145,8 +4145,11 @@ impl ProgramSource {
     }
 
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        // `layout` is a memo of `text`, made again on the first position read.
-        crate::vm::freeze_source_call_sites(self);
+        // `layout` is a memo of `text`, made again on the first position read. A binary without
+        // the source frontend writes the call sites its source froze, if any (`source_routes`).
+        if let Some(routes) = crate::compile::source_routes::routes() {
+            (routes.freeze_call_sites)(self);
+        }
         let Self { text, typescript, base, line_offset, column_offset, layout: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);

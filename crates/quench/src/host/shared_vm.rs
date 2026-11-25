@@ -122,6 +122,31 @@ macro_rules! literal_operation {
 }
 pub(crate) use literal_operation as operation;
 
+/// The host's routes to the source frontend (`enable_dynamic_source`).
+pub(crate) struct HostSourceRoutes {
+    /// A module's source from its file (`NodeHost::module_source`).
+    pub(crate) module_source: fn(&mut NodeHost, &std::path::Path, String, Vec<u8>) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError>,
+    /// The goal of a CommonJS file whose wrapper failed to compile (`commonjs::failed_wrapper_goal`).
+    pub(crate) failed_wrapper_goal: fn(&RootedError, &std::path::Path, &str) -> quench_runtime::SourceKind,
+}
+static SOURCE_ROUTES: std::sync::OnceLock<HostSourceRoutes> = std::sync::OnceLock::new();
+
+/// The installed host route `pick` names, or `None` in a binary whose program makes no code.
+pub(crate) fn source_route<R>(pick: impl FnOnce(&HostSourceRoutes) -> R) -> Option<R> {
+    SOURCE_ROUTES.get().map(pick)
+}
+
+/// Lets this binary compile source after load: the runtime's source routes
+/// (`quench_runtime::enable_dynamic_source`) and the host's module sources. The CLI's host
+/// enables it (`NodeHost::new`); an image does only where its program can make code.
+pub fn enable_dynamic_source() {
+    quench_runtime::enable_dynamic_source();
+    SOURCE_ROUTES.get_or_init(|| HostSourceRoutes {
+        module_source: NodeHost::module_source_text,
+        failed_wrapper_goal: commonjs::failed_wrapper_goal_parsed,
+    });
+}
+
 node_bindings! {
         method "streamConstant" (0) => crate::modules::stream_shared_vm::constant,
         method "streamNop" (0) => crate::modules::stream_shared_vm::nop,
@@ -3221,6 +3246,16 @@ impl NodeHost {
     /// The module `name` compiles from `path`'s `bytes`: its text, or the facade over a
     /// CommonJS, JSON or WebAssembly file.
     pub(crate) fn module_source(
+        &mut self, path: &std::path::Path, name: String, bytes: Vec<u8>,
+    ) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError> {
+        // A binary whose program makes no code reads no module's source (`enable_dynamic_source`).
+        match source_route(|routes| routes.module_source) {
+            Some(module_source) => module_source(self, path, name, bytes),
+            None => Err(format!("module {} cannot load: this executable compiles no source", path.display()).into()),
+        }
+    }
+
+    fn module_source_text(
         &mut self, path: &std::path::Path, name: String, bytes: Vec<u8>,
     ) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError> {
         let extension = path

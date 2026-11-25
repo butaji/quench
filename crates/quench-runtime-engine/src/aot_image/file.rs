@@ -1,4 +1,4 @@
-//! The file form of an `AotImage`: magic, build id, fingerprint, the recipe tables and atom
+//! The file form of an `AotImage`: magic, build id, fingerprint, whether its program is closed, the recipe tables and atom
 //! texts, the base PC labels, operand records and proven call sites, then per function its base and lane code with
 //! relocations. Every number is
 //! little-endian; `Words` reads it back and rejects a file that ends early or names an unknown tag.
@@ -12,7 +12,7 @@ use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x02";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x03";
 /// The shape prototype a shape with none names.
 const NO_PROTOTYPE: u32 = u32::MAX;
 const RECIPE_INTRINSIC: u8 = 0;
@@ -33,6 +33,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     let mut out = MAGIC.to_vec();
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
+    out.push(u8::from(image.closed));
     put_recipes(&mut out, image);
     put_sites(&mut out, image);
     put_count(&mut out, image.functions.len());
@@ -50,12 +51,13 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
         return Err("images from another quench-node build".into());
     }
     let fingerprint = words.quad()?;
+    let closed = words.byte()? != 0;
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
     let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
     let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls })
+    Ok(AotImage { fingerprint, build_id, closed, functions, shapes, heap_values, atoms, labels, calls })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
