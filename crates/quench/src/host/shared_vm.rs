@@ -88,6 +88,23 @@ impl MarkedOperation {
     }
 }
 
+/// Runs operation `id` when the image links it, else `None`: a call that names an operation
+/// without marking it, for a value of a kind only the operation's owner makes. The owner
+/// marks the operation where it makes the first such value, so an image links it exactly
+/// when a value of that kind can exist.
+pub(crate) fn call_linked(
+    context: &mut NativeContext<'_>,
+    id: quench_runtime::HostFunctionId,
+    args: &[quench_runtime::RootId],
+) -> Result<Option<quench_runtime::RootId>, RootedError> {
+    let callback = context.host_as::<NodeHost>().operations[id.0 as usize];
+    if std::ptr::fn_addr_eq(callback, crate::host::unlinked_operation as HostCallback) {
+        return Ok(None);
+    }
+    let undefined = context.undefined();
+    callback(context, undefined, args).map(Some)
+}
+
 /// The operation registered as `name`, as a mark (`MarkedOperation`), for a table.
 macro_rules! marked_operation {
     ($name:expr $(,)?) => {{
@@ -1466,6 +1483,8 @@ node_bindings! {
         method "assertSettled" (1) => crate::modules::assert_shared_vm::settled,
         method "assertRejected" (1) => crate::modules::assert_shared_vm::rejected,
         method "utilExternalValue" (0) => crate::modules::util_shared_vm::external_value,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoStructuredClone" (1) => crate::modules::crypto_node::clone::structured_clone,
         #[cfg(quench_openssl_provider)]
         method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
         #[cfg(quench_openssl_provider)]

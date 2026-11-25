@@ -427,8 +427,12 @@ impl Comparison {
                     return Ok(false);
                 }
             }
-            let crypto = crate::host::shared_vm::commonjs::builtin!(c, "crypto")?;
-            let key_object = get(c, crypto, "KeyObject")?;
+            // Two CryptoKeys are the built crypto module's.
+            #[cfg(quench_openssl_provider)]
+            let key_object = crate::modules::crypto_node::built_class(c, crate::modules::crypto_node::Class::KeyObject);
+            #[cfg(not(quench_openssl_provider))]
+            let key_object = None;
+            let key_object = key_object.ok_or_else(|| RootedError::host("a CryptoKey without the crypto module"))?;
             let from = get(c, key_object, "from")?;
             let left_key = c.call_rooted(from, key_object, &[left])?;
             let right_key = c.call_rooted(from, key_object, &[right])?;

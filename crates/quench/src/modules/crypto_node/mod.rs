@@ -136,6 +136,12 @@ pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError>
     state(c).borrow().crypto.intrinsics.ok_or_else(|| RootedError::host("crypto module is not initialized"))
 }
 
+/// Class `class`, once the module is built: every key and key class is the built module's,
+/// so a value is no key of a module not yet built.
+pub(crate) fn built_class(c: &mut Context<'_>, class: Class) -> Option<RootId> {
+    state(c).borrow().crypto.intrinsics.map(|intrinsics| intrinsics.classes[class as usize])
+}
+
 pub(crate) fn class(c: &mut Context<'_>, class: Class) -> Outcome {
     Ok(intrinsics(c)?.classes[class as usize])
 }
