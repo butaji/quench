@@ -1016,7 +1016,7 @@ macro_rules! lane_helper_inventory {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
-            const COUNT: usize = [$(stringify!($name)),+].len();
+            pub(crate) const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
             const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             /// The name of helper number `index` (`Symbol::Helper`), as an image's demand lists it.
@@ -1038,8 +1038,8 @@ macro_rules! lane_helper_inventory {
         /// jump to the helper, so a call through it is the helper's own (every register and the
         /// stack as the caller left them). These are the symbols an ahead image's object imports
         /// (`aot_image::object`, `lane_helper_symbol`). An executable's export macro instantiates
-        /// this once (`export_native_js_operations!`); the trampolines lie in their own section,
-        /// so the function itself runs nothing.
+        /// this once (`export_native_js_operations!`); each trampoline lies in a section of its own,
+        /// so the function itself runs nothing and the linker keeps only the ones an image names.
         #[doc(hidden)]
         #[inline(never)]
         // The labels are the exported symbols themselves, defined once: the one instantiation is
@@ -1050,9 +1050,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: the template only lays out code in another section; it runs no instruction here.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -1061,9 +1059,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: as above.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
