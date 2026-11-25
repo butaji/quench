@@ -1097,6 +1097,11 @@ pub(crate) fn set_raw_mode(c: &mut Context<'_>, this: RootId, args: &[RootId]) -
 }
 
 fn dumb_terminal(c: &mut Context<'_>) -> Result<bool, RootedError> {
+    // A build-time run asks it as a question, while process.env is this process's unread.
+    if crate::aot::prefix::armed() && crate::aot::prefix::environment_unread(c)? {
+        let question = crate::aot::prefix::Question::Environment("TERM".into(), "dumb".into());
+        return crate::aot::prefix::answer(question).ok_or_else(|| crate::aot::prefix::stop(c));
+    }
     let global = c.global_root()?;
     let process = get(c, global, "process")?;
     let env = get(c, process, "env")?;

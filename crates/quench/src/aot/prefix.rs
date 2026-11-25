@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// The host operations a build-time run may make: they read and write only the realm and
 /// the host's own state, write the process's output (`processStreamWrite`), which the run
 /// records (`record`), or answer whether a stream is a terminal as the run assumes
-/// (`processStreamTerminal`, `terminal`). Every other operation is a dynamic input.
+/// (`processStreamTerminal`, `answer`). Every other operation is a dynamic input.
 const STATIC_OPERATIONS: &[&str] = &[
     // `require` and its builtin views load the program's own modules and builtins, which
     // a strict graph names statically: the sources the image is compiled from.
@@ -54,46 +54,83 @@ const STATIC_OPERATIONS: &[&str] = &[
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Whether the entry's own code runs (`arm`): the host's start-up before it is the realm's.
 static ARMED: AtomicBool = AtomicBool::new(false);
-static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, terminals: Vec::new(), choice: None, rest: None });
+static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None });
 
 struct State {
     effects: Vec<(i32, Vec<u8>)>,
     refusal: Option<String>,
-    /// The answers this run assumes for whether a descriptor is a terminal (`terminal`).
-    terminals: Vec<(i32, bool)>,
-    /// A descriptor whose terminal answer the run read with none assumed.
-    choice: Option<i32>,
+    /// The answers this run assumes to the questions it may ask (`answer`).
+    answers: Vec<(Question, bool)>,
+    /// A question the run asked with no answer assumed.
+    choice: Option<Question>,
     /// The runtime as the run left it at its first wait for input (`reach_wait`).
     rest: Option<Vec<u8>>,
 }
 
-/// What a build-time run left: its effects in order; a finite dynamic input it read, which a
-/// run per value specializes (whether descriptor `fd` is a terminal), the image choosing among
-/// them as it starts; or the first other dynamic input it read.
+/// A yes-or-no dynamic input: a run per answer specializes it, and the image asks it as it
+/// starts to choose among them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Question {
+    /// Whether the descriptor is a terminal.
+    Terminal(i32),
+    /// Whether the environment variable is set to the value.
+    Environment(String, String),
+}
+
+impl Question {
+    /// The question as its key: `tty:FD` or `env:NAME=VALUE`.
+    pub(crate) fn key(&self) -> String {
+        match self {
+            Self::Terminal(fd) => format!("tty:{fd}"),
+            Self::Environment(name, value) => format!("env:{name}={value}"),
+        }
+    }
+
+    pub(crate) fn of_key(key: &str) -> Result<Self, String> {
+        let malformed = || format!("malformed build-time question {key}");
+        match key.split_once(':').ok_or_else(malformed)? {
+            ("tty", fd) => Ok(Self::Terminal(fd.parse().map_err(|_| malformed())?)),
+            ("env", binding) => {
+                let (name, value) = binding.split_once('=').ok_or_else(malformed)?;
+                Ok(Self::Environment(name.to_owned(), value.to_owned()))
+            }
+            _ => Err(malformed()),
+        }
+    }
+}
+
+/// What a build-time run left: its effects in order; a question it asked with no answer
+/// assumed, which a run per answer specializes; or the first other dynamic input it read.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
     /// The run's effects up to its first wait for input, and the runtime there as a snapshot.
     Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>),
-    Terminal(i32),
+    Question(Question),
     Dynamic(String),
 }
 
-/// Makes this process's entry run a build-time evaluation, which assumes each of `terminals`
-/// (a descriptor, and whether it is a terminal).
-pub(crate) fn begin(terminals: Vec<(i32, bool)>) {
-    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).terminals = terminals;
+/// Makes this process's entry run a build-time evaluation, which assumes each of `answers`.
+pub(crate) fn begin(answers: Vec<(Question, bool)>) {
+    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).answers = answers;
     ACTIVE.store(true, Ordering::Relaxed);
 }
 
-/// Whether descriptor `fd` is a terminal, as the run assumes; with no assumption, notes the
-/// choice and ends the run (`stop`), which `None` asks the caller to do.
-pub(crate) fn terminal(fd: i32) -> Option<bool> {
+/// The answer to `question` the run assumes; with none, notes the question and asks the
+/// caller to end the run (`stop`) with `None`.
+pub(crate) fn answer(question: Question) -> Option<bool> {
     let mut state = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let assumed = state.terminals.iter().find(|(assumed, _)| *assumed == fd).map(|(_, value)| *value);
+    let assumed = state.answers.iter().find(|(assumed, _)| *assumed == question).map(|(_, value)| *value);
     if assumed.is_none() {
-        state.choice.get_or_insert(fd);
+        state.choice.get_or_insert(question);
     }
     assumed
+}
+
+/// Whether `process.env` still holds this process's environment unread: a question about
+/// a variable then asks about the environment the image runs in.
+pub(crate) fn environment_unread(context: &mut NativeContext<'_>) -> Result<bool, RootedError> {
+    let process = crate::modules::process_shared_vm::process_root(context)?;
+    context.is_pending_lazy_data_property_rooted(process, "env")
 }
 
 /// Ends the run, before whatever it was about to do: a guest `try` cannot catch it.
@@ -160,9 +197,11 @@ pub(crate) fn input_of(name: &str) -> String {
     }
 }
 
-/// Notes the first dynamic input of the run.
+/// Notes the first dynamic input of the run: an input the runtime noted before it (the
+/// clock, `quench_runtime::clock::note_input`) came first.
 pub(crate) fn refuse(what: String) {
-    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(what);
+    let first = quench_runtime::clock::first_input().map_or(what, str::to_owned);
+    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(first);
 }
 
 /// The callback the gate runs in place of a refused operation: it ends the run, which a
@@ -182,8 +221,8 @@ pub(crate) fn finish() -> Residual {
     if let Some(refusal) = state.refusal.take() {
         return Residual::Dynamic(refusal);
     }
-    if let Some(fd) = state.choice {
-        return Residual::Terminal(fd);
+    if let Some(question) = state.choice.take() {
+        return Residual::Question(question);
     }
     if let Some(input) = quench_runtime::clock::first_input() {
         return Residual::Dynamic(input.to_owned());
