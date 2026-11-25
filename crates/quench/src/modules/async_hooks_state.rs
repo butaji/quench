@@ -242,7 +242,7 @@ impl SharedAsyncHooksState {
 }
 
 impl SharedAsyncHooksState {
-    /// The identity counters and cached module of a bootstrap that ran no async resource:
+    /// The identity counters and cached module of a process at rest that holds no async resource:
     /// a restored process continues numbering where the snapshot's left off.
     pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
         use crate::host::startup_snapshot::{require_quiescent, HostSnap};
@@ -266,10 +266,13 @@ impl SharedAsyncHooksState {
             enabled_local_storages,
         } = self;
         let cells = &identity.0;
+        // The top level's context, or the native one the event loop polls in, which a restored
+        // process's event loop enters again (`process_shared_vm`): a snapshot at the first wait
+        // for input is taken there.
+        let at_rest = |id: u64| cells.current_async_id.get() == id && cells.current_store.get() == StoreContext::Resource(id);
         require_quiescent(
-            cells.current_async_id.get() == ROOT_ASYNC_ID
+            (at_rest(ROOT_ASYNC_ID) || at_rest(NATIVE_ASYNC_ID))
                 && cells.current_trigger_id.get() == ROOT_TRIGGER_ASYNC_ID
-                && cells.current_store.get() == StoreContext::Resource(ROOT_ASYNC_ID)
                 && default_trigger_async_id.is_none()
                 && scoped_resource.is_none()
                 && entered_scopes.is_empty(),

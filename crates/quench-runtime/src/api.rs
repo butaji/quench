@@ -285,6 +285,19 @@ impl<H: Host> Runtime<H> {
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
     }
 
+    /// The running runtime as a snapshot, where nothing runs and nothing waits but host
+    /// sources (an event loop about to wait for input), which `restore_snapshot` makes again
+    /// with `entry` as the program whose run it continues; `write_host` writes the host's state.
+    pub fn snapshot_at_rest(
+        &mut self,
+        program: &ResidualProgram,
+        write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
+    ) -> Result<Vec<u8>, String> {
+        self.vm.forget_spare_await_state();
+        self.vm.collect_now(program);
+        self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
+    }
+
     /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
     /// as its main program and the host state `read_host` reads back. Returns the entry as the
     /// restored runtime runs it, for `execute_restored` and every later call naming it.

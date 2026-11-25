@@ -5359,7 +5359,8 @@ impl Vm {
 
 impl PromiseRuntime {
     /// A snapshot (`crate::snapshot`) is taken between jobs, with no module loading and no
-    /// combinator or reaction in flight, so only the rejection numbering carries over.
+    /// combinator or reaction in flight, so only the rejection numbering, the settled module
+    /// records and the module sources carry over.
     pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
         let Self {
             rejection_notifications,
@@ -5383,7 +5384,7 @@ impl PromiseRuntime {
             ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
             ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
             ("a reaction capability", reaction_capabilities.is_empty()),
-            ("a module record", modules.is_empty() && module_replacements.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
+            ("a module being replaced", module_replacements.is_empty() && async_module_order.is_empty()),
             ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
             ("a settled async module", !async_module_settled),
             ("a native activation", active_native.is_empty()),
@@ -5392,11 +5393,17 @@ impl PromiseRuntime {
             return Err(crate::snapshot::SnapshotError::unsupported(what));
         }
         writer.u64(*last_rejection_id);
-        Ok(())
+        crate::snapshot::Snap::snap(modules, writer)?;
+        crate::snapshot::Snap::snap(module_sources, writer)
     }
 
     pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
+        Ok(Self {
+            last_rejection_id: reader.u64()?,
+            modules: crate::snapshot::Snap::unsnap(reader)?,
+            module_sources: crate::snapshot::Snap::unsnap(reader)?,
+            ..Self::default()
+        })
     }
 }
 

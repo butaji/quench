@@ -9,9 +9,6 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         self.write_out_all_strings();
-        if self.properties.float_slots() {
-            return Err(SnapshotError::unsupported("a heap whose number slots hold raw doubles"));
-        }
         if !self.abandoned_contexts.is_empty() {
             return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }
@@ -45,7 +42,7 @@ impl Heap {
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         // Every small string was written out above: each is kept as its text.
         write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
-        self.properties.write_snapshot(writer);
+        self.properties.write_snapshot(writer, self.tracked_runs());
         self.roots.write_snapshot(writer);
         self.write_sparse_arrays(writer);
         Ok(())
