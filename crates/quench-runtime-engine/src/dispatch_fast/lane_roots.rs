@@ -222,7 +222,7 @@ impl Vm {
         let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
         let _proofs = quench_runtime::tier_surface::LaneProofScope::enter();
         let (first, left) = exited(start(cx));
-        let ip = if left { first } else { dispatch_in_lane(cx, first) };
+        let ip = if left || !cfg!(feature = "jit") { first } else { dispatch_in_lane(cx, first) };
         #[cfg(feature = "profile-lane-exits")]
         self.record_lane_exit(cx, ip);
         self.materialize_lane_exit(cx);

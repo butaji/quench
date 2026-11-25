@@ -4162,7 +4162,8 @@ pub(crate) fn staged_delete(cx: *mut LaneContext, r: Registers, [destination, ba
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.
 #[path = "lane_frame/fused.rs"]
 pub(crate) mod fused;
-pub(crate) use fused::{chain_row, fused_row, fuse_chains, fuse_rows, is_window_row};
+pub(crate) use fused::{chain_row, fused_row, is_window_row};
+#[cfg(feature = "jit")] pub(crate) use fused::{fuse_chains, fuse_rows};
 
 /// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
 /// filter, null where the record has none.

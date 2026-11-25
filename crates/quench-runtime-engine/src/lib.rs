@@ -10,6 +10,7 @@
 #![feature(stmt_expr_attributes)]
 
 pub mod dispatch_fast;
+pub(crate) mod ahead_runner;
 pub mod compiled;
 pub mod js_compiled;
 pub mod aot_image;

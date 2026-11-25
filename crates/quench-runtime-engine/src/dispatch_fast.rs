@@ -135,6 +135,7 @@ use quench_runtime::bytecode::{RegisterList, Traits};
 use quench_runtime::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
+#[cfg(feature = "jit")]
 use quench_runtime::wasm::float::F64UnaryOperator;
 use quench_runtime::wasm::integer::I32BinaryOperator;
 use quench_runtime::wasm::memory::{MemoryLoad, MemoryStore};
@@ -503,7 +504,11 @@ pub(crate) use body_calls::{body_call_helper, body_construct_helper};
 pub(crate) mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(crate) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_operands, seed_declared_feedback, Records};
+#[cfg(feature = "jit")]
+use operand_feedback::{has_operand_feedback, seed_declared_feedback};
+#[cfg(feature = "jit")]
+use operand_feedback::Records;
+use operand_feedback::note_operands;
 #[path = "body_tier_in_lane.rs"]
 pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
@@ -2277,10 +2282,10 @@ fn tls_lane_floor() -> *const std::sync::atomic::AtomicUsize {
 
 /// A lane run's raised floor (`Vm::enter_lane_floor`): the VM's floor cell, and the cell and
 /// floor of the run it nests in, which leaving restores.
-struct LaneFloor {
-    cell: *const std::sync::atomic::AtomicUsize,
-    outer_cell: *const std::sync::atomic::AtomicUsize,
-    outer_floor: usize,
+pub(crate) struct LaneFloor {
+    pub(crate) cell: *const std::sync::atomic::AtomicUsize,
+    pub(crate) outer_cell: *const std::sync::atomic::AtomicUsize,
+    pub(crate) outer_floor: usize,
 }
 
 /// The running lane's floor.
@@ -2688,7 +2693,7 @@ macro_rules! return_handler {
 /// reaches the record only by falling through from it.
 const ACC_NONE: u8 = 0;
 /// `LaneView::accumulator_registers` of a record that reads no accumulator.
-const NO_ACCUMULATOR: u16 = u16::MAX;
+pub(crate) const NO_ACCUMULATOR: u16 = u16::MAX;
 use quench_runtime::vm::engine_types::ACC_A;
 use quench_runtime::vm::engine_types::ACC_B;
 use quench_runtime::vm::engine_types::ACC_C;
@@ -7601,6 +7606,7 @@ fn inlined_activation_in_lane(
 #[path = "vector_region.rs"]
 pub(crate) mod vector_region;
 pub(crate) mod wasm_instance;
+#[cfg(feature = "jit")]
 use wasm_instance::lane_instance_binding_memory;
 
 
@@ -7647,7 +7653,7 @@ fn resolve_memory(cx: *mut LaneContext, binding: Value) -> MemoryView {
 }
 
 /// The view behind `view`'s memory register in `registers`.
-fn frame_memory_view(
+pub(crate) fn frame_memory_view(
     cx: *mut LaneContext,
     view: &LaneView,
     registers: Registers,
@@ -7760,10 +7766,10 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
-            // The same derivation as every entry's (`derived_view`): an image's view takes on every record.
+            // The same derivation as every entry's (`ahead_runner::lane_view`).
             let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                vm.derived_view(function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::lane_view(vm, function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
@@ -8180,7 +8186,7 @@ impl Vm {
     }
 
     /// The lane's `this` for frame `frame` (`LaneContext::this`).
-    fn frame_lane_this(&self, frame: usize) -> Value {
+    pub(crate) fn frame_lane_this(&self, frame: usize) -> Value {
         let frame = &self.frames[frame];
         if frame.fixed_this {
             frame.this
@@ -8711,7 +8717,7 @@ impl Vm {
         if !self.runs_lane || !self.may_run_in_lane(program, code) { return None; }
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            self.derived_view(function, code, constants, kind, live, sites, image)
+            crate::ahead_runner::lane_view(self, function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -8723,6 +8729,7 @@ impl Vm {
     /// width handler settled | instruction`, handlers as run-time addresses (symbolized against
     /// the binary's symbol table, less the anchor's bias), `settled`
     /// the handler the stored view holds after the run (`-` where no run derived one).
+    #[cfg(feature = "jit")]
     pub(crate) fn report_lane_plan(&mut self) {
         if quench_runtime::trace::Channel::Bytecode.value() != Some(quench_runtime::vm::inspection::LANE_PLAN) {
             return;
@@ -10823,7 +10830,9 @@ pub(crate) mod frame_walk;
 pub(crate) mod with_scopes;
 pub mod scoped_names; pub(crate) mod window_owner; 
 pub(crate) mod lane_eval;
-use lane_roots::{LaneRoot, LaneStart};
+#[cfg(feature = "jit")]
+use lane_roots::LaneStart;
+use lane_roots::LaneRoot;
 pub(crate) mod async_requests;
 pub(crate) mod generator_windows; use generator_windows::{generator_returned_in_lane, resume_generator_step_in_lane}; 
 pub(crate) mod raised_windows;
@@ -16513,6 +16522,7 @@ fn writes_in_lane(instruction: WideInstruction, register: u16) -> bool {
     result || optional || filled
 }
 
+#[cfg(feature = "jit")]
 use crate::compiled::tier_policy::{LANE_ENTRY_MIN_RUN, LANE_ENTRY_MIN_CALL_RUN};
 /// Whether records may read the accumulator. Without sibling calls every
 /// handler returns to the lane loop, which carries no accumulator.
@@ -16542,8 +16552,10 @@ fn plain_frame_local(function: &Function, slot: usize) -> bool {
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
+#[cfg(feature = "jit")]
 use crate::jit_routes::lane_handler;
-fn derive_lane_view<'live>(
+#[cfg(feature = "jit")]
+pub(crate) fn derive_lane_view<'live>(
     function_id: u32,
     function: &Function,
     constants: &[Value],
@@ -18065,21 +18077,9 @@ impl Vm {
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs
             .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
-                self.derived_view(function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::lane_view(self, function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
-    }
-
-    /// `function`'s view of `code`, derived with this VM's facts.
-    #[allow(clippy::too_many_arguments)]
-    fn derived_view<'a>(&self, function: u32, code: &quench_runtime::bytecode::Function, constants: &[Value], kind: quench_runtime::bytecode::ProgramKind,
-        live: &dyn Fn() -> Option<&'a std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>, sites: &[quench_runtime::bytecode::FieldSite], image: bool) -> LaneView {
-        let mut view = derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites,
-            crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-            self.programs.reports_on_drop(), self.programs.tiers());
-        // Where an image's bodies are the only code, the lane takes on every record they leave at.
-        if image && !self.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
-        view
     }
 
     /// Whether a lane run of `program` credits its functions' loop work: a Wasm program in
@@ -18117,6 +18117,7 @@ impl Vm {
     /// `frame` and `pending` as the general loop would. Kept out of line so
     /// the general loop's code generation, which serves JavaScript, does not
     /// depend on the lane.
+    #[cfg(feature = "jit")]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn run_fast_lane(
@@ -18177,7 +18178,7 @@ impl Vm {
     /// interrupt state, where a termination request raises it; entry sets it before reading
     /// the request, the request raises it after setting itself, so one of the two sees the
     /// other.
-    fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
+    pub(crate) fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
         let floor = if self.collection_due() || self.credits_backedges_in_lane(code, program) {
             COLLECTION_DUE_FLOOR
         } else {

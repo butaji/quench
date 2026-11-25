@@ -23,10 +23,16 @@ impl BitSet {
     pub fn len(&self) -> usize { self.words.iter().map(|word| word.count_ones() as usize).sum() }
     pub fn is_empty(&self) -> bool { self.words.iter().all(|word| *word == 0) }
     pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        let (mut word, mut bits): (usize, u64) = (0, 0);
+        let mut word = 0usize;
+        let mut bits = self.words.first().copied().unwrap_or(0);
         std::iter::from_fn(move || loop {
-            if bits != 0 { let bit = bits.trailing_zeros() as usize; bits &= bits - 1; return Some(word * u64::BITS as usize + bit); }
-            bits = *self.words.get(word)?; word += 1;
+            if bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                return Some(word * u64::BITS as usize + bit);
+            }
+            word += 1;
+            bits = *self.words.get(word)?;
         })
     }
 }
@@ -109,4 +115,22 @@ pub fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
         }
     }
     states
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BitSet;
+
+    #[test]
+    fn iteration_names_every_indices_across_words() {
+        let mut set = BitSet::with_capacity(0);
+        for index in [0, 1, 64, 65, 130, 191] {
+            assert!(set.insert(index));
+            assert!(!set.insert(index));
+        }
+        set.remove(65);
+        assert_eq!(set.iter().collect::<Vec<_>>(), [0, 1, 64, 130, 191]);
+        assert_eq!(set.len(), 5);
+        assert!(set.contains(130) && !set.contains(65));
+    }
 }

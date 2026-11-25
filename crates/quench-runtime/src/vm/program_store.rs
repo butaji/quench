@@ -2730,7 +2730,7 @@ impl ProgramStore {
         if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
             return None;
         }
-        Some(derive_lane_view(entry, function, code, view, derive))
+        Some(store_lane_view(entry, function, code, view, derive))
     }
 
     /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
@@ -2767,7 +2767,7 @@ impl ProgramStore {
         let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
-        Some(derive_lane_view(entry, function, code, view, derive))
+        Some(store_lane_view(entry, function, code, view, derive))
     }
 
     /// A view of `function` derived afresh from its bytecode and not stored, beside the view
@@ -3102,7 +3102,7 @@ pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<crate::vm::
 }
 
 /// `function`'s view in its cell `view`, which `derive` makes from `code` if it has none yet.
-fn derive_lane_view<'s>(
+fn store_lane_view<'s>(
     entry: &'s ProgramEntry,
     function: u32,
     code: &crate::bytecode::Function,

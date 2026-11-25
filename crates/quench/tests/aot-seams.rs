@@ -13,7 +13,6 @@ fn compile(directory: &Path, source: &str, name: &str, keep_symbols: bool) -> (s
     let binary = directory.join(name);
     let report = directory.join(format!("{name}.json"));
     let mut command = Command::new(env!("CARGO_BIN_EXE_quench"));
-    command.env("QUENCH_AUDIT_WARN", "1");
     if keep_symbols { command.env("QUENCH_KEEP_SYMBOLS", "1"); }
     let output = command.args(["compile"]).arg(&entry).arg("-o").arg(&binary)
         .args(["--profile", "experiment", "--report"]).arg(&report).output().unwrap();
@@ -79,11 +78,9 @@ fn core_links_runtime_alone_with_the_quench_allocator() {
     assert_eq!(String::from_utf8_lossy(&run(&binary).stdout), "hello\n");
 }
 
-/// Stop condition 2 of M1B-2: the build-time AOT lowering shares the `ahead_images` codegen
-/// unit with the runtime's unit planning, so drop glue for `cranelift_codegen::ir::Function`
-/// and `cranelift_bitset` stays. Kept as the explicit seam check it will become.
+/// The execution-only image carries no code generator: `quench_runtime::dataflow::BitSet` and the
+/// `jit`-gated backend leave no Cranelift symbol in it.
 #[test]
-#[ignore = "M1B-2 stop condition 2: cranelift drop glue from the shared ahead_images unit"]
 fn core_has_no_cranelift_symbols() {
     let directory = workspace("cranelift");
     let (binary, _) = compile(&directory, "console.log('hello');\n", "core-cranelift", true);
@@ -109,10 +106,11 @@ fn static_multifamily_smoke_runs_like_the_interpreter() {
     assert_eq!(output.stdout, interpreted.stdout);
 }
 
-/// Step 3E of M1B-2: the crypto state's prune/cleanup calls and the image's surviving crypto
-/// operation keep OpenSSL. Kept as the explicit seam check it will become.
+/// The argv image names no OpenSSL symbol or bind and no libiconv, but Xcode's `ld-prime` keeps the
+/// two OpenSSL `LC_LOAD_DYLIB`s from the static `openssl-sys` rlib despite `-dead_strip_dylibs`.
+/// Kept as the explicit seam check it will become.
 #[test]
-#[ignore = "M1B-2 Step 3E: crypto prune/cleanup and remaining operation roots keep OpenSSL"]
+#[ignore = "ld-prime keeps libssl/libcrypto LC_LOAD_DYLIBs with no OpenSSL symbol or bind left"]
 fn static_argv_links_no_openssl_or_iconv() {
     let directory = workspace("argv");
     let (binary, report) = compile(&directory, "console.log(process.argv.length);\n", "static-argv", false);
