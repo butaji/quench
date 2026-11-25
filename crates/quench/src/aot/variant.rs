@@ -3,7 +3,6 @@
 
 use super::{DependencyGraph, GraphRequirement};
 use quench_runtime::NativeImageSupport;
-use std::path::{Path, PathBuf};
 
 /// Support archives, from most capable to least.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,11 +22,6 @@ impl Variant {
             Self::Static => "static",
             Self::Strict => "strict",
         }
-    }
-
-    /// The archive file name `cargo build` produces for this variant.
-    pub fn archive_name(self) -> String {
-        format!("libquench_aot_support_{}.a", self.name())
     }
 
     /// The runtime support an image of this variant executes with.
@@ -60,33 +54,6 @@ pub fn select(strict: bool, explicit: Option<NativeImageSupport>, graph: &Depend
 /// dynamic requires and imports; every other unresolved requirement still blocks.
 pub fn blocks(variant: Variant, requirement: &GraphRequirement) -> bool {
     !(variant == Variant::Full && requirement.is_dynamic_load())
-}
-
-/// The variant's archive in `support_dir`, or beside the compiler executable.
-pub fn archive_path(variant: Variant, support_dir: Option<&Path>) -> Result<PathBuf, String> {
-    let directory = match support_dir {
-        Some(directory) => directory.to_path_buf(),
-        None => std::env::current_exe()
-            .map_err(|error| error.to_string())?
-            .parent()
-            .ok_or("compiler executable has no directory")?
-            .to_path_buf(),
-    };
-    let path = directory.join(variant.archive_name());
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!("support archive {} is absent: looked in {}", variant.archive_name(), path.display()))
-    }
-}
-
-/// Until the strict archive has a link path, a strict compile names its archive and stops.
-pub fn require_linkable(variant: Variant, support_dir: Option<&Path>) -> Result<(), String> {
-    if variant != Variant::Strict {
-        return Ok(());
-    }
-    archive_path(variant, support_dir)?;
-    Err("strict AOT link is not yet implemented: the strict archive has no cc link path".into())
 }
 
 /// The first demand that may receive source at run time, named for a refusal.

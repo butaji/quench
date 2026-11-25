@@ -229,6 +229,40 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
 /// The process's arguments, executable and ids on `process`. A restored startup snapshot
 /// (`Host::resume`) holds another process's, which these replace in place.
 fn install_identity(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
+    // A build-time evaluation keeps them unread until the entry reads them, when its gate
+    // refuses the initializer: they are this process's, not the image's.
+    if crate::aot::prefix::active() {
+        set_text(context, process, "arch", process_state::architecture())?;
+        set_text(context, process, "platform", &process_state::platform())?;
+        let exec_argv = context.host_as::<crate::host::NodeHost>().shared_state().borrow().exec_argv.clone();
+        let exec_argv = exec_argv.iter().map(|value| context.string_rooted(value)).collect::<Vec<_>>();
+        let exec_argv = context.array_rooted(&exec_argv)?;
+        install(context, process, "execArgv", exec_argv)?;
+        let initializer = context.host_function(crate::host::shared_vm::operation!("processIdentityInitialize"))?;
+        return context.define_lazy_data_properties_rooted(process, IDENTITY, true, initializer);
+    }
+    install_identity_now(context, process)
+}
+
+/// The members of `install_identity` that a build-time evaluation keeps lazy: the target's
+/// architecture and platform are the image's too, as are its Node options (`execArgv`: an
+/// image takes none).
+const IDENTITY: &[&str] = &["argv", "execPath", "argv0", "pid", "ppid"];
+
+/// `install_identity`'s lazy initializer.
+pub(crate) fn initialize_identity(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = process_root(context)?;
+    install_identity_now(context, process)?;
+    Ok(context.undefined())
+}
+
+/// The installed `process`.
+pub(crate) fn process_root(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
+    context.host_as::<crate::host::NodeHost>().shared_state().borrow().process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))
+}
+
+fn install_identity_now(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
     let shared_state = context.host_as::<crate::host::NodeHost>().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
@@ -991,7 +1025,10 @@ pub(crate) fn stream_write(
         )?);
     };
     let worker = context.host_as::<crate::host::NodeHost>().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.control.clone());
-    if let Some(control) = worker {
+    if crate::aot::prefix::armed() {
+        // A build-time evaluation keeps its output for the image to write (`aot::prefix`).
+        crate::aot::prefix::record(fd, bytes);
+    } else if let Some(control) = worker {
         // A worker's stdio reaches its parent's `worker.stdout`/`worker.stderr`.
         control.write_output(fd == STDERR_FD, bytes);
     } else if fd == STDERR_FD {

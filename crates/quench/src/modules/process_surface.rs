@@ -381,16 +381,7 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
         let kill = c.host_function_named(crate::host::shared_vm::operation!("processKillPortable"), "kill")?;
         c.assign_named_property_rooted(process, "kill", kill)?;
     }
-    let argv = get(c, process, "execArgv")?;
-    if nullish(c, argv) {
-        let empty = c.array_rooted(&[])?;
-        c.assign_named_property_rooted(process, "execArgv", empty)?;
-    }
-    let argv0 = get(c, process, "argv0")?;
-    if !c.truthy_rooted(argv0)? {
-        let node = c.string_rooted("node");
-        c.assign_named_property_rooted(process, "argv0", node)?;
-    }
+    // `execArgv` and `argv0` are the process identity's (`process_shared_vm::install_identity`).
     let mut features = get(c, process, "features")?;
     if !c.truthy_rooted(features)? {
         features = c.object_rooted()?;
