@@ -53,7 +53,7 @@ pub(crate) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir:
 /// where the VM's own step must (`Vm::absent_array_element` declines) leaves at `miss`.
 pub(crate) fn index_get(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (base, key): (ir::Value, ir::Value),
     miss: ir::Block) -> ir::Value {
-    let helper = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, element_get));
+    let helper = emit_js_payload_target(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, element_get));
     let read = emit_lane_helper_call(stage.builder, frame.payload, helper, &[base, key]);
     let found = stage.raw_compare_imm(Relation::NotEqual, read, Value::DELETED.to_bits() as i64);
     emit_js_guard(stage.builder, found, miss);
