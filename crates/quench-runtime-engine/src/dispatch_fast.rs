@@ -7072,9 +7072,8 @@ fn loop_run_in_lane(
         site.tier.borrow_mut().missed_entry(site.tiers);
         return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
-    if matches!(exit, LaneExit::Terminated) {
-        return LoopContinuation::Safepoint;
-    }
+    if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count());
     if nested {
@@ -7724,20 +7723,10 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
-            let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
+            // The same derivation as every entry's (`derived_view`): an image's view takes on every record.
+            let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                derive_lane_view(
-                    function,
-                    code,
-                    constants,
-                    vm.heap_reads(),
-                    kind,
-                    live,
-                    sites,
-                    crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
-                    diagnostics,
-                    tiers,
-                )
+                vm.derived_view(function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
@@ -8692,7 +8681,7 @@ impl Vm {
     /// Prints every loaded function's lane view, derived afresh from its bytecode (no loop
     /// tier), when `QUENCH_TRACE=bytecode=lanes` is set: per record `LANEPLAN program function pc
     /// width handler settled | instruction`, handlers as run-time addresses (symbolized against
-    /// the symbol table by `quench-gate --only ir-predict`, less the anchor's bias), `settled`
+    /// the binary's symbol table, less the anchor's bias), `settled`
     /// the handler the stored view holds after the run (`-` where no run derived one).
     pub(crate) fn report_lane_plan(&mut self) {
         if quench_runtime::trace::Channel::Bytecode.value() != Some(quench_runtime::vm::inspection::LANE_PLAN) {
@@ -13066,13 +13055,13 @@ enum LaneBodyLeft {
 
 
 
-/// Records that a run of `own`'s body ended at `exit`, in the diagnostics report's leave table;
-/// nothing the lane does next reads it.
+/// Counts a run of `own`'s body that ended at `exit` on its typed edge (`ExitTable::cross`), and in the diagnostics leave table.
 #[inline(always)]
 fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
     if !matches!(exit, crate::compiled::LaneExit::Returned { .. }) && quench_runtime::trace::Channel::BodyLeave.on() {
         eprintln!("QUENCH_BODY_LEAVE function={} exit={exit:?}", running_function_in_lane(cx));
     }
+    method.exits.cross(exit);
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());
     }
@@ -13110,6 +13099,7 @@ fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }

@@ -33,9 +33,9 @@ const DEFINED_FLOAT64: u64 = 2;
 /// reads are `shared::NumberFrame`'s, emitted: an int32 as itself, the binary64 of an int32
 /// (`i32_to_f64`), and the int32 of a binary64 as Rust's `as` (saturating, NaN zero), which no
 /// generated state reaches.
-struct EmitNumberFrame {
-    values: [Option<(ir::Value, Domain)>; 3],
-    miss: ir::Block,
+pub(super) struct EmitNumberFrame {
+    pub(super) values: [Option<(ir::Value, Domain)>; 3],
+    pub(super) miss: ir::Block,
 }
 
 impl EmitNumberFrame {
@@ -67,8 +67,10 @@ impl staged::Frame<Emit<'_, '_>> for EmitNumberFrame {
     }
     fn branch(&mut self, _stage: &mut Emit<'_, '_>, _condition: ir::Value) -> Edge { unreachable!("a Number operation branches nowhere") }
     fn jump(&mut self, _stage: &mut Emit<'_, '_>) -> Edge { unreachable!("a Number operation jumps nowhere") }
-    fn boolean(&mut self, _stage: &mut Emit<'_, '_>, _condition: ir::Value) -> (ir::Value, Domain) {
-        unreachable!("a Number operation makes no boolean")
+    /// The tagged Boolean the u-jit's register frame makes (`lane_region::boolean_word`), read by the
+    /// static predictor's `RelationValue` row (`ir_predict_tests.rs`); the agreement test runs no such row.
+    fn boolean(&mut self, stage: &mut Emit<'_, '_>, condition: ir::Value) -> (ir::Value, Domain) {
+        (crate::compiled::lane_region::boolean_word(stage.builder, condition), Domain::Int32)
     }
 }
 
@@ -96,6 +98,11 @@ impl staged::NumericFrame<Emit<'_, '_>> for EmitNumberFrame {
         Some(Float64::by_fact(word, NumberFact::float64_home()))
     }
     fn prove_number(&mut self, _stage: &mut Emit<'_, '_>, _register: Register, _miss: ir::Block) -> Option<()> { Some(()) }
+    /// An int32 register is a proven int32 (only `IntCase`, a row of the static predictor, asks).
+    fn held_int(&mut self, _stage: &mut Emit<'_, '_>, operand: Operand) -> Option<Int32<ir::Value>> {
+        let (word, domain) = self.operand(operand);
+        (domain == Domain::Int32).then(|| Int32::by_fact(word, IntFact::int32_home()))
+    }
     fn miss(&self) -> ir::Block { self.miss }
     fn int_fact(&self) -> Domain { Domain::Int32 }
     fn number_fact(&self) -> Domain { Domain::Float64 }

@@ -61,3 +61,6 @@ quench-runtime-intl = { path = "../quench-runtime-intl" }
 quench-stencils = { path = "../quench-stencils" }
 quench-tier-corpus = { path = "../quench-tier-corpus" }
 quench-runtime = { path = "../quench-runtime", default-features = false, features = ["test-support"] }
+# The static Ir predictor (`emit/ir_predict_tests.rs`, S1.12) decodes each row's compiled code to count its fast
+# path; the version and features quench-bjit locks, so Cargo.lock already has it.
+iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "instr_info"] }

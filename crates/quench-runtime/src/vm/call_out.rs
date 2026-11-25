@@ -194,10 +194,12 @@ impl Vm {
         }
     }
 
-    /// Retires every view's speculative int32 kinds, once per thread (`dispatch_fast::int_kinds`).
+    /// Retires every view's speculative int32 kinds, once per thread (`dispatch_fast::int_kinds`):
+    /// an update overflowed one, or native code ran an activation the lane goes on in
+    /// (`int_kinds::retire_after_native`).
     #[cold]
     #[inline(never)]
-    pub(super) fn retire_int_speculation(&self) {
+    pub fn retire_int_speculation(&self) {
         if crate::vm::engine_calls::note_int_speculation_retired() {
             self.programs.retire_int_speculation();
         }
