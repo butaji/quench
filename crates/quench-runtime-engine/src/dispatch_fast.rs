@@ -7072,9 +7072,8 @@ fn loop_run_in_lane(
         site.tier.borrow_mut().missed_entry(site.tiers);
         return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
-    if matches!(exit, LaneExit::Terminated) {
-        return LoopContinuation::Safepoint;
-    }
+    if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count());
     if nested {
@@ -13110,6 +13109,7 @@ fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }
