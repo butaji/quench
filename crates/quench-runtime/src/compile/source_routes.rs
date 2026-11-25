@@ -6,9 +6,11 @@
 //! parser or compiler. Without them, source compilation is refused as Node refuses it under
 //! `--disallow-code-generation-from-strings` (`Vm::require_source_compilation`).
 use super::{
-    AtomPrefix, Constant, Diagnostic, Engine, EvalRegExpLiteral, ParameterSite, ParsedProgramShape, ReleasedRecords,
+    AtomPrefix, Constant, Diagnostic, EvalRegExpLiteral, ParameterSite, ParsedProgramShape, ReleasedRecords,
     SpecializationMode, StaticModuleAnalysis, StaticModuleOutcome,
 };
+#[cfg(feature = "source")]
+use super::Engine;
 use crate::bytecode::{CallSiteDescription, ChunkDelta, ProgramSource, ResidualProgram, SourceSpan, SourceText};
 use oxc_span::SourceType;
 
@@ -44,7 +46,12 @@ pub(crate) fn routes() -> Option<&'static SourceRoutes> {
     ROUTES.get()
 }
 
-/// Installs the routes: the runtime may compile and read source from here on.
+/// Installs the routes: the runtime may compile and read source from here on. An
+/// execution-only build (no `source`) has no front end to route to: nothing installs.
+#[cfg(not(feature = "source"))]
+pub fn enable() {}
+
+#[cfg(feature = "source")]
 pub fn enable() {
     ROUTES.get_or_init(|| SourceRoutes {
         specialize: Engine::specialize_source,

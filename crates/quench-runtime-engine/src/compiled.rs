@@ -1068,19 +1068,23 @@ macro_rules! lane_helper_inventory {
             // Mach-O has no `.pushsection`; the trampolines are laid out in this function's own
             // section, which never runs (the instance exists for its symbols alone).
             #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
-            // SAFETY: as above.
+            // SAFETY: as above. `.subsections_via_symbols` makes each trampoline its own
+            // subsection, so `ld64 -dead_strip` keeps only the helpers an image names.
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".subsections_via_symbols",
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
             }
             #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))]
-            // SAFETY: as above.
+            // SAFETY: as above. `.subsections_via_symbols` makes each trampoline its own
+            // subsection, so `ld64 -dead_strip` keeps only the helpers an image names.
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".subsections_via_symbols",
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );

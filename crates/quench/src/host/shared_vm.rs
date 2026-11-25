@@ -157,6 +157,9 @@ static WASM_ROUTES: std::sync::OnceLock<quench_runtime::WasmFrontend> = std::syn
 /// (`NodeHost::new`); an image does only where its program can reach WebAssembly
 /// (`RUNS_WASM`). Without it, `WebAssembly` compiles nothing, as in a host without a frontend.
 pub fn enable_wasm() {
+    // A support built without the Wasm feature (a static image whose program reaches none)
+    // installs no frontend, so it links no decoder.
+    #[cfg(feature = "wasm")]
     WASM_ROUTES.get_or_init(|| crate::host::wasm_frontend::FRONTEND);
 }
 
@@ -805,6 +808,7 @@ node_bindings! {
         method "errorSetSourceMapsEnabled" (1) => crate::modules::node_errors_shared_vm::set_source_maps_enabled,
         method "errorTriggerUncaughtException" (2) => crate::modules::node_errors_shared_vm::trigger_uncaught_exception,
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
+        method "cryptoGlobalInitialize" (0) => crate::modules::crypto_node::binding::install_global_operation,
         method "consoleWrite" (0) => crate::modules::console_shared_vm::write [row plain_text(1, "consoleWritePlain")],
         method "consoleWritePlain" (0) => crate::modules::console_shared_vm::write_plain,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,

@@ -5,6 +5,7 @@
 //! host's handle table. The table owns the OpenSSL contexts; a weak root per entry lets the
 //! idle sweep release the state of objects the collector reclaimed.
 
+pub(crate) mod binding;
 pub(crate) mod cipher;
 pub(crate) mod clone;
 pub(crate) mod dh;

@@ -383,16 +383,32 @@ fn detected_kind_of(bytes: &[u8]) -> Option<quench_runtime::SourceKind> {
 /// Parses the text up to twice (the wrapper, then `module_syntax_kind`); callers that
 /// already hold a failed wrapper compile use `goal_after_wrapper_syntax_error` instead.
 fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
+    #[cfg(not(feature = "source"))]
+    {
+        let _ = text;
+        return quench_runtime::SourceKind::Script;
+    }
+    #[cfg(feature = "source")]
+    {
     let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
         return quench_runtime::SourceKind::Script;
     }
     module_syntax_kind(text)
+    }
 }
 
 /// The module-syntax step of Node's detection, once the CommonJS wrapper is ruled out:
 /// `text` is an ES module when it parses as one (unambiguous) or is valid as `.mjs`.
+#[cfg(feature = "source")]
 fn module_syntax_kind(text: &str) -> quench_runtime::SourceKind {
+    #[cfg(not(feature = "source"))]
+    {
+        let _ = text;
+        return quench_runtime::SourceKind::Script;
+    }
+    #[cfg(feature = "source")]
+    {
     let allocator = oxc_allocator::Allocator::default();
     let parsed =
         oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
@@ -400,6 +416,7 @@ fn module_syntax_kind(text: &str) -> quench_runtime::SourceKind {
         quench_runtime::SourceKind::Module
     } else {
         quench_runtime::SourceKind::Script
+    }
     }
 }
 
@@ -409,7 +426,15 @@ fn module_syntax_kind(text: &str) -> quench_runtime::SourceKind {
 /// it instead (`typescript_has_module_syntax`): none known is a Script, anything else a Module,
 /// since the wrapper just failed to compile.
 /// Single parse order for a rejected wrapper: compile (`execute_module`) -> this step.
+#[cfg(feature = "source")]
 fn goal_after_wrapper_syntax_error(path: &Path, text: &str) -> quench_runtime::SourceKind {
+    #[cfg(not(feature = "source"))]
+    {
+        let _ = (path, text);
+        return quench_runtime::SourceKind::Script;
+    }
+    #[cfg(feature = "source")]
+    {
     if path.extension().is_some_and(|extension| extension == "ts") {
         return match quench_runtime::Engine::typescript_has_module_syntax(text) {
             None => quench_runtime::SourceKind::Script,
@@ -421,6 +446,7 @@ fn goal_after_wrapper_syntax_error(path: &Path, text: &str) -> quench_runtime::S
         entry.store(&[detected_kind_byte(kind)]);
     }
     kind
+    }
 }
 
 /// The goal a failed CommonJS wrapper compile (`error`) leaves for `path` with body `text`:
@@ -433,6 +459,14 @@ fn failed_wrapper_goal(error: &RootedError, path: &Path, text: &str) -> quench_r
 }
 
 pub(super) fn failed_wrapper_goal_parsed(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
+    // Without the front end no wrapper compile happens, and no text parses: a strict image
+    // loads only the programs and module sources its build embedded.
+    #[cfg(not(feature = "source"))]
+    {
+        let _ = (error, path, text);
+        return quench_runtime::SourceKind::Script;
+    }
+    #[cfg(feature = "source")]
     match error.compile_failure() {
         Some(quench_runtime::CompileFailureKind::Syntax) => goal_after_wrapper_syntax_error(path, text),
         Some(quench_runtime::CompileFailureKind::Unsupported) => quench_runtime::SourceKind::Script,
@@ -443,6 +477,13 @@ pub(super) fn failed_wrapper_goal_parsed(error: &RootedError, path: &Path, text:
 /// Holds one function's tree at a time: the whole tree of a large file (typescript.js, 9 MB)
 /// with its semantic tables was the peak of loading it.
 fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
+    // Without the front end no text parses: a strict image loads only embedded programs.
+    #[cfg(not(feature = "source"))]
+    {
+        let _ = (source, source_type);
+        return false;
+    }
+    #[cfg(feature = "source")]
     quench_runtime::Engine::syntax_valid(source, source_type)
 }
 
@@ -500,8 +541,13 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let key = context.string_rooted(super::esm_wasm::INSTANTIATE);
     context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
     context.scoped(install_performance_global)?;
+    // `globalThis.crypto` installs through the crypto family's operation: an image whose
+    // program never names crypto links `unlinked_operation` in its place, and no OpenSSL.
     #[cfg(quench_openssl_provider)]
-    context.scoped(crate::modules::crypto_node::install_global)?;
+    {
+        let initialize = crate::host::shared_vm::operation!("cryptoGlobalInitialize");
+        let _ = crate::host::shared_vm::call_linked(context, initialize, &[])?;
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // The SDK console reads its primordial snapshot. It loads on the first read of

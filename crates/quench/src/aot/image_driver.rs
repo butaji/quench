@@ -41,11 +41,11 @@ fn run() -> Result<std::process::ExitCode, String> {
     // An image with saved runs has one for every start (`RESUME_ONLY`) and links no entry run.
     // The source frontend links only where the program can make code (`MAKES_CODE`) or the
     // entry runs from its start, compiling what it loads.
-    if MAKES_CODE || !RESUME_ONLY {
+    if SUPPORT.allows_dynamic_source() && (MAKES_CODE || !RESUME_ONLY) {
         quench::host::enable_dynamic_source();
     }
     // The WebAssembly frontend links only where the program can reach it (`RUNS_WASM`).
-    if RUNS_WASM || !RESUME_ONLY {
+    if RUNS_WASM {
         quench::host::enable_wasm();
     }
     let result = match quench::aot::saved_wait(RESUMES_AT_REST) {

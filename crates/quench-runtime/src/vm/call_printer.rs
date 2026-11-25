@@ -17,6 +17,7 @@ use crate::heap::Cell;
 use crate::value::Value;
 use std::collections::BTreeMap;
 mod function_sites;
+#[cfg(feature = "source")]
 pub(crate) use function_sites::unfrozen_call_sites;
 
 /// What `CallPrinter` prints for an operand it does not render.

@@ -88,6 +88,8 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
+    /// A runtime that runs only code its image archived: it installs no JIT or source routes.
+    pub fn new_static(host: H) -> Self { Self { vm: Vm::new_static(host), host: std::marker::PhantomData } }
     /// A runtime only ever restored from one saved at rest (`resume_native_from_snapshot` of a
     /// `snapshot_at_rest`): it never installs its host.
     pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }

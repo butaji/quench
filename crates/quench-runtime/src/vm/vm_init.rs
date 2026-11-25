@@ -5,6 +5,12 @@ impl Vm {
         Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default())
     }
 
+    /// A VM that runs only code its image archived: it installs no JIT routes and no source
+    /// routes, so a static executable links neither compiler.
+    pub(crate) fn new_static<T: crate::Host>(host: T) -> Self {
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>())
+    }
+
     /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
     pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
