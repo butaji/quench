@@ -36,7 +36,8 @@ const RESET_PEAK: &str = "5";
 const CLEAR_REFS_PATH: &str = "/proc/self/clear_refs";
 
 /// Diagnostic (`QUENCH_TRACE=rss-phases`): reports on stderr the peak resident set since the previous
-/// boundary, and the resident anonymous and file pages now, then resets the peak, so that
+/// boundary, the resident anonymous and file pages now, and the minor faults and time since the
+/// first boundary, then resets the peak, so that
 /// each phase of a run (load, start-up, entry compilation, the run up to its first
 /// collection, the rest) reports its own peak.
 #[cfg(target_os = "linux")]
@@ -48,11 +49,21 @@ pub fn phase_peak(phase: &str) {
     let field = |name: &str| {
         status.lines().find_map(|line| line.strip_prefix(name)).map_or("?", str::trim).to_owned()
     };
+    /// When the first phase was reported: each later one reports its time since.
+    static FIRST: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let since = FIRST.get_or_init(std::time::Instant::now).elapsed();
+    // SAFETY: `getrusage` writes only the struct passed.
+    let faults = unsafe {
+        let mut usage = std::mem::zeroed::<libc::rusage>();
+        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+        usage.ru_minflt
+    };
     eprintln!(
-        "quench: rss phase {phase:<20} peak {:>10} anon {:>10} file {:>10}",
+        "quench: rss phase {phase:<20} peak {:>10} anon {:>10} file {:>10} minor faults {faults:>6} at {:>8} us",
         field("VmHWM:"),
         field("RssAnon:"),
-        field("RssFile:")
+        field("RssFile:"),
+        since.as_micros()
     );
     let _ = std::fs::write(CLEAR_REFS_PATH, RESET_PEAK);
 }
