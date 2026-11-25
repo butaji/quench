@@ -17,7 +17,6 @@ pub struct NativeSourceKey {
 impl NativeSourceKey {
     pub fn new(name: &str, parts: &[&str]) -> Result<Self, String> {
         match parts {
-            ["specialized" | "unspecialized", _] => {},
             ["specialized" | "unspecialized", STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL | super::GLOBAL_SCRIPT_GOAL, _] => {},
             ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
             ["specialized" | "unspecialized", DYNAMIC_FUNCTION_GOAL, kind, _, _]
@@ -142,7 +141,6 @@ impl NativeJsCompiler {
             return Err("native source specialization does not match compiler".into());
         }
         match parts.as_slice() {
-            [_, source] => self.compile_host_script(source, key.name()).map_err(|errors| format!("{errors:?}")),
             [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions::default())
                 .map_err(|errors| format!("{errors:?}")),
             [_, goal @ (STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL), source] => self.compile_module_with_syntax(source, key.name(), *goal == STATIC_TYPESCRIPT_MODULE_GOAL)
@@ -227,17 +225,6 @@ impl NativeJsCompiler {
         if let Some(source) = &mut program.source {
             source.text = SourceText::Shared(module.source.clone());
         }
-        Ok(program)
-    }
-
-    /// Compile context-free host bootstrap source, matching `eval_host_script`.
-    pub fn compile_host_script(
-        &mut self, source: &str, name: &str,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let mut program = Engine::specialize_eval_with_context(
-            source, name, self, false, Default::default(), &[], &[], None,
-        )?;
-        self.adopt(&mut program);
         Ok(program)
     }
 
