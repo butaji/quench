@@ -78,25 +78,17 @@ macro_rules! by_leaf {
     }};
 }
 
-/// Return `value` from the running function at the record `ip`, as `Return` would (the returning
-/// misses, `returning_row`, a returning field site): the common return as one op, no call (`lane_return_one_op`): a running
-/// leaf of the caller's program, or a plain activation's header, whose window is the innermost
-/// plain one (as `return_from_in_lane` reads it); else the activation's completion, else the
-/// frame's return.
+/// Return `value` from the record `ip` as `Return` would: one op (`lane_return_one_op`), else the
+/// activation's completion, else the frame's return.
 macro_rules! lane_return_value {
-    ($cx:expr, $ip:expr, $value:expr) => {
-        lane_return_value!($cx, $ip, $value, NOT_LEAF)
-    };
+    ($cx:expr, $ip:expr, $value:expr) => { lane_return_value!($cx, $ip, $value, NOT_LEAF) };
     ($cx:expr, $ip:expr, $value:expr, $leaf:expr) => {{
         let (cx, ip, value): (*mut LaneContext, Ip, Value) = ($cx, $ip, $value);
         let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
         if let Some((registers, next)) = by_leaf!($leaf, |L| crate::dispatch_fast::lane_return_one_op::<L>(cx, window, value)) {
-            let carried = Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
-            next!(cx, registers, next, carried)
+            next!(cx, registers, next, Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) })
         }
-        if let Some(resumed) = by_leaf!($leaf, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) {
-            resume!(cx, resumed)
-        }
+        if let Some(resumed) = by_leaf!($leaf, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) { resume!(cx, resumed) }
         resume!(cx, crate::dispatch_fast::return_value_general_in_lane(cx, ip, value));
     }};
 }
@@ -1383,10 +1375,10 @@ impl Admission {
 
     /// Whether `self` was made in the lane's current generation and program, whatever the lane's
     /// conditions and diagnostics: what a plan built now may rely on (`direct_callee_in_lane`).
-    /// The diagnostics only observe the tier, so they must not change which callees it compiles.
+    /// Diagnostics only observe; `UNPROVEN` only gates the plain call, never a direct one (via the cell).
     #[inline(always)]
     fn current(self, lane: Admission) -> bool {
-        (self.0 ^ lane.0) & !(Self::CONDITIONS | Self::DIAGNOSED) == 0
+        (self.0 ^ lane.0) & !(Self::CONDITIONS | Self::DIAGNOSED | Self::UNPROVEN) == 0
     }
 
     /// Whether `self` was made in the lane's current generation, whatever its program.

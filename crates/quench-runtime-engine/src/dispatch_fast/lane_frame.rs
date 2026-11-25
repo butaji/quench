@@ -2164,13 +2164,7 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
     }
     #[inline(always)]
     fn wide(self) -> WideInstruction {
-        // SAFETY: the view admits a record only with its register fields inside the function's
-        // registers (`fields_fit_in_lane`), which `REGISTER_MASK` bounds; stated so a row's operand
-        // kind test folds.
-        // A result carries at most its layout's flags. Past a call's row, which decodes its return
-        // (`Invocation::of`), the rows a flagged record reaches strip its flags first (a sinking read's
-        // store, a returning read's or `returning_row`'s return, `FLAG_COMPLETING`) or route it to its
-        // miss before decoding (`protocol_row`, `generated_row`).
+        // SAFETY: registers fit (`fields_fit_in_lane`); flagged records are stripped here or missed first.
         let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
             self.0.a & quench_runtime::bytecode::REGISTER_MASK
         } else { self.0.a };
@@ -2263,8 +2257,7 @@ pub(crate) const FLAG_KEPT_OBJECT: u8 = 18;
 /// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`, `NumericMultiply`) whose operands
 /// are both registers (`specialize_register_operands`): the row reads them without testing their tags.
 pub(crate) const FLAG_REGISTERS: u8 = 19;
-/// `LaneFields`' `FLAG` for a record whose row completes its result itself (`returning_row`): its result
-/// register decodes without its flags, which the row tested.
+/// `LaneFields`' `FLAG` for a record whose row completes its result itself (`returning_row`).
 pub(crate) const FLAG_COMPLETING: u8 = 20;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
@@ -3474,8 +3467,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
                 Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
             }
         }
-        // A record whose result carries flags is its miss's: a returning one is `returning_row`'s to complete,
-        // and this row never computes it.
+        // A record whose result carries flags is its miss's (`returning_row` completes a return).
         if const { LaneFields::<OP>::OPCODE.result_layout().allowed_flags() != 0 } && i.a > quench_runtime::bytecode::REGISTER_MASK {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         }
@@ -3643,9 +3635,7 @@ sharded_handler! { script_handler, returning_row_shards, returning_row_handler, 
     /// only a record whose flags are exactly the return reaches its row. Any other record, and any step
     /// but a value, takes the record's protocol miss, which completes the returning value itself.
     pub(crate) fn returning_row<OP: u16, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
-        // Only a record whose flags are exactly the return reaches its row; it then decodes plain. A
-        // returning `Binary` the view left generic takes its miss's in-place value
-        // (`returning_binary_value_in_lane`), which the generic staged step costs 2x (TOD-2194).
+        // Only flags exactly the return reach the row; a generic `Binary` takes its miss (2x cheaper).
         if const { quench_runtime::staged::computes_binary(LaneFields::<OP>::OPCODE) }
             || i.a & !quench_runtime::bytecode::REGISTER_MASK != quench_runtime::bytecode::RETURN_REGISTER
         {
