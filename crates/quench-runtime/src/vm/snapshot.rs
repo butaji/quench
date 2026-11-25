@@ -519,7 +519,6 @@ impl Vm {
     pub fn install_restored_main(&mut self, main: Rc<ResidualProgram>) {
         self.programs.install_main(main.clone());
         self.rebuild_program_cache_layouts();
-        self.keep_slot_representations();
         self.materialize_program_constants(ProgramId::MAIN, &main);
         self.set_active_program(ProgramId::MAIN);
     }

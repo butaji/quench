@@ -239,6 +239,8 @@ impl Vm {
     pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
         let _ = unit;
+        // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         let traced = quench_runtime::trace::Channel::AotLanes.on();
         if entry.is_some() || !generic.is_empty() {
             if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
