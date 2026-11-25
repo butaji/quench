@@ -227,6 +227,15 @@ pub(crate) fn concrete_number_predicate(native: super::call_native::NumberNative
     answer == Some(Value::boolean(true).to_bits())
 }
 
+/// SameValue of the Numbers `left` and `right` (`call_native::NumberNative::SameValue`); `None`
+/// when either is no Number.
+#[inline(always)]
+pub(crate) fn concrete_same_number(left: Value, right: Value) -> Option<bool> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let answer = super::call_native::step_number_native_of(&mut stage, super::call_native::NumberNative::SameValue, &[left.to_bits(), right.to_bits()], ())?;
+    Some(answer == Value::boolean(true).to_bits())
+}
+
 /// The interpreter's `push` of `array` (`step_array_native_of`), a direct array among the records at
 /// `record_base` whose backing has room for `room` values: the new length.
 #[inline(always)]

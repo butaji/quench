@@ -676,9 +676,8 @@ impl Vm {
     }
 
     pub(super) fn same_value(&self, left: Value, right: Value) -> bool {
-        if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
-            return (a.is_nan() && b.is_nan())
-                || (a == b && (a != 0.0 || a.is_sign_negative() == b.is_sign_negative()));
+        if let Some(same) = crate::staged::builtins::concrete_same_number(left, right) {
+            return same;
         }
         if let (Some(a), Some(b)) = (self.heap.string(left), self.heap.string(right)) {
             return a == b;

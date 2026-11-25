@@ -291,6 +291,8 @@ pub enum NumberNative {
     IsNaN,
     /// `Number.isFinite` of its one argument.
     IsFinite,
+    /// SameValue of its two Number arguments (`Object.is`): NaN is itself, `+0` is not `-0`.
+    SameValue,
 }
 
 /// The value word `native` answers for the value words `args`: the one step of a native of
@@ -301,6 +303,27 @@ pub fn step_number_native_of<S: NumericStage>(stage: &mut S, native: NumberNativ
     -> Option<S::Word> {
     match native {
         NumberNative::Math(call) => math_call(stage, call, args, miss),
+        NumberNative::SameValue => {
+            let &[left, right] = args else { return None };
+            let (a, b) = (number_word(stage, left, miss)?, number_word(stage, right, miss)?);
+            let equal = stage.relation(NumberRelation::Equal, Domain::Float64, a, b);
+            Some(stage.choose(equal, #[inline(always)] |stage| {
+                // Equal zeros differ in sign exactly where their reciprocals are opposite infinities.
+                let zero = stage.f64_constant(0.0);
+                let zeros = stage.relation(NumberRelation::Equal, Domain::Float64, a, zero);
+                stage.choose(zeros, #[inline(always)] |stage| {
+                    let one = stage.f64_constant(1.0);
+                    let (left, right) = (stage.float_arithmetic(NumberArithmetic::Divide, one, a), stage.float_arithmetic(NumberArithmetic::Divide, one, b));
+                    let same = stage.relation(NumberRelation::Equal, Domain::Float64, left, right);
+                    boolean_word(stage, same)
+                }, #[inline(always)] |stage| stage.constant(Value::boolean(true).to_bits()))
+            }, #[inline(always)] |stage| {
+                let (ordered_a, ordered_b) = (stage.relation(NumberRelation::Equal, Domain::Float64, a, a), stage.relation(NumberRelation::Equal, Domain::Float64, b, b));
+                let either = stage.any(ordered_a, ordered_b);
+                let both_nan = stage.not(either);
+                boolean_word(stage, both_nan)
+            }))
+        }
         NumberNative::IsInteger | NumberNative::IsSafeInteger | NumberNative::IsNaN | NumberNative::IsFinite => {
             let &[value] = args else { return None };
             let int = is_int(stage, value);
