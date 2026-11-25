@@ -1271,7 +1271,7 @@ impl LaneHelpers {
         }
         let mut stage = object_slots::emit(builder);
         match self.table_address(helper) {
-            HelperAddress::Embedded(_) => stage.slow_path_target(helper),
+            HelperAddress::Embedded => stage.slow_path_target(helper),
             HelperAddress::Loaded { table, offset } => stage.entry_target(helper, invariant(), table, offset),
         }
     }
@@ -1286,7 +1286,7 @@ impl LaneHelpers {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
-            Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
+            Self::Process(_) => HelperAddress::Embedded,
             Self::Bound(table, _) => HelperAddress::Loaded {
                 table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
@@ -1297,7 +1297,7 @@ impl LaneHelpers {
 /// Where a helper's address is: a constant, or an entry of the table a region bound.
 #[derive(Clone, Copy)]
 enum HelperAddress {
-    Embedded(i64),
+    Embedded,
     Loaded { table: ir::Value, offset: i32 },
 }
 

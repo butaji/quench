@@ -1922,6 +1922,7 @@ pub(crate) fn lower(
             signature, colocated: false, patchable: false });
         LaneHelpers::Bound(emit(&mut builder).call_function(target, &[])[0], narrow_table)
     } else { helpers };
+    let interrupt_owner = fault_poll.then(|| polls::interrupt_owner_call(&mut builder, helpers, context, isa));
     let count = usize::from(unit.registers);
     let live = if unit.registers > quench_runtime::compile::liveness::ROOT_MAP_REGISTERS {
         Liveness::Frames {
@@ -2354,14 +2355,13 @@ pub(crate) fn lower(
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
     let reentries = std::mem::take(&mut lowering.reentries);
-    let helpers = lowering.helpers;
     let stable = lowering.stable.take();
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
     super::jit_backend::builder::keep_context(builder_context);
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
-    if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
+    if let Some(owner) = interrupt_owner { specialize_closed_polls(&mut native, &reentries, &mut polls, owner); }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types, exits })
 }
 
