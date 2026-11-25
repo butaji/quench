@@ -135,7 +135,7 @@ mod tests {
     use super::*;
     use quench_runtime::vm::tier_policy::TEST_PRIORS as PRIORS;
 
-    const LOOPS: Loops = Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 100, widen_after_leaves: 4, max_compilations: 8, trip_check_entries: 64, min_trip_per_entry: 4 };
+    const LOOPS: Loops = Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 100, widen_after_leaves: 4, max_compilations: 8 };
     const COST: u64 = PRIORS.compile_ns_per_ir;
 
     fn required(span: u64, wall: u64) -> u32 { required_taken(&PRIORS, &LOOPS, span, COST, wall) }
