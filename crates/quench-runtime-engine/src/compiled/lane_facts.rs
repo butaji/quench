@@ -243,6 +243,6 @@ mod tests {
         // The length threshold is `Tiers::amortizing_instructions`, checked per tier by
         // `tier_policy`'s `each_lane_body_tier_has_its_own_amortizing_length`.
         let priors = &tier_policy::TEST_PRIORS;
-        assert_eq!(priors.repaying_length(priors.body_share), 48);
+        assert_eq!(quench_runtime::test_support::repaying_length(&priors, priors.body_share), 48);
     }
 }

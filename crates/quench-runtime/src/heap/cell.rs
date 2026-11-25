@@ -44,7 +44,8 @@ pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
 #[allow(unused_imports)]
 pub use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
+#[quench_macros::test_visible]
 pub(crate) use global_values::new_table;
 
 /// Changes at the prototype-layout events no single prototype names: a collection frees a
@@ -980,6 +981,7 @@ pub struct ProtoLink(u32);
 impl ProtoLink {
     pub(crate) const NULL: Self = Self(PROTO_NULL);
 
+    #[quench_macros::test_visible]
     /// The link naming `prototype`, an object or null (`Object::encode_proto`).
     #[inline(always)]
     pub(crate) fn of(prototype: Value) -> Self {

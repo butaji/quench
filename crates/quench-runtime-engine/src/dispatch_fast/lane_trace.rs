@@ -36,8 +36,8 @@ mod tests {
         let mut program = Engine::specialize("globalThis.seed = 1;", "parked-wasm.js").unwrap();
         // An uncovered function's window is scanned whole, as a parked Wasm window with no masks is.
         program.functions[0].register_roots = quench_runtime::bytecode::RegisterRoots::new(false);
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(TestHost::default());
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let held = vm.allocate_object(Vm::empty_object(vm.object_proto));
         let registers = [held, Value::integer(7)];
         let wasm = Activation::of_parts(

@@ -20,14 +20,10 @@ use quench_runtime::Value;
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
-/// The namespace of `Symbol::SemanticEntry`: the first number after the `RelocKind` ones.
-const SEMANTIC_ENTRY_NAMESPACE: u32 = RelocKind::Shape as u32 + 1;
-/// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list.
-const BASE_PC_NAMESPACE: u32 = SEMANTIC_ENTRY_NAMESPACE + 1;
-/// The namespace of `Symbol::Operands`, whose key is its record in the image's operand table.
-pub(crate) const OPERANDS_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
+/// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
+const BASE_PC_NAMESPACE: u32 = RelocKind::Shape as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
-pub(crate) const CALL_RECORD_NAMESPACE: u32 = OPERANDS_NAMESPACE + 1;
+pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
 const NARROW_WORDS_NAMESPACE: u32 = CALL_RECORD_NAMESPACE + 1;
 /// The namespace of `Symbol::Attention`, one byte keyed 0.
@@ -48,13 +44,8 @@ pub(crate) enum Symbol {
     Helper(u32),
     ConstantPool(u32),
     Atom(u32),
-    /// The monomorphized semantic entry of opcode number `op` (`Op::native_semantic_entry`).
-    SemanticEntry(u16),
     /// The base body of `function` entered at record `pc` (a lane leave's continuation).
     BasePc { function: u32, pc: u32 },
-    /// The operand record (`NativeJsOperands`) of record `pc` of `function`, which its generic row
-    /// passes its semantic entry: data the linker places (`AotImage::operands`).
-    Operands { function: u32, pc: u32 },
     /// The record (`CallRecord`) the direct call of record `pc` of `function` reads, a call the closed
     /// world proves (`AotFacts::call_target`): data the linker places and binds (`AotImage::calls`).
     CallRecord { function: u32, pc: u32 },
@@ -103,18 +94,16 @@ pub(crate) struct SymbolTable {
     heap_values: Interned<HeapValueRecipe>,
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
-    operands: Interned<(u32, u32)>,
     calls: Interned<(u32, u32)>,
 }
 
 /// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
-/// operand sites and call sites, each by key.
+/// and call sites, each by key.
 pub(crate) struct Finished {
     pub(crate) shapes: Vec<ShapeRecipe>,
     pub(crate) heap_values: Vec<HeapValueRecipe>,
     pub(crate) atoms: Vec<Box<str>>,
     pub(crate) labels: Vec<(u32, u32)>,
-    pub(crate) operands: Vec<(u32, u32)>,
     pub(crate) calls: Vec<(u32, u32)>,
 }
 
@@ -123,16 +112,15 @@ impl SymbolTable {
     /// and a recipe's field name carry (atom numbers are per VM, texts are not).
     pub(crate) fn new(program: &ResidualProgram) -> Self {
         let atoms = program.atoms.iter().map(Box::<str>::from).collect();
-        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(), operands: Interned::default(),
+        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(),
             calls: Interned::default() }
     }
 
     /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
-    /// an operand record's its site in the operand table, a call record's its site in the call table.
+    /// a call record's its site in the call table.
     pub(crate) fn intern(&mut self, symbol: Symbol) -> (u32, u32) {
         match symbol {
             Symbol::BasePc { function, pc } => (BASE_PC_NAMESPACE, self.labels.key((function, pc))),
-            Symbol::Operands { function, pc } => (OPERANDS_NAMESPACE, self.operands.key((function, pc))),
             Symbol::CallRecord { function, pc } => (CALL_RECORD_NAMESPACE, self.calls.key((function, pc))),
             other => (other.namespace(), other.key()),
         }
@@ -159,19 +147,17 @@ impl SymbolTable {
     pub(crate) fn decode(image: &AotImage, namespace: u32, key: u32) -> Option<Symbol> {
         match namespace {
             BASE_PC_NAMESPACE => image.labels.get(key as usize).map(|&(function, pc)| Symbol::BasePc { function, pc }),
-            OPERANDS_NAMESPACE => image.operands.get(key as usize).map(|record| Symbol::Operands { function: record.function, pc: record.pc }),
             CALL_RECORD_NAMESPACE => image.calls.get(key as usize).map(|call| Symbol::CallRecord { function: call.function, pc: call.pc }),
-            SEMANTIC_ENTRY_NAMESPACE => u16::try_from(key).ok().map(Symbol::SemanticEntry),
             NARROW_WORDS_NAMESPACE => (key == 0).then_some(Symbol::NarrowUpperWords),
             ATTENTION_NAMESPACE => (key == 0).then_some(Symbol::Attention),
             _ => KEYED.iter().find(|(kind, _)| *kind == namespace).map(|(_, make)| make(key)),
         }
     }
 
-    /// The recipe tables, the label list, the operand sites and the call sites the image carries.
+    /// The recipe tables, the label list and the call sites the image carries.
     pub(crate) fn finish(self) -> Finished {
         Finished { shapes: self.shapes.values, heap_values: self.heap_values.values, atoms: self.atoms, labels: self.labels.values,
-            operands: self.operands.values, calls: self.calls.values }
+            calls: self.calls.values }
     }
 }
 
@@ -205,9 +191,7 @@ impl Symbol {
             Self::Atom(_) => RelocKind::Atom as u32,
             Self::HeapValue(_) => RelocKind::HeapValue as u32,
             Self::Shape(_) => RelocKind::Shape as u32,
-            Self::SemanticEntry(_) => SEMANTIC_ENTRY_NAMESPACE,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
-            Self::Operands { .. } => OPERANDS_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
             Self::Attention => ATTENTION_NAMESPACE,
@@ -220,9 +204,8 @@ impl Symbol {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) => key,
             Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
-            Self::SemanticEntry(op) => u32::from(op),
-            Self::BasePc { .. } | Self::Operands { .. } | Self::CallRecord { .. } =>
-                unreachable!("a base PC, an operand record or a call record is keyed by its site (`intern`)"),
+            Self::BasePc { .. } | Self::CallRecord { .. } =>
+                unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
         }
     }
 }

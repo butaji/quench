@@ -65,8 +65,8 @@ impl LaneView {
 
     /// The body of a function of a program with a loaded AOT image: `install` takes it from the
     /// image (`Vm::install_ahead_body`) at once, with no warm-up, no compile budget and no tier
-    /// gate, since an image has no profiling phase; a function the image has no body for runs in
-    /// the lane, never in a runtime tier. Whether it has a body.
+    /// gate, since an image has no profiling phase. It is the ladder's first body: its leaves
+    /// respecialize it on the JIT's route (`specialize_in_lane`). Whether it has a body.
     pub(crate) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.

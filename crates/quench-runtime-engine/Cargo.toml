@@ -10,6 +10,8 @@ description = "The Quench runtime's lane handlers and compiled tiers: a layer cr
 doctest = false
 
 [features]
+# Never enabled here: quench-runtime files this crate mounts name quench-runtime's feature of that name.
+test-support = []
 default = ["jit", "native-execution"]
 # The same features as quench-runtime's, which quench-layers enables together with the core's.
 jit = ["quench-runtime/jit"]
@@ -51,3 +53,11 @@ libc = "0.2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The intl layer's exported entry points, which the core names and a test binary must link.
+quench-runtime-intl = { path = "../quench-runtime-intl" }
+# The stencil tables `quench_bjit::rustc` reads (QUENCH_STENCILS_*), which a test binary must link.
+quench-stencils = { path = "../quench-stencils" }
+quench-tier-corpus = { path = "../quench-tier-corpus" }
+quench-runtime = { path = "../quench-runtime", default-features = false, features = ["test-support"] }

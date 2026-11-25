@@ -15,6 +15,7 @@ macro_rules! typed_array_kinds {
         }
 
         impl TypedArrayKind {
+            #[cfg_attr(feature = "test-support", quench_macros::test_visible)]
             /// Every kind, in discriminant order.
             pub(crate) const ALL: [Self; typed_array_kinds!(@count $($name)+)] = [$(Self::$name),+];
             /// The number of kinds: one past the last discriminant.

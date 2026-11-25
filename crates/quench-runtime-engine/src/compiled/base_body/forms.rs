@@ -6,7 +6,7 @@ use super::tests::{run_after, run_both, run_in};
 use quench_runtime::JitMode;
 use quench_runtime::bytecode::Op as Opcode;
 use crate::compiled::base_region::fast_rows;
-use quench_runtime::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
 
 /// A read of a binding in its temporal dead zone, and an assignment that is no initialization, leave a fast row
 /// into the interpreter's step, which raises; an initialized binding is read and written by the row.

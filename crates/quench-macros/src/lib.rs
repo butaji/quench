@@ -401,3 +401,59 @@ fn derive_extension(name: syn::Ident, mut block: syn::ItemImpl) -> syn::Result<p
         }
     })
 }
+
+/// Makes a crate-private item public under the `test-support` feature of the crate it is in, and
+/// leaves it as written otherwise: what a dependent crate's own tests reach of this crate's
+/// internals (quench-runtime-engine's tests of quench-runtime), without widening the item for any
+/// production build. On a struct, its fields become public too. Works on items and impl items.
+#[proc_macro_attribute]
+pub fn test_visible(_attribute: TokenStream, input: TokenStream) -> TokenStream {
+    let original = proc_macro2::TokenStream::from(input.clone());
+    let widened = match syn::parse::<syn::Item>(input.clone()) {
+        Ok(item) => widen_item(item),
+        Err(_) => syn::parse::<syn::ImplItem>(input).map_err(|_| "test_visible: an item or impl item").and_then(widen_impl_item),
+    };
+    match widened {
+        Ok(widened) => quote! {
+            #[cfg(feature = "test-support")]
+            #widened
+            #[cfg(not(feature = "test-support"))]
+            #original
+        }
+        .into(),
+        Err(message) => syn::Error::new_spanned(original, message).to_compile_error().into(),
+    }
+}
+
+/// An item made `pub` (a struct's fields too), or why it has no visibility to widen.
+fn widen_item(mut item: syn::Item) -> Result<proc_macro2::TokenStream, &'static str> {
+    let vis = match &mut item {
+        syn::Item::Const(item) => &mut item.vis,
+        syn::Item::Enum(item) => &mut item.vis,
+        syn::Item::Fn(item) => &mut item.vis,
+        syn::Item::Mod(item) => &mut item.vis,
+        syn::Item::Static(item) => &mut item.vis,
+        syn::Item::Trait(item) => &mut item.vis,
+        syn::Item::Type(item) => &mut item.vis,
+        syn::Item::Use(item) => &mut item.vis,
+        syn::Item::Struct(item) => {
+            item.fields.iter_mut().for_each(|field| field.vis = syn::parse_quote!(pub));
+            &mut item.vis
+        }
+        _ => return Err("test_visible: an item with a visibility"),
+    };
+    *vis = syn::parse_quote!(pub);
+    Ok(quote!(#item))
+}
+
+/// An impl item made `pub`, or why it has no visibility to widen.
+fn widen_impl_item(mut item: syn::ImplItem) -> Result<proc_macro2::TokenStream, &'static str> {
+    let vis = match &mut item {
+        syn::ImplItem::Fn(item) => &mut item.vis,
+        syn::ImplItem::Const(item) => &mut item.vis,
+        syn::ImplItem::Type(item) => &mut item.vis,
+        _ => return Err("test_visible: an impl item with a visibility"),
+    };
+    *vis = syn::parse_quote!(pub);
+    Ok(quote!(#item))
+}

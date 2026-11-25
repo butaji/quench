@@ -70,7 +70,7 @@ fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
                 "{definition}\n{}", program.disassemble());
             if expected == 1 {
                 let target = targets[caller].iter().flatten().copied().next().unwrap();
-                assert!(program.function(target as usize).instructions().any(|instruction| instruction.op().class().eq(Class::Return)
+                assert!(program.function(target as usize).instructions().any(|instruction| instruction.op().class().eq(&Class::Return)
                     || instruction.returns_from_frame()));
                 let unit = unit(&program, caller as u32, program.function(caller), &|function, pc|
                     targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
@@ -123,15 +123,15 @@ fn terminal_leaf_uses_the_existing_caller_return_and_strict_calls_residualize() 
             continue;
         }
         assert_eq!(unit.frames.len(), 1);
-        assert!(!unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Call)));
+        assert!(!unit.instructions.iter().any(|instruction| instruction.op().class().eq(&Class::Call)));
         let terminal = unit.instructions.len() - 1;
         let returned = unit.instructions[terminal];
         assert_eq!(returned.op(), Op::Return);
         assert_eq!(unit.origins[terminal], Origin::Caller(original_terminal as u32),
             "completion must recover at the original Return, never the Call");
-        assert!(unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Move)
+        assert!(unit.instructions.iter().any(|instruction| instruction.op().class().eq(&Class::Move)
             && instruction.result_register() == returned.register_a()));
-        assert!(unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Jump)
+        assert!(unit.instructions.iter().any(|instruction| instruction.op().class().eq(&Class::Jump)
             && instruction.jump_target() as usize == terminal));
         let live = unit.register_masks(&program, caller as u32).expect("terminal splice liveness");
         assert!(live.is_live(terminal, returned.register_a()));
@@ -157,7 +157,7 @@ fn nested_strict_terminal_calls_residualize_in_their_own_caller() {
             assert_eq!(unit.frames.len(), 2, "ordinary nested terminal calls retain recursive expansion");
             assert_eq!(unit.frames[0].parent, None);
             assert_eq!(unit.frames[1].parent, Some(0));
-            assert!(!unit.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Call)));
+            assert!(!unit.instructions.iter().any(|instruction| instruction.op().class().eq(&Class::Call)));
         }
     }
 }
@@ -195,7 +195,7 @@ fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_a
     let caller = id("caller");
     let leaf = id("leaf");
     let body = program.function(caller as usize);
-    let call = body.instructions().position(|instruction| instruction.op().class().eq(Class::Call)).unwrap();
+    let call = body.instructions().position(|instruction| instruction.op().class().eq(&Class::Call)).unwrap();
     let mut targets = vec![None; body.code.len()];
     targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
     let mut unit = unit(&program, caller, body, &|function, pc| if function == caller {
@@ -207,7 +207,7 @@ fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_a
         assert!(!masks.is_live(0, register), "callee register {register} is defined by call admission");
     }
     let (pc, instruction) = unit.instructions.iter().enumerate().find(|(pc, instruction)|
-        instruction.op().class().eq(Class::Move) && matches!(unit.origins[*pc], Origin::Inlined { .. })
+        instruction.op().class().eq(&Class::Move) && matches!(unit.origins[*pc], Origin::Inlined { .. })
             && instruction.result_register() < unit.caller_registers).expect("synthesized result move");
     assert!(masks.is_live(pc, instruction.register_b()), "return projection must retain its produced result");
     drop(masks);

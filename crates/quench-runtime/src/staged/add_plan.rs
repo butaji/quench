@@ -8,6 +8,7 @@ use super::Concrete;
 use crate::heap::{Heap, NATIVE_OBJECT_LAYOUT as OBJECT};
 use crate::value_vec::range_has_room;
 
+#[quench_macros::test_visible]
 /// One resolved shape transition as an add site records it: objects of `before` take the value at
 /// `slot`, their storage length, and move to `after`. The staged rows run it on records of exactly
 /// the layout `layouts[0]` (`heap::layouts`: prototype link, flags, shape and storage form), which

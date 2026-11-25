@@ -8,7 +8,7 @@ fn named(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| value != "0")
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// A test's override of `float_slots`, for the thread that sets it.
     static FLOAT_SLOTS_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -20,7 +20,7 @@ thread_local! {
 /// Read per slot decode (`value_vec::read_type`), so the initialized value is one inlined load.
 #[inline(always)]
 pub fn float_slots() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if FLOAT_SLOTS_FOR_TEST.get() { return true; }
     // One byte loaded and tested once on the decided path, not a `OnceLock`'s state and value:
     // every field read decodes through here (`value_vec::read_type`). Only the unread state takes
@@ -55,8 +55,8 @@ fn read_float_slots() -> bool {
 }
 
 /// Runs `body` with `float_slots` on for this thread.
-#[cfg(test)]
-pub(crate) fn with_float_slots<R>(body: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-support"))]
+pub fn with_float_slots<R>(body: impl FnOnce() -> R) -> R {
     FLOAT_SLOTS_FOR_TEST.set(true);
     let result = body();
     FLOAT_SLOTS_FOR_TEST.set(false);

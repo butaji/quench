@@ -423,6 +423,7 @@ impl FactStore {
 }
 
 /// The heap's dependency table.
+#[quench_macros::test_visible]
 pub(crate) struct Dependencies(Box<UnsafeCell<Table>>);
 
 impl Default for Dependencies {
@@ -492,6 +493,7 @@ impl Dependencies {
         proof(&mut table.proofs);
     }
 
+    #[quench_macros::test_visible]
     /// The subject of a prototype that died: its proofs retire, and the subject is free.
     pub(crate) fn release(&mut self, subject: u32) {
         let table = self.table_mut();
@@ -517,6 +519,7 @@ impl Dependencies {
         table.retire_cells().retire();
     }
 
+    #[quench_macros::test_visible]
     /// Retires every chain cell (`Table::retire_cells`), for an event no subject names: a
     /// collection that may let a dead prototype's record be reused, or a shape compaction,
     /// which renumbers the shapes proofs name.

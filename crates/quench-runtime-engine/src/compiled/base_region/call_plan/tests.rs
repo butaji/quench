@@ -132,7 +132,8 @@ fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_before_the_call() {
 #[test]
 fn call_protocol_matches_the_runtime() {
     use super::super::super as compiled;
-    use compiled::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
+    use compiled::entry_cell::EntryCell;
+    use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
     use stencil_layout as mirror;
     assert_eq!(
         [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LANE_CALL_BRANCHED, compiled::LaneExit::Callee.word()],

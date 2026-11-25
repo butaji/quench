@@ -124,14 +124,14 @@ static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::
 
 // The mode a test thread runs in, over the process's: tests share one process, so a test that
 // needs `--b-jit` selects it for its own thread only (`with_mode`).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static TEST_MODE: std::cell::Cell<Option<JitMode>> = const { std::cell::Cell::new(None) };
 }
 
 /// Runs `body` on this thread in `mode`.
-#[cfg(test)]
-pub(crate) fn with_mode<R>(mode: JitMode, body: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-support"))]
+pub fn with_mode<R>(mode: JitMode, body: impl FnOnce() -> R) -> R {
     let before = TEST_MODE.with(|chosen| chosen.replace(Some(mode)));
     let result = body();
     TEST_MODE.with(|chosen| chosen.set(before));
@@ -144,7 +144,7 @@ fn process_mode() -> JitMode {
     if let Some(mode) = THREAD_MODE.with(std::cell::Cell::get) {
         return mode;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(mode) = TEST_MODE.with(std::cell::Cell::get) {
         return mode;
     }

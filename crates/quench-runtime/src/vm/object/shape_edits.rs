@@ -4,6 +4,7 @@
 use super::*;
 
 impl Vm {
+    #[quench_macros::test_visible]
     pub(in crate::vm) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }

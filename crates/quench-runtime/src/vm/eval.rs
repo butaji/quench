@@ -105,6 +105,7 @@ impl Vm {
         self.eval_script_source(p, &source, &source_name)
     }
 
+    #[quench_macros::test_visible]
     /// Evaluates `source` as a global Script of the active realm: its
     /// top-level lexical declarations join the realm's global lexical scope.
     pub(super) fn eval_script_source(

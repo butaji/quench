@@ -23,7 +23,7 @@ fn region_over(source: &str, observed: bool, left: bool, views: ElementViews) ->
         instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize).filter(|target| *target <= pc))
         .min().unwrap();
     let at = |class: Class| -> Vec<usize> { unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().class().eq(class)).map(|(pc, _)| pc).collect() };
+        .filter(|(_, instruction)| instruction.op().class().eq(&class)).map(|(pc, _)| pc).collect() };
     let reads: Vec<_> = at(Class::GetIndex).into_iter().filter(|_| observed)
         .map(|pc| super::super::facts::ObservedRead { pc, ty: Type::NUMBER }).collect();
     let generic = if left { at(Class::SetIndex) } else { Vec::new() };
@@ -179,7 +179,7 @@ fn wide_operations(function: &ir::Function, body: &[ir::Inst], opcode: ir::Opcod
 #[test]
 fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     assert_eq!(conversions(&function, &body), 0, "an index is no Number that converts to an integer and back: {function}");
     let sums = wide_operations(&function, &body, ir::Opcode::Iadd, |function, operands|
@@ -216,7 +216,7 @@ fn overflow_exits(function: &ir::Function, body: &[ir::Inst]) -> usize {
 #[test]
 fn matmul_indices_have_no_int32_overflow_exit_in_the_loop() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     assert_eq!(overflow_exits(&function, &body), 0, "the counter stays below its int32 bound and the indices are words: {function}");
 }
@@ -237,7 +237,7 @@ fn version_compares(function: &ir::Function, instructions: &[ir::Inst]) -> usize
 #[test]
 fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_access() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(SUM, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(SUM, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
         .filter(|inst| !body.contains(inst)).collect();
@@ -245,7 +245,7 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
     assert!(version_compares(&function, &before) >= 1, "the entry compares the bound with the length: {function}");
     // A loop that writes its bound keeps the per-access test and has nothing to compare at its entry.
     let shrinking = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i]; if (s > 1e9) n--; } return s; }";
-    let function = entered_region(shrinking, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(shrinking, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     assert!(bounds_compares(&function, &body) >= 1, "a bound the loop writes proves nothing: {function}");
 }
@@ -273,7 +273,7 @@ fn a_masked_index_compares_its_mask_with_the_array_length_once_and_not_per_acces
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     // `i & 255` lies in 0..=255 wherever it is read: the entry compares 255 with the length once.
     let masked = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i & 255]; } return s; }";
-    let function = entered_region(masked, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(masked, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
         .filter(|inst| !body.contains(inst)).collect();
@@ -303,7 +303,7 @@ fn a_loop_nest_proves_the_views_of_its_arrays_once_where_their_bases_are_invaria
 fn an_index_that_adds_an_invariant_base_to_a_counter_compares_base_and_bound_once() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let source = "function row(a, r, n) { var s = 0; for (var k = 0; k < n; k++) s += a[r + k]; return s; }";
-    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     assert_eq!(bounds_compares(&function, &body), 0, "{function}");
 }
@@ -317,7 +317,7 @@ fn before_loops(function: &ir::Function) -> Vec<ir::Inst> {
 #[test]
 fn matmul_k_loop_multiplies_nothing_and_compares_no_index_with_a_length() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let body = loop_body(&function);
     let program_product = |function: &ir::Function, operands: [ir::Value; 2]| !operands.iter().any(|operand| is_any_constant(function, *operand));
     let products = wide_operations(&function, &body, ir::Opcode::Imul, program_product);
@@ -332,7 +332,7 @@ fn matmul_k_loop_multiplies_nothing_and_compares_no_index_with_a_length() {
 fn a_loop_invariant_product_is_one_word_the_entry_evaluates_once() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let source = "function f(a, x, y, n) { var s = 0; for (var k = 0; k < n; k++) s += a[x * y + k]; return s; }";
-    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
     let products = wide_operations(&function, &loop_body(&function), ir::Opcode::Imul, |function, operands|
         !operands.iter().any(|operand| is_any_constant(function, *operand)));
     assert_eq!(products, 0, "`x * y` does not change with `k`: {function}");

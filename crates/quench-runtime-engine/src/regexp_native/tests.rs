@@ -1,6 +1,5 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::vm::Vm;
 use quench_runtime::Engine;
 use quench_runtime::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
@@ -30,9 +29,9 @@ for (const re of patterns) {
 print(bad.join("\n") + "|" + bad.length);
 "#;
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     let program = Engine::specialize(source, "regexp-native.js").unwrap();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["|0"]);
 }

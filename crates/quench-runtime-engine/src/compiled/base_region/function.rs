@@ -321,7 +321,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     }
     let linked = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
-    let generic = generic_records(&layout, &decoded, &reached, helpers);
+    let generic = generic_records(&layout, &decoded, &reached);
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;

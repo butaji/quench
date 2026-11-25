@@ -21,6 +21,7 @@ impl<T> NumericResult<T> {
 
 #[cfg(not(stencil_build))]
 impl WasmValue {
+    #[cfg_attr(feature = "test-support", quench_macros::test_visible)]
     /// The word `from_bits` reads back: a 32-bit scalar's payload, zero-extended.
     #[inline]
     pub(crate) fn word(self) -> u64 {

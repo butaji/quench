@@ -219,7 +219,7 @@ impl Vm {
         let held = entry.holder == NO_FIELD_HOLDER
             && entry.receiver != NO_FIELD_RECEIVER
             && entry.receiver == self.heap.object_record_by_id(record_id).exact_shape();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if held {
             super::call_out::counts::bump(&super::call_out::counts::CONSTANT_FIELD_SKIPS);
         }

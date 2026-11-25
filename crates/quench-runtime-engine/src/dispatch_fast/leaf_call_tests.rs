@@ -29,8 +29,8 @@ fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
     // returning read records with forward jumps is a leaf (`leaf_body`), whose records read the
     // context or not; a call, a loop, `arguments` or a private read keeps the activation.
     let program = quench_runtime::Engine::specialize(LEAF_ENTRY_SOURCE, "leaf-entries.js").unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.execute(&program).unwrap();
+    let mut vm = quench_runtime::test_support::vm(TestHost::default());
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     let leaf = |entry: CallEntry| entry.leaf_form() != NOT_LEAF;
     for (name, expected) in [
         ("plain", Some(CallEntry::Leaf)),
@@ -71,8 +71,8 @@ fn a_leaf_returning_construction_completes() {
       print(run(10));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     let program = quench_runtime::Engine::specialize(source, "leaf-returning-construct.js").unwrap();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["65"]);
 }

@@ -2,7 +2,7 @@
 use crate::ext_traits::*;
 use quench_runtime::{Engine, JitMode};
 use quench_runtime::test_host::TestHost;
-use quench_runtime::vm::test_oracle::{assert_tier_agrees_after, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees_after, Expect, Tier};
 use quench_runtime::vm::tier_events::Event;
 
 #[path = "tests/inlined.rs"]
@@ -442,8 +442,8 @@ fn class_construction_and_super_print_what_the_interpreter_prints() {
 #[test]
 fn a_callee_of_another_realm_is_not_inlinable() {
     let program = Engine::specialize("function g(x) { return x + 1; }", "realm.js").unwrap();
-    let mut vm = quench_runtime::vm::Vm::new(TestHost::default());
-    vm.execute(&program).unwrap();
+    let mut vm = quench_runtime::test_support::vm(TestHost::default());
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     let atom = vm.lookup_atom("g").unwrap();
     let callee = vm.own_property(vm.realm.globals, atom).unwrap();
     let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::User(_, function), .. }) = vm.function_record(callee) else { panic!("a script function") };

@@ -56,7 +56,7 @@ fn value_words_match() {
 
 /// The typed-array kinds the stencils name are the runtime's, in its order, with its widths.
 fn typed_kinds_match() {
-    use quench_runtime::staged::typed_array_catalog::TypedArrayKind as Mirror;
+    use quench_runtime::tier_surface::TypedArrayKind as Mirror;
     let mirrored = Mirror::ALL;
     assert_eq!(usize::from(stencil_layout::LOOP_ENTRY_ARRAY_COUNT_AT as u8), std::mem::size_of::<u64>(), "the count follows the elements' address");
     let native_kinds: Vec<u8> = (0..quench_bjit::numeric::library::TYPED_KINDS).filter(|kind| !quench_bjit::numeric::library::NON_NATIVE_KINDS.contains(kind)).collect();

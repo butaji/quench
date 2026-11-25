@@ -16,9 +16,9 @@ const SOURCE: &str = "function f(n) { let s = 0; for (let i = 0; i < n; i++) { s
 fn after_run(mode: JitMode) -> (usize, Vec<*const ()>) {
     let program = Engine::specialize(SOURCE, "update-fusion.js").unwrap();
     let function = program.functions.iter().position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "f")).unwrap();
-    let mut vm = Vm::new(TestHost::default());
+    let mut vm = quench_runtime::test_support::vm(TestHost::default());
     vm.set_execution_mode(ExecutionMode::Compiled);
-    quench_runtime::jit_mode::with_mode(mode, || vm.execute(&program)).unwrap();
+    quench_runtime::jit_mode::with_mode(mode, || quench_runtime::test_support::execute(&mut vm, &program)).unwrap();
     let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("the function's view");
     let updates = program.function(function).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_inc_dec()).map(|(pc, _)| pc);
@@ -61,9 +61,9 @@ fn a_fused_postfix_update_carries_its_result_to_the_next_record() {
     let program = Engine::specialize(source, "postfix-update-accumulator.js").unwrap();
     for jit in [JitMode::Interp, JitMode::Full] {
         for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
-            let mut vm = Vm::new(TestHost::default());
+            let mut vm = quench_runtime::test_support::vm(TestHost::default());
             vm.set_execution_mode(mode);
-            quench_runtime::jit_mode::with_mode(jit, || vm.execute(&program)).unwrap_or_else(|error| panic!("{jit:?} {mode:?}: {error:?}"));
+            quench_runtime::jit_mode::with_mode(jit, || quench_runtime::test_support::execute(&mut vm, &program)).unwrap_or_else(|error| panic!("{jit:?} {mode:?}: {error:?}"));
         }
     }
 }

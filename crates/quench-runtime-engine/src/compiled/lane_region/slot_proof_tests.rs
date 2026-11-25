@@ -10,7 +10,7 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
     let program = quench_runtime::Engine::specialize(source, "slot-proof.js").unwrap();
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter_map(|instruction| {
-        if instruction.op().class().eq(Class::GetField)
+        if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),

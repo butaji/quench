@@ -51,7 +51,7 @@ impl NumericImage {
     /// this build cannot make.
     #[cfg(test)]
     pub(crate) fn compile(program: &ResidualProgram, function_id: u32) -> Option<Self> {
-        Self::build(lower_numeric_region(program, function_id, crate::compiled::admission::test_unit())?, function_id)
+        Self::build(lower_numeric_region(program, function_id, crate::compiled::admission::test_unit())?, function_id, crate::compiled::admission::test_unit())
     }
 
     /// Lowers and compiles `function_id` on the code generator's thread, from a copy of its

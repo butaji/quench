@@ -84,11 +84,13 @@ impl Object {
         }
     }
 
+    #[quench_macros::test_visible]
     #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn mark_as_prototype(&mut self) {
         if !self.was_used_as_prototype() {
             // A prototype's elements answer its dependents' reads: no proof replaces them.

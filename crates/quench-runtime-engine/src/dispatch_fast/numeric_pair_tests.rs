@@ -7,7 +7,8 @@ fn numeric_pair_compositions_match_general_execution() {
     let source = include_str!("../../../quench-runtime/tests/fixtures/constant-numeric-pairs.js");
     let run = |program| {
         let host = TestHost::default();
-        quench_runtime::vm::Vm::new(host.clone()).execute(&program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(host.clone());
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let output = host.lines();
         output.clone()
     };

@@ -12,7 +12,7 @@ fn native_call_retires_conditional_shapes_in_cfg_facts() {
     let call = function.instructions().find(|instruction| instruction.op().is_call()).unwrap();
     let null = Type::language(quench_runtime::ValueType::Null);
     for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
-        Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
+        Type::direct_object(7).join(Type::language(quench_runtime::ValueType::Null).join(Type::language(quench_runtime::ValueType::Undefined))), Type::INT32, Type::ANY] {
         let mut types = vec![ty; usize::from(function.registers)];
         assert!(matches!(transfer(&mut types, call, Operation::<u64, ()>::of(call).as_ref(), &program.constants,
             &super::super::lane_region::writes, true), Flow::Next));
@@ -141,7 +141,7 @@ fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, Int
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(&program.constants, instructions[pc]) { free.push(pc); }
     });
-    let steps = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().class().eq(Class::IncDec)
+    let steps = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().class().eq(&Class::IncDec)
         || (instruction.op().js_denotation() == quench_runtime::bytecode::JsDenotation::NumericBinary
             && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()))
         .map(|(pc, _)| pc).collect();
@@ -175,7 +175,7 @@ fn a_counter_below_a_proved_int32_bound_never_overflows_and_one_below_a_number_m
 #[test]
 fn an_entry_guarded_range_seeds_its_input_and_an_unguarded_int32_proves_nothing() {
     let source = "function run(k){const r=k-1;return r;}";
-    let (free, steps) = overflow_proofs_entered(source, Type::INT32, &[(0, IntRange::NON_NEGATIVE)]);
+    let (free, steps) = overflow_proofs_entered(source, Type::INT32, &[(0, IntRange::entering(0))]);
     assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
     let (free, _) = overflow_proofs_entered(source, Type::INT32, &[]);
     assert!(free.is_empty(), "{free:?}");
@@ -218,7 +218,7 @@ fn a_midpoint_of_a_bounded_sum_is_below_the_bound_and_at_most_the_length_the_bou
     let mut relations = fresh();
     relations.bound(NumberRelation::LessThan, [Operand::register(lo), Operand::register(hi)]);
     assert_eq!(relations.atmost[usize::from(hi)], Some(array));
-    let non_negative = |_: Operand| Some(quench_runtime::typed_ir::IntRange::NON_NEGATIVE);
+    let non_negative = |_: Operand| Some(quench_runtime::typed_ir::IntRange::entering(0));
     relations.relate_sum_of(sum, lo, hi, &non_negative);
     assert_eq!(relations.twice[usize::from(sum)], Some(hi), "lo + hi is below twice hi");
     relations.relate_shift_of(mid, sum);

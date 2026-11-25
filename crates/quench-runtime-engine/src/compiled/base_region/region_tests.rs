@@ -18,11 +18,11 @@ fn run_regions(source: &str) -> Regions {
     let program = Engine::specialize(source, "base-region.js").unwrap();
     let printed = |mode: ExecutionMode| {
         let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = quench_runtime::vm::Vm::new(TestHost::writing_to(output.clone()));
+        let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
         vm.programs.disable_js_entry_specializations();
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         (output.take(), vm.tier_events().clone())
     };
     let (interpreted, _) = printed(ExecutionMode::Interpreted);

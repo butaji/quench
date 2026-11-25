@@ -4,7 +4,7 @@ use super::*;
 use super::call_plan::DirectFacts;
 use super::declared::EntryGuard;
 use super::super::LaneHelper;
-use quench_bjit::{call, padded_holes, patch_successor, HOLES};
+use quench_bjit::{call, padded_holes, HOLES};
 
 pub(crate) mod entry;
 pub(crate) mod place;
@@ -97,10 +97,7 @@ impl Ending {
 }
 
 /// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name, memoized as the rows are.
-pub(crate) fn routine(name: &'static str) -> Result<&'static Stencil, String> {
-    static ROUTINES: quench_bjit::rustc::Memo<&'static str> = std::sync::OnceLock::new();
-    quench_bjit::rustc::memoized(&ROUTINES, name, || quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}")))
-}
+pub(crate) use crate::compiled::stitcher::routine;
 
 /// The entry thunk, its calls to the first row (at `rows_at`) patched. A body's is followed by its row entry
 /// (`entry_rows`, at `rows_entry_offset`), which calls the same first row, and its proven-arguments entry (a second
@@ -114,11 +111,8 @@ pub(crate) fn thunk(ending: Ending, rows_at: usize, proven_at: usize) -> Result<
     for (name, target) in names {
         let stencil = routine(name)?;
         let start = code.len();
-        code.extend_from_slice(&stencil.code);
-        for reloc in &stencil.relocs {
-            let at = start + reloc.offset as usize;
-            patch_successor(&mut code, at, reloc.class, target as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
-        }
+        code.resize(start + stencil.code.len(), 0);
+        crate::compiled::stitcher::place_routine(&mut code, start, stencil, &[0; HOLES], target).map_err(|error| format!("entry thunk: {error}"))?;
     }
     Ok(code)
 }
@@ -164,9 +158,8 @@ pub(crate) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Reg
     }
     chain.push((routine(tail)?, leave));
     let rows: Vec<Placed> = chain.iter().map(|(stencil, hole)| Placed { stencil: *stencil, hole, taken: None, cold: false }).collect();
-    let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
-    // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
-    let (len, _) = unsafe { quench_bjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
+    let mut code = vec![0u8; crate::compiled::stitcher::room(&rows)];
+    let (len, _) = crate::compiled::stitcher::place_rows(&mut code, 0, &rows, |_, _| crate::compiled::stitcher::Exit::Address(0));
     code.truncate(len);
     Ok(code)
 }

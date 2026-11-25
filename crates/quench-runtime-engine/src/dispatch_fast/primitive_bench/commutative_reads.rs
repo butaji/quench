@@ -1,6 +1,6 @@
 //! Canonical Number result laws and register forwarding below lane dispatch.
 use super::*;
-use super::super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION, number_result_is_commutative, number_value_operator};
+use crate::engine_prelude::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION, number_result_is_commutative, number_value_operator};
 
 fn operator(destination: u16, left: u16, right: u16) -> LaneInstruction {
     LaneInstruction {

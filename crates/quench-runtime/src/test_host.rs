@@ -16,10 +16,10 @@ use crate::host::{Host, HostGlobal, ModuleLoadError, ModuleSource};
 use crate::{CapabilityId, HostFunction, NativeContext, RootedError};
 
 /// A test host's install step (`Host::initialize`).
-pub(crate) type Install = fn(&mut NativeContext<'_>) -> Result<(), RootedError>;
+pub type Install = fn(&mut NativeContext<'_>) -> Result<(), RootedError>;
 
 /// A test host's dynamic-import resolution (`Host::resolve_dynamic_import`), by specifier.
-pub(crate) type Resolve = Rc<dyn Fn(&str) -> Result<Option<ModuleSource>, ModuleLoadError>>;
+pub type Resolve = Rc<dyn Fn(&str) -> Result<Option<ModuleSource>, ModuleLoadError>>;
 
 /// The `$262` global as the Test262 host provides it: realms and the IsHTMLDDA object.
 const TEST262_GLOBALS: &[HostGlobal] = &[
@@ -30,7 +30,7 @@ const TEST262_GLOBALS: &[HostGlobal] = &[
 /// A unit test's host. Clones share what it wrote and its state, so a test keeps a clone
 /// to read them after the runtime takes the host.
 #[derive(Clone)]
-pub(crate) struct TestHost {
+pub struct TestHost {
     lines: Rc<RefCell<Vec<String>>>,
     globals: &'static [HostGlobal],
     functions: &'static [HostFunction],
@@ -64,37 +64,37 @@ impl Default for TestHost {
 }
 
 impl TestHost {
-    pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram>, crate::NativeSourceError> + 'static) -> Self {
+    pub fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram>, crate::NativeSourceError> + 'static) -> Self {
         Self { native_lookup: Some(Rc::new(lookup)), ..self }
     }
 
     /// A host that writes into `lines`.
-    pub(crate) fn writing_to(lines: Rc<RefCell<Vec<String>>>) -> Self {
+    pub fn writing_to(lines: Rc<RefCell<Vec<String>>>) -> Self {
         Self { lines, ..Self::default() }
     }
 
     /// Also provide `$262`, through which the Test262 harness creates realms.
-    pub(crate) fn with_test262(self) -> Self {
+    pub fn with_test262(self) -> Self {
         Self { globals: TEST262_GLOBALS, ..self }
     }
 
     /// Provide no host globals.
-    pub(crate) fn without_globals(self) -> Self {
+    pub fn without_globals(self) -> Self {
         Self { globals: &[], ..self }
     }
 
     /// Install `functions` as the host's natives (`Host::functions`).
-    pub(crate) fn with_natives(self, functions: &'static [HostFunction]) -> Self {
+    pub fn with_natives(self, functions: &'static [HostFunction]) -> Self {
         Self { functions, ..self }
     }
 
     /// Run `install` when the runtime initializes the host (`Host::initialize`).
-    pub(crate) fn with_install(self, install: Install) -> Self {
+    pub fn with_install(self, install: Install) -> Self {
         Self { install: Some(install), ..self }
     }
 
     /// Resolve dynamic imports by specifier through `resolve`.
-    pub(crate) fn with_modules(
+    pub fn with_modules(
         self,
         resolve: impl Fn(&str) -> Result<Option<ModuleSource>, ModuleLoadError> + 'static,
     ) -> Self {
@@ -102,26 +102,26 @@ impl TestHost {
     }
 
     /// Answer `Host::has_module_source` through `module_source`.
-    pub(crate) fn with_module_sources(self, module_source: fn(&ModuleSource) -> bool) -> Self {
+    pub fn with_module_sources(self, module_source: fn(&ModuleSource) -> bool) -> Self {
         Self { module_source: Some(module_source), ..self }
     }
 
-    pub(crate) fn with_wasm_validation(self, validate: fn(&mut Self, &[u8], crate::ExecutionMode) -> bool) -> Self {
+    pub fn with_wasm_validation(self, validate: fn(&mut Self, &[u8], crate::ExecutionMode) -> bool) -> Self {
         Self { wasm_validation: Some(validate), ..self }
     }
 
     /// Share `state` with the host's natives (`state`).
-    pub(crate) fn with_state<T: 'static>(self, state: Rc<T>) -> Self {
+    pub fn with_state<T: 'static>(self, state: Rc<T>) -> Self {
         Self { state, ..self }
     }
 
     /// The state `with_state` shared, as the type it was given.
-    pub(crate) fn state<T: 'static>(&self) -> Rc<T> {
+    pub fn state<T: 'static>(&self) -> Rc<T> {
         Rc::clone(&self.state).downcast::<T>().expect("test host state of the type its natives read")
     }
 
     /// The lines the host has written.
-    pub(crate) fn lines(&self) -> Ref<'_, Vec<String>> {
+    pub fn lines(&self) -> Ref<'_, Vec<String>> {
         self.lines.borrow()
     }
 }
@@ -179,7 +179,7 @@ impl Host for TestHost {
 
 /// Runs `run` on a thread with the stack the runtime is made for (`WORKER_STACK_SIZE`): the
 /// default test thread's 2 MiB overflows on unoptimized frames before the stack guard fires.
-pub(crate) fn on_worker_stack<R: Send>(run: impl FnOnce() -> R + Send) -> R {
+pub fn on_worker_stack<R: Send>(run: impl FnOnce() -> R + Send) -> R {
     std::thread::scope(|scope| {
         let worker = std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE);
         worker.spawn_scoped(scope, run).unwrap().join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
@@ -187,7 +187,7 @@ pub(crate) fn on_worker_stack<R: Send>(run: impl FnOnce() -> R + Send) -> R {
 }
 
 /// The lines `source` prints, run to completion under a host that writes them.
-pub(crate) fn printed(source: &str, file: &str) -> Vec<String> {
+pub fn printed(source: &str, file: &str) -> Vec<String> {
     let lines = Rc::new(RefCell::new(Vec::new()));
     let mut vm = crate::vm::Vm::new(TestHost::writing_to(lines.clone()));
     let program = crate::Engine::specialize(source, file).unwrap();

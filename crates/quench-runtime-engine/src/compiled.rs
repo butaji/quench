@@ -184,6 +184,8 @@ pub(crate) mod wasm_gc_callout;
 pub(crate) mod wasm_instance_switch;
 pub(crate) mod wasm_roots;
 pub(crate) mod wasm_simd_stage;
+// The one stitcher every b-jit family places its rows through.
+pub(crate) mod stitcher;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;
@@ -1199,19 +1201,6 @@ pub(crate) enum LaneHelpers {
     Linked(u32, u32),
     Bound(ir::Value, u32),
 }
-/// Whether an image body (`LaneHelpers::Ahead`) runs a record no row takes as its generic semantic row
-/// (`base_region::steps::generic`) instead of leaving at it. Its semantic entry steps a VM frame (`js_semantic_callout`),
-/// which no lane activation has, and an image's bodies run on the lane runner (`Vm::install_ahead_body`), so they
-/// leave as a JIT body does and the lane's interpreter takes the record.
-const AHEAD_GENERIC_ROWS: bool = false;
-
-impl LaneHelpers {
-    /// Whether a record no row takes runs as the generic semantic row (`AHEAD_GENERIC_ROWS`), which never leaves.
-    pub(crate) fn generic_rows(self) -> bool {
-        AHEAD_GENERIC_ROWS && matches!(self, Self::Ahead)
-    }
-}
-
 /// The process helper table a JIT publication binds.
 pub(crate) fn process_lane_helpers() -> LaneHelpers {
     LaneHelpers::Process(LaneHelper::addresses())
@@ -1486,7 +1475,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize))?;
-    let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Aot, facts: Default::default() }).compiled()?;
+    let admitted = admission::ahead_unit(function_id)?;
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[], admitted,
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
@@ -9237,12 +9226,12 @@ pub(crate) struct TierEntry {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine_prelude::*;
+    use super::*;
 
     #[test]
     fn native_narrow_store_encoding_matches_shared_values() {
         use quench_runtime::value::NarrowLayout as N;
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I64));
         signature.returns.push(AbiParam::new(types::I64));
@@ -9275,7 +9264,7 @@ mod tests {
     #[test]
     fn native_narrow_decoder_matches_value_bits() {
         use quench_runtime::value::NarrowLayout as N;
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = ir::Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I32));
         signature.returns.push(AbiParam::new(types::I64));
@@ -9323,7 +9312,7 @@ mod tests {
         const ASR_KIND: u32 = 0b10 << SHIFT_KIND_OFFSET;
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLSH");
         use quench_runtime::vm::operations::NumberBitwise;
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let width = ty.bits();
             let mask = u64::MAX >> (u64::BITS - width);
@@ -9433,7 +9422,7 @@ mod tests {
 
     #[test]
     fn private_store_commits_preserve_overlapping_bytes_and_zero_trips() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         let mut function = ir::Function::with_name_signature(UserFuncName::testcase("private_store_commit"), signature);
@@ -9481,7 +9470,7 @@ mod tests {
 
     #[test]
     fn conditional_xor_masks_preserve_integer_words_and_bit_positions() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word = u64::MAX >> (u64::BITS - ty.bits());
             let sign = 1_u64 << (ty.bits() - 1);
@@ -9603,7 +9592,7 @@ mod tests {
 
     #[test]
     fn masked_integer_conditions_preserve_width_polarity_and_other_uses() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
             let word_mask = u64::MAX >> (u64::BITS - ty.bits());
             let sign_bit = 1_u64 << (ty.bits() - 1);
@@ -9650,7 +9639,7 @@ mod tests {
 
     #[test]
     fn rotated_countdown_preserves_empty_loops_and_early_exit_values() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {
           for observe_counter in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
@@ -9693,7 +9682,7 @@ mod tests {
             builder.seal_all_blocks();
             builder.finalize(isa.frontend_config());
             if !observe_counter {
-                let converted = quench_runtime::jit_backend::compile_function(function.clone(), &*isa, None, |_, native| {
+                let converted = quench_runtime::vm::jit_backend::compile_function(function.clone(), &*isa, None, |_, native| {
                     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
                     let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
                     let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
@@ -9983,7 +9972,7 @@ mod tests {
         const STORE_SOURCE_OFFSET: u32 = 42;
         let update_label = ir::ValueLabel::from_u32(UPDATE_LABEL);
         let store_location = ir::SourceLoc::new(STORE_SOURCE_OFFSET);
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 5]);
@@ -10091,7 +10080,7 @@ mod tests {
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLCP");
         const FEEDBACK: u64 = 0xD008;
         const UNTOUCHED: u64 = 0x55;
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I32, types::I64] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 5]);
@@ -10189,8 +10178,8 @@ mod tests {
         let program = quench_runtime::Engine::specialize(
             "var receiver={edgeValue:1}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} read();",
             "slot-reader-retirement.js").unwrap();
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
-        vm.execute(&program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         vm.programs.enable_js_lane_methods();
         vm.keep_slot_representations();
         let function = program.functions.iter().position(|body|
@@ -10259,8 +10248,8 @@ mod tests {
             let program = quench_runtime::Engine::specialize(
                 "var receiver={edgeValue:1,a:2,b:3}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} function write(x){receiver.edgeValue=x;} function make(n){return function store(){this.edgeValue=n;};} var setter=make(0.5);setter.call(receiver);write(1);read();",
                 "native-widening-edge.js").unwrap();
-            let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
-            vm.execute(&program).unwrap();
+            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+            quench_runtime::test_support::execute(&mut vm, &program).unwrap();
             vm.programs.enable_js_lane_methods();
             vm.keep_slot_representations();
             let reader = program.functions.iter().position(|body|
@@ -10287,8 +10276,8 @@ mod tests {
                 match edge {
                     Edge::Domain => field_write_admission_in_lane(machine, residual,
                         shape as u64, slot as u64, quench_runtime::typed_ir::SlotType::from_type(quench_runtime::typed_ir::Type::NUMBER) as u64),
-                    Edge::Store => field_set_in_lane(machine, residual, receiver.to_bits(),
-                        store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5).to_bits()),
+                    Edge::Store => field_set_in_lane(machine, residual, receiver,
+                        store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5)),
                     Edge::Pointer => u64::from(vm.cached_field_store_pointer(&program, receiver,
                         store.atom_index(), store.cache_site_index(), quench_runtime::typed_ir::Type::NUMBER).is_some()),
                 }
@@ -10298,7 +10287,7 @@ mod tests {
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
             assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
-            assert!(vm.heap.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
+            assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
                 "the wider domain is admitted on the next entry");
             assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
@@ -10308,20 +10297,20 @@ mod tests {
     #[test]
     fn jit_loop_slots_preserve_widening_and_reentry() {
         let source = concat!("run({count:4096,value:0},1);\n",
-            include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
+            include_str!("../../quench-runtime/tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
         for typescript in [false, true] {
             let program = if typescript { quench_runtime::Engine::specialize_typescript(source, "jit-loop-slots.cts") }
                 else { quench_runtime::Engine::specialize(source, "jit-loop-slots.cjs") }.unwrap();
-            let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::Compiled);
-            let error = vm.execute(&program).unwrap_err();
+            let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
     }
 
     #[test]
     fn bound_field_arena_preserves_slot_bounds() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for bound in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 4]);
@@ -10367,15 +10356,15 @@ mod tests {
 
     #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
-        let source = include_str!("../../tests/fixtures/nullable-slot-writes.js");
+        let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
         let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
         let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
         for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
-            let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.programs.enable_js_lane_methods();
             vm.set_execution_mode(mode);
             if mode == ExecutionMode::NativeOnly { vm.execute_native_program(&native, true).unwrap(); }
-            else { vm.execute(&program).unwrap(); }
+            else { quench_runtime::test_support::execute(&mut vm, &program).unwrap(); }
             let atom = vm.lookup_atom("answer").unwrap();
             // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
             assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
@@ -10389,8 +10378,8 @@ mod tests {
             ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; globalThis.box=new Box(); box.own=1; read(box);", true),
         ] {
         let program = quench_runtime::Engine::specialize(source, "packed-holder.js").unwrap();
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
-        vm.execute(&program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
         assert!(vm.heap_reads().object(receiver).unwrap().inline_properties().is_some());
@@ -10401,7 +10390,7 @@ mod tests {
             Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site), _ => None,
         }).unwrap();
         let cache = vm.field_cache_entry(site);
-        assert_ne!(cache.holder, quench_runtime::NO_FIELD_HOLDER);
+        assert_ne!(cache.holder, quench_runtime::vm::NO_FIELD_HOLDER);
         assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
         let prototype = vm.heap_reads().object(receiver).unwrap().proto();
         let holder = vm.heap_reads().object(prototype).unwrap();
@@ -10409,7 +10398,7 @@ mod tests {
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
 
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 4]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -10466,7 +10455,7 @@ mod tests {
         }).unwrap();
         vm.frames[0].fixed_this = true;
         let slots = quench_runtime::tier_surface::EnvironmentSlots::from(vec![Value::number(7.0)]);
-        vm.frames[0].capture_cache = quench_runtime::CaptureCache {
+        vm.frames[0].capture_cache = quench_runtime::vm::CaptureCache {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
             epoch: vm.cache_epochs.gc, slots: &slots, root: None,
         };
@@ -10487,7 +10476,7 @@ mod tests {
             let mut program = quench_runtime::Engine::specialize(source, "native-loop-store.js").unwrap();
             program.specialized = specialized;
             let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
-            let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.execute_native_program(&native, true).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::number(40.0)));
@@ -10502,7 +10491,7 @@ mod tests {
         let program = quench_runtime::Engine::specialize(
             "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
             "nested-poll-binding.js").unwrap();
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
             &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
         assert!(method.fault_poll);
@@ -10586,14 +10575,14 @@ mod tests {
             "#, "numeric-jit-interrupt.js").unwrap();
             let host = quench_runtime::test_host::TestHost::default()
                 .with_natives(quench_runtime::host_functions![global "started" (0) => started]).with_state(Rc::new(ready));
-            let mut vm = Vm::new(host);
+            let mut vm = quench_runtime::test_support::vm(host);
             vm.set_execution_mode(ExecutionMode::Compiled);
             send_handle.send(vm.execution_interrupt.clone()).unwrap();
             let budget = quench_runtime::stack::GuestCallGuard::remaining();
-            let error = vm.execute(&program).unwrap_err();
+            let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
             assert!(error.is_execution_terminated(), "{error}");
             assert_eq!(quench_runtime::stack::GuestCallGuard::remaining(), budget);
-            let Some(quench_runtime::program_store::JsTierState::Compiled(native)) =
+            let Some(quench_runtime::vm::program_store::JsTierState::Compiled(native)) =
                 vm.programs.js_tier(ProgramId::MAIN, 1) else { panic!("numeric function must compile"); };
             #[cfg(not(quench_profiled))]
             assert!(native.native_entries() > 0);
@@ -10609,7 +10598,7 @@ mod tests {
 
     #[test]
     fn scalar_core_binds_poll_pointer_before_loop_but_keeps_atomic_reads() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
         let mut native = ir::Function::with_name_signature(UserFuncName::testcase("bound_poll"), signature);
         let mut context = FunctionBuilderContext::new();
@@ -10646,7 +10635,7 @@ mod tests {
     }
 
     fn semantic_program(program: ResidualProgram) -> Vm {
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.initialize_for_snapshot(&program).unwrap();
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
@@ -10783,9 +10772,9 @@ mod tests {
     #[test]
     fn native_only_rejects_unlinked_roots_before_guest_effects() {
         let program = quench_runtime::Engine::specialize("globalThis.effect = 1;", "unlinked.js").unwrap();
-        let mut vm = Vm::new(quench_runtime::test_host::TestHost::default());
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute(&program).unwrap_err();
+        let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
         assert!(error.to_string().contains("native guest code required"));
         let atom = vm.lookup_atom("effect").unwrap();
         assert_eq!(vm.own_property(vm.realm.globals, atom), None);
@@ -10896,16 +10885,16 @@ mod tests {
         assert_eq!(counters[0].get(), 0);
         assert_eq!(counters[1].get(), 2);
         assert_eq!(
-            format_import_callout_targets(&names, &counters),
+            quench_runtime::vm::engine_types::format_import_callout_targets(&names, &counters),
             "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
         );
-        assert_eq!(json_string("\u{1}\t"), "\"\\u0001\\t\"");
+        assert_eq!(quench_runtime::vm::engine_types::json_string("\u{1}\t"), "\"\\u0001\\t\"");
     }
 
     #[test]
     #[cfg(all(target_arch = "x86_64", unix))]
     fn native_checked_signed_multiply_preserves_product_and_overflow() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for ty in [types::I16, types::I32, types::I64] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 3]);
@@ -10951,7 +10940,7 @@ mod tests {
     fn native_vector_rotations_preserve_near_matches_and_unaligned_accesses() {
         #[derive(Clone, Copy, Debug)]
         enum Shape { Rotate, DistinctInputs, SignedRight, NonComplementaryShift }
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         // A baseline x86-64 target has no optional SSSE3: it must retain
         // the existing shifts/OR lowering while producing the same values.
         let baseline = cranelift_codegen::isa::lookup(isa.triple().clone())
@@ -11026,7 +11015,7 @@ mod tests {
 
     #[test]
     fn native_alias_regions_preserve_overlapping_untagged_accesses() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         for tagged_load in [false, true] {
             for tagged_store in [false, true] {
                 let mut signature = Signature::new(isa.default_call_conv());
@@ -11070,7 +11059,7 @@ mod tests {
 
     #[test]
     fn native_unsigned_widening_multiply_preserves_lane_products() {
-        let isa = quench_runtime::jit_backend::target_isa().unwrap();
+        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         // Exhaust both single-input shuffle encodings and all lane selectors,
         // including the unaffected cases, against scalar unsigned products.
         for shuffle in std::iter::once(None).chain(

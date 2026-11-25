@@ -1,6 +1,6 @@
-//! Wasm calls the lane enters as activations: statically known calls and reference calls. The
-//! call rules are `staged::wasm_activation`; this file is the lane's state they run on
-//! (`LaneCall`) and the lane's own steps.
+//! Wasm calls the lane enters as activations: statically known calls and reference calls. They run
+//! the one call step JavaScript calls run (`staged::wasm_invoke`); this file is the lane's state the
+//! step's Wasm frame runs on (`LaneCall`) and the lane's own steps.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -135,6 +135,9 @@ impl WasmActivation for LaneCall<'_> {
     type Shape = (ActivationShape, Ip);
     type Full = LaneStackFull;
     type Guard = quench_runtime::stack::GuestCallGuard;
+
+    #[inline(always)]
+    fn caller_registers(&mut self) -> u64 { self.r.0.expose_provenance() as u64 }
 
     #[inline(always)]
     fn reference(&mut self) -> CallTarget {
@@ -366,15 +369,13 @@ impl WasmActivation for LaneCall<'_> {
             Some(value) => NativeCall::Ran(value.to_bits()),
         }
     }
-
 }
 
 lane_handler! {
-    /// A Wasm call to a function of the same program, pushed as the general
-    /// loop's inline call would be.
+    /// A Wasm call to a function of the same program, through the one call step.
     fn lane_call_known<>(cx, r, ip, i, view) {
         let mut call = LaneCall { cx, r, ip, i, memory: view.memory, offered: None };
-        match activation::step_call_known_of(&mut call, u32::from(i.b)) {
+        match quench_runtime::staged::wasm_invoke::step_call_known_of(&mut call, i.b, (ImmediateLayout::call_window_base(i.imm()), ImmediateLayout::argument_count(i.imm())), i.a) {
             Some(resumed) => resume!(cx, resumed),
             None => return exit(ip),
         }
@@ -387,7 +388,7 @@ lane_handler! {
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
         let mut call = LaneCall { cx, r, ip, i, memory: view.memory, offered: None };
-        match activation::step_call_reference_of(&mut call) {
+        match quench_runtime::staged::wasm_invoke::step_call_reference_of(&mut call, (ImmediateLayout::call_window_base(i.imm()), ImmediateLayout::argument_count(i.imm())), i.a) {
             Some(resumed) => resume!(cx, resumed),
             None => return exit(ip),
         }
@@ -546,7 +547,6 @@ fn push_import_activation(
     unsafe { (*cx).memory = view.memory };
     Resumed::At(registers, start, view)
 }
-
 
 /// The call facts of the import `wrapper`, from the lane's cache of its last import, else
 /// derived (`js_import_plan`) and cached.

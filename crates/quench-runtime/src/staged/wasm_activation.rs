@@ -8,16 +8,6 @@
 use super::wasm::WasmStage;
 use crate::WasmType;
 
-/// Where a Wasm call continues.
-pub(crate) enum CallOutcome<R> {
-    /// The caller resumes as `R` says: an activation was pushed, or the call completed.
-    Resume(R),
-    /// The lane has no room for the callee's activation.
-    NoRoom,
-    /// The call leaves the lane for the general loop.
-    Exit,
-}
-
 /// The callee a reference call names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CallTarget {
@@ -63,6 +53,8 @@ pub trait WasmNativeEntry {
 pub trait WasmActivation: WasmStage + WasmNativeEntry {
     /// The activation shape a callee's frame takes, copied out of its view.
     type Shape: Copy;
+    /// The address of the caller's registers, where the call's window lies.
+    fn caller_registers(&mut self) -> u64;
     /// The callee of the reference the call names.
     fn reference(&mut self) -> CallTarget;
     /// Whether the lane may make calls inline (the frame is not leaving for native code).
@@ -127,22 +119,6 @@ pub(crate) fn push_frame<S: WasmActivation>(stage: &mut S) -> S::Resume {
     stage.push_pending_call(caller, guard);
     stage.refresh_activation_limit();
     stage.enter_frame(caller + 1)
-}
-
-/// Enters `function` as a Wasm call: out of the lane when inline calls are off, through native
-/// code where a tier holds it, out of the lane where a compile came due (the general loop makes
-/// it), else as an activation. The guard order is the lane's: depth, the frames and activations
-/// together, storage, then the value stack's room.
-#[inline(always)]
-pub(crate) fn enter_function<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutcome<S::Resume> {
-    if !stage.inline_calls() {
-        return CallOutcome::Exit;
-    }
-    match enter_native(stage, function) {
-        NativeEntry::Ran(resumed) => CallOutcome::Resume(resumed),
-        NativeEntry::Leave => CallOutcome::Exit,
-        NativeEntry::Interpret => enter_activation(stage, function),
-    }
 }
 
 /// Where a Wasm call's native entry (`enter_native`) leaves the call.
@@ -264,50 +240,6 @@ pub fn offer_entry<T: WasmEntryTiers>(tiers: &mut T, function: u32) -> EntryOffe
     }
     tiers.note_fallback(function);
     EntryOffer::Interpret
-}
-
-/// The activation of `function` where the lane has its shape and room for it.
-#[inline(always)]
-fn enter_activation<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutcome<S::Resume> {
-    let Some(shape) = stage.shape(function) else {
-        return CallOutcome::NoRoom;
-    };
-    let registers = S::shape_registers(shape);
-    if stage.activation_room()
-        && stage.frame_room()
-        && stage.storage_room(registers)
-        && stage.values_room(registers)
-    {
-        CallOutcome::Resume(stage.push_activation(function, shape))
-    } else {
-        CallOutcome::NoRoom
-    }
-}
-
-/// A known call: an activation of `function`, or the call's frame where the lane has no room.
-/// `None` leaves the lane.
-#[inline(always)]
-pub fn step_call_known_of<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
-    match enter_function(stage, function) {
-        CallOutcome::Resume(resumed) => Some(resumed),
-        CallOutcome::NoRoom => Some(push_frame(stage)),
-        CallOutcome::Exit => None,
-    }
-}
-
-/// A reference call: its callee is checked first (a function of the running program and
-/// instance, or an import), then entered as a known call would be. Any other callee, or no room,
-/// leaves the lane.
-#[inline(always)]
-pub fn step_call_reference_of<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
-    match stage.reference() {
-        CallTarget::Function(function) => match enter_function(stage, function) {
-            CallOutcome::Resume(resumed) => Some(resumed),
-            CallOutcome::NoRoom | CallOutcome::Exit => None,
-        },
-        CallTarget::Import => call_import(stage),
-        CallTarget::Other => None,
-    }
 }
 
 /// A call native code runs: the caller resumes with its result, or leaves; `None` where the

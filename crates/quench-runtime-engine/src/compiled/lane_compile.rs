@@ -841,7 +841,7 @@ impl LanePlan {
             scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
             framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
-            summary: self.lowered.region.summary.take(), withdrawn: Default::default(), ahead: false,
+            summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
         })
     }
 }
