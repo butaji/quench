@@ -73,9 +73,9 @@ pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCall
     let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return false };
     if !caller.owns_record(ip) { return false; }
     if caller.note_late_call() {
-        // A callee still warming toward its body may be called by its entry later: count again.
-        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_none() { return unsafe { &*(*cx).views }.get(target.function as usize)
-            .and_then(super::program_store::derived_lane_view).is_some_and(|own| own.warming()) && { caller.recount_late_calls(); false } }
+        // A callee still warming toward its body is called by its entry once it has one: count again until then.
+        if unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view).is_some_and(|own| own.warming()) { caller.recount_late_calls(); return false; }
+        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_none() { return false; }
         caller.respecialize();
         let (pc, region) = (unsafe { ip.offset_from(caller.records()) } as u32, unsafe { (*cx).region_payload } != 0);
         return caller.loops.iter().filter(|site| region && (site.header..=site.backedge).contains(&pc))
