@@ -82,7 +82,7 @@ impl Emitter<'_, '_> {
         }
         let signature = crate::compiled::call_signature::typed_signature(self.call_conv, &[types::I64, types::I64], &[]);
         let signature = self.body.core.builder.import_signature(signature);
-        let target = self.constant(Width::I64, quench_runtime::staged::machine::SlowPath::address(crate::compiled::slow_paths::EngineSlowPath::SimdKernel) as i64);
+        let target = self.slow_path_target(crate::compiled::slow_paths::EngineSlowPath::SimdKernel);
         let selector = self.constant(Width::I64, i64::from(selector));
         let words = self.slot_address(slot, 0);
         self.call_signature(signature, target, &[selector, words]);

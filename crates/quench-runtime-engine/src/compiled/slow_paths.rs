@@ -32,3 +32,22 @@ quench_runtime::slow_paths! {
         GcAdmits => super::wasm_gc_stage::gc_admits,
     }
 }
+
+quench_runtime::entry_sources! {
+    /// Where the engine's emitted code reads the words it calls: every call it makes that is no
+    /// slow path names one of these.
+    pub(crate) enum EngineEntry {
+        /// A lane helper of the payload's helper table (`LaneHelpers`, `LaneHelper`).
+        LaneHelper,
+        /// The Wasm context's call-out to the VM (`CONTEXT_CALLOUT`).
+        WasmCallOut,
+        /// The Wasm context's indirect or reference call to the VM (`CONTEXT_CALL_INDIRECT`, `CONTEXT_CALL_REFERENCE`).
+        WasmTableCallOut,
+        /// A compiled Wasm function's entry, from the context's function table.
+        WasmFunctionEntry,
+        /// A compiled Wasm body's entry, from a table row.
+        WasmTableBody,
+        /// A compiled unit's entry (`FlowStage::call_entry`).
+        CompiledEntry,
+    }
+}

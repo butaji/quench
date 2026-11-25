@@ -367,7 +367,7 @@ impl Emitter<'_, '_> {
         let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
         let callee = self.body.core.builder.import_signature(callee);
         let roots = self.root();
-        let results = self.call_signature(callee, body, &arguments);
+        let results = self.call_signature(callee, quench_runtime::staged::machine::CallTarget::entry(body, crate::compiled::slow_paths::EngineEntry::WasmTableBody), &arguments);
         self.unroot(roots);
         let bits = match signature.results.first() {
             Some(result) => match Kind::of(*result).expect("planned") {
@@ -476,7 +476,7 @@ impl Emitter<'_, '_> {
         let signature_index = self.constant(Width::I64, i64::from(signature_index));
         let site = self.constant(Width::I64, site as i64);
         let roots = self.root();
-        let status = self.call_words(target, &[context, table, row, signature_index, site, args, out]);
+        let status = self.call_words(quench_runtime::staged::machine::CallTarget::entry(target, crate::compiled::slow_paths::EngineEntry::WasmTableCallOut), &[context, table, row, signature_index, site, args, out]);
         self.unroot(roots);
         status
     }
