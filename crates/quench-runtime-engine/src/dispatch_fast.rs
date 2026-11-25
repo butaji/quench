@@ -6542,7 +6542,7 @@ script_handler! {
         }
         // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
         // such loop takes the region (`install_loop_sites`), and this one neither warms up nor enters its own.
-        if site.inside_admitted_loop() {
+        if site.inside_admitted_loop() && site.defers_to_enclosing() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
         if site.interprets() {
