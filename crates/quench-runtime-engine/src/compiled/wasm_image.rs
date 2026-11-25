@@ -26,10 +26,12 @@ pub(crate) struct WasmImageRows {
     pub(crate) symbols: Vec<(usize, Symbol)>,
 }
 
-/// The rows of every function of Wasm program `id`, under the binding types `declared`: `None` for a
+/// The memory slot the rows' entry reads, and the rows of every function of Wasm program `id`, under the
+/// binding types `declared`: `None` for a
 /// function with no plan or no rows. The callable set shrinks until every callable function stitches, as
 /// the b-jit's does (`compile_program_with_diagnostics_and_root_mode`).
-pub(crate) fn rows(vm: &Vm, id: ProgramId, code: &ResidualProgram, declared: &[quench_runtime::WasmBindingType]) -> Vec<Option<WasmImageRows>> {
+pub(crate) fn rows(vm: &Vm, id: ProgramId, code: &ResidualProgram, declared: &[quench_runtime::WasmBindingType])
+    -> (Option<u32>, Vec<Option<WasmImageRows>>) {
     let count = code.function_count();
     let analysis = Analysis {
         // A memory an instance may share counts as growing under every function (`wasm_growth`).
@@ -45,7 +47,7 @@ pub(crate) fn rows(vm: &Vm, id: ProgramId, code: &ResidualProgram, declared: &[q
             .map(|index| callable[index].then(|| function_rows(&analysis, index, (&plans, &callable), memory_slot, full_plans[index].as_ref()?)).flatten())
             .collect();
         let kept: Vec<bool> = stitched.iter().map(Option::is_some).collect();
-        if kept == callable { break stitched; }
+        if kept == callable { break (memory_slot, stitched); }
         callable = kept;
     }
 }
@@ -78,4 +80,29 @@ fn function_rows(analysis: &Analysis<'_>, index: usize, (plans, callable): (&[Op
     let named = named.into_iter().map(|(offset, value)| symbols.get(usize::try_from(value - SYMBOL_WORDS).ok()?).map(|symbol| (offset, *symbol)))
         .collect::<Option<Vec<_>>>()?;
     Some(WasmImageRows { code, symbols: named })
+}
+
+/// Function `index`'s rows from the image of program `analysis.program`, linked for this instance's compile:
+/// each callee's entry cell (`cells`) written where the rows name it. `None` where the image has no rows for
+/// it, was planned for another memory slot, or names a callee that is not `callable` here (the live plan may
+/// keep fewer functions than the module's declarations did), and the function then stitches as usual.
+pub(crate) fn linked(analysis: &Analysis<'_>, index: usize, memory_slot: Option<u32>, (cells, callable): (&[std::cell::Cell<usize>], &[bool]))
+    -> Option<Vec<u8>> {
+    let images = analysis.vm.programs.ahead_images(analysis.program, analysis.code)?;
+    let image = &images.image;
+    let wasm = image.wasm.as_ref().filter(|wasm| wasm.memory_slot == memory_slot)?;
+    let rows = wasm.functions.get(index)?.as_ref()?;
+    let mut code = rows.code.to_vec();
+    for relocation in rows.relocations.iter() {
+        let Some(Symbol::EntryCell(callee)) = crate::aot_image::symbols::SymbolTable::decode(image, relocation.namespace, relocation.key) else { return None };
+        if relocation.kind != cranelift_codegen::binemit::Reloc::Abs8 || !callable.get(callee as usize).copied().unwrap_or(false) {
+            return None;
+        }
+        let word = (cells.get(callee as usize)?.as_ptr() as i64).wrapping_add(relocation.addend) as u64;
+        code.get_mut(relocation.offset..relocation.offset + 8)?.copy_from_slice(&word.to_le_bytes());
+    }
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: wasm function {index}: image rows");
+    }
+    Some(code)
 }
