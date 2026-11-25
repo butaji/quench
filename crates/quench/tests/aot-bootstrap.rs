@@ -295,7 +295,7 @@ fn bootstrap_images_link_and_execute_in_node_host() {
     let count = manifest.units().len();
     let directory = std::env::temp_dir().join(format!("quench-native-node-bootstrap-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
-    let inputs = manifest.compile().unwrap().emit(&directory.join("images"), &quench_runtime::NativeTarget::default()).unwrap();
+    let inputs = manifest.compile().unwrap().emit(&directory.join("images"), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap();
     let executable = directory.join("native-node-bootstrap");
     link_images(&inputs, &executable);
     let output = Command::new(&executable).env_clear()
@@ -376,7 +376,7 @@ fn bootstrap_images_reject_missing_frozen_sdk_preparation() {
         .expect("bootstrap captures primordials");
     assert!(file.prepared.take().is_some());
     let missing = path.display().to_string();
-    let inputs = compiled.emit(&directory.join("images"), &quench_runtime::NativeTarget::default()).unwrap();
+    let inputs = compiled.emit(&directory.join("images"), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap();
     let executable = directory.join("missing-preparation");
     link_images(&inputs, &executable);
     let output = Command::new(executable).env_clear().current_dir(&directory).output().unwrap();
@@ -695,7 +695,7 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         let graph = manifest.add_module_graph(&entry).unwrap();
         manifest.extend(SourceManifest::capture_for_graph(&graph).unwrap()).unwrap();
         eprintln!("native {fixture}: {} files, {} source units, {} requirements", graph.files.len(), manifest.units().len(), graph.requirements.len());
-        let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images")), &quench_runtime::NativeTarget::default()).unwrap();
+        let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images")), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap();
         let executable = directory.join(fixture);
         link_images(&inputs, &executable);
         let run = |command: &mut Command| {

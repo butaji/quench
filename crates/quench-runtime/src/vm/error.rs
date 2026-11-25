@@ -1345,7 +1345,7 @@ impl Vm {
                     )?;
                     continue;
                 }
-                CapabilityId::WriteLine | CapabilityId::ClockMillis => continue,
+                CapabilityId::WriteLine | CapabilityId::WriteErr | CapabilityId::ClockMillis => continue,
             };
             let native_function = self.native_value(native);
             self.global(program, global.name, native_function)?;

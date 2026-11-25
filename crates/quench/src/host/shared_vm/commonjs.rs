@@ -1301,7 +1301,7 @@ fn resolve_request(
 }
 
 #[derive(Clone, Copy)]
-enum BuiltinModule {
+pub(crate) enum BuiltinModule {
     Internal(&'static str),
     Process,
     Assert,
@@ -1621,7 +1621,7 @@ pub(super) fn refresh_module_paths(context: &mut Context<'_>) -> Result<(), Root
     Ok(())
 }
 
-fn cached_builtin(
+pub(crate) fn cached_builtin(
     context: &mut Context<'_>,
     builtin: BuiltinModule,
 ) -> Result<RootId, RootedError> {
@@ -1779,12 +1779,12 @@ pub(crate) fn child_process_module(context: &mut Context<'_>) -> Result<RootId, 
     cached_builtin(context, BuiltinModule::ChildProcess)
 }
 
-pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached_builtin(context, BuiltinModule::Dns)
-}
-
 pub(crate) fn events_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Events)
+}
+
+pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Dns)
 }
 
 pub(crate) fn path_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -2022,29 +2022,17 @@ pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[Roo
 }
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
+    let families = context.host_as::<crate::host::NodeHost>().capabilities().builtins;
     match builtin {
         BuiltinModule::Internal("internal/options") => crate::modules::cli_options_shared_vm::internal::module(context),
         BuiltinModule::Internal(name @ ("_http_agent" | "_http_client" | "_http_incoming" | "_http_outgoing" | "_http_server")) => {
-            crate::modules::http_shared_vm::internal_module(context, name)
+            (crate::host::BuiltinFamilies::builder(families.http, "http")?)(context, Some(name))
         }
-        BuiltinModule::Internal("_tls_common") | BuiltinModule::Internal("_tls_wrap") => {
-            let process = context
-                .host_as::<crate::host::NodeHost>()
-                .shared_state()
-                .borrow()
-                .process_module
-                .ok_or_else(|| RootedError::host("shared process module is not initialized"))?;
-            crate::modules::tls_shared_vm::deprecated_internal_module(
-                context,
-                process,
-                match builtin {
-                    BuiltinModule::Internal(name) => name,
-                    _ => unreachable!(),
-                },
-            )
+        BuiltinModule::Internal(name @ ("_tls_common" | "_tls_wrap")) => {
+            (crate::host::BuiltinFamilies::builder(families.tls, "tls")?)(context, Some(name))
         }
         #[cfg(quench_openssl_provider)]
-        BuiltinModule::Internal("internal/crypto/keys") => crate::modules::crypto_node::keys::internal_module(context),
+        BuiltinModule::Internal("internal/crypto/keys") => (crate::host::BuiltinFamilies::builder(families.crypto, "crypto")?)(context, Some("internal/crypto/keys")),
         BuiltinModule::Internal("internal/source_map/source_map_cache") => {
             crate::modules::source_map_shared_vm::cache_module(context)
         }
@@ -2101,17 +2089,18 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal(name) if name.starts_with("internal/streams/") => {
             crate::modules::stream_shared_vm::internal_streams_module(context, name)
         }
-        BuiltinModule::Internal("internal/net") => crate::modules::net_internal_shared_vm::module(context),
+        BuiltinModule::Internal("internal/net") => (crate::host::BuiltinFamilies::builder(families.net, "net")?)(context, Some("internal/net")),
         BuiltinModule::Internal("_http_common") => {
-            crate::modules::http_common_shared_vm::module(context)
+            (crate::host::BuiltinFamilies::builder(families.http, "http")?)(context, Some("_http_common"))
         }
-        BuiltinModule::Internal("dns/promises") => crate::modules::dns_module_shared_vm::promises(context),
+        BuiltinModule::Internal("dns/promises") => (crate::host::BuiltinFamilies::builder(families.dns, "dns")?)(context, Some("promises")),
         BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
-        BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
+        BuiltinModule::Internal("readline/promises") => (crate::host::BuiltinFamilies::builder(families.readline, "readline")?)(context, Some("promises")),
         BuiltinModule::Internal("constants") => constants_module(context),
         // Quench has no inspector; its promise API is as empty as `inspector`.
         BuiltinModule::Internal("inspector/promises") | BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
-        builtin @ (BuiltinModule::Sqlite | BuiltinModule::NodeTestReporters | BuiltinModule::Internal("_stream_wrap")) => node_only_module(context, builtin),
+        BuiltinModule::Sqlite => (crate::host::BuiltinFamilies::builder(families.sqlite, "sqlite")?)(context, None),
+        builtin @ (BuiltinModule::NodeTestReporters | BuiltinModule::Internal("_stream_wrap")) => node_only_module(context, builtin),
         BuiltinModule::Internal(name) => Err(RootedError::host(format!("node:{name} has no builder"))),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
@@ -2124,8 +2113,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
         }
-        BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
-        BuiltinModule::Http => crate::modules::http_shared_vm::build_module(context),
+        BuiltinModule::Net => (crate::host::BuiltinFamilies::builder(families.net, "net")?)(context, None),
+        BuiltinModule::Http => (crate::host::BuiltinFamilies::builder(families.http, "http")?)(context, None),
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
         BuiltinModule::Stream => crate::modules::stream_shared_vm::module(context),
@@ -2139,56 +2128,45 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
         BuiltinModule::InternalTimers => crate::modules::timers_shared_vm::internal_module(context),
         BuiltinModule::NodeTest => crate::modules::test_runner::module(context),
-        BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
-        BuiltinModule::WorkerThreads => crate::modules::worker_shared_vm::module(context),
+        BuiltinModule::Vm => (crate::host::BuiltinFamilies::builder(families.vm, "vm")?)(context, None),
+        BuiltinModule::WorkerThreads => (crate::host::BuiltinFamilies::builder(families.worker_threads, "worker_threads")?)(context, None),
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
-        BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
+        BuiltinModule::Readline => (crate::host::BuiltinFamilies::builder(families.readline, "readline")?)(context, None),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
         }
         BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
-        BuiltinModule::Dns => crate::modules::dns_module_shared_vm::module(context),
-        BuiltinModule::Dgram => crate::modules::dgram_shared_vm::module(context),
-        BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
-        BuiltinModule::Zlib => crate::modules::zlib_shared_vm::module(context),
+        BuiltinModule::Dns => (crate::host::BuiltinFamilies::builder(families.dns, "dns")?)(context, None),
+        BuiltinModule::Dgram => (crate::host::BuiltinFamilies::builder(families.dgram, "dgram")?)(context, None),
+        BuiltinModule::PerfHooks => (crate::host::BuiltinFamilies::builder(families.perf_hooks, "perf_hooks")?)(context, None),
+        BuiltinModule::Zlib => (crate::host::BuiltinFamilies::builder(families.zlib, "zlib")?)(context, None),
         #[cfg(quench_openssl_provider)]
-        BuiltinModule::Crypto => crate::modules::crypto_node::exports::module(context),
+        BuiltinModule::Crypto => (crate::host::BuiltinFamilies::builder(families.crypto, "crypto")?)(context, None),
         #[cfg(not(quench_openssl_provider))]
         BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
-        BuiltinModule::Tls => crate::modules::tls_shared_vm::build_module(context),
-        BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
+        BuiltinModule::Tls => (crate::host::BuiltinFamilies::builder(families.tls, "tls")?)(context, None),
+        BuiltinModule::V8 => (crate::host::BuiltinFamilies::builder(families.v8, "v8")?)(context, None),
         BuiltinModule::Module => crate::modules::module_shared_vm::module(context),
         BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(
             "stateful builtin passed to generic shared module builder",
         )),
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
         BuiltinModule::Sys => crate::modules::util_module_shared_vm::sys_module(context),
-        BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
+        BuiltinModule::ChildProcess => (crate::host::BuiltinFamilies::builder(families.child_process, "child_process")?)(context, None),
         // The public module's `ChildProcess` and `spawnSync`.
-        BuiltinModule::InternalChildProcess => {
-            let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
-            let module = context.object_rooted()?;
-            for name in ["ChildProcess", "spawnSync"] {
-                let value = get(context, public, name)?;
-                set(context, module, name, value)?;
-            }
-            Ok(module)
-        }
-        BuiltinModule::Https => crate::modules::https_shared_vm::module(context),
+        BuiltinModule::InternalChildProcess => (crate::host::BuiltinFamilies::builder(families.child_process, "child_process")?)(context, Some("internal")),
+        BuiltinModule::Https => (crate::host::BuiltinFamilies::builder(families.https, "https")?)(context, None),
         BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
-        BuiltinModule::DnsPromises => {
-            let dns = dns_module(context)?;
-            get(context, dns, "promises")
-        }
-        BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
-        BuiltinModule::Http2 => crate::modules::http2_shared_vm::build_module(context),
-        BuiltinModule::Http2Binding => crate::modules::http2_shared_vm::binding(context),
-        BuiltinModule::Cluster => crate::modules::cluster::module(context),
-        BuiltinModule::Repl => crate::modules::repl::module(context),
+        BuiltinModule::DnsPromises => (crate::host::BuiltinFamilies::builder(families.dns, "dns")?)(context, Some("dns_promises")),
+        BuiltinModule::CaresBinding => (crate::host::BuiltinFamilies::builder(families.dns, "dns")?)(context, Some("binding")),
+        BuiltinModule::Http2 => (crate::host::BuiltinFamilies::builder(families.http2, "http2")?)(context, None),
+        BuiltinModule::Http2Binding => (crate::host::BuiltinFamilies::builder(families.http2, "http2")?)(context, Some("binding")),
+        BuiltinModule::Cluster => (crate::host::BuiltinFamilies::builder(families.cluster, "cluster")?)(context, None),
+        BuiltinModule::Repl => (crate::host::BuiltinFamilies::builder(families.repl, "repl")?)(context, None),
         BuiltinModule::Sea => crate::modules::sea_shared_vm::module(context),
         BuiltinModule::Process
         | BuiltinModule::Assert
@@ -2205,7 +2183,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
 }
 
 /// The builders of the modules Quench adds beyond Node's public set, each in its own module.
-fn node_only_module(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
+pub(crate) fn node_only_module(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
         BuiltinModule::Sqlite => crate::modules::sqlite_shared_vm::module(context),
         BuiltinModule::NodeTestReporters => crate::modules::test_runner::reporters::module(context),

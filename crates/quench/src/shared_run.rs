@@ -22,7 +22,6 @@ pub fn initialize_cli_process_signals() -> std::io::Result<()> {
 }
 
 const TYPESCRIPT_MODULE_ENTRY_NAME: &str = "<quench:typescript-module-entry>";
-const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
 
@@ -132,7 +131,7 @@ impl SharedCompletion {
     pub fn exit_code(self) -> ExitCode {
         match self {
             Self::Completed => ExitCode::SUCCESS,
-            Self::PendingTopLevelAwait => ExitCode::from(UNSETTLED_TOP_LEVEL_AWAIT_EXIT),
+            Self::PendingTopLevelAwait => ExitCode::from(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT),
             Self::GuestExit { code } => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         }
     }
@@ -230,14 +229,14 @@ fn execute_shared_with_teardown(
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
 ) -> Result<SharedCompletion, String> {
-    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown, None, crate::host::OPERATION_CALLBACKS))
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown, None, crate::host::HostCapabilities::all()))
 }
 
 /// Resumes `input`'s entry from `rest`, the runtime a build-time evaluation saved at its first
 /// wait for input (`aot::prefix::reach_wait`): the entry does not run again, and the event loop
 /// waits for that input as the evaluated run would have.
 pub(crate) fn resume_shared(input: SharedInput, argv: Vec<String>, rest: Vec<u8>) -> Result<SharedCompletion, String> {
-    run_node_worker(move || execute_shared_on_worker(input, argv, None, DEFAULT_MODE, Teardown::ProcessExit, Some(rest), crate::host::OPERATION_CALLBACKS))
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, DEFAULT_MODE, Teardown::ProcessExit, Some(rest), crate::host::HostCapabilities::all()))
 }
 
 /// Node entry worker lifecycle, including the platform signal-mask transition.
@@ -269,7 +268,7 @@ pub(crate) fn execute_worker(
     argv: Vec<String>,
     worker: crate::modules::worker_shared_vm::WorkerContext,
     mode: quench_runtime::ExecutionMode,
-    operations: &'static [quench_runtime::HostCallback],
+    capabilities: crate::host::HostCapabilities,
 ) -> Result<SharedCompletion, String> {
     execute_shared_on_worker(
         input,
@@ -278,7 +277,7 @@ pub(crate) fn execute_worker(
         mode,
         Teardown::Free,
         None,
-        operations,
+        capabilities,
     )
 }
 
@@ -289,7 +288,7 @@ fn execute_shared_on_worker(
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
     rest: Option<Vec<u8>>,
-    operations: &'static [quench_runtime::HostCallback],
+    capabilities: crate::host::HostCapabilities,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty =
@@ -394,7 +393,7 @@ fn execute_shared_on_worker(
 
     let memory_policy = select_memory_policy();
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
-        let mut host = NodeHost::with_operations(argv.clone(), operations).with_exec_argv(exec_argv.clone())?;
+        let mut host = NodeHost::with_capabilities(argv.clone(), capabilities).with_exec_argv(exec_argv.clone())?;
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;

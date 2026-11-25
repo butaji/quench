@@ -3,14 +3,13 @@ use quench_runtime::{NativeImageSupport, NativeTarget};
 use serde_json::{json, Value};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 const COMPILE_REPORT_VERSION: u64 = 1;
-const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
+pub(super) const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
@@ -253,16 +252,20 @@ fn compile(options: Options) -> Result<(), String> {
             return Ok(());
         }
     }
-    manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
+    // A core image runs no Node bootstrap: its program is the whole application, so no
+    // snapshot sources are staged and no bootstrap bytes are linked.
+    let core = variant == variant::Variant::Core;
+    super::image::capture_bootstrap(core, &graph, &mut manifest)?;
     report["source_units"] = json!(manifest.units().len());
     report["archived_module_sources"] = json!(manifest.assets().modules.len());
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
-    let compiled = manifest.compile()?;
+    let compiled = super::image::compile_sources(core, &graph, &entry, manifest)?;
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images, &options.target)?;
+    let image_host = super::compiler::ImageHost::of(core);
+    let inputs = compiled.emit(&images, &options.target, image_host)?;
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
         inputs
@@ -270,30 +273,7 @@ fn compile(options: Options) -> Result<(), String> {
         inputs.self_contained()
     };
     report["self_contained"] = json!(inputs.is_self_contained());
-    let (table, unlinked) = operation_table(&graph);
-    fs::OpenOptions::new().append(true).open(inputs.catalog()).and_then(|mut catalog| catalog.write_all(table.as_bytes())).map_err(|error| error.to_string())?;
-    report["unlinked_host_operations"] = json!(unlinked);
-    let bootstrap = work.0.join("bootstrap.bin");
-    let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
-    worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
-        .arg(images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT)))
-        .arg(&bootstrap)
-        .args(graph.snapshot_builtins());
-    crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
-    let inputs = match quench_runtime::native_link::checked_output(&mut worker, "native bootstrap preparation") {
-        Ok(_) => {
-            let mut catalog = fs::OpenOptions::new().append(true).open(inputs.catalog()).map_err(|error| error.to_string())?;
-            writeln!(catalog, "const _: () = assert!(quench::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
-                .map_err(|error| error.to_string())?;
-            report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
-                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
-            inputs.with_bootstrap(bootstrap)
-        },
-        Err(error) => {
-            report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
-            inputs
-        },
-    };
+    let inputs = super::image::stage_image(core, &graph, &work.0, &images, inputs, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -320,10 +300,8 @@ fn compile(options: Options) -> Result<(), String> {
     let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
     support.check_build()?;
     report["support_artifacts"] = support.report();
-    let driver = work.0.join("driver.rs");
-    fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
     let staged = work.0.join("native-image");
-    let audit = support.link_audited(&inputs, &driver, &staged)?;
+    let audit = super::image::link_image(core, &support, &inputs, &work.0, &staged)?;
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
@@ -334,7 +312,7 @@ fn compile(options: Options) -> Result<(), String> {
         report["binary_bytes"] = json!(payload.binary_bytes);
         report["payload_reduction"] = json!(payload);
     }
-    report["native_dependencies"] = json!(native_dependencies(&staged)?);
+    report["native_dependencies"] = json!(super::image::native_dependencies(&staged)?);
     report["status"] = json!("compiled");
     // Publish only an audited executable. A failed compile leaves existing output intact.
     let report_build = report_path
@@ -361,26 +339,6 @@ fn compile(options: Options) -> Result<(), String> {
     }
     eprintln!("compiled {} -> {}", entry.display(), output.display());
     Ok(())
-}
-
-fn native_dependencies(executable: &Path) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    let output = quench_runtime::native_link::checked_output(
-        Command::new("otool").arg("-L").arg(executable),
-        "native dependency audit",
-    )?;
-    #[cfg(target_os = "linux")]
-    let output = quench_runtime::native_link::checked_output(
-        Command::new("readelf").arg("-d").arg(executable),
-        "native dependency audit",
-    )?;
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = executable;
-        return Err("native image dependency auditing supports macOS and Linux".into());
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    String::from_utf8(output).map_err(|error| error.to_string())
 }
 
 fn absolute_output(path: &Path) -> Result<PathBuf, String> {
@@ -525,33 +483,4 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(output).unwrap(), "previous artifact");
     }
-}
-
-/// The modules whose host operations an image links only when its program imports them by
-/// name: each holds a heavy dependency (`node:sqlite` the SQL engine).
-const IMPORTED_OPERATION_FAMILIES: &[(&str, &str)] = &[("sqlite", "sqlite_shared_vm")];
-
-/// The image's host operation table (`NodeHost::with_operations`), with the number of
-/// operations it leaves unlinked: every operation, except those of a family whose module the
-/// program cannot import. A program that loads anything at run time keeps them all.
-fn operation_table(graph: &super::graph::DependencyGraph) -> (String, usize) {
-    let dynamic = graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. }))
-        || !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty() || !graph.dynamic_reflective_sites.is_empty();
-    let builtins = graph.snapshot_builtins();
-    let excluded: Vec<&str> = IMPORTED_OPERATION_FAMILIES.iter()
-        .filter(|(builtin, _)| !dynamic && !builtins.iter().any(|name| name == builtin))
-        .map(|(_, module)| *module).collect();
-    let paths = crate::host::OPERATION_CALLBACK_PATHS;
-    let mut unlinked = 0;
-    let entries = paths.iter().enumerate().map(|(index, path)| {
-        if excluded.iter().any(|module| path.contains(module)) {
-            unlinked += 1;
-            "quench::host::unlinked_operation".to_owned()
-        } else {
-            format!("quench::host::OPERATION_CALLBACKS[{index}]")
-        }
-    }).collect::<Vec<_>>().join(", ");
-    let table = format!("static OPERATIONS: [quench_runtime::HostCallback; {n}] = [{entries}];\n\
-        const _: () = assert!(quench::host::OPERATION_CALLBACKS.len() == {n}, \"native image host operation table mismatch\");\n", n = paths.len());
-    (table, unlinked)
 }

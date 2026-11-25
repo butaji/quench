@@ -143,7 +143,7 @@ pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_read_run, dou
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,
-    ModuleSource, SystemHost,
+    ModuleSource, SystemHost, WasmFrontend,
     WasmHostFunctionId, WasmHostValue,
 };
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
@@ -169,7 +169,7 @@ pub use api::{
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule, ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
-    wrapper_origin,
+    wrapper_origin, UNSETTLED_TOP_LEVEL_AWAIT_EXIT,
 };
 
 #[cfg(test)]

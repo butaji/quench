@@ -26,7 +26,7 @@ fn run() -> Result<std::process::ExitCode, String> {
     let entry = unsafe { bind_entry() }?;
     let namespace = quench_runtime::NativeProgramNamespace::from_entry(entry.residual())?;
     quench::host::resident_pages::phase_peak("native entry bound");
-    let host = NodeHost::with_operations(argv, &OPERATIONS)
+    let host = NodeHost::with_capabilities(argv, CAPABILITIES)
         .with_exec_argv(Vec::new())?
         .with_embedded_modules(assets)
         .with_native_programs(move |name, parts| {

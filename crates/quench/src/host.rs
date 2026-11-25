@@ -9,10 +9,13 @@ pub mod resident_pages;
 pub(crate) mod shared_vm;
 pub(crate) mod ts_checker;
 pub(crate) mod startup_snapshot;
+pub mod wasm_frontend;
+pub mod pollers;
+pub mod builtin_families;
 
 pub(crate) use crate::shared_run::EntryGoal;
 pub(crate) use node_host::SharedNodeState;
-pub use node_host::{unlinked_operation, NodeHost, NodeOutputSink};
+pub use node_host::{unlinked_operation, BuiltinBuilder, BuiltinFamilies, HostCapabilities, HostPoller, HostPollers, NodeHost, NodeOutputSink};
 pub use shared_vm::{OPERATION_CALLBACKS, OPERATION_CALLBACK_PATHS};
 #[cfg(feature = "native-execution")]
 pub use node_host::NativeProgramResolver;

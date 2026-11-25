@@ -12,8 +12,8 @@ impl NodeHost {
             module_assets: _,
             // The installation and the process's own entry and environment.
             compile_cache: _,
-            // The image's own linked operations.
-            operations: _,
+            // The image's own linked capabilities (operations, pollers, Wasm frontend).
+            capabilities: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             shared_state,
@@ -62,7 +62,8 @@ impl SharedNodeState {
             scheduler,
             fs,
             fs_watch,
-            tls_contexts,
+            tls_contexts: _,
+            tcp: _,
             sqlite,
             #[cfg(quench_icu)]
             icu_converters,
@@ -121,7 +122,6 @@ impl SharedNodeState {
             diagnostics,
             http,
             http2,
-            tcp,
             net_sockets,
             net_closing_sockets,
             net_socket_close_completed,
@@ -148,7 +148,7 @@ impl SharedNodeState {
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
         require_quiescent(fs.snapshot_quiescent(), "open file descriptors")?;
         require_quiescent(process_signals.snapshot_quiescent(), "signal listeners")?;
-        require_quiescent(sqlite.get::<crate::modules::sqlite_shared_vm::State>().is_none_or(crate::modules::sqlite_shared_vm::State::snapshot_quiescent), "open sqlite handles")?;
+        require_quiescent(!sqlite.is_made(), "open sqlite handles")?;
         require_quiescent(active_esm_requires.is_empty(), "an ESM require")?;
         require_quiescent(
             net_sockets.is_empty()
@@ -174,7 +174,6 @@ impl SharedNodeState {
         dns.write_snapshot(writer)?;
         performance_native.write_snapshot(writer)?;
         fs_watch.write_snapshot(writer)?;
-        tls_contexts.write_snapshot(writer)?;
         fs_classes.write_snapshot(writer)?;
         fs_stat_watch.write_snapshot(writer)?;
         module_parent_api.write(writer)?;
@@ -206,7 +205,6 @@ impl SharedNodeState {
         diagnostics.write(writer)?;
         http.write_snapshot(writer)?;
         http2.write_snapshot(writer)?;
-        tcp.write_snapshot(writer)?;
         net_socket_close_completed.write(writer)?;
         udp.write_snapshot(writer)?;
         native_async_wrap.write_snapshot(writer)?;
@@ -242,7 +240,6 @@ impl SharedNodeState {
         self.dns.read_snapshot(reader)?;
         self.performance_native.read_snapshot(reader)?;
         self.fs_watch.read_snapshot(reader)?;
-        self.tls_contexts.read_snapshot(reader)?;
         self.fs_classes.read_snapshot(reader)?;
         self.fs_stat_watch.read_snapshot(reader)?;
         self.module_parent_api = HostSnap::read(reader)?;
@@ -274,7 +271,6 @@ impl SharedNodeState {
         self.diagnostics = HostSnap::read(reader)?;
         self.http.read_snapshot(reader)?;
         self.http2.read_snapshot(reader)?;
-        self.tcp.read_snapshot(reader)?;
         self.net_socket_close_completed = HostSnap::read(reader)?;
         self.udp.read_snapshot(reader)?;
         self.native_async_wrap.read_snapshot(reader)?;

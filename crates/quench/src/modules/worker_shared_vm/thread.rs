@@ -15,7 +15,6 @@ pub(crate) const TERMINATED_EXIT_CODE: i32 = 1;
 /// Node's exit code for a fatal exception.
 const FATAL_EXIT_CODE: i32 = 1;
 /// Node's exit code when the entry's top-level await never settles.
-const UNSETTLED_TOP_LEVEL_AWAIT_EXIT_CODE: i32 = 13;
 /// The `process.argv[1]` Node reports for an `eval` worker.
 const EVAL_ENTRY_NAME: &str = "[worker eval]";
 
@@ -108,7 +107,7 @@ impl WorkerControl {
         let (code, error) = match outcome {
             Ok(SharedCompletion::Completed) => (0, None),
             Ok(SharedCompletion::GuestExit { code }) => (code, None),
-            Ok(SharedCompletion::PendingTopLevelAwait) => (UNSETTLED_TOP_LEVEL_AWAIT_EXIT_CODE, None),
+            Ok(SharedCompletion::PendingTopLevelAwait) => (i32::from(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT), None),
             Err(message) => (FATAL_EXIT_CODE, Some(failure.unwrap_or(Failure::Message(message)))),
         };
         // A worker that came up ran JavaScript; one that failed earlier still reports online
@@ -144,8 +143,8 @@ pub(crate) struct Launch {
     pub(crate) parent: Arc<Endpoint>,
     /// The parent's execution mode, which the worker runs in.
     pub(crate) mode: quench_runtime::ExecutionMode,
-    /// The parent's host operations, which the worker's host links (`NodeHost::with_operations`).
-    pub(crate) operations: &'static [quench_runtime::HostCallback],
+    /// The parent's host capabilities, which the worker's host links unchanged.
+    pub(crate) capabilities: crate::host::HostCapabilities,
 }
 
 /// Start a worker thread; returns its thread id and control block.
@@ -177,7 +176,7 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
             libc::pthread_sigmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut());
         }
     }
-    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, environment, parent, mode, operations } = launch;
+    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, environment, parent, mode, capabilities } = launch;
     let (input, entry) = if is_eval {
         let input = SharedInput::Eval { source: filename, goal: EntryGoal::CommonJs, exec_argv, print: false };
         (input, EVAL_ENTRY_NAME.to_owned())
@@ -195,7 +194,7 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
         control: control.clone(),
         env,
     };
-    let outcome = crate::shared_run::execute_worker(input, process_argv, context, mode, operations);
+    let outcome = crate::shared_run::execute_worker(input, process_argv, context, mode, capabilities);
     control.finish(outcome);
 }
 

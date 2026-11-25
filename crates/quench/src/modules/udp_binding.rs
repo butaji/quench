@@ -333,7 +333,7 @@ pub(crate) fn reference(
     if let Some(socket) = state.udp.endpoints.get_mut(&id) {
         socket.io.referenced = referenced;
     } else {
-        super::net_shared_vm::udp_close_reference(&mut state.tcp, id, referenced);
+        super::net_shared_vm::udp_close_reference(&mut state.tcp(), id, referenced);
     }
     Ok(c.undefined())
 }
@@ -346,7 +346,7 @@ pub(crate) fn has_ref(c: &mut Context<'_>, r: RootId) -> Result<RootId, RootedEr
         .endpoints
         .get(&id)
         .map(|s| s.io.referenced)
-        .or_else(|| super::net_shared_vm::udp_close_has_ref(&state.tcp, id))
+        .or_else(|| super::net_shared_vm::udp_close_has_ref(&state.tcp(), id))
         .unwrap_or(false);
     Ok(c.boolean(referenced))
 }
@@ -566,7 +566,7 @@ pub(crate) fn close(
             pending,
         },
     );
-    super::net_shared_vm::request_udp_close(&mut shared.borrow_mut().tcp, id, referenced);
+    super::net_shared_vm::request_udp_close(&mut shared.borrow_mut().tcp(), id, referenced);
     Ok(c.undefined())
 }
 pub(crate) fn deliver_message(
@@ -674,7 +674,7 @@ pub(crate) fn poll(
                     },
                 );
                 super::net_shared_vm::request_udp_close(
-                    &mut shared.borrow_mut().tcp,
+                    &mut shared.borrow_mut().tcp(),
                     id,
                     referenced,
                 );

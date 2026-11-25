@@ -15,6 +15,18 @@ use loader_bindings::{Base, LoaderBindings};
 #[derive(Clone, Copy)]
 enum RequestKind { Resolve, Load }
 
+/// The globals only a Node or web host provides. A program that references one cannot run on
+/// the pure-ECMAScript host (`Variant::Core`); `console` is the runtime's own and stays.
+const HOST_ONLY_GLOBALS: &[&str] = &[
+    "process", "Buffer", "require", "module", "exports", "__dirname", "__filename", "global",
+    "setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate",
+    "fetch", "Headers", "Request", "Response", "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
+    "crypto", "WebAssembly", "performance", "queueMicrotask", "structuredClone",
+    "AbortController", "AbortSignal", "Event", "EventTarget", "ReadableStream", "WritableStream",
+    "TransformStream", "Blob", "File", "FormData", "MessageChannel", "BroadcastChannel",
+    "atob", "btoa", "navigator",
+];
+
 #[derive(Debug)]
 pub enum GraphRequirement {
     DynamicRequire { from: PathBuf, offset: u32 },
@@ -58,6 +70,9 @@ pub struct DependencyGraph {
     pub builtins: BTreeSet<String>,
     pub esm_builtins: BTreeSet<String>,
     pub host_globals: BTreeSet<String>,
+    /// Unshadowed references to globals only the Node or web host provides: a program that
+    /// names one keeps the Node host.
+    pub host_only_globals: BTreeSet<String>,
     pub requirements: Vec<GraphRequirement>,
     /// Unshadowed eval references may receive source first known at execution.
     pub dynamic_eval_sites: Vec<(PathBuf, u32)>,
@@ -107,13 +122,14 @@ struct Requests<'s> {
     dynamic_imports: BTreeSet<u32>,
     literal_imports: BTreeSet<String>,
     host_globals: BTreeSet<String>,
+    host_only_globals: BTreeSet<String>,
 }
 
 impl<'s> Requests<'s> {
     fn new(scoping: &'s oxc_semantic::Scoping, loaders: &'s LoaderBindings<'s>) -> Self {
         Self { scoping, loaders, specifiers: BTreeMap::new(), classified_requires: loaders.transfers(),
             dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
-            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new() }
+            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new(), host_only_globals: BTreeSet::new() }
     }
 
     fn request(&mut self, specifier: String, kind: RequestKind) {
@@ -133,13 +149,14 @@ impl<'s> Requests<'s> {
     }
 
     fn record_host_global(&mut self, name: &str) {
+        if HOST_ONLY_GLOBALS.contains(&name) { self.host_only_globals.insert(name.to_owned()); }
         if name == "console" { self.request("node:console".into(), RequestKind::Load); }
         let interfaces = commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS).copied()
             .chain(crate::modules::events_shared_vm::EVENT_GLOBALS.iter().copied())
             .chain(crate::modules::events_shared_vm::MESSAGING_GLOBALS.iter().copied())
             .chain(crate::modules::text_decoder_shared_vm::GLOBAL_NAMES.iter().copied())
             .chain(crate::modules::util_lazy_shared_vm::lazy_global_names());
-        if name == "performance" || interfaces.into_iter().any(|global|global == name) {
+        if name == "performance" || name == "WebAssembly" || name == "crypto" || interfaces.into_iter().any(|global|global == name) {
             self.host_globals.insert(name.to_owned());
         }
     }
@@ -289,6 +306,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         let mut requests = Requests::new(scoping, &loaders);
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
+        graph.host_only_globals.extend(std::mem::take(&mut requests.host_only_globals));
         for offset in requests.dynamic_requires {
             graph.requirements.push(GraphRequirement::DynamicRequire { from: name.clone().into(), offset: offset + base });
         }

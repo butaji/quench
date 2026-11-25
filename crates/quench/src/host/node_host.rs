@@ -34,6 +34,96 @@ impl InlineSource {
 #[cfg(feature = "native-execution")]
 pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram>, quench_runtime::NativeSourceError>;
 
+/// One I/O source the event loop polls, in the host's terms: a compiled image's catalog names
+/// the sources its program can reach, so a program that cannot create a socket links no
+/// transport (and no `openssl`), one that imports no child-process module links no child poller.
+pub type HostPoller = fn(
+    &mut quench_runtime::Runtime<NodeHost>,
+    &quench_runtime::ResidualProgram,
+) -> Result<bool, String>;
+
+/// The event loop's polled I/O sources. Every field is absent unless the program can reach the
+/// module that owns it; the CLI and non-sliced hosts install all of them (`pollers::all`).
+#[derive(Clone, Copy, Default)]
+pub struct HostPollers {
+    pub child_ipc: Option<HostPoller>,
+    pub child_process: Option<HostPoller>,
+    pub carriers: Option<HostPoller>,
+    /// UDP and TCP sockets, polled together with the collection safepoint between them and the
+    /// next source (`process_shared_vm::poll_io`).
+    pub transport: Option<HostPoller>,
+    pub worker: Option<HostPoller>,
+    pub napi: Option<HostPoller>,
+    pub dns: Option<HostPoller>,
+}
+
+/// A builtin family's module builder: the builtin's internal name when it is an internal
+/// module, `None` for the public module.
+pub type BuiltinBuilder = fn(
+    &mut quench_runtime::NativeContext<'_>,
+    Option<&'static str>,
+) -> Result<quench_runtime::RootId, quench_runtime::RootedError>;
+
+/// The builtin families an image links. A family is installed only when the program can reach
+/// its module (directly or through another builtin's internal requires), so `build_builtin`'s
+/// arm for an absent family is never linked.
+#[derive(Clone, Copy, Default)]
+pub struct BuiltinFamilies {
+    pub tls: Option<BuiltinBuilder>,
+    pub crypto: Option<BuiltinBuilder>,
+    pub http: Option<BuiltinBuilder>,
+    pub http2: Option<BuiltinBuilder>,
+    pub https: Option<BuiltinBuilder>,
+    pub net: Option<BuiltinBuilder>,
+    pub dns: Option<BuiltinBuilder>,
+    pub dgram: Option<BuiltinBuilder>,
+    pub zlib: Option<BuiltinBuilder>,
+    pub child_process: Option<BuiltinBuilder>,
+    pub worker_threads: Option<BuiltinBuilder>,
+    pub vm: Option<BuiltinBuilder>,
+    pub v8: Option<BuiltinBuilder>,
+    pub readline: Option<BuiltinBuilder>,
+    pub repl: Option<BuiltinBuilder>,
+    pub cluster: Option<BuiltinBuilder>,
+    pub perf_hooks: Option<BuiltinBuilder>,
+    pub sqlite: Option<BuiltinBuilder>,
+}
+
+impl BuiltinFamilies {
+    /// Every family, for the CLI and any host that runs arbitrary source.
+    pub fn all() -> Self {
+        crate::host::builtin_families::ALL
+    }
+
+    /// The family's builder, or the error an unlinked builtin raises.
+    pub(crate) fn builder(slot: Option<BuiltinBuilder>, name: &str) -> Result<BuiltinBuilder, quench_runtime::RootedError> {
+        slot.ok_or_else(|| quench_runtime::RootedError::host(format!("node:{name} support is not linked into the compiled image")))
+    }
+}
+
+/// The host services an executable links, in one value: the operation table, the event loop's
+/// polled sources and the WebAssembly frontend. A compiled image's catalog derives each from
+/// what its program can reach; the CLI and every non-sliced host link all of them.
+#[derive(Clone, Copy, Default)]
+pub struct HostCapabilities {
+    pub operations: &'static [quench_runtime::HostCallback],
+    pub pollers: HostPollers,
+    pub wasm: Option<quench_runtime::WasmFrontend>,
+    pub builtins: BuiltinFamilies,
+}
+
+impl HostCapabilities {
+    /// Every host service, for the CLI and any host that runs arbitrary source.
+    pub fn all() -> Self {
+        Self {
+            operations: crate::host::shared_vm::OPERATION_CALLBACKS,
+            pollers: crate::host::pollers::all(),
+            wasm: Some(crate::host::wasm_frontend::FRONTEND),
+            builtins: BuiltinFamilies::all(),
+        }
+    }
+}
+
 pub struct NodeHost {
     #[cfg(feature = "native-execution")]
     pub(crate) module_assets: crate::aot::ModuleAssetState,
@@ -45,8 +135,8 @@ pub struct NodeHost {
     /// snapshot): bootstrap's own programs decode back to back (`cached_program_decoded`).
     pub(crate) bootstrapped: bool,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
-    /// The callback of each host operation, by index (`with_operations`).
-    pub(crate) operations: &'static [quench_runtime::HostCallback],
+    /// The host services this executable links (`with_capabilities`).
+    pub(crate) capabilities: HostCapabilities,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
     pub(crate) eval_builtin_globals: bool,
@@ -113,7 +203,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
-    pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    /// TLS contexts and their sessions, reached only by a program that imports `tls`.
+    pub(crate) tls_contexts: LazyState,
     /// The `node:sqlite` engine's handles (`sqlite_shared_vm::State`).
     pub(crate) sqlite: LazyState,
     #[cfg(quench_icu)]
@@ -188,7 +279,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
     pub(crate) http2: crate::modules::http2_shared_vm::State,
-    pub(crate) tcp: crate::modules::net_shared_vm::Transport,
+    /// The socket transport, made only when the program can create a socket.
+    pub(crate) tcp: LazyState,
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
@@ -274,6 +366,17 @@ pub(crate) enum ChildProcessEvent {
 }
 
 impl SharedNodeState {
+    /// The TLS contexts, made on first use: a program that imports no `tls` links none of them.
+    pub(crate) fn tls(&self) -> LazyStateRef<'_, crate::modules::tls_shared_vm::contexts::State> {
+        self.tls_contexts.state()
+    }
+
+    /// The socket transport, made on first use: a program with no `net`/`tls`/`dgram` operation
+    /// links no transport (and no `openssl`).
+    pub(crate) fn tcp(&self) -> LazyStateRef<'_, crate::modules::net_shared_vm::Transport> {
+        self.tcp.state()
+    }
+
     /// Child output pipes with pending guest demand. The event loop polls them
     /// with the transport descriptors, so a child's write wakes the loop at once
     /// instead of being found on the fallback poll interval.
@@ -330,7 +433,7 @@ impl SharedNodeState {
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
-        self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
+        self.tls_contexts = LazyState::default();
         #[cfg(quench_icu)]
         {
             self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
@@ -357,7 +460,7 @@ impl SharedNodeState {
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
-            tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            tls_contexts: LazyState::default(),
             sqlite: LazyState::default(),
             #[cfg(quench_icu)]
             icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
@@ -423,7 +526,7 @@ impl SharedNodeState {
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),
             http2: crate::modules::http2_shared_vm::State::new(),
-            tcp: crate::modules::net_shared_vm::Transport::new(),
+            tcp: LazyState::default(),
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
             net_socket_close_completed: None,
@@ -455,15 +558,17 @@ impl NodeHost {
             && crate::host::startup_snapshot::native_bootstrap_environment_is_compatible()
     }
 
-    /// A host whose every operation is linked.
-    pub fn new(argv: Vec<String>) -> Self {
-        Self::with_operations(argv, crate::host::shared_vm::OPERATION_CALLBACKS)
+    pub(crate) fn capabilities(&self) -> HostCapabilities {
+        self.capabilities
     }
 
-    /// A host that runs host operation `index` with `operations[index]`: an image keeps only
-    /// the operations its program can reach and links `unlinked_operation` for the rest, so
-    /// the modules behind them are not linked.
-    pub fn with_operations(argv: Vec<String>, operations: &'static [quench_runtime::HostCallback]) -> Self {
+    /// A host whose every operation is linked.
+    pub fn new(argv: Vec<String>) -> Self {
+        Self::with_capabilities(argv, HostCapabilities::all())
+    }
+
+    /// A host that links exactly `capabilities`.
+    pub fn with_capabilities(argv: Vec<String>, capabilities: HostCapabilities) -> Self {
         #[cfg(feature = "profile-memory")]
         crate::shared_run::profile_startup_boundary("node_host_begin");
         // The Node test common/tmpdir helper exposes a per-process host path.
@@ -487,7 +592,7 @@ impl NodeHost {
         #[cfg(feature = "profile-memory")]
         crate::shared_run::profile_startup_boundary("node_host_cwd_ready");
         Self {
-            operations,
+            capabilities,
             #[cfg(feature = "native-execution")]
             module_assets: Default::default(),
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
@@ -612,16 +717,39 @@ pub fn unlinked_operation(
 /// A module's state, made on the module's first use and dropped through its own vtable: a
 /// program that never uses the module links none of its code, and none of its dependencies'.
 #[derive(Default)]
-pub(crate) struct LazyState(Option<Box<dyn std::any::Any>>);
+pub(crate) struct LazyState(std::cell::RefCell<Option<Box<dyn std::any::Any>>>);
 
 impl LazyState {
-    /// The state, if the module has made it.
-    pub(crate) fn get<T: 'static>(&self) -> Option<&T> {
-        self.0.as_ref().and_then(|state| state.downcast_ref())
+    /// Whether the module has made its state.
+    pub(crate) fn is_made(&self) -> bool {
+        self.0.borrow().is_some()
     }
 
     /// The state, made now if the module has not made it.
-    pub(crate) fn get_or_default<T: Default + 'static>(&mut self) -> &mut T {
-        self.0.get_or_insert_with(|| Box::new(T::default())).downcast_mut().expect("a lazy state slot holds one module's state")
+    pub(crate) fn state<T: Default + 'static>(&self) -> LazyStateRef<'_, T> {
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(Box::new(T::default()));
+        }
+        LazyStateRef { slot, state: std::marker::PhantomData }
+    }
+}
+
+/// A borrow of one lazy state, usable like the field it replaced.
+pub(crate) struct LazyStateRef<'a, T> {
+    slot: std::cell::RefMut<'a, Option<Box<dyn std::any::Any>>>,
+    state: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T: 'static> std::ops::Deref for LazyStateRef<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.slot.as_deref().and_then(|state| state.downcast_ref::<T>()).expect("a lazy state slot holds one module's state")
+    }
+}
+
+impl<T: 'static> std::ops::DerefMut for LazyStateRef<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.slot.as_deref_mut().and_then(|state| state.downcast_mut::<T>()).expect("a lazy state slot holds one module's state")
     }
 }

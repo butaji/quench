@@ -11,19 +11,46 @@ pub(crate) const NODE_API_SUPPORTED_VERSION_MAX: &str = "10";
 pub(crate) const NODE_API_DEFAULT_MODULE_API_VERSION: &str = "8";
 
 pub(crate) fn openssl_version() -> String {
-    #[cfg(quench_openssl_provider)]
+    #[cfg(all(unix, quench_openssl_provider))]
+    {
+        // The version of the OpenSSL image this process actually loaded, read from the
+        // symbol itself: naming `openssl::version::version` would link libssl into every
+        // image, including one whose program can reach no TLS or crypto operation.
+        if let Some(version) = unsafe { loaded_openssl_version() } {
+            return version;
+        }
+    }
+    #[cfg(all(not(unix), quench_openssl_provider))]
     {
         let version = openssl::version::version();
-        version
+        return version
             .strip_prefix("OpenSSL ")
             .and_then(|version| version.split_whitespace().next())
             .unwrap_or("3.0.0")
-            .to_owned()
+            .to_owned();
     }
-    #[cfg(not(quench_openssl_provider))]
+    #[allow(unreachable_code)]
     {
         "3.0.0".to_owned()
     }
+}
+
+/// `OpenSSL_version(OPENSSL_VERSION)`, when the process has OpenSSL loaded.
+#[cfg(all(unix, quench_openssl_provider))]
+unsafe fn loaded_openssl_version() -> Option<String> {
+    const OPENSSL_VERSION: libc::c_int = 0;
+    let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"OpenSSL_version".as_ptr()) };
+    if symbol.is_null() {
+        return None;
+    }
+    // SAFETY: the symbol is OpenSSL's `const char *OpenSSL_version(int)`.
+    let version: unsafe extern "C" fn(libc::c_int) -> *const libc::c_char = unsafe { std::mem::transmute(symbol) };
+    let version = unsafe { version(OPENSSL_VERSION) };
+    if version.is_null() {
+        return None;
+    }
+    let version = unsafe { std::ffi::CStr::from_ptr(version) }.to_str().ok()?;
+    Some(version.strip_prefix("OpenSSL ").and_then(|version| version.split_whitespace().next()).unwrap_or("3.0.0").to_owned())
 }
 
 #[derive(Clone, Copy)]
@@ -611,12 +638,18 @@ pub(crate) fn shared_openssl() -> bool {
         };
         #[cfg(not(target_os = "macos"))]
         let host_address = shared_openssl as *const () as *const libc::c_void;
+        // The OpenSSL image the process loaded, found by name: naming a symbol statically
+        // would link libssl into every image, even one with no TLS or crypto operation.
+        let ssl_address = libc::dlsym(libc::RTLD_DEFAULT, c"SSL_CTX_new".as_ptr());
+        if ssl_address.is_null() {
+            return false;
+        }
         libc::dladdr(
             host_address,
             &mut host,
         ) != 0
             && libc::dladdr(
-                openssl_sys::SSL_CTX_new as *const () as *const libc::c_void,
+                ssl_address,
                 &mut ssl,
             ) != 0
             && host.dli_fbase != ssl.dli_fbase

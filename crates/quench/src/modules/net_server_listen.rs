@@ -260,12 +260,14 @@ pub(crate) fn listen(
         let is_tcp_listener = {
             let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let shared = shared.borrow();
-            net_shared_vm::listener_is_tcp(&shared.tcp, listener)
+            let tcp = shared.tcp();
+            net_shared_vm::listener_is_tcp(&tcp, listener)
         };
         let is_tcp_handle = {
             let shared = context.host_as::<crate::host::NodeHost>().shared_state();
             let shared = shared.borrow();
-            net_shared_vm::native_tcp_is_open(&shared.tcp, listener)
+            let tcp = shared.tcp();
+            net_shared_vm::native_tcp_is_open(&tcp, listener)
         };
         if is_tcp_listener || is_tcp_handle {
             if !is_tcp_listener {
@@ -277,8 +279,9 @@ pub(crate) fn listen(
                 };
                 let result = {
                     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-                    let mut shared = shared.borrow_mut();
-                    net_shared_vm::native_tcp_listen(&mut shared.tcp, listener, backlog)
+                    let shared = shared.borrow_mut();
+                    let mut tcp = shared.tcp();
+                    net_shared_vm::native_tcp_listen(&mut tcp, listener, backlog)
                 };
                 if let Err(error) = result {
                     return Err(RootedError::host(format!(
@@ -386,14 +389,14 @@ pub(crate) fn listen(
     let address = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let listener = net_shared_vm::listen_with_reuse_port(
-        &mut shared.borrow_mut().tcp,
+        &mut shared.borrow_mut().tcp(),
         address,
         reuse_port,
         backlog,
     );
     let listener = match listener {
         Err(_) => net_shared_vm::listen_with_reuse_port(
-            &mut shared.borrow_mut().tcp,
+            &mut shared.borrow_mut().tcp(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
             reuse_port,
             backlog,
@@ -418,7 +421,7 @@ pub(crate) fn listen(
     // Node records the normalized bind endpoint (and requested port, including
     // zero) after a successful listen. Cluster code and diagnostics inspect it.
     if let Some(bound) =
-        net_shared_vm::address(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, listener)
+        net_shared_vm::address(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(), listener)
     {
         let family = if bound.ip().is_ipv6() { 6 } else { 4 };
         let key = context.string_rooted("_connectionKey");
@@ -497,7 +500,7 @@ pub(crate) fn lookup_completed(
     let backlog = net_shared_vm::convert_listen_backlog(context, backlog)?;
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let listener = net_shared_vm::listen_with_reuse_port(
-        &mut shared.borrow_mut().tcp,
+        &mut shared.borrow_mut().tcp(),
         address,
         reuse,
         backlog,
@@ -511,7 +514,7 @@ pub(crate) fn lookup_completed(
     };
     let result = net_shared_vm::register_server(context, server, listener)?;
     if let Some(bound) =
-        net_shared_vm::address(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, listener)
+        net_shared_vm::address(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(), listener)
     {
         let family = if bound.ip().is_ipv6() { 6 } else { 4 };
         let key = context.string_rooted("_connectionKey");
@@ -557,7 +560,7 @@ pub(crate) fn close(
             server.listening_pending = false;
             server.listener
         }) {
-            net_shared_vm::close_listener(&mut state.tcp, listener);
+            net_shared_vm::close_listener(&mut state.tcp(), listener);
             true
         } else {
             false

@@ -34,7 +34,7 @@ pub(crate) fn register(
         .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
-        .tls_contexts
+        .tls()
         .sessions
         .entries
         .push(Session {
@@ -66,7 +66,7 @@ pub(crate) fn find_owner(
         .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow()
-        .tls_contexts
+        .tls()
         .sessions
         .entries
         .iter()
@@ -91,7 +91,7 @@ pub(crate) fn set_purpose(
         .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
-        .tls_contexts
+        .tls()
         .sessions
         .entries[index]
         .purpose = purpose;
@@ -101,7 +101,7 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     let dead = shared
         .borrow()
-        .tls_contexts
+        .tls()
         .sessions
         .entries
         .iter()
@@ -113,7 +113,7 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
     for index in dead.into_iter().rev() {
         let entry = shared
             .borrow_mut()
-            .tls_contexts
+            .tls()
             .sessions
             .entries
             .remove(index);
@@ -122,7 +122,7 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
-    let entries = std::mem::take(&mut shared.borrow_mut().tls_contexts.sessions.entries);
+    let entries = std::mem::take(&mut shared.borrow_mut().tls().sessions.entries);
     for entry in entries {
         runtime.release_host_weak_root(entry.identity);
     }

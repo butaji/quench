@@ -441,7 +441,13 @@ impl Vm {
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();
         let native_print = self.native_value(Native::Print);
-        self.set_named(program, console, "log", native_print)?;
+        let native_error = self.native_value(Native::PrintError);
+        for (name, value) in [
+            ("log", native_print), ("info", native_print),
+            ("warn", native_error), ("error", native_error),
+        ] {
+            self.set_named(program, console, name, value)?;
+        }
         self.global(program, "console", console)
     }
     pub(super) fn install_json_for_realm(

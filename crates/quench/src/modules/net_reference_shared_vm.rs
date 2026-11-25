@@ -45,7 +45,7 @@ pub(crate) fn install(
     let unref = get(context, server, "_unref")?;
     let referenced = !context.truthy_rooted(unref)?;
     super::net_shared_vm::listener_reference(
-        &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp,
+        &mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp(),
         id,
         referenced,
     );
@@ -71,7 +71,7 @@ fn install_handle(
     // expose a stable getAsyncId() value. Accepted handles that already got
     // initialized with their listener trigger keep that original resource.
     if matches!(kind, EndpointKind::Socket)
-        && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, id)
+        && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(), id)
         && super::native_async_wrap::tcp_resource(&context.host_as::<crate::host::NodeHost>().shared_state(), id).is_none()
     {
         super::native_async_wrap::initialize_tcp(context, handle, id, false)?;
@@ -144,10 +144,10 @@ fn create_handle(
             .iter()
             .any(|(_, existing)| *existing == id);
         if first_handle {
-            super::net_shared_vm::stop_read(&mut shared.borrow_mut().tcp, id);
+            super::net_shared_vm::stop_read(&mut shared.borrow_mut().tcp(), id);
         } else {
             // A TLS wrapper inherits its original endpoint's existing request.
-            let active = super::net_shared_vm::read_active(&shared.borrow().tcp, id);
+            let active = super::net_shared_vm::read_active(&shared.borrow().tcp(), id);
             let reading = context.boolean(active);
             set(context, handle, "reading", reading)?;
         }
@@ -155,13 +155,13 @@ fn create_handle(
     register_identity(context, handle, id)?;
     let tcp_listener = matches!(kind, EndpointKind::Listener)
         && super::net_shared_vm::listener_is_tcp(
-            &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
+            &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(),
             id,
         );
     if tcp_listener
         || (matches!(kind, EndpointKind::Socket)
             && super::net_shared_vm::socket_is_tcp(
-                &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
+                &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(),
                 id,
             ))
     {
@@ -181,7 +181,7 @@ fn create_handle(
     context.define_data_property_rooted(method, key, name, false, false, true)?;
     set(context, handle, "hasRef", method)?;
     if matches!(kind, EndpointKind::Socket)
-        && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp, id)
+        && super::net_shared_vm::socket_is_tcp(&context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(), id)
     {
         for (name, operation) in [
             ("setNoDelay", "netHandleSetNoDelay"),
@@ -257,9 +257,9 @@ pub(crate) fn handle_has_ref(
     let (id, _, kind) = owner(context, receiver)?;
     let state = context.host_as::<crate::host::NodeHost>().shared_state();
     let value = match kind {
-        EndpointKind::Listener => super::net_shared_vm::listener_has_ref(&state.borrow().tcp, id),
+        EndpointKind::Listener => super::net_shared_vm::listener_has_ref(&state.borrow().tcp(), id),
         EndpointKind::Socket => {
-            Some(super::net_shared_vm::socket_has_ref(&state.borrow().tcp, id).unwrap_or(false))
+            Some(super::net_shared_vm::socket_has_ref(&state.borrow().tcp(), id).unwrap_or(false))
         }
     };
     Ok(match value {
@@ -354,7 +354,7 @@ pub(crate) fn set_no_delay(
         .and_then(|value| value.as_bool())
         == Some(true);
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let result = super::net_shared_vm::tcp_no_delay(&mut shared.borrow_mut().tcp, id, enabled);
+    let result = super::net_shared_vm::tcp_no_delay(&mut shared.borrow_mut().tcp(), id, enabled);
     Ok(option_result(context, result))
 }
 pub(crate) fn set_keep_alive(
@@ -388,7 +388,7 @@ pub(crate) fn set_keep_alive(
             .unwrap_or(DEFAULT_KEEPALIVE_PROBE_COUNT),
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let result = super::net_shared_vm::tcp_keep_alive(&mut shared.borrow_mut().tcp, id, options);
+    let result = super::net_shared_vm::tcp_keep_alive(&mut shared.borrow_mut().tcp(), id, options);
     Ok(option_result(context, result))
 }
 
@@ -408,7 +408,7 @@ pub(crate) fn set_type_of_service(
         .unwrap_or(0.0) as u8;
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let result =
-        super::net_shared_vm::tcp_set_type_of_service(&mut shared.borrow_mut().tcp, id, tos);
+        super::net_shared_vm::tcp_set_type_of_service(&mut shared.borrow_mut().tcp(), id, tos);
     Ok(option_result(context, result))
 }
 
@@ -422,7 +422,7 @@ pub(crate) fn get_type_of_service(
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let value =
-        super::net_shared_vm::tcp_get_type_of_service(&shared.borrow().tcp, id).unwrap_or(0);
+        super::net_shared_vm::tcp_get_type_of_service(&shared.borrow().tcp(), id).unwrap_or(0);
     Ok(context.number(f64::from(value)))
 }
 
@@ -511,7 +511,7 @@ fn socket_name(
         return Ok(context.number(-f64::from(libc::EBADF)));
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let address = super::net_shared_vm::socket_address(&shared.borrow().tcp, id, peer);
+    let address = super::net_shared_vm::socket_address(&shared.borrow().tcp(), id, peer);
     match address {
         Ok(address) => {
             let out = args.first().copied().unwrap_or_else(|| context.undefined());
@@ -533,7 +533,7 @@ pub(crate) fn close(
 ) -> Result<RootId, RootedError> {
     let (id, _, _) = owner(context, receiver)?;
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    if !super::net_shared_vm::socket_is_open(&shared.borrow().tcp, id) {
+    if !super::net_shared_vm::socket_is_open(&shared.borrow().tcp(), id) {
         return Ok(context.undefined());
     }
     let key = onclose_symbol(context)?;
@@ -548,7 +548,7 @@ pub(crate) fn close(
         .net_handle_close_callbacks
         .insert(id, handle);
     super::stream_binding::release_reader(context, id);
-    super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp, id);
+    super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp(), id);
     Ok(context.undefined())
 }
 
@@ -593,7 +593,7 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     }
     for id in dead {
         if !live.iter().any(|(_, existing)| *existing == id) {
-            super::net_shared_vm::native_tcp_close(&mut shared.borrow_mut().tcp, id);
+            super::net_shared_vm::native_tcp_close(&mut shared.borrow_mut().tcp(), id);
             super::native_async_wrap::collect_tcp(runtime, id);
         }
     }
@@ -644,7 +644,7 @@ pub(crate) fn read_start(
         return Ok(context.number(-f64::from(libc::EBADF)));
     };
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let result = super::net_shared_vm::start_read(&mut shared.borrow_mut().tcp, id);
+    let result = super::net_shared_vm::start_read(&mut shared.borrow_mut().tcp(), id);
     if result.is_ok() {
         super::stream_binding::retain_reader(context, id, receiver)?;
     }
@@ -658,7 +658,7 @@ pub(crate) fn read_stop(
     let Some(id) = tcp_option_owner(context, receiver)? else {
         return Ok(context.number(-f64::from(libc::EBADF)));
     };
-    super::net_shared_vm::stop_read(&mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp, id);
+    super::net_shared_vm::stop_read(&mut context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().tcp(), id);
     super::stream_binding::release_reader(context, id);
     Ok(context.number(0.0))
 }
@@ -670,7 +670,7 @@ pub(crate) fn has_pending_read(
 ) -> Result<RootId, RootedError> {
     let pending = tcp_option_owner(context, receiver)?.is_some_and(|id| {
         super::net_shared_vm::socket_has_pending_read(
-            &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp,
+            &context.host_as::<crate::host::NodeHost>().shared_state().borrow().tcp(),
             id,
         )
     });

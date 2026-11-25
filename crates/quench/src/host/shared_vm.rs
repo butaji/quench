@@ -45,7 +45,7 @@ macro_rules! node_bindings {
         ]);
 
         /// Every operation's callback, by index. A constant, not a static: a table built from
-        /// it (`NodeHost::with_operations`) names only the callbacks it copies, so an image's
+        /// it (`NodeHost::with_capabilities`) names only the callbacks it copies, so an image's
         /// table links only the operations it keeps.
         pub const OPERATION_CALLBACKS: &[HostCallback] = quench_runtime::host_functions![@callbacks;
             $($(#[$attribute])* $scope $name ($length) => $callback),*
@@ -2556,8 +2556,8 @@ impl quench_runtime::Host for NodeHost {
         quench_runtime::Host::clock_millis(&mut SystemHost)
     }
 
-    fn validate_wasm(&mut self, bytes: &[u8], _mode: quench_runtime::ExecutionMode) -> bool {
-        quench_wasm::validate_binary(bytes)
+    fn validate_wasm(&mut self, bytes: &[u8], mode: quench_runtime::ExecutionMode) -> bool {
+        self.capabilities.wasm.is_some_and(|frontend| (frontend.validate)(bytes, mode))
     }
 
     fn compile_wasm(
@@ -2565,17 +2565,8 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        // Decoding with validation, and lowering, each run once per module and touch code
-        // the other does not, nor what ran before them: each phase's pages leave the
-        // resident set before the next phase, and the module runs.
-        crate::host::resident_pages::release_read_only_pages();
-        let module = quench_wasm::Engine::new().compile(bytes);
-        crate::host::resident_pages::release_read_only_pages();
-        let module = module
-            .and_then(|module| module.lower_shared_module_for(mode))
-            .map_err(|error| error.to_string());
-        crate::host::resident_pages::release_read_only_pages();
-        module
+        let frontend = self.capabilities.wasm.ok_or("WebAssembly compilation is not available in this host")?;
+        (frontend.compile)(bytes, mode)
     }
 
     fn resolve_dynamic_import(
@@ -2751,7 +2742,7 @@ impl quench_runtime::Host for NodeHost {
                 return Some(crate::aot::prefix::refused);
             }
         }
-        self.operations.get(index).copied()
+        self.capabilities.operations.get(index).copied()
     }
 
     fn function_row(&self, index: usize) -> Option<quench_runtime::staged::host_rows::HostRow> {

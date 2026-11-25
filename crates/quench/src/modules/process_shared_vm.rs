@@ -2081,27 +2081,28 @@ pub(crate) fn get_active_network_resources(
 ) -> Result<RootId, RootedError> {
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
     let state = shared.borrow();
+    let tcp = state.tcp();
     let active_sockets = state
         .net_sockets
         .iter()
         .filter(|(id, socket)| {
-            crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true)
+            crate::modules::net_shared_vm::socket_has_ref(&tcp, **id) == Some(true)
                 && (socket.parent_server.is_none()
-                    || crate::modules::net_shared_vm::connection_delivery_started(&state.tcp, **id))
+                    || crate::modules::net_shared_vm::connection_delivery_started(&tcp, **id))
         })
         .count()
         + state
             .net_closing_sockets
             .keys()
             .filter(|id| {
-                crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true)
+                crate::modules::net_shared_vm::socket_has_ref(&tcp, **id) == Some(true)
             })
             .count();
     let active_servers = state
         .net_servers
         .keys()
         .filter(|id| {
-            crate::modules::net_shared_vm::listener_has_ref(&state.tcp, **id) == Some(true)
+            crate::modules::net_shared_vm::listener_has_ref(&tcp, **id) == Some(true)
         })
         .count();
     let mut resources = Vec::with_capacity(active_sockets + active_servers);
@@ -2653,26 +2654,24 @@ fn poll_io(
     settle(runtime, ran)?;
     let ran = crate::modules::pipe_binding::poll(runtime, program)?;
     settle(runtime, ran)?;
-    let ran = crate::modules::child_process_ipc_shared_vm::poll(runtime, program)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::child_process_shared_vm::poll(runtime, program, shared_state)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::cares_binding::poll(runtime, program)?;
-    settle(runtime, ran)?;
-    let udp_progress = crate::modules::udp_binding::poll(runtime, shared_state)?;
-    let transport_progress = crate::modules::net_shared_vm::transport_poll::poll(runtime, program, shared_state)?;
+    let pollers = runtime.host_mut().capabilities().pollers;
+    for poll in [pollers.child_ipc, pollers.child_process, pollers.carriers].into_iter().flatten() {
+        let ran = poll(runtime, program)?;
+        settle(runtime, ran)?;
+    }
     // Each turn of the loop is a collection safepoint, once its network writes have gone
     // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
     // due collection would otherwise wait for guest code that loops. Nothing runs here,
     // and every value is a root.
-    runtime.collect_if_due(program).map_err(|error| error.to_string())?;
-    settle(runtime, transport_progress || udp_progress)?;
-    let ran = crate::modules::napi::poll(runtime, program)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::worker_shared_vm::poll(runtime, program, shared_state)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::dns_shared_vm::poll(runtime, program, shared_state)?;
-    settle(runtime, ran)?;
+    if let Some(poll) = pollers.transport {
+        let ran = poll(runtime, program)?;
+        runtime.collect_if_due(program).map_err(|error| error.to_string())?;
+        settle(runtime, ran)?;
+    }
+    for poll in [pollers.napi, pollers.worker, pollers.dns].into_iter().flatten() {
+        let ran = poll(runtime, program)?;
+        settle(runtime, ran)?;
+    }
     if has_referenced_shared_work(shared_state) {
         let ran = super::fs_watch_shared_vm::poll(runtime, program)?;
         settle(runtime, ran)?;
@@ -2821,7 +2820,7 @@ fn wait_for_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) {
     let extra = Vec::new();
     let control = shared_state.borrow().process_control.clone();
     let started = std::time::Instant::now();
-    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, &extra, wait);
+    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp(), &extra, wait);
     control.record_event_loop_idle(started.elapsed());
 }
 
@@ -2867,7 +2866,7 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
-        || crate::modules::net_shared_vm::has_work(&shared_state.borrow().tcp)
+        || crate::modules::net_shared_vm::has_work(&shared_state.borrow().tcp())
         || crate::modules::napi::has_work()
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)

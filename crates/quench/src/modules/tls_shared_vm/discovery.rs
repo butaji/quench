@@ -42,14 +42,14 @@ pub(crate) fn ciphers(
     _: &[quench_runtime::RootId],
 ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
     let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    if shared.borrow().tls_contexts.ciphers.is_none() {
+    if shared.borrow().tls().ciphers.is_none() {
         let names = discover()
             .map_err(|errors| super::super::crypto_error_shared_vm::decorated(context, errors))?;
-        shared.borrow_mut().tls_contexts.ciphers = Some(names);
+        shared.borrow_mut().tls().ciphers = Some(names);
     }
     let names = shared
         .borrow()
-        .tls_contexts
+        .tls()
         .ciphers
         .as_ref()
         .unwrap()
@@ -117,7 +117,7 @@ pub(crate) fn ca_certificates(
             .host_as::<crate::host::NodeHost>()
             .shared_state()
             .borrow()
-            .tls_contexts
+            .tls()
             .default_ca_certificates
             .clone();
         if let Some(certificates) = defaults {
@@ -246,7 +246,7 @@ fn set_default_ca_certificates(
         .host_as::<crate::host::NodeHost>()
         .shared_state()
         .borrow_mut()
-        .tls_contexts
+        .tls()
         .default_ca_certificates = Some(certificates);
     Ok(context.undefined())
 }

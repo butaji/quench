@@ -9,12 +9,14 @@ mod assets;
 pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceView, EmbeddedModules, EmbeddedImportResolution, EmbeddedModuleSource, ModuleAssets, ModuleFile, PreparedModuleSource};
 pub(crate) use assets::ModuleAssetState;
 mod graph;
+mod host_operations;
+mod image;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;
 pub(crate) mod prefix;
 mod strict;
-pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
+pub use compiler::{ImageHost, SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 pub use quench_runtime::native_link::NativeImageInputs;
 
 /// One compiler-owned source pool, shared by all embedding hosts.

@@ -78,6 +78,9 @@ impl Engine {
 ///
 /// The VM names no host type (`Vm::host` is erased), so the runtime is compiled once; this
 /// wrapper only keeps the host's type for the embedder's `host_mut` and snapshot hooks.
+/// The process status of an entry whose top-level await never settled.
+pub const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
+
 pub struct Runtime<H: Host> {
     vm: Vm,
     host: std::marker::PhantomData<fn() -> H>,

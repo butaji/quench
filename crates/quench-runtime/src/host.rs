@@ -1,5 +1,16 @@
 use std::io::{self, Write};
 
+/// A host's WebAssembly frontend: the two operations the `WebAssembly` namespace runs, with
+/// the host's own resident-page policy. A JS-only host leaves it uninstalled, so a compiled
+/// image links neither the decoder nor the validator.
+#[derive(Clone, Copy)]
+pub struct WasmFrontend {
+    /// Validate a binary without producing executable code.
+    pub validate: fn(&[u8], crate::ExecutionMode) -> bool,
+    /// Decode, validate and lower a binary for `mode`.
+    pub compile: fn(&[u8], crate::ExecutionMode) -> Result<crate::WasmModule, String>,
+}
+
 /// A frozen source failure is distinct from an incompatible native image.
 #[cfg(feature = "native-execution")]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +63,7 @@ pub enum CapabilityId {
     Done = 3,
     CreateRealm = 4,
     IsHTMLDDA = 5,
+    WriteErr = 6,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,6 +233,11 @@ pub trait Host: core::any::Any {
     }
 
     fn write_line(&mut self, text: &str);
+    /// Write one host diagnostic line to the error stream. A host whose `console` writes to its
+    /// own stream overrides this.
+    fn write_err(&mut self, text: &str) {
+        let _ = writeln!(io::stderr().lock(), "{text}");
+    }
     fn clock_millis(&mut self) -> f64;
 
     /// ECMAScript proper tail calls discard strict caller activations. Hosts
@@ -582,6 +599,11 @@ impl<'a> HostContext<'a> {
                 self.host.write_line(text.unwrap_or_default());
                 0.0
             }
+            CapabilityId::WriteErr => {
+                crate::clock::note_input("the host's direct output");
+                self.host.write_err(text.unwrap_or_default());
+                0.0
+            }
             CapabilityId::ClockMillis => {
                 crate::clock::note_input("the clock");
                 self.host.clock_millis()
@@ -602,6 +624,10 @@ pub struct SystemHost;
 impl Host for SystemHost {
     fn write_line(&mut self, text: &str) {
         let _ = writeln!(io::stdout().lock(), "{text}");
+    }
+
+    fn write_err(&mut self, text: &str) {
+        let _ = writeln!(io::stderr().lock(), "{text}");
     }
 
     fn clock_millis(&mut self) -> f64 {
