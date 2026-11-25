@@ -39,7 +39,7 @@ impl LaneBodyStats {
         // A guard's leave names the lowering line that made it (`JsStepDispatch::exit_line`).
         let compile = if line == 0 { format!("c{compile}") } else { format!("c{compile} L{line}") };
         let at = match exit {
-            crate::compiled::LaneExit::At(pc) => format!("{compile} {pc}#{}@{pc}", self.function.get()),
+            crate::compiled::LaneExit::At(pc) => format!("{compile} {pc}{}#{}@{pc}", exits.describe(exit), self.function.get()),
             crate::compiled::LaneExit::Entry => format!("{compile} entry#{}", self.function.get()),
             crate::compiled::LaneExit::Inlined { frame, pc } => match frames.get(frame) {
                 Some(call) => format!("{compile} {frame}:{pc}{}#{}@{pc}", exits.describe(exit), call.target.function),
