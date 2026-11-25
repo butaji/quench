@@ -1483,21 +1483,21 @@ fn admit_region(
     method_calls: MethodCalls,
     native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
-    // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
-    if !crate::compiled::admission::stencil_only()
-        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls, native_call)
-    {
+    // A loop whose every iteration leaves (at a call, a throw) is still a region where the stencil tier runs:
+    // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop (`stencil_only`).
+    let leaves = (!crate::compiled::admission::stencil_only()).then(|| iteration::iterates_natively(&instructions, header, method_calls, native_call).err()).flatten();
+    if let Some(offset) = leaves && !crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
+    let stencil_only = leaves.is_some();
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
     ) {
-        Ok(region) => Ok(region),
+        Ok(region) => Ok(LoopRegion { stencil_only, ..region }),
         // A loop the register analysis rejects is admitted on value identities where it can be; a
         // call the renamed loop stops at is the inliner's (`is_call_boundary`).
         Err(failure) => match lifetime::admit_lifetime_roles(instructions, registers, constants, sites, live, header, objects, method_calls) {
-            Some(Ok(region)) => Ok(region),
+            Some(Ok(region)) => Ok(LoopRegion { stencil_only, ..region }),
             Some(Err(renamed)) if renamed.is_call_boundary() => Err(renamed),
             _ => Err(failure),
         },
@@ -1895,6 +1895,7 @@ fn admit_register_roles(
         .collect();
     let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
     Ok(LoopRegion {
+        stencil_only: false,
         header,
         backedge,
         numbers,

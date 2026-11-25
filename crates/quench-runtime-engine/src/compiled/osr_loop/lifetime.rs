@@ -66,7 +66,7 @@ fn flow_region(instructions: Vec<WideInstruction>, registers: usize,
         dynamic_arrays: BTreeSet::new(),
         field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
         identity_branches: BTreeMap::new(), instructions, constants: BTreeMap::new(),
-        live, inlining: None,
+        live, inlining: None, stencil_only: false,
     }
 }
 

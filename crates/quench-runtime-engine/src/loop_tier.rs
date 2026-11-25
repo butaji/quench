@@ -11,10 +11,18 @@ pub(crate) use quench_runtime::vm::engine_types::LoopTier;
 
 #[quench_macros::ext(LoopTierOps1)]
 impl LoopTier {
-    pub(crate) fn weigh_run(&mut self, backedges: u64) {
+    /// Weighs a run that took `backedges` backward edges; `left` where it left inside the loop rather than at its
+    /// exit. Runs that each leave before their first backward edge, `widen_after_leaves` in a row, pay their entry
+    /// for nothing: the code goes and the site compiles no more, so its backward jump stays the interpreter's.
+    pub(crate) fn weigh_run(&mut self, tiers: &Tiers, backedges: u64, left: bool) {
         self.runs = self.runs.saturating_add(1);
         self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
+        self.fruitless = if left && backedges == 0 { self.fruitless.saturating_add(1) } else { 0 };
+        if self.fruitless >= tiers.loops.widen_after_leaves {
+            self.compilations = tiers.loops.max_compilations;
+            if let Some(code) = self.code.take() { code.retire(); }
+        }
     }
 
     /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations reach
@@ -271,10 +279,11 @@ pub(crate) fn loop_compile_in_lane(
     let machine = unsafe { vm(cx) };
     // The tier of this compile: b-jit where the u-jit region is not yet ahead of it, counting
     // the interpreter's jumps and the native iterations the loop took so far.
-    let base = crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
+    // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
+    let base = region.stencil_only || crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
         u64::from(site.taken.get()).saturating_add(tier.iterations));
     tier.base = base && !crate::compiled::admission::stencil_regions();
-    tier.promote_at = crate::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span());
+    tier.promote_at = crate::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span()).filter(|_| !region.stencil_only);
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = crate::compiled::process_lane_helpers();

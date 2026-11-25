@@ -7082,7 +7082,7 @@ fn loop_run_in_lane(
     if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
     crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
     // A run pays for its entry with the iterations it completed, wherever it leaves.
-    site.note_run(entry.backedge_count());
+    site.note_run(entry.backedge_count(), exit.at_place() && !region.holds_exit(exit));
     if nested {
         return region_left_in_lane(cx, r, site.function, exit);
     }

@@ -1421,6 +1421,9 @@ pub struct LoopRegion {
     pub live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub inlining: Option<Box<Inlining>>,
+    /// Whether its iterations leave natively (at a call no row completes, a throw), so only the stencil tier
+    /// takes it, which lowers each instruction: Cranelift never compiles it (`osr_loop::admit_region`).
+    pub stencil_only: bool,
 }
 
 /// Storage and guest-call allowance proved before an inlined body runs.
@@ -1755,6 +1758,9 @@ pub struct LoopTier {
     /// bound misses every versioned entry.
     pub entry_misses: u16,
     pub unbounded: bool,
+    /// Runs in a row that left inside the loop before its first backward edge (`LoopTier::weigh_run`): code that
+    /// pays its entry for no iteration, whose site gives up its native code past `widen_after_leaves` of them.
+    pub fruitless: u16,
     /// Whether the current code (or the compile under way) is a b-jit region the default mode
     /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
     /// compile (`promote`).
