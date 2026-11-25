@@ -133,6 +133,10 @@ pub(crate) struct HostSourceRoutes {
     /// The interactive REPL a run with no entry starts (`repl::start_interactive`), which
     /// evaluates what it reads.
     pub(crate) interactive: fn(&mut quench_runtime::NativeContext<'_>) -> Result<(), RootedError>,
+    /// The builtin modules an evaluated entry (`-e`, `-p`) sees as globals (`eval_globals_shared_vm::install`).
+    pub(crate) eval_globals: fn(&mut quench_runtime::NativeContext<'_>) -> Result<(), RootedError>,
+    /// An inline entry's module record and globals (`commonjs::install_inline_entry`).
+    pub(crate) inline_entry: fn(&mut quench_runtime::NativeContext<'_>) -> Result<(), RootedError>,
 }
 static SOURCE_ROUTES: std::sync::OnceLock<HostSourceRoutes> = std::sync::OnceLock::new();
 
@@ -151,6 +155,8 @@ pub fn enable_dynamic_source() {
         failed_wrapper_goal: commonjs::failed_wrapper_goal_parsed,
         filesystem_import: NodeHost::resolve_filesystem_import,
         interactive: crate::modules::repl::start_interactive,
+        eval_globals: crate::modules::eval_globals_shared_vm::install,
+        inline_entry: commonjs::install_inline_entry,
     });
 }
 

@@ -527,6 +527,34 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     finish_initialize(context)
 }
 
+/// The module record, globals and printing of an inline entry (`-e`, `-p`), as Node's
+/// `evalScript` binds them (a source route: `HostSourceRoutes::inline_entry`).
+pub(crate) fn install_inline_entry(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let filename = inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
+    let module = module_record(context, &filename, None, false)?;
+    let label = context.host_as::<crate::host::NodeHost>().inline_source.label();
+    let label = context.string_rooted(label);
+    set(context, module, "id", label)?;
+    let global = context.global_root()?;
+    for name in ["exports", "require"] {
+        let value = get(context, module, name)?;
+        set(context, global, name, value)?;
+    }
+    set(context, global, "module", module)?;
+    set(context, global, "__filename", label)?;
+    let dirname = context.string_rooted(".");
+    set(context, global, "__dirname", dirname)?;
+    #[cfg(quench_openssl_provider)]
+    if context.host_as::<crate::host::NodeHost>().eval_crypto {
+        crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
+    }
+    if let Some(source) = context.host_as::<crate::host::NodeHost>().eval_print.take() {
+        let name = context.host_as::<crate::host::NodeHost>().inline_source.compilation_name();
+        crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
+    }
+    Ok(())
+}
+
 /// The part of `initialize` after the startup snapshot point (`startup_snapshot`): what
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -564,7 +592,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
     if context.host_as::<crate::host::NodeHost>().eval_builtin_globals {
-        context.scoped(crate::modules::eval_globals_shared_vm::install)?;
+        let install = super::source_route(|routes| routes.eval_globals)
+            .ok_or_else(|| RootedError::host("this binary evaluates no source"))?;
+        context.scoped(install)?;
     }
     if context.is_module()? {
         crate::aot::prefix::arm(context)?;
@@ -587,28 +617,10 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         crate::aot::prefix::arm(context)?;
         context.call_rooted(run_main, module, &[filename])?;
     } else {
-        let filename = inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
-        let module = module_record(context, &filename, None, false)?;
-        let label = context.host_as::<crate::host::NodeHost>().inline_source.label();
-        let label = context.string_rooted(label);
-        set(context, module, "id", label)?;
-        let global = context.global_root()?;
-        for name in ["exports", "require"] {
-            let value = get(context, module, name)?;
-            set(context, global, name, value)?;
-        }
-        set(context, global, "module", module)?;
-        set(context, global, "__filename", label)?;
-        let dirname = context.string_rooted(".");
-        set(context, global, "__dirname", dirname)?;
-        #[cfg(quench_openssl_provider)]
-        if context.host_as::<crate::host::NodeHost>().eval_crypto {
-            crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
-        }
-        if let Some(source) = context.host_as::<crate::host::NodeHost>().eval_print.take() {
-            let name = context.host_as::<crate::host::NodeHost>().inline_source.compilation_name();
-            crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
-        }
+        // An inline entry (`-e`, `-p`), which only a binary that compiles source runs.
+        let install = super::source_route(|routes| routes.inline_entry)
+            .ok_or_else(|| RootedError::host("this binary runs no inline source"))?;
+        context.scoped(install)?;
     }
     Ok(())
 }
