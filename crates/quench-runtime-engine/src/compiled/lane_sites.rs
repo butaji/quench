@@ -228,7 +228,9 @@ impl Vm {
         };
         let value = self.own_plain_data(holder, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
-        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None })
+        let array_link = matches!(row.holder, quench_runtime::vm::native_rows::Holder::ArrayPrototype)
+            .then(|| quench_runtime::tier_surface::ProtoLink::of(holder).bits());
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None, array_link })
     }
 
     /// The field read `instruction` of a method by a name some realm prototype holds as a native a loop
@@ -248,7 +250,7 @@ impl Vm {
         let value = self.own_plain_data(holder, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
         (*held == row.native).then(|| self.native_holder(holder)).flatten()
-            .map(|holder| GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None })
+            .map(|holder| GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None, array_link: None })
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
@@ -294,7 +296,7 @@ impl Vm {
         let value = self.own_plain_data(object, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
-        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell }))
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell, array_link: None }))
     }
 
     /// The exact shape of `holder`, an object whose own native functions code calls inline,

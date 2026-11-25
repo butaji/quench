@@ -1452,11 +1452,11 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
-        // An element store or an append may grow its array, which changes its `length`; a store
+        // An element store, an append or a pop may change its array's `length`; a store
         // `quiet_store` proves through a typed view changes none.
         let resizes = body.iter().enumerate().any(|(offset, candidate)| {
             let pc = header + offset;
-            (stores_element(*candidate) && !quiet_store(pc)) || native_calls::appends(intrinsics, pc)
+            (stores_element(*candidate) && !quiet_store(pc)) || native_calls::resizes(intrinsics, pc)
         });
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
@@ -4470,6 +4470,13 @@ impl Lowering<'_, '_> {
     /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
         self.forget_append_rooms(pc);
+        self.reload_dense_views(pc);
+    }
+
+    /// `reload_dense_arrays` after a step that moves no backing and grows none (`pop`, which
+    /// shortens one in place): each view reads its count again, and its append room, the
+    /// backing's capacity, and its prototypes' proof stay.
+    fn reload_dense_views(&mut self, pc: usize) {
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
             .filter(|array| matches!(array.views, ElementViews::Dense | ElementViews::Double) && (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {

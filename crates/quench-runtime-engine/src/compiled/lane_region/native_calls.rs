@@ -75,11 +75,6 @@ impl Inline {
         matches!(self, Self::Builtin(builtin) if builtin.mutates_arrays())
     }
 
-    /// Whether a loop holds the operation natively: it changes no array, or it appends to one
-    /// and reloads the views the append may move (`Lowering::hoisted_push`).
-    const fn holds_in_loop(self) -> bool {
-        !self.mutates_arrays() || self.appends()
-    }
 
     /// Whether the operation appends a value to an array (`push`).
     const fn appends(self) -> bool {
@@ -104,17 +99,16 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(crate) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a lane body runs a call of `native` inline and a loop holds it natively: the call
-/// changes no array, or appends to one (`holds_in_loop`). A loop whose calls are all such runs
+/// Whether a lane body runs a call of `native` inline, which a loop holds natively (`holds_in_loop`). A loop whose calls are all such runs
 /// natively in a body (`loop_body::offer_body`).
 pub(crate) fn inlines_in_loop(native: Native) -> bool {
-    Inline::of(native).is_some_and(Inline::holds_in_loop)
+    Inline::of(native).is_some()
 }
 
 /// Whether a call of `native` with `count` arguments runs inline in a loop that holds it, the lane's test
-/// of `intrinsic_calls` (`accepts`, `holds_in_loop`) for the region analysis.
+/// of `intrinsic_calls` (`accepts`) for the region analysis.
 pub(crate) fn inlines_in_loop_call(native: Native, count: u16) -> bool {
-    Inline::of(native).is_some_and(|inline| inline.accepts(count) && inline.holds_in_loop())
+    Inline::of(native).is_some_and(|inline| inline.accepts(count))
 }
 
 /// Whether the call at `pc` of `decoded` is a method call of a native that `inlines_in_loop_call` runs in place:
@@ -143,9 +137,15 @@ pub(crate) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| !inline.mutates_arrays())
 }
 
-/// Whether a loop holds the call at `pc` natively (`holds_in_loop`).
+/// Whether a loop holds the call at `pc` natively: it runs inline, and one that changes an array
+/// (`push`, `pop`) reloads the views it may move or shorten (`Lowering::reload_dense_arrays`).
 pub(crate) fn holds_in_loop(intrinsics: &Intrinsics, pc: usize) -> bool {
-    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.holds_in_loop())
+    intrinsics.get(pc).copied().flatten().is_some()
+}
+
+/// Whether the call at `pc` changes an array's length (`push`, `pop`).
+pub(crate) fn resizes(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.mutates_arrays())
 }
 
 /// Whether the call at `pc` appends to an array (`appends`): the array's length may grow.
