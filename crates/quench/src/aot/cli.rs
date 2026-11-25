@@ -254,7 +254,15 @@ fn resumes_at_rest(saved: &[SavedWait]) -> String {
     }).collect::<Vec<_>>().join(", ");
     // The runs answer every yes-or-no input the build-time evaluation asked, each both ways
     // (`strict::specialize`), so one always holds: an image with saved runs links no other start.
-    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\n", !saved.is_empty())
+    // An image that only resumes them installs lane handlers for the opcodes their programs
+    // hold, any other running on the general path; one that also runs its entry, every one.
+    let mut opcodes: Vec<u16> = saved.iter().flat_map(|wait| wait.held.2.iter().copied()).collect();
+    opcodes.sort_unstable();
+    opcodes.dedup();
+    let group = crate::LANE_ROW_GROUP;
+    let rows = opcodes.iter().map(|op| format!("&quench::lane_rows::g{}::R{}", op / group, op % group)).collect::<Vec<_>>().join(", ");
+    let lanes = if saved.is_empty() { "quench::install_all_lane_rows()".to_owned() } else { format!("quench::install_lane_rows(&[{rows}])") };
+    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\nfn install_lanes() {{ {lanes} }}\n", !saved.is_empty())
 }
 
 fn compile(options: Options) -> Result<(), String> {

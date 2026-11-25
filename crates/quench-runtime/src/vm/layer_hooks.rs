@@ -46,8 +46,8 @@ layer_hooks! {
     fn canonical_locale_list => quench_layer_canonical_locale_list(vm: &mut Vm, p: &ResidualProgram, locales: Option<Value>) -> Result<Vec<String>, JsError>;
     /// The collation `String.prototype.localeCompare` compares with.
     fn locale_compare_collation => quench_layer_locale_compare_collation(vm: &mut Vm, p: &ResidualProgram, locales: Value, options: Value) -> Result<std::rc::Rc<intl_core::Collation>, JsError>;
-    /// Installs the JIT's compile routes (the engine's `jit_routes`), as `Vm::new` makes
-    /// a runtime: a VM only restored at rest (`Vm::new_at_rest`) never names them.
+    /// Installs the JIT's compile routes (the engine's `jit_routes`) and every lane handler, as
+    /// `Vm::new` makes a runtime: a VM only restored at rest (`Vm::new_at_rest`) names neither.
     fn enable_jit => quench_layer_enable_jit() -> ();
     /// `%SegmentIteratorPrototype%.next`.
     fn intl_segment_iterator_next => quench_layer_intl_segment_iterator_next(vm: &mut Vm, p: &ResidualProgram, iterator: Value) -> Result<Value, JsError>;

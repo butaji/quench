@@ -309,6 +309,12 @@ impl<H: Host> Runtime<H> {
         self.vm.held_host_operations()
     }
 
+    /// The opcodes the programs this runtime holds run, lowered: a saved runtime's image
+    /// links lane handlers for these alone (`LaneTables::kept`).
+    pub fn held_opcodes(&self) -> Vec<u16> {
+        self.vm.programs.lowered_ops()
+    }
+
     /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
     /// as its main program and the host state `read_host` reads back. Returns the entry as the
     /// restored runtime runs it, for `execute_restored` and every later call naming it.

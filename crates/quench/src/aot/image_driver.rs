@@ -9,6 +9,8 @@ const _: () = assert!(SUPPORT.is_available() && (SUPPORT.allows_dynamic_source()
 include!(env!("QUENCH_NATIVE_CATALOG"));
 
 fn run() -> Result<std::process::ExitCode, String> {
+    // The lane handlers this image's programs run.
+    install_lanes();
     quench::host::resident_pages::phase_peak("native worker entry");
     let assets = embedded_modules();
     let entry_path = assets

@@ -2670,7 +2670,7 @@ use quench_runtime::vm::engine_types::ACC_C;
 /// condition.
 const ACC_PAIR: u8 = 4;
 /// Accumulator positions a record may read: none, A, B, C and the pair.
-const ACC_POSITIONS: usize = 5;
+pub(crate) const ACC_POSITIONS: usize = 5;
 
 
 
@@ -15978,7 +15978,7 @@ fn lane_return_wasm_export(cx: *mut LaneContext, value: Value) -> Resumed {
 /// producer: whenever it falls through to the next record, it has written
 /// its result register and carries the written value into that record.
 #[derive(Clone, Copy)]
-struct LaneHandler {
+pub(crate) struct LaneHandler {
     handler: Handler,
     produces: bool,
 }
@@ -16098,11 +16098,11 @@ const fn other_handler(opcode: Op) -> Option<Handler> {
 
 /// Dense fast handlers cover every opcode, in whole table rows: a generated row
 /// (`admits_row`) runs from its table entry whatever its index.
-const TABLE_SLOTS: usize = Op::COUNT.next_multiple_of(TABLE_ROW as usize);
+pub(crate) const TABLE_SLOTS: usize = Op::COUNT.next_multiple_of(TABLE_ROW as usize);
 
 /// Opcodes per generated table row.
-const TABLE_ROW: u16 = 16;
-const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
+pub(crate) const TABLE_ROW: u16 = 16;
+pub(crate) const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
 // `lane_table` lists one generated row per sixteen opcodes.
 const _: () = assert!(TABLE_ROWS == 19, "add a `table_row!` to `lane_table` per sixteen new opcodes");
 
@@ -16171,12 +16171,12 @@ macro_rules! lane_table {
     };
 }
 
-struct LaneTable;
+pub(crate) struct LaneTable;
 
 impl LaneTable {
     /// Tables indexed by jump direction (forward, then backward: a
     /// safepoint) and by accumulator field.
-    const TABLES: [[Table; ACC_POSITIONS]; 2] = [
+    pub(crate) const TABLES: [[Table; ACC_POSITIONS]; 2] = [
         [
             lane_table!(false, ACC_NONE),
             lane_table!(false, ACC_A),
@@ -16579,6 +16579,7 @@ fn plain_frame_local(function: &Function, slot: usize) -> bool {
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
+use crate::jit_routes::lane_handler;
 fn derive_lane_view<'live>(
     function_id: u32,
     function: &Function,
@@ -16597,7 +16598,6 @@ fn derive_lane_view<'live>(
     // Every backward jump observes host termination, including allocation-free
     // Wasm loops. Collection and stack-floor exits share this safepoint.
 
-    let tables = const { &LaneTable::TABLES };
     // Only Wasm bodies access linear memory.
     let memory_register = (kind == quench_runtime::bytecode::ProgramKind::Wasm)
         .then(|| memory_register(function))
@@ -16669,7 +16669,7 @@ fn derive_lane_view<'live>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                lane_handler(backward_jump, acc, op as usize)
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
                             ACC_NONE => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }) as Handler,
@@ -16684,7 +16684,7 @@ fn derive_lane_view<'live>(
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
             {
                 // The count of the function's kept arguments: its row with that fact (`row_near`).
-                let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
+                let row = lane_handler(backward_jump, acc, op as usize);
                 row.map(|row| LaneHandler { handler: row_near::<ARGUMENTS_COUNT>(row.handler as *const ()).unwrap_or(row.handler), ..row })
             } else if quench_runtime::staged::local_read_family(op)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
@@ -16697,7 +16697,7 @@ fn derive_lane_view<'live>(
                     quench_runtime::staged::forwarded_call_family(next.op()) && next.call_window().last() == Some(instruction.result_register())
                 });
                 let object = kept == quench_runtime::bytecode::KeptArguments::Passes && !forwards;
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                lane_handler(backward_jump, acc, op as usize)
                     .and_then(|row| lane_frame::kept_row(row.handler as *const (), object)
                         .map(|handler| LaneHandler { handler, ..row }))
             } else if quench_runtime::staged::calls(op) && iteration_step_in_lane(&decoded, pc) {
@@ -16733,15 +16733,12 @@ fn derive_lane_view<'live>(
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler(instruction)).flatten() {
                 handler
             } else {
-                tables[usize::from(backward_jump)][usize::from(acc)]
-                    .get(op as usize)
-                    .copied()
-                    .flatten()
+                lane_handler(backward_jump, acc, op as usize)
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
             // a record whose `a` carries result flags (a numeric local target) runs the general
             // step, which decodes them, so no row tests for them.
-            let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
+            let row = lane_handler(backward_jump, acc, op as usize);
             let selected = selected.map(|chosen| {
                 let flagged = admits_row(op)
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
@@ -16784,10 +16781,7 @@ fn derive_lane_view<'live>(
     let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: u16, acc: u8| {
-        tables[0][usize::from(acc)]
-            .get(usize::from(op))
-            .copied()
-            .flatten()
+        lane_handler(false, acc, usize::from(op))
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`
@@ -16795,10 +16789,7 @@ fn derive_lane_view<'live>(
     let plain_served = |handler: *const (), op: u16, accs: &[u8]| {
         [false, true].into_iter().find_map(|backward| {
             accs.iter().copied().find(|&acc| {
-                tables[usize::from(backward)][usize::from(acc)]
-                    .get(usize::from(op))
-                    .copied()
-                    .flatten()
+                lane_handler(backward, acc, usize::from(op))
                     .is_some_and(|served| handler == served.handler as *const ())
             })
             .map(|acc| (backward, acc))
@@ -16844,7 +16835,7 @@ fn derive_lane_view<'live>(
     // A record's plain jump, with its direction.
     let jump_direction = |handler: *const ()| {
         [false, true].into_iter().find(|&backward| {
-            tables[usize::from(backward)][usize::from(ACC_NONE)][quench_runtime::staged::JUMP_ROW as usize]
+            lane_handler(backward, ACC_NONE, quench_runtime::staged::JUMP_ROW as usize)
                 .is_some_and(|jump| handler == jump.handler as *const ())
         })
     };
@@ -16948,7 +16939,7 @@ fn derive_lane_view<'live>(
             }
             let op = decoded[pc].op() as u16;
             let Some((backward, _)) = plain_served(records[pc].handler, op, &[ACC_A, ACC_B, ACC_C, ACC_PAIR]) else { continue };
-            if let Some(plain) = tables[usize::from(backward)][usize::from(ACC_NONE)].get(usize::from(op)).copied().flatten() {
+            if let Some(plain) = lane_handler(backward, ACC_NONE, usize::from(op)) {
                 records[pc].handler = plain.handler as *const ();
             }
         }

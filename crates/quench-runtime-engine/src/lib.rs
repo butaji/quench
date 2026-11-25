@@ -341,4 +341,5 @@ pub mod api {
     pub use crate::compiled::ahead_images::AheadImagesOps1;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1;
     pub use crate::native_program::NativeJsProgramOps1;
+    pub use crate::jit_routes::{LANE_ROW_GROUP, LaneRow, install_all_lane_rows, install_lane_rows, lane_rows};
 }
