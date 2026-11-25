@@ -83,6 +83,8 @@ mod admission;
 mod delete;
 mod operation;
 pub use operation::Operation;
+pub mod c_twins;
+pub use c_twins::{CKernel, CTwin};
 pub use operation::kind as op_kind;
 #[cfg(not(stencil_build))]
 pub use operation::{COMPARE_JUMP_ROW, METHOD_CALL_ROW};

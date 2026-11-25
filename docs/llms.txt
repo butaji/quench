@@ -8,7 +8,8 @@ Key measured facts (interpreter only in every engine: quench --no-jit, node --ji
 - V8-v7, 14 Nov 2026: Quench scores 1.49x to 2.57x the faster of Node and Bun on all 8 benchmarks; peak memory 0.28x to 0.55x of the smaller on 7 of 8 (splay 1.07x).
 - JetStream 3, 17 Nov 2026, 56 tests all three finish: score 34.3 (Node 39.7, Bun 32.2); peak memory 28.5 MB (Node 110.1 MB, Bun 47.7 MB).
 - Test262: 53,353 passing, 0 failing, 53 waived (Node-identical failures, still counted as failures). WebAssembly spec: 67,124 of 67,124.
-- Weak spots: cold code loading, async/promises, proxies; JIT tiers not yet competitive; no AOT speed numbers published; Deno not measured.
+- AOT, 25 Nov 2026: quench compile --strict-aot evaluates a program at build time up to its first run-time input. Hello world compiles to a 4,896-byte executable, 0.96 ms startup, 1.3 MB peak RSS (C: 14 KB, 0.89 ms, 1.36 MB; Node 22: 27.5 ms, 36 MB). Programs that read input fall back to a full image (readline REPL: 71.3 MB, 6.2 ms, 4.42 MB); shrinking that is in progress.
+- Weak spots: cold code loading, async/promises, proxies; JIT tiers not yet competitive; no AOT compute speed numbers published; Deno not measured.
 
 ## Built for agent Code Mode
 Quench targets agent harnesses that run model-written code in-process (Code Mode), often hundreds of agents per machine:
@@ -32,6 +33,10 @@ Quench targets agent harnesses that run model-written code in-process (Code Mode
 - [JavaScript engine for AI agents (Code Mode, embedded, no JIT)](https://quench.run/javascript-engine-for-ai-agents/)
 
 ## Blog
+- [Hello world in 4,896 bytes: AOT as the JIT run at build time](https://quench.run/blog/hello-world-in-4896-bytes/)
+- [Strict AOT: a compiler that refuses, and names the input](https://quench.run/blog/strict-aot-refuses-and-names-the-input/)
+- [Chasing a sub-megabyte readline binary](https://quench.run/blog/chasing-a-sub-megabyte-readline-binary/)
+- [From 538 to 224 seconds: rebuilding a JavaScript engine faster](https://quench.run/blog/incremental-build-from-538-to-224-seconds/)
 - [Where Quench stands: JetStream 3 with the JIT off](https://quench.run/blog/where-quench-stands/)
 - [One interpreter, four outputs](https://quench.run/blog/one-interpreter-four-outputs/)
 - [AOT without a second compiler](https://quench.run/blog/aot-without-a-second-compiler/)

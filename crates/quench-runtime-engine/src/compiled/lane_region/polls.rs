@@ -4,13 +4,27 @@
 use crate::ext_traits::*;
 use super::*;
 
-/// Specializes the interrupt owner at the polls no reentry reaches (`retain_closed_polls`).
+/// Specializes the interrupt owner at the polls no reentry reaches (`retain_closed_polls`); with
+/// none, the owner's call (`interrupt_owner_call`) is removed.
 pub(crate) fn specialize_closed_polls(native: &mut ir::Function, reentries: &[ir::Block],
-    polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>, helpers: LaneHelpers, context: ir::Value,
-    isa: &dyn cranelift_codegen::isa::TargetIsa) {
-    if polls.is_empty() { return; }
+    polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>, owner: ir::Inst) {
     retain_closed_polls(native, reentries, polls);
-    if !polls.is_empty() { specialize_interrupt_owner(native, helpers, context, polls, isa); }
+    if polls.is_empty() { native.layout.remove_inst(owner); }
+    else { specialize_interrupt_owner(native, owner, polls); }
+}
+
+/// The interrupt owner's proof: a call of its lane helper (`LaneHelper::InterruptOwner`), made
+/// once after helper binding and before guest execution, which the closed polls are gated on.
+pub(crate) fn interrupt_owner_call(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, context: ir::Value,
+    isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Inst {
+    let target = helpers.target(builder, LaneHelper::InterruptOwner);
+    let signature = crate::compiled::call_signature::typed_signature(isa.default_call_conv(), &[types::I64], &[types::I64]);
+    let signature = builder.import_signature(signature);
+    let exclusive = emit(builder).call_signature(signature, target, &[context])[0];
+    match builder.func.dfg.value_def(exclusive) {
+        ir::ValueDef::Result(call, _) => call,
+        _ => unreachable!("a call's result"),
+    }
 }
 
 /// A callback retires ownership only on paths reachable from its completion. A callback
@@ -35,40 +49,11 @@ pub(crate) fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Bloc
     });
 }
 
-/// The address of the interrupt owner helper: a symbol for a frameless Number region, whose
-/// loader resolves it (`relocs::numeric_symbol`), else the helper table's.
-fn interrupt_owner_address(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, helpers: LaneHelpers) -> ir::Value {
-    if helpers.names_symbols() {
-        return quench_runtime::vm::jit_backend::symbol_in(cursor, RelocKind::Helper as u32, LaneHelper::InterruptOwner as u32);
-    }
-    let build = cursor.ins();
-    match helpers.table_address(LaneHelper::InterruptOwner) {
-        HelperAddress::Embedded(address) => build.iconst(types::I64, address),
-        HelperAddress::Loaded { table, offset } => build.load(types::I64, super::super::invariant(), table, offset),
-    }
-}
-
-/// Bind the current owner's proof once, after helper binding and before guest execution.
-/// Each selected poll lies before any reachable callback completion.
-fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers, context: ir::Value,
-    polls: &[ir::Inst], isa: &dyn cranelift_codegen::isa::TargetIsa)
-{
+/// Gates each selected poll on the owner's proof (`interrupt_owner_call`). Each selected poll lies
+/// before any reachable callback completion.
+fn specialize_interrupt_owner(function: &mut ir::Function, call: ir::Inst, polls: &[ir::Inst]) {
     use cranelift_codegen::cursor::{Cursor, FuncCursor};
-    let entry = function.layout.entry_block().expect("native entry");
-    let after = match helpers {
-        LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
-            ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
-        },
-        LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
-        _ => None,
-    };
     let mut cursor = FuncCursor::new(function);
-    if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
-    else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
-    let address = interrupt_owner_address(&mut cursor, helpers);
-    let signature = crate::compiled::call_signature::typed_signature(isa.default_call_conv(), &[types::I64], &[types::I64]);
-    let signature = cursor.func.import_signature(signature);
-    let call = cursor.ins().call_indirect(signature, address, &[context]);
     let exclusive = cursor.func.dfg.inst_results(call)[0];
     let mut gates = Vec::with_capacity(polls.len());
     for &poll in polls {
@@ -89,7 +74,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
             let interrupt = self.interrupt;
-            let proof = super::super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
+            let proof = super::super::EmitProof::Safepoint { interrupt };
             self.step(state, frame::Edges::Value, quench_runtime::staged::Operation::Safepoint { proof });
             return;
         }
@@ -102,7 +87,7 @@ impl Lowering<'_, '_> {
 
     pub(crate) fn emit_fault_poll(&mut self) {
         frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
-            super::super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
+            super::super::EmitProof::Safepoint { interrupt: self.interrupt });
     }
 
     /// Joining edges must not move a guard, conversion or recovery across the

@@ -55,7 +55,7 @@ impl Emitter<'_, '_> {
     fn call_in_instance(
         &mut self,
         record: ir::Value,
-        body: ir::Value,
+        body: quench_runtime::staged::machine::CallTarget<ir::Value>,
         signature: &quench_runtime::WasmSignature,
         buffers: (ir::Value, ir::Value),
     ) -> ir::Value {
@@ -73,7 +73,7 @@ impl Emitter<'_, '_> {
         // The record's length is the one its code was last published with: the memory may have
         // grown since (TOD-1790), so the length is read from the memory itself on the way in,
         // and again on the way out, as the callee may have grown a memory the caller shares.
-        let leaf = switched_memory_length as *const () as usize;
+        let leaf = crate::compiled::slow_paths::EngineSlowPath::SwitchedMemoryLength;
         let length = self.call_leaf(leaf, &[context]);
         let depth = self.push_root(record);
         let length = self.memory.length.then_some(length);
@@ -114,7 +114,7 @@ impl Emitter<'_, '_> {
 
 /// The length of the memory of the instance the context runs now, read from the memory and
 /// written to the context, which every access after it reads (`WasmMemory::memory_length`).
-unsafe extern "C" fn switched_memory_length(context: *mut CallContext) -> u64 {
+pub(super) unsafe extern "C" fn switched_memory_length(context: *mut CallContext) -> u64 {
     // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
     // that call.
     let context = unsafe { &mut *context };

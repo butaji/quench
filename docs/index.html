@@ -1049,11 +1049,12 @@
             <div class="tile">
                 <h2>Follow the build</h2>
                 <ul>
+                    <li><a class="tlink" href="/blog/hello-world-in-4896-bytes/">Hello world in 4,896 bytes: AOT as the JIT run at build time</a></li>
+                    <li><a class="tlink" href="/blog/chasing-a-sub-megabyte-readline-binary/">Chasing a sub-megabyte readline binary</a></li>
                     <li><a class="tlink" href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a></li>
                     <li><a class="tlink" href="/blog/an-instruction-budget-for-every-operation/">3 × C + 6: an instruction budget for every operation</a></li>
-                    <li><a class="tlink" href="/blog/one-interpreter-four-outputs/">One interpreter, four outputs</a></li>
-                    <li><a class="tlink" href="/benchmarks/">All benchmarks, dated, with weak spots</a></li>
-                    <li><a class="tlink" href="/blog/">All 17 posts</a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
+                                        <li><a class="tlink" href="/benchmarks/">All benchmarks, dated, with weak spots</a></li>
+                    <li><a class="tlink" href="/blog/">All 21 posts</a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
                 </ul>
             </div>
         </section>
@@ -1075,7 +1076,7 @@
                     </details>
                     <details>
                         <summary>What does AOT compilation mean in Quench?</summary>
-                        <p>Quench can compile an entry file and the modules it imports into a single native executable ahead of time. The AOT compiler is derived from the interpreter by specialization, so a compiled program follows the same semantics as an interpreted one.</p>
+                        <p>Quench can compile an entry file and the modules it imports into a single native executable ahead of time. The AOT compiler is derived from the interpreter by specialization, so a compiled program follows the same semantics as an interpreted one. In strict mode the build evaluates the program up to its first run-time input and keeps only what is left: hello world becomes a 4,896-byte executable that starts in 0.96 ms.</p>
                     </details>
                     <details>
                         <summary>How does Quench compare to Node.js and Bun?</summary>
@@ -1198,7 +1199,7 @@
         "name": "What does AOT compilation mean in Quench?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Quench can compile an entry file and the modules it imports into a single native executable ahead of time. The AOT compiler is derived from the interpreter by specialization, so a compiled program follows the same semantics as an interpreted one."
+          "text": "Quench can compile an entry file and the modules it imports into a single native executable ahead of time. The AOT compiler is derived from the interpreter by specialization, so a compiled program follows the same semantics as an interpreted one. In strict mode the build evaluates the program up to its first run-time input and keeps only what is left: hello world becomes a 4,896-byte executable that starts in 0.96 ms."
         }
       },
       {

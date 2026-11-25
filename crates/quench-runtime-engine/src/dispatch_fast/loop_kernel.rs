@@ -123,48 +123,30 @@ fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[
 
 #[quench_macros::ext(LoopKernelOps1)]
 impl LoopKernel {
-    /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
-    /// its stencils run it slower (`install_loop_sites`).
-    pub(crate) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
-        Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
-            .is_some_and(|shape| shape.guarded.is_empty() && pass(&shape).is_some())
+    /// The recurrence of the loop `header..=backedge`'s kernel, where it has one: the tiers leave
+    /// such a loop to it, as their rows run it slower (`install_loop_sites`, `base_region::kernel_entries`).
+    pub(crate) fn recurrence(decoded: &[WideInstruction], constants: &[Value], function: &Function, span: (usize, usize), live: Option<&quench_runtime::compile::liveness::RegisterMasks>) -> Option<recur::Recurrence> {
+        Self::shaped(decoded, constants, function, span, live).map(|(_, recurrence)| recurrence)
+    }
+    fn shaped(decoded: &[WideInstruction], constants: &[Value], function: &Function, (header, backedge): (usize, usize), live: Option<&quench_runtime::compile::liveness::RegisterMasks>) -> Option<(Shape, recur::Recurrence)> {
+        let mut shape = Shape::of(decoded, constants, usize::from(function.registers), header, backedge)?;
+        (drop_dead_temps(&mut shape, decoded, header, backedge, live) && never_number_scalar(&shape, decoded, constants).is_none()).then(|| pass(&shape).map(|recurrence| (shape, recurrence))).flatten()
+    }
+    /// Whether the kernel runs the loop in fewer instructions than a tier's rows (`Recurrence::beats_rows`); a word fold over a non-integer constant (`k * 0.5`) declines its every chunk.
+    pub(crate) fn beats_rows(decoded: &[WideInstruction], constants: &[Value], function: &Function, span: (usize, usize), live: Option<&quench_runtime::compile::liveness::RegisterMasks>) -> bool {
+        Self::shaped(decoded, constants, function, span, live).is_some_and(|(shape, recurrence)| recurrence.beats_rows() && !(recurrence.word_fold() && shape.scalars.iter().any(|scalar| matches!(scalar, shape::Scalar::Const(constant) if constant.fract() != 0.0))))
     }
 
     /// The registered kernel of the loop `header..=backedge`, if it has one.
-    fn of(
-        decoded: &[WideInstruction],
-        constants: &[Value],
-        function: &Function,
-        header: usize,
-        backedge: usize,
-        original: *const (),
-        live: Option<&quench_runtime::compile::liveness::RegisterMasks>,
-    ) -> Option<Box<Self>> {
-        let trace = quench_runtime::trace::Channel::LoopKernel.on();
-        let Some(mut shape) = Shape::of(decoded, constants, usize::from(function.registers), header, backedge) else {
-            if trace {
-                eprintln!("loop-kernel: loop {header}..{backedge}: no shape");
-            }
-            return None;
-        };
-        if !drop_dead_temps(&mut shape, decoded, header, backedge, live) {
-            if trace {
-                eprintln!("loop-kernel: loop {header}..{backedge}: a branch-written register is live past the loop");
-            }
-            return None;
+    fn of(decoded: &[WideInstruction], constants: &[Value], function: &Function, (header, backedge): (usize, usize), original: *const (),
+        live: Option<&quench_runtime::compile::liveness::RegisterMasks>) -> Option<Box<Self>> {
+        // The tiers judge the same shape and pass (`shaped`, `beats_rows`).
+        let shaped = Self::shaped(decoded, constants, function, (header, backedge), live);
+        if quench_runtime::trace::Channel::LoopKernel.on() {
+            eprintln!("loop-kernel: loop {header}..{backedge}: {}", shaped.as_ref().map_or("no shape or no recurrence pass", |(_, r)| r.name()));
+            if let Some((shape, _)) = &shaped { eprintln!("loop-kernel:   nodes {:?} phis {:?} temps {:?}", shape.nodes, shape.phis, shape.temps); }
         }
-        if let Some(register) = never_number_scalar(&shape, decoded, constants) {
-            if trace {
-                eprintln!("loop-kernel: loop {header}..{backedge}: scalar r{register} is only ever a non-number constant");
-            }
-            return None;
-        }
-        let recurrence = pass(&shape);
-        if trace {
-            eprintln!("loop-kernel: loop {header}..{backedge}: {}", recurrence.as_ref().map_or("no recurrence pass", |r| r.name()));
-            eprintln!("loop-kernel:   nodes {:?} phis {:?} temps {:?}", shape.nodes, shape.phis, shape.temps);
-        }
-        let recurrence = recurrence?;
+        let (shape, recurrence) = shaped?;
         let mut kernel = Box::new(LoopKernel {
             shape,
             recurrence,
@@ -229,7 +211,7 @@ pub(crate) fn install_loop_kernels(
         if exits[header] || records[header].call_link.get() != NO_CALL_LINK {
             continue;
         }
-        let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler, live) else {
+        let Some(kernel) = LoopKernel::of(decoded, constants, function, (header, backedge), records[header].handler, live) else {
             continue;
         };
         records[header].handler = loop_kernel_head as Handler as *const ();
@@ -239,23 +221,26 @@ pub(crate) fn install_loop_kernels(
     kernels.into_boxed_slice()
 }
 
-/// `requicken` of a record holding a kernel: the record's own handler (which the kernel runs
-/// after itself) becomes `handler`, and the record keeps the kernel. `false` for any other
-/// record.
-///
-/// # Safety
-/// `ip` is a live record of the running view.
+/// `requicken` of a record holding a kernel (`kernel_at`): the record's own handler (which the kernel runs after
+/// itself) becomes `handler`, and the record keeps the kernel. `false` for any other record.
 #[inline(always)]
 pub(crate) unsafe fn requicken_kernel(ip: Ip, handler: Handler) -> bool {
-    // SAFETY: the caller's contract.
+    unsafe { kernel_at(ip) }.map(|kernel| kernel.original.set(handler as *const ())).is_some()
+}
+
+/// The kernel the live record `ip` of the running view holds (`loop_kernel_head`), if it holds one.
+pub(crate) unsafe fn kernel_at<'a>(ip: Ip) -> Option<&'a LoopKernel> {
+    // SAFETY: the caller's contract; a record holding the head names a live kernel of its view (`install_loop_kernels`).
     let record = unsafe { &*ip };
-    if record.handler != loop_kernel_head as Handler as *const () {
-        return false;
-    }
-    // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
-    let kernel = unsafe { &*(&*KERNELS.get())[usize::from(record.call_link.get())] };
-    kernel.original.set(handler as *const ());
-    true
+    (record.handler == loop_kernel_head as Handler as *const ()).then(|| unsafe { &*(&*KERNELS.get())[usize::from(record.call_link.get())] })
+}
+
+/// Runs `kernel` at its head record `ip` (`LoopKernel::run`), the interpreter's head and the b-jit's entry edge
+/// (`compiled::base_body::kernel_step_in_lane`) alike: whether it ran any iteration. One that declines too often stands down.
+pub(crate) unsafe fn enter_kernel(kernel: &LoopKernel, cx: *mut LaneContext, r: Registers, ip: Ip) -> bool {
+    let ran = unsafe { kernel.run(cx, r, ip) };
+    if kernel.declines.get() >= KERNEL_SHORT_DECLINES { kernel.stand_down(ip); }
+    ran
 }
 
 script_handler! {
@@ -266,10 +251,7 @@ script_handler! {
         let kernel = unsafe { &*(&*KERNELS.get())[usize::from(i.call_link.get())] };
         // The loop's own records continue from where the kernel left the registers: its
         // head runs, then its test, which fails where the kernel ran the whole loop.
-        unsafe { kernel.run(cx, r, ip) };
-        if kernel.declines.get() >= KERNEL_SHORT_DECLINES {
-            kernel.stand_down(ip);
-        }
+        unsafe { enter_kernel(kernel, cx, r, ip) };
         sibling!(kernel.original(), r, ip, Carried::script_in(cx, view))
     }
 }

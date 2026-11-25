@@ -105,7 +105,7 @@ pub(super) type Answers = Vec<(super::prefix::Question, bool)>;
 /// gains what the evaluations left.
 pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Value) -> Result<Outcome, String> {
     let mut variants = Vec::new();
-    if let Some(input) = specialize(entry, work, Vec::new(), &mut variants)? {
+    if let Some(input) = explore_variants(entry, work, Vec::new(), &mut variants)? {
         report["strict"] = json!({"status": "dynamic_input", "input": input});
         return Ok(Outcome::Dynamic);
     }
@@ -137,7 +137,7 @@ pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Val
 /// Evaluates `entry` under `answers`, and once per answer of each question the run asks,
 /// adding each run that completes or waits for input to `variants`; or the first dynamic input
 /// a run read.
-fn specialize(entry: &Path, work: &Path, answers: Answers, variants: &mut Vec<Variant>) -> Result<Option<String>, String> {
+fn explore_variants(entry: &Path, work: &Path, answers: Answers, variants: &mut Vec<Variant>) -> Result<Option<String>, String> {
     let journal = work.join(format!("evaluation-{}.json", variants.len()));
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", EVALUATION_WORKER_OPTION]).arg(entry).arg(&journal)
@@ -157,7 +157,7 @@ fn specialize(entry: &Path, work: &Path, answers: Answers, variants: &mut Vec<Va
             for answer in [false, true] {
                 let mut assumed = answers.clone();
                 assumed.push((question.clone(), answer));
-                if let Some(input) = specialize(entry, work, assumed, variants)? {
+                if let Some(input) = explore_variants(entry, work, assumed, variants)? {
                     return Ok(Some(input));
                 }
             }

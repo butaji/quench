@@ -102,7 +102,7 @@ fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [
 fn decide_answer(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32) -> ir::Value {
     let mut scratch = frame.state.clone();
     let [left, right] = operands.map(|register| super::register_tagged(stage.builder, frame.registers, &mut scratch, register));
-    let helper = frame.helpers.address(&mut stage.builder, LaneHelper::Decide);
+    let helper = frame.helpers.target(&mut stage.builder, LaneHelper::Decide);
     let operator = stage.constant(u64::from(operator));
     emit_lane_helper_call(stage.builder, frame.payload, helper, &[left, right, operator])
 }
@@ -117,7 +117,7 @@ fn call_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallO
     }
     let context = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
     let record = stage.constant(u64::from(site.record));
-    let helper = frame.helpers.address(&mut stage.builder, LaneHelper::VmStep);
+    let helper = frame.helpers.target(&mut stage.builder, LaneHelper::VmStep);
     emit_lane_helper_call(stage.builder, frame.payload, helper, &[context, record])
 }
 

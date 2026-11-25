@@ -104,6 +104,7 @@ pub(crate) use crate::layout as layout_offsets;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use allocation::Allocation;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/flow.rs"] pub(crate) mod flow;
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/poll.rs"] pub(crate) mod poll;
 // The Wasm families `step` dispatches to (pure word arithmetic over the stage).
 #[path = "../../quench-runtime/src/staged/wasm_simd.rs"] mod wasm_simd;
 

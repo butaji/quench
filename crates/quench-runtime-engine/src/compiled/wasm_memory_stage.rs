@@ -8,7 +8,7 @@ use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
     Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Kind, Region, Slot,
-    Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length,
+    Vm, refresh_memory_length,
 };
 use quench_runtime::bytecode::{Function, WideInstruction};
 use quench_runtime::staged::machine::{Lane, MachineAccess, MachineStage};
@@ -90,7 +90,7 @@ impl WasmMemoryWrite for Emitter<'_, '_> {
         let address = self.operate(Binary::Add, Width::I64, self.base, index);
         let byte = self.convert(Conversion::ExtendI32Unsigned, byte);
         self.call_leaf(
-            compiled_memory_fill as *const () as usize,
+            crate::compiled::slow_paths::EngineSlowPath::MemoryFill,
             &[address, byte, length],
         );
     }
@@ -99,7 +99,7 @@ impl WasmMemoryWrite for Emitter<'_, '_> {
         let destination = self.operate(Binary::Add, Width::I64, self.base, destination);
         let source = self.operate(Binary::Add, Width::I64, self.base, source);
         self.call_leaf(
-            compiled_memory_copy as *const () as usize,
+            crate::compiled::slow_paths::EngineSlowPath::MemoryCopy,
             &[destination, source, length],
         );
     }
@@ -125,7 +125,7 @@ impl WasmMemoryGrow for Emitter<'_, '_> {
         let delta = self.memory_index(pages);
         let context = self.body.core.context;
         let roots = self.root();
-        let before = self.call_leaf(memory_grow_callout as *const () as usize, &[context, delta]);
+        let before = self.call_leaf(crate::compiled::slow_paths::EngineSlowPath::MemoryGrow, &[context, delta]);
         self.unroot(roots);
         self.convert(Conversion::WrapI64, before)
     }

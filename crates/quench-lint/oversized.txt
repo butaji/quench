@@ -5112,7 +5112,6 @@ inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::activate_envi
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::activate_gathering_in_lane 55
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::activate_in_lane 55
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::activate_keeping_window_in_lane 44
-inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::body_entry_resumed 43
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::call_keeping_activation_in_lane 59
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::call_native_out_in_lane 58
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast.rs::call_read_in_lane 42

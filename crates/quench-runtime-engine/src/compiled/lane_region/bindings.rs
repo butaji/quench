@@ -38,7 +38,7 @@ impl Lowering<'_, '_> {
             let one = self.raw_const(Lane::I64, 1);
             self.branch_if(hit, (join, &[one]), (slow, &[]));
             self.builder.switch_to_block(slow);
-            let helper = self.helpers.address(&mut self.builder, LaneHelper::AdmittedFunctionBinding);
+            let helper = self.helpers.target(&mut self.builder, LaneHelper::AdmittedFunctionBinding);
             let called = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
             self.goto(join, &[called]);
             self.builder.switch_to_block(join);
@@ -46,7 +46,7 @@ impl Lowering<'_, '_> {
         } else {
             let depth = self.unit.recovery_depth().max(1) as i64;
             let depth = self.raw_const(Lane::I64, depth);
-            let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionBinding);
+            let helper = self.helpers.target(&mut self.builder, LaneHelper::FunctionBinding);
             emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function, depth])
         };
         self.raw_compare_imm(Relation::NotEqual, admitted, 0)

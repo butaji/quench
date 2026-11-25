@@ -135,7 +135,7 @@ crate::compiled::emit_machine::for_each_builder!(MachineTail {
         self.function_builder().ins().return_call(target, arguments);
     }
 
-    fn tail_call_indirect(&mut self, signature: ir::SigRef, target: ir::Value, arguments: &[ir::Value]) {
-        self.function_builder().ins().return_call_indirect(signature, target, arguments);
+    fn tail_call_indirect(&mut self, signature: ir::SigRef, target: quench_runtime::staged::machine::CallTarget<ir::Value>, arguments: &[ir::Value]) {
+        self.function_builder().ins().return_call_indirect(signature, target.word(), arguments);
     }
 });

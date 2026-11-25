@@ -41,7 +41,7 @@ mod tests {
         vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
         vm.execute_native_program(&native, true).unwrap();
         assert!(vm.specialized_operations_enabled(program));
-        assert!(!vm.admits_in_lane(program), "native semantics do not admit interpreter lane dispatch");
+        assert!(!vm.admits_in_lane(crate::vm::ProgramId::MAIN, program), "native semantics do not admit interpreter lane dispatch");
         let site = |name: &str| {
             let function = program.functions.iter().position(|body| body.header().name
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();

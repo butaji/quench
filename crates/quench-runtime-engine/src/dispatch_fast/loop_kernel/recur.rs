@@ -231,13 +231,14 @@ impl Recurrence {
             Pass::Machine(_) => "kernel (machine)",
         }
     }
-
     /// Whether the pass interprets its recurrences per iteration (`Machine`) rather than
     /// running them as fused or chained loops.
     pub(crate) fn interprets(&self) -> bool {
         matches!(self.pass, Pass::Machine(_))
     }
-
+    pub(crate) fn beats_rows(&self) -> bool { const MAX_CHEAP_LINKS: usize = 3; match &self.pass { Pass::None => true, Pass::Fold(fold) => matches!(fold.operand, Arg::Scalar(_)) || fold.words.is_some() || fold.exact.is_some(), Pass::Chain(chain) => (chain.int32 || chain.masks || chain.wrap) && chain.links.len() <= MAX_CHEAP_LINKS, Pass::Machine(_) => false } } // fewer instructions than a tier's rows: no recurrence, a fold of a loop-invariant operand, of int32 induction words or exact on integers, or an integer chain of at most `MAX_CHEAP_LINKS` links; a float fold or chain over a per-iteration column, or a longer chain, costs more (v_int_to_double 224 against the stencil rows' 22, v_obj_literal's 7-link chain 61 against 16)
+    pub(crate) fn word_fold(&self) -> bool { matches!(&self.pass, Pass::Fold(fold) if fold.exact.is_some()) } // the exact fold sums integer words
+    pub(crate) fn closed_form(&self) -> bool { matches!(&self.pass, Pass::Fold(fold) if fold.exact.is_some() || (fold.int32 && (fold.words.is_some() || matches!(fold.operand, Arg::Scalar(_))))) } // a chunk in closed form or on integer words
     /// The pass of a single recurrence whose cycle is a chain (`cycle`), whose other nodes
     /// read columns only.
     fn single(shape: &Shape) -> Option<Self> {

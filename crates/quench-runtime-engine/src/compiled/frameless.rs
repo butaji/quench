@@ -4,7 +4,7 @@
 //! (`emit_admitted_captures`), and each closure of an admitted function shares the function's entry.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
+use super::{emit_js_payload_target, emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
 use crate::compiled::regions;
 use cranelift_codegen::ir::{self, types};
 use super::object_slots::emit;
@@ -106,7 +106,7 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     let entry = builder.append_block_param(found, types::I64);
     emit(builder).branch_if(hit, (found, &[cached]), (admit, &[]));
     builder.switch_to_block(admit);
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, frameless));
+    let helper = emit_js_payload_target(builder, payload, std::mem::offset_of!(JsStepDispatch, frameless));
     let admitted = emit_lane_helper_call(builder, payload, helper, &[payload, callee]);
     let some = emit(builder).raw_compare_imm(Relation::NotEqual, admitted, 0);
     emit(builder).branch_if(some, (found, &[admitted]), (framed, &[]));

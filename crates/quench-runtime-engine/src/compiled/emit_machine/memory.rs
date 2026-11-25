@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{Builds, of_in_lane, machine_type};
-use quench_runtime::staged::machine::{Extend, Lane, MachineAccess};
+use quench_runtime::staged::machine::{CallTarget, Extend, Lane, MachineAccess};
 use quench_runtime::staged::wasm_memory::Access;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
 use cranelift_codegen::isa::CallConv;
@@ -108,12 +108,12 @@ crate::compiled::emit_machine::for_each_builder!(MachineAccess {
         self.raw_store(cell_lane(access.bytes), flags, (value, false), address, 0);
     }
 
-    fn call_words(&mut self, target: ir::Value, arguments: &[ir::Value]) -> ir::Value {
+    fn call_words(&mut self, target: CallTarget<ir::Value>, arguments: &[ir::Value]) -> ir::Value {
         let parameters = smallvec::SmallVec::<[Lane; 8]>::from_elem(Lane::I64, arguments.len());
         self.call_lanes(target, (&parameters[..], Lane::I64), arguments)
     }
 
-    fn call_lanes(&mut self, target: ir::Value, (parameters, result): (&[Lane], Lane), arguments: &[ir::Value]) -> ir::Value {
+    fn call_lanes(&mut self, target: CallTarget<ir::Value>, (parameters, result): (&[Lane], Lane), arguments: &[ir::Value]) -> ir::Value {
         let builder = self.function_builder();
         let parameters: Vec<ir::Type> = parameters.iter().map(|lane| machine_type(*lane)).collect();
         let call_conv = leaf_call_conv(builder.func.signature.call_conv);
@@ -128,6 +128,11 @@ crate::compiled::emit_machine::for_each_builder!(MachineAccess {
         builder.inst_results(call).to_vec()
     }
 
+    /// A slow path's helper symbol where the body names its helpers by symbol (`slow_path_symbol`).
+    fn slow_path_symbol(&mut self, address: usize) -> Option<ir::GlobalValue> {
+        crate::compiled::slow_path_symbol(self.function_builder().func, address)
+    }
+
     fn symbol_address(&mut self, symbol: ir::GlobalValue) -> ir::Value {
         self.function_builder().ins().symbol_value(types::I64, symbol)
     }
@@ -140,9 +145,9 @@ crate::compiled::emit_machine::for_each_builder!(MachineAccess {
         self.function_builder().ins().stack_store(machine_type(lane), value, slot, offset);
     }
 
-    fn call_signature(&mut self, signature: ir::SigRef, target: ir::Value, arguments: &[ir::Value]) -> Vec<ir::Value> {
+    fn call_signature(&mut self, signature: ir::SigRef, target: CallTarget<ir::Value>, arguments: &[ir::Value]) -> Vec<ir::Value> {
         let builder = self.function_builder();
-        let call = builder.ins().call_indirect(signature, target, arguments);
+        let call = builder.ins().call_indirect(signature, target.word(), arguments);
         builder.inst_results(call).to_vec()
     }
 });

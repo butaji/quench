@@ -52,7 +52,7 @@ pub(crate) struct CheckedRow {
 /// `expected` (a type index of the program) although its id is not the expected one: a subtype,
 /// or a host function whose signature the VM compares. A reference the VM cannot compare does
 /// not satisfy it.
-unsafe extern "C" fn compiled_table_accepts(
+pub(super) unsafe extern "C" fn compiled_table_accepts(
     context: *mut CallContext,
     table: u64,
     index: u64,
@@ -162,7 +162,7 @@ impl WasmTable for Emitter<'_, '_> {
         let context = self.body.core.context;
         let table = self.constant(Width::I64, i64::from(site.table));
         let expected_type = self.constant(Width::I64, i64::from(site.signature_index));
-        let target = compiled_table_accepts as *const () as usize;
+        let target = crate::compiled::slow_paths::EngineSlowPath::TableAccepts;
         let related = self.call_leaf(target, &[context, table, reference, expected_type]);
         let related = self.convert(Conversion::WrapI64, related);
         let mismatch = self.operate_unary(quench_runtime::wasm::integer::I64UnaryOperator::EqualZero, Width::I32, related);
@@ -269,9 +269,9 @@ impl Emitter<'_, '_> {
         self.branch_if(same_signature, (resolve, &[]), (slow, &[]));
         self.enter(resolve);
         // The row's body (one load): 0 is no compiled body, which takes the slow path.
-        let body = self.load_word(Width::I64, flags, address, TableTarget::BODY);
+        let body = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmTableBody, flags, address, TableTarget::BODY);
         let none = self.constant(Width::I64, 0);
-        let compiled = self.operate(Binary::NotEqual, Width::I64, body, none);
+        let compiled = self.operate(Binary::NotEqual, Width::I64, body.word(), none);
         let present = self.body.core.builder.create_block();
         self.branch_if(compiled, (present, &[]), (slow, &[]));
         self.enter(present);
@@ -313,13 +313,13 @@ impl Emitter<'_, '_> {
 
     /// The body at index `entry` of the code table at `table`; a function without one leaves
     /// for `slow`.
-    pub(crate) fn entry_body(&mut self, table: ir::Value, entry: ir::Value, slow: ir::Block) -> ir::Value {
+    pub(crate) fn entry_body(&mut self, table: ir::Value, entry: ir::Value, slow: ir::Block) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
         let size = self.constant(Width::I64, size_of::<usize>() as i64);
         let offset = self.operate(Binary::Multiply, Width::I64, entry, size);
         let slot = self.operate(Binary::Add, Width::I64, table, offset);
-        let body = self.load_word(Width::I64, MemFlagsData::trusted(), slot, 0);
+        let body = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmTableBody, MemFlagsData::trusted(), slot, 0);
         let none = self.constant(Width::I64, 0);
-        let compiled = self.operate(Binary::NotEqual, Width::I64, body, none);
+        let compiled = self.operate(Binary::NotEqual, Width::I64, body.word(), none);
         let enter = self.body.core.builder.create_block();
         self.branch_if(compiled, (enter, &[]), (slow, &[]));
         self.enter(enter);
@@ -330,7 +330,7 @@ impl Emitter<'_, '_> {
     /// callee takes: its status, the result stored through `out`.
     pub(crate) fn call_body(
         &mut self,
-        body: ir::Value,
+        body: quench_runtime::staged::machine::CallTarget<ir::Value>,
         signature: &quench_runtime::WasmSignature,
         (args, out): (ir::Value, ir::Value),
         (base, length): (ir::Value, Option<ir::Value>),
@@ -358,7 +358,7 @@ impl Emitter<'_, '_> {
     /// arguments the callee takes: its status and its result as a word of bits (0 for none).
     fn call_body_values(
         &mut self,
-        body: ir::Value,
+        body: quench_runtime::staged::machine::CallTarget<ir::Value>,
         signature: &quench_runtime::WasmSignature,
         values: &[ir::Value],
         (base, length): (ir::Value, Option<ir::Value>),
@@ -393,7 +393,7 @@ impl Emitter<'_, '_> {
     /// The native tail call of `body` with `values`: a `return_call_indirect` (no roots, as `tail_known`).
     fn tail_body_values(
         &mut self,
-        body: ir::Value,
+        body: quench_runtime::staged::machine::CallTarget<ir::Value>,
         signature: &quench_runtime::WasmSignature,
         values: &[ir::Value],
         (base, length): (ir::Value, Option<ir::Value>),
@@ -471,7 +471,7 @@ impl Emitter<'_, '_> {
             CONTEXT_CALL_REFERENCE
         };
         let context = self.body.core.context;
-        let target = self.load_word(Width::I64, invariant(), context, offset);
+        let target = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmTableCallOut, invariant(), context, offset);
         let table = self.constant(Width::I64, i64::from(table));
         let signature_index = self.constant(Width::I64, i64::from(signature_index));
         let site = self.constant(Width::I64, site as i64);

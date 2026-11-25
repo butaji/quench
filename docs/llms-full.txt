@@ -16,7 +16,7 @@ quench.run / updated 17 November 2026
 
 Every number Quench publishes, with its date, configuration and the tests where Quench loses.
 
-With the JIT off in every engine, Quench scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at 0.28x to 0.55x their peak memory on 7 of 8. On the broader JetStream 3 suite it scores 34.3 against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB. The JIT tiers and AOT have no published speed numbers yet.
+With the JIT off in every engine, Quench scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at 0.28x to 0.55x their peak memory on 7 of 8. On the broader JetStream 3 suite it scores 34.3 against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB. The JIT tiers and AOT have no published compute speed numbers yet. AOT startup: a strict AOT hello world is a 4,896-byte executable that starts in 0.96 ms with 1.3 MB peak RSS (25 November 2026).
 
 ## V8-v7, JIT off (14 November 2026)
 
@@ -84,7 +84,7 @@ The 53 waived Test262 cases fail exactly the way Node fails them; each is listed
 
 - JIT tiers. b-jit and u-jit are not yet competitive with V8 or JavaScriptCore with their JITs on; no comparison is published.
 
-- AOT executables. No speed numbers are published for AOT-compiled programs. The goal is within 5x of equivalent C.
+- AOT compute speed. No compute speed numbers are published for AOT-compiled programs; only startup, size and memory for strict images (hello world: 4,896 B, 0.96 ms, 1.3 MB; C 14 KB, 0.89 ms, 1.36 MB). The target is within 2x of Node and Bun.
 
 ## Method
 
@@ -239,7 +239,7 @@ quench.run / updated 20 November 2026
 
 Quench's AOT compiler turns a JavaScript or TypeScript program into machine code, not a bundled script.
 
-Quench compiles a JavaScript or TypeScript entry file and its imports ahead of time into one native executable: quench --build-aot app.ts -o app. The program is lowered to machine code with the same meaning as Quench's interpreter; the full interpreter and JITs are left out unless the program uses eval or new Function. AOT is experimental and no AOT speed numbers are published yet.
+Quench compiles a JavaScript or TypeScript entry file and its imports ahead of time into one native executable: quench --build-aot app.ts -o app. The program is lowered to machine code with the same meaning as Quench's interpreter; the full interpreter and JITs are left out unless the program uses eval or new Function. AOT is experimental. With quench compile --strict-aot, a program that reads no run-time input compiles to an image with no engine at all: hello world is a 4,896-byte executable that starts in 0.96 ms with 1.3 MB peak memory, level with C (14 KB, 0.89 ms, 1.36 MB). Programs that read input fall back to a full image (readline REPL: 71.3 MB, 6.2 ms). Compute speed of AOT code is not published yet.
 
 ## Usage
 
@@ -266,7 +266,7 @@ Each opcode's meaning is written once. The interpreter runs it directly, the JIT
 
 - Built and tested on Linux, from a source build with --features aot.
 
-- No published speed numbers; the target is within 5x of equivalent C on every JetStream benchmark.
+- Startup and size published only for programs with no run-time input; no compute speed numbers yet. The target is AOT code within 2x of Node and Bun.
 
 - Node API compatibility is still being built out.
 
@@ -290,7 +290,7 @@ Benchmark rows: interpreter only in every engine (quench --no-jit, node --jitles
 With Quench built with the aot feature, run quench --build-aot app.ts -o app, then ./app. The entry file and the modules it imports are compiled ahead of time into one native executable.
 
 ### Is the Quench AOT compiler faster than Node?
-No AOT speed numbers are published yet. The goal is AOT code within 5x of the equivalent C program, and it is not yet met on every benchmark.
+Compute speed of AOT code is not published yet. Startup is: with quench compile --strict-aot, a program that reads no run-time input compiles to a 4,896-byte hello world that starts in 0.96 ms, against 27.5 ms for Node running the script. Programs that read input still use a full image that starts in about 5 to 6 ms.
 
 ### Does an AOT-compiled Quench program include an interpreter?
 The full interpreter and the JIT tiers are left out of the executable unless the program uses eval or new Function, which need to compile code at run time.
@@ -422,6 +422,272 @@ With the JIT off, five of the eight V8-v7 benchmarks peak at 6.4 to 8.2 MB of RS
 Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: github.com/butaji/quench. Machine-readable summary: llms.txt.
 
 Related: benchmarks · JavaScript runtime in Rust · low-memory Node.js alternative · compile JavaScript to a native executable · Test262 conformance · JavaScript for AI agents
+
+---
+URL: https://quench.run/blog/hello-world-in-4896-bytes/
+
+blog / 25 November 2026 · 5 min read · aot
+
+# Hello world in 4,896 bytes: AOT as the JIT run at build time
+
+Quench now compiles a JavaScript hello world to a 4,896-byte native executable that starts in 0.96 ms with 1.3 MB of memory, level with C. No second compiler: the build runs the program through the same specializer as the JIT and keeps only what is left.
+
+Here is the smallest program we care about:
+
+// hello.js
+console.log("Hello world!")
+
+And here is what Quench does with it on 25 November 2026:
+
+$ quench compile --strict-aot hello.js -o hello
+$ ls -l hello
+-rwxr-xr-x 1 dev dev 4896 hello
+$ ./hello
+Hello world!
+
+4,896 B
+executable
+C hello: 14 KB
+
+0.96 ms
+startup
+C hello: 0.89 ms
+
+1.3 MB
+peak RSS
+C hello: 1.36 MB
+
+A day earlier the same program compiled to an 84.8 MB executable. This post is about what changed, and why it is not a hello-world trick.
+
+## The numbers
+
+console.log("Hello world!")| Executable| Startup| Peak RSS| 
+Quench strict AOT image| 4,896 B| 0.96 ms| 1.3 MB| 
+Quench AOT image, 24 November| 84.8 MB| 6.16 ms| 3.7 MB| 
+C, gcc -O2, dynamic glibc, stripped| 14 KB| 0.89 ms| 1.36 MB| 
+Node 22 running the script| (runtime)| 27.5 ms| 36 MB| 
+
+One 4-vCPU x86 Linux machine, wall time and peak resident memory from a small C harness that spawns the process and waits for it. A later rebuild on 25 November measured 4,880 bytes, 0.99 ms and 1.2 MB, which is the run-to-run noise of this box. The build itself takes 0.15 s.
+
+## Why it used to be 85 MB
+
+Every Quench executable used to link the whole engine. Asking the linker why the parser stayed in a hello-world image gave a chain that explains everything: the image starts the generic VM, the VM can call a user function, a user function can hit code that was never compiled, and compiling it needs the parser. Once the VM is in, so are the interpreter, both JITs, WebAssembly, ICU, compression and TLS.
+
+Trimming that graph edge by edge might reach a few megabytes. It can never reach C's size class, because the image still contains a JavaScript engine. To get there the image has to stop being "the engine plus your program".
+
+## The first Futamura projection, at build time
+
+Quench's design rule is that the interpreter is the only definition of what JavaScript means, and every other tier is that interpreter specialized to what it knows. We wrote about it in One interpreter, four outputs and AOT without a second compiler. The JIT specializes to facts it learns while the program runs. AOT is the same specializer run earlier, against facts known at build time.
+
+With one source of truth for everything, AOT is just a particular case of JIT.
+
+Specializing an interpreter to a program is the first Futamura projection: the result is a compiled program. Its coarsest form is also the simplest. The build runs the entry file against the same realm the image would start with, and keeps going until the program reads its first dynamic input: something a later run could see differently, such as its arguments, the environment, a file, the clock or standard input.
+
+Everything computed before that point is the same in every run, so the image does not need the code that computed it. It only needs the program's effects: which bytes went to which descriptor, in what order, and the exit status.
+
+Hello world reads no dynamic input at all. Its residual program is one write of 13 bytes to descriptor 1 and an exit status of 0. Quench emits that as a no_std Rust program that calls write and returns, and links it with the system C library. That is the whole 4,896-byte executable. There is no engine inside it because nothing is left for an engine to do.
+
+## Why this is not a special case
+
+Nothing in the compiler knows about console.log or about hello world. The rule is general: evaluate up to the first dynamic input, keep the effects. A program that builds a table, formats a report and prints it, reading nothing from outside, compiles the same way. The work it did at build time costs nothing at run time.
+
+The rule is also strict in the other direction. If a program does read a dynamic input, the build stops there, says which input it was, and does not pretend. That half of the design is the subject of the companion post.
+
+## What it does not do yet
+
+Most real programs read an input in the first few lines. A command-line tool reads its arguments, a REPL reads standard input. For those, the strict image is refused today and the compile falls back to the full image, which still works and is still large. Our current target is a readline REPL, and the gap there is wide: we wrote down where it stands.
+
+The next stage keeps more than effects. The build saves the heap at the program's first wait for input, and the code that runs after it (the input handlers) is compiled against that saved heap by the same JIT specializer, linking only the runtime services it still calls. The hello-world image is the end point of that pipeline for a program with no inputs. Every other program should land somewhere between 4.9 KB and the full engine, in proportion to how much of it really depends on run time.
+
+---
+URL: https://quench.run/blog/strict-aot-refuses-and-names-the-input/
+
+blog / 25 November 2026 · 5 min read · aot
+
+# Strict AOT: a compiler that refuses, and names the input
+
+Running a program at build time is only safe if the build never bakes in something a later run would see differently. Quench's strict AOT mode is sound by construction: host operations off an allow-list are refused before they run, and the build names the input it could not fold.
+
+Quench's strict AOT mode runs your program at build time and keeps only what it left behind. For a program that reads nothing from outside, that is a few kilobytes of output replay, as described in Hello world in 4,896 bytes.
+
+Running code at build time has an obvious failure mode. If the build reads a file, the image contains the build machine's file. If it reads the clock, every run starts at the same instant. If it reads process.argv, every run gets the build's arguments. A compiler that does this produces a binary that is fast and wrong.
+
+So strict AOT is built around one question: is this value the same in every future run? If the answer is not a proven yes, the build stops there.
+
+## An allow-list, not a deny-list
+
+Every way a Quench program touches the outside world goes through a named host operation. Strict AOT lets a short list of them run at build time, in aot/prefix.rs:
+
+- Loading the program's own modules (require and the builtin module views). The sources are what the image is compiled from, so they are static by definition.
+- Writes to stdout and stderr. They run against a recorder, not the terminal. The recording becomes the image's effects.
+- Exit status: process.exitCode and process.exit(n).
+- Asking for standard input. This only marks a read as wanted. The wait for it is where evaluation ends.
+
+Everything else is a dynamic input: files, the terminal, timers, the network, child processes. A host operation that is not on the list is refused before it runs, and the refusal ends the run. It cannot be caught. We checked that with fs.writeFileSync inside a try: the build stops and no file is written.
+
+A new host operation is dynamic until someone proves otherwise. Forgetting to classify one makes the build refuse, never makes it wrong.
+
+A deny-list would fail the other way: the first operation nobody thought about would be baked silently into every binary.
+
+## Inputs that hide in plain sight
+
+Some inputs are not host calls at the point of use. They are values the runtime prepared at start-up. Quench handles those three ways:
+
+- Process identity and environment (process.argv, execPath, pid, process.env) are lazy. They are not filled in until the program reads them, and reading them is a refused host operation.
+- The clock, the local time zone and Math.random are noted by the runtime when used, so the build knows the result depended on them.
+- Whether a stream is a terminal. This one surprised us. console.log of a non-string colours its output when stdout is a terminal, so even a constant program depends on where it runs. Our first build baked process.stdout.isTTY from the build worker's own descriptors. That was a soundness bug, and it is now an input like any other.
+
+## Refusing with a name
+
+A refusal is a diagnostic, not a crash. The compile report names the first dynamic input the run reached, then the compile falls back to the full image, which runs the program normally. These are four small programs on 25 November 2026:
+
+Program| Strict outcome| Executable| 
+console.log("hello")| image, no engine linked| 4,880 B| 
+print process.argv| refused: the process identity (process.argv, execPath, pid)| full image| 
+read a file named on the command line| refused: the process identity| full image| 
+readline REPL| refused: standard input, after it waits for it| full image| 
+
+The readline row is the interesting one. Its refusal is not "it reads stdin". The build evaluated everything up to the point where the program waits for a line: module loading, creating the interface, writing the prompt. Only then did it stop. That is exactly the prefix the next stage will keep as a saved heap instead of throwing away.
+
+## Small inputs become variants
+
+Refusing every input would make strict AOT useless for anything that prints a number. But some inputs have only a few possible values. Whether descriptor 1 is a terminal has two.
+
+For those, the build does what partial evaluation calls "The Trick": it evaluates the program once per value the program actually distinguishes, and the image starts with a guard that picks the matching variant. Quench asks up to three yes-or-no questions per image (today: whether each of stdin, stdout and stderr is a terminal), and only the ones the program really read. The image calls isatty() at start and replays the right recording. A fourth question refuses the strict image and names it.
+
+The same mechanism is meant to carry other small inputs later: whether an environment variable such as NO_COLOR is set, platform facts, how many arguments were passed.
+
+## Why be this strict
+
+Startup snapshots and build-time evaluation are not new. What we want from Quench is that the fast binary and the slow interpreter can never disagree. The interpreter is the only definition of JavaScript in the engine. The JIT and AOT are specializations of it, and a specialization is only correct if every fact it relied on holds in every run. For the JIT, a guard checks the fact at run time. For AOT, the fact has to be proved at build time, or the build has to say it could not.
+
+That is the trade we picked: a strict build that sometimes says no, and names why, over a permissive one that is occasionally wrong.
+
+---
+URL: https://quench.run/blog/chasing-a-sub-megabyte-readline-binary/
+
+blog / 25 November 2026 · 5 min read · aot
+
+# Chasing a sub-megabyte readline binary
+
+A small TypeScript compiler turns a readline REPL into a binary under 1 MB that starts in about 1 ms. Quench's is 71 MB and starts in 6.2 ms. Where the megabytes go, what we have cut so far, and the general plan to close the gap without a single readline-specific path.
+
+This is a post about a benchmark we are losing.
+
+The program is a 49-line TypeScript REPL built on node:readline: it prints a prompt, keeps history, completes command names, answers help, add, echo, upper and history, and exits on quit. It is the kind of program people want to ship as one small executable. scriptc, a compiler that translates a typed subset of TypeScript to native code, does that very well, and it is the bar we set ourselves for size and startup.
+
+readline REPL, 25 November 2026| Executable| Startup to exit on quit| Peak RSS| 
+scriptc build, same machine| 903 KB| 1.05 ms| 2.36 MB| 
+Quench AOT, 24 November| 85.0 MB| 7.8 ms| 5.6 MB| 
+Quench AOT, 25 November| 71.3 MB| 6.2 ms| 4.42 MB| 
+
+One 4-vCPU x86 Linux machine, median wall time and peak RSS of the process from start to exit with quit on stdin. We are about 80 times larger, 6 times slower to start and twice the memory. The goal is about 1 MB and about 1 ms, reached only with optimizations that help every program.
+
+## Where 85 MB went
+
+The link map of the image, by origin:
+
+What| Size| 
+Engine and runtime code| 20 MB| 
+SQLite engine| 10 MB| 
+Node host code| 9 MB| 
+Copy-and-patch JIT stencil tables| 6.6 MB| 
+Cranelift JIT| 5.8 MB| 
+ICU, zstd, brotli, Wasm, parser and more| about 6 MB| 
+Unwind tables| 4.4 MB| 
+OpenSSL| 3.4 MB| 
+
+A REPL that never opens a database carried a SQL engine. The cause was one static table listing every host operation. Because the table referenced every module, the linker could not drop any of them. Turning off the JITs does not fix that: the no-JIT image was still 78 MB.
+
+## What we have cut so far
+
+Link only the host operations a program can reach. Each image now gets its own operation table, built from what the program can actually call, and heavy module state such as SQLite is created on first use. The image went from 85.0 MB to 71.3 MB, and the linker confirms no SQL code is left. Startup did not move. Unused code costs disk, not time.
+
+Lay out start-up code together. Profiling start-up showed about 2,600 page faults per run at roughly 1.2 µs each. Ordering the functions that start-up runs next to each other took readline from 7.0 to 6.2 ms in back-to-back runs and 5.35 to 4.42 MB, and a smaller tool that prints its arguments from 5.6 to 4.9 ms.
+
+Save the program at its first wait. The build now runs the REPL until it blocks on standard input, saves the runtime there (a 257 KB snapshot) and records the prompt it printed. A resumed run restores the snapshot and enters the event loop without running the entry again. Its output is identical to a full run for every command, and it exits on quit in 5.8 ms against 9.4 ms for the full run in the same harness. The engine is still linked, so memory does not drop yet.
+
+## Why trimming is not the plan
+
+Each of those cuts is real, and none of them gets to 1 MB. As long as the image contains a general JavaScript engine, it is the size of a general JavaScript engine. The way out is the same one that took hello world to 4,896 bytes: the image should contain only the code that is left after the build has used everything it knows.
+
+For readline, what the build knows is a lot. At the first wait, the modules are loaded, the interface exists and the prompt is written. What remains is the line handler: split a line, look up a command, format a reply, write it. Three steps get there:
+
+- Natives become staged rows. Much of Node's API in Quench is Rust code the specializer cannot see through. Each native the handler reaches (console writes, stream push, event emit, line splitting) is being rewritten as a staged row: a guard every tier runs, a small typed primitive the image can link on its own, and the general native as the fallback. The first row, the plain-string path of console.log, matches Node on all three tiers.
+- Specialize the handlers at build time. The JIT specializer compiles the pending callbacks against the saved heap, so global lookups, method identities and constant strings fold.
+- Link only what the residual calls. Runtime services become named symbols, the heap ships as read-only data mapped at a fixed address, and the linker keeps only what the handler code references.
+
+The rule for this work: no optimization that only helps readline. Every change has to be one the interpreter, the JIT and AOT share.
+
+## Why publish a losing number
+
+Because the number is the point. Quench's AOT design bets that one specializer, run at build time, can produce binaries in the same class as compilers that only accept a subset of the language, while keeping all of JavaScript. Hello world says the bet can pay off at the small end. Readline is the first program where the program does something after start-up, and it is where the bet is tested. We will update this table as it moves, including if it stops moving.
+
+---
+URL: https://quench.run/blog/incremental-build-from-538-to-224-seconds/
+
+blog / 25 November 2026 · 5 min read · build
+
+# From 538 to 224 seconds: rebuilding a JavaScript engine faster
+
+A one-line change in the arithmetic of Quench's interpreter took 538 seconds to rebuild. Two days of profiling LLVM, sharding generated code and refusing any change that cost a single instruction at run time brought it to 224 seconds. What worked and what we rejected.
+
+Quench generates a lot of code. Each JavaScript operation is written once as a staged row, and the build expands those rows into the interpreter's handlers, thousands of copy-and-patch JIT stencils and the pieces the optimizing JIT and AOT reuse. That is how one definition feeds four outputs. It is also why touching the definition of + is expensive.
+
+Our worst case is a one-line edit to arithmetic in staged/numeric.rs, rebuilt incrementally with the experiment profile on a 4-core machine. On 23 November 2026 it took 538 seconds. The project's rule is that an incremental build over five minutes is a bug, so this was a bug.
+
+224 s
+worst incremental build
+was 538 s on 23 November
+
+0
+Ir cells worse
+on the instruction-count gate
+
+8 / 8
+V8-v7 rows
+pass on all three tiers
+
+## The rule that made it hard
+
+Making a build faster is easy if run-time speed can drop: inline less, split more, let LLVM see less. Quench does not allow that trade. Every change runs through an instruction-count gate on hundreds of small operations in three tiers, and the build work is held to the same rule as any other change: nothing may get slower. Several of the most effective build-time ideas below were rejected for that reason.
+
+## Where the time went
+
+The first profile settled one question: the build was CPU-bound. It spent about 1,850 CPU-seconds, so even perfect scheduling on 4 cores could not go below about 460 seconds. Tweaking job order was pointless. The code volume had to go down.
+
+Most of that CPU was LLVM optimizing code it would soon throw away. Rows are built from #[inline(always)] pieces. A piece that dispatches over, say, 16 register placements gets copied into every row with all 16 arms, and only after inlining does LLVM discover that the row uses one of them. One family of 66 fused loop-test rows took about 7 seconds of LLVM each. In the stencils, the placement arms were 95% of a row's IR before optimization.
+
+## What moved the number
+
+Change| Worst incremental build| 
+Starting point, 23 November| 538 s| 
+Fused loop tests without a fixed comparison dispatch their record's own row instead of inlining every comparison| 481 s| 
+Stencil placement helpers fold to the row's place before they inline| 424 s| 
+Loop tests shared as one row per comparison; dead Wasm forms removed| 327 s| 
+Stencil table stored as binary files; shared build cache read only on a fresh target| 293 s on its base, 320 s after upstream growth| 
+Stencil frame reads: pick the place, then one 24-arm dispatch instead of 48| 295 s| 
+Numeric rows in their own codegen modules; index and store rows re-weighted across shards| 224 s| 
+
+The line is not monotonic, and that is honest: the engine kept growing while the build work went on, and upstream changes added about 140 CPU-seconds between two of the steps. Each step was measured against its own base.
+
+The last step shows the shape of most of the wins. About 75 numeric rows had been spread by hash across all 16 generated-row modules and all 8 shards of each sharded handler family. An edit to arithmetic therefore recompiled every one of them. Giving numeric rows their own modules meant the same edit recompiles only those, and the engine's share fell from 597 to 338 CPU-seconds.
+
+## What we rejected
+
+The gate turned down more ideas than it accepted:
+
+- Re-hashing every row into new modules. Faster to build, but 12 no-JIT cells got 17 to 84 instructions slower because closures moved out of line. Only numeric rows moved in the end, and everything else stayed in place.
+- Always inlining runtime placement code in stencils. 27% less stencil CPU, but LLVM merged compare branches differently and one cell cost 25 more instructions.
+- Passing the stencil hole as a run-time value. 18% faster to build, and a register allocation change cost another cell 6 instructions.
+- Moving the Wasm GC call-out out of JavaScript rows. 302 KB less code, and 1 to 5 more instructions on 49 cells because LLVM spent the freed inline budget elsewhere.
+- Re-landing a codegen unit split. 535 cells got worse. Moving generic instances into other units costs inlining in many places at once.
+
+LLVM's inline budget is a shared resource. Freeing it in one place spends it in another, which is why every build-time change runs through the same run-time gate.
+
+## What is next
+
+224 seconds meets the five-minute rule with room to spare, and the remaining levers are already listed: the four out-of-line copies of the full Number step (about 74 CPU-seconds) and the arithmetic stencil shards (about 250). The broader lesson is about generated code in Rust. Compile time follows what LLVM sees before it optimizes, not what is left after, so the cheapest code to compile is the code that never gets inlined in the first place.
 
 ---
 URL: https://quench.run/blog/where-quench-stands/

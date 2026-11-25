@@ -362,7 +362,8 @@ impl Vm {
     /// view, and the stack has room. `frame` is the suspended frame of `job`'s owner
     /// (`Vm::job_frame`), looked up by the caller. `None` changes nothing.
     fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, sent: Value) -> Option<JobWindow> {
-        if !self.admits_in_lane(code) || code.kind == quench_runtime::bytecode::ProgramKind::Wasm {
+        // `code` is the active program's (`run_lane_job`).
+        if !self.admits_in_lane(self.active_program, code) || code.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
         // SAFETY: the owner holds the frame boxed, which nothing moves or drops before the resume

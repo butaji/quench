@@ -7,6 +7,7 @@
 use super::region::Region;
 use super::stage::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+use crate::value::ValueLayout;
 
 /// Where a record space's mark block list lies in the dispatch payload: the byte offsets of its
 /// block table pointer and of its block count.
@@ -18,6 +19,7 @@ pub struct MarkList {
 
 /// Continues where the record `record_id` is unmarked: its block lies below the count `list` names
 /// in the dispatch `payload`, and its mark bit is clear. A failed condition leaves at `miss`.
+#[inline(always)]
 pub fn unmarked<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, record_id: S::Word,
     miss: S::Miss) -> Option<()> {
     let blocks = stage.load_u64(Region::Dispatch.mutable(), payload, list.blocks as i32);
@@ -25,6 +27,17 @@ pub fn unmarked<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, recor
     let block = stage.shr_imm(record_id, u64::from(OBJECT.mark_records_per_block.trailing_zeros()));
     let live = stage.ult(block, count);
     stage.guard(live, miss)?;
+    let bit = mark_bit(stage, blocks, record_id);
+    let unset = stage.eq_imm(bit, 0_u64);
+    stage.guard(unset, miss)
+}
+
+/// The mark bit (0 or 1) of the record `record_id` in the block table at `blocks`, whose block the
+/// caller knows exists. The heap's own barrier (`RecordSpace::store_logs`) reads it over the
+/// concrete stage, so every tier and the interpreter test the same bit the same way.
+#[inline(always)]
+pub fn mark_bit<S: Stage>(stage: &mut S, blocks: S::Word, record_id: S::Word) -> S::Word {
+    let block = stage.shr_imm(record_id, u64::from(OBJECT.mark_records_per_block.trailing_zeros()));
     let block_offset = stage.mul_imm(block, OBJECT.mark_block_size as u64);
     let block_address = stage.add(blocks, block_offset);
     let within = stage.and_imm(record_id, (OBJECT.mark_records_per_block - 1) as u64);
@@ -34,7 +47,29 @@ pub fn unmarked<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, recor
     let marks = stage.load_u64(Region::HeapMeta.mutable(), word_address, OBJECT.mark_offset as i32);
     let bit_index = stage.and_imm(within, (OBJECT.mark_word_bits - 1) as u64);
     let marked = stage.shr(marks, bit_index);
-    let bit = stage.and_imm(marked, 1_u64);
-    let unset = stage.eq_imm(bit, 0_u64);
-    stage.guard(unset, miss)
+    stage.and_imm(marked, 1_u64)
+}
+
+/// Continues where storing `value` into the record `record_id` logs nothing
+/// (`RecordSpace::store_logs` while no counts are kept): an immediate value names no heap record
+/// and joins no log; a heap value needs its owner `unmarked`. A marked owner leaves at `miss`.
+#[inline(always)]
+pub fn value_unlogged<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList, record_id: S::Word,
+    value: S::Word, miss: S::Miss) -> Option<()> {
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+    let zero = stage.constant(0);
+    stage.choose_leaving(heap, #[inline(always)] |stage| unmarked(stage, payload, list, record_id, miss).map(|()| zero),
+        #[inline(always)] |_| Some(zero)).map(drop)
+}
+
+/// The store gate every tier shares: the dispatch `payload`'s store-watch word (at byte `watch`)
+/// is clear, so nothing observes the store, and `value_unlogged` holds. Otherwise leaves at `miss`.
+#[inline(always)]
+pub fn store_unlogged<S: Stage>(stage: &mut S, payload: S::Word, watch: usize, list: MarkList, record_id: S::Word,
+    value: S::Word, miss: S::Miss) -> Option<()> {
+    let tracked = stage.load_u64(Region::Dispatch.mutable(), payload, watch as i32);
+    let untracked = stage.eq_imm(tracked, 0_u64);
+    stage.guard(untracked, miss)?;
+    value_unlogged(stage, payload, list, record_id, value, miss)
 }
