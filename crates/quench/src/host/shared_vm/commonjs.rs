@@ -1699,6 +1699,19 @@ pub(crate) fn builtin_operation_of(specifier: &str) -> Option<quench_runtime::Ho
     module.cache_key().or_else(|| module.uncached_key(specifier)).and_then(builtin_operation)
 }
 
+/// The builtin `key` when the image links its builder, else `None`: named without marking its
+/// builder, for a start that only a program naming the builtin can reach.
+fn linked_builtin(context: &mut Context<'_>, key: &str) -> Result<Option<RootId>, RootedError> {
+    let Some(operation) = builtin_operation(key) else {
+        return Ok(None);
+    };
+    let callback = context.host_as::<crate::host::NodeHost>().operations[operation.0 as usize];
+    if std::ptr::fn_addr_eq(callback, crate::host::unlinked_operation as quench_runtime::HostCallback) {
+        return Ok(None);
+    }
+    keyed_builtin(context, key, operation).map(Some)
+}
+
 pub(crate) fn keyed_builtin(
     context: &mut Context<'_>,
     key: &str,
@@ -3635,7 +3648,11 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
         return Ok(());
     }
     let env = get(context, process, "env")?;
-    let cluster = builtin!(context, "cluster")?;
+    // Linked only in an image whose program names `cluster`: a cluster worker runs the
+    // primary's program.
+    let Some(cluster) = linked_builtin(context, "cluster")? else {
+        return Ok(());
+    };
     let setup = get(context, cluster, "_setupWorker")?;
     context.call_rooted(setup, cluster, &[])?;
     context.with_startup_intrinsics(|context| {

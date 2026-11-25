@@ -88,6 +88,10 @@ impl<H: Host> Runtime<H> {
     /// A runtime only ever restored from one saved at rest (`resume_native_from_snapshot` of a
     /// `snapshot_at_rest`): it never installs its host.
     pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }
+    /// A runtime only ever restored from its startup snapshot (`execute_native_from_snapshot`):
+    /// it never installs its host, compiles source or runs the JIT, so a binary that makes
+    /// only such runtimes links none of them.
+    pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 

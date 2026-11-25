@@ -10,6 +10,10 @@ impl Vm {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
     }
 
+    pub(crate) fn new_restored<T: crate::Host>(host: T) -> Self {
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>())
+    }
+
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,

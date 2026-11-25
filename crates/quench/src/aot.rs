@@ -111,6 +111,21 @@ pub fn execute_native_process_entry_with_bootstrap(
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, Some(bootstrap))
 }
 
+/// Runs a linked entry from the image's startup snapshot `bootstrap` in a runtime that never
+/// installs its host (`Runtime::new_restored`): a strict image whose entry reads a process
+/// input as it starts. As a resumed saved run does, it restores whatever configuration the
+/// environment names (`NODE_OPTIONS`), which the snapshot settled.
+pub fn execute_native_process_entry_restored(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram, support: NativeImageSupport,
+    bootstrap: &'static [u8],
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_restored(host), crate::shared_run::Teardown::ProcessExit);
+    runtime.set_execution_mode(support.execution_mode());
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    let execution = runtime.execute_native_from_snapshot(std::rc::Rc::new(bootstrap), program, |host, reader| host.read_snapshot(reader));
+    finish_native(runtime, program, execution)
+}
+
 /// A run saved at its first wait for input at build time (`aot::prefix::reach_wait`), as an
 /// image's catalog lists it: the answers it assumed (question keys), the writes it made before
 /// the wait, and the saved runtime.
@@ -154,6 +169,13 @@ fn execute_native_with_teardown(
         Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
         None => runtime.execute_native_deferred_jobs(program),
     };
+    finish_native(runtime, program, execution)
+}
+
+/// The completion of a native entry's run, or why the image failed it.
+fn finish_native(
+    mut runtime: crate::shared_run::EntryRuntime, program: &quench_runtime::NativeJsProgram, execution: Result<(), quench_runtime::JsError>,
+) -> Result<crate::shared_run::SharedCompletion, String> {
     let completion = crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)?;
     let rejected = runtime.native_execution_rejections();
     if rejected != 0 {

@@ -389,6 +389,9 @@ fn compile(options: Options) -> Result<(), String> {
         Some(held) => vec![held],
         None => saved_waits.iter().map(|wait| (wait.held.0.clone(), wait.held.1.clone())).collect(),
     };
+    // A strict image whose entry reads a process input runs it from the startup snapshot alone.
+    fs::OpenOptions::new().append(true).open(inputs.catalog())
+        .and_then(|mut catalog| writeln!(catalog, "const RESTORED: bool = {};", options.strict && saved_waits.is_empty() && !heaps.is_empty())).map_err(|error| error.to_string())?;
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
     // global's module): every one the graph names.

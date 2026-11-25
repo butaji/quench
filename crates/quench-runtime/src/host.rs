@@ -573,6 +573,12 @@ impl HostStatics {
         Self { initialize: Self::installed, resume: T::resume_at_rest, ..Self::of::<T>() }
     }
 
+    /// A runtime only ever restored from its startup snapshot (`Runtime::new_restored`): the
+    /// host resumes as from any startup snapshot but never installs itself.
+    pub(crate) fn restored<T: Host>() -> Self {
+        Self { initialize: Self::installed, ..Self::of::<T>() }
+    }
+
     fn installed(_: &mut crate::NativeContext<'_>) -> Result<(), crate::RootedError> {
         Err(crate::RootedError::host("a runtime restored at rest does not install its host"))
     }
