@@ -34,6 +34,9 @@ mod wasm_layout;
 mod wasm_runtime_codes;
 #[path = "../stencils/wasm_library.rs"]
 mod wasm_library;
+/// The regexp rows' codes and program record (`stencils/regexp_layout.rs`), which the stitcher reads.
+#[path = "../stencils/regexp_layout.rs"]
+pub mod regexp;
 /// The Wasm rows and codes the runtime reads, one namespace over the files that define them
 /// (`stencils/wasm_kinds.rs`, `wasm_families.rs`, `wasm_layout.rs`, `wasm_runtime_codes.rs`, `wasm_library.rs`).
 pub mod wasm {

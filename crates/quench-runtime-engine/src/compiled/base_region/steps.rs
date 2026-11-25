@@ -63,7 +63,7 @@ use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
 pub(crate) mod lowering;
-pub(crate) use lowering::{calls_in_place, decode_step, lowering, unplaced, STEP_WRITES};
+pub(crate) use lowering::{calls_in_place, decode_step, lowering, STEP_WRITES};
 
 /// How the b-jit runs an instruction no row takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,9 +96,6 @@ pub(crate) enum Step {
     Catch,
     /// A `WasmBranchTable`: a compare tree on the selector over the table's `Jump` rows (`function::switch`).
     Switch,
-    /// The semantic row of an instruction no row takes under `LaneHelpers::Ahead`: its opcode's semantic
-    /// entry runs it in the body (`generic::generic_row`), where a stop leaves.
-    Generic,
 }
 
 impl Step {
@@ -106,7 +103,7 @@ impl Step {
     /// as the raising step, or the VM step helper's call-out): it may allocate or run guest code, which
     /// no heap snapshot a region took sees.
     pub(crate) fn runs_helper(self) -> bool {
-        matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw | Self::Generic)
+        matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw)
     }
 
     /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
@@ -165,10 +162,9 @@ pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
-        Step::Generic => generic_row(layout, decoded, pc, Semantic::of(layout, pc)?),
         Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
-        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, ahead_miss(decoded, layout, pc, helpers)?, helpers),
+        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
             let register = match decoded.a {
                 Some(Source::Register(register)) => register,
@@ -357,15 +353,9 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     chained(parts, spills.len(), record)
 }
 
-#[path = "steps/misses.rs"]
-pub(crate) mod misses;
-pub(crate) use misses::stepped_misses;
 #[path = "steps/branches.rs"]
 pub(crate) mod branches;
 use branches::{branching, jump_to};
-#[path = "steps/generic.rs"]
-pub(crate) mod generic;
-pub(crate) use generic::{Semantic, ahead_miss, generic_row};
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -97,7 +97,10 @@ fn main() -> std::process::ExitCode {
     let result = if let Some(result) = quench::qimg::route(&arguments) {
         result
     } else if arguments.first().is_some_and(|argument| argument == "compile" || argument == "--build-aot") {
-        quench::aot::cli::run(arguments.into_iter().skip(1).collect())
+        // `-o <x>.qimg` records the images into a file the VM loads (`qimg`); any other output is an
+        // executable the object linker builds (`aot::cli`). Both lower through the one image driver (`aot_image::lower`).
+        let qimg = arguments.windows(2).any(|pair| pair[0] == "-o" && pair[1].ends_with(quench::qimg::EXTENSION));
+        if qimg { quench::qimg::compile(arguments.into_iter().skip(1).collect()) } else { quench::aot::cli::run(arguments.into_iter().skip(1).collect()) }
     } else {
         quench::shared_run::run_shared_cli(arguments)
     };

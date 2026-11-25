@@ -7,7 +7,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{AotFunction, AotImage, CallSite, LaneImage, OperandRecord, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
+use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
@@ -54,11 +54,10 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let fingerprint = words.quad()?;
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
     let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
-    let operands = (0..words.half()?).map(|_| read_operands(&mut words)).collect::<Result<_, String>>()?;
     let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, operands, calls })
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -81,18 +80,12 @@ fn put_recipes(out: &mut Vec<u8>, image: &AotImage) {
     }
 }
 
-/// The base PC labels, then the operand records: each its site and its words.
+/// The base PC labels, then the call sites.
 fn put_sites(out: &mut Vec<u8>, image: &AotImage) {
     put_count(out, image.labels.len());
     for (function, pc) in &image.labels {
         out.extend(function.to_le_bytes());
         out.extend(pc.to_le_bytes());
-    }
-    put_count(out, image.operands.len());
-    for record in &image.operands {
-        out.extend(record.function.to_le_bytes());
-        out.extend(record.pc.to_le_bytes());
-        record.words.iter().for_each(|word| out.extend(word.to_le_bytes()));
     }
     put_count(out, image.calls.len());
     for call in &image.calls {
@@ -124,10 +117,6 @@ fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
     Ok(CallSite { function, pc, callee, record })
 }
 
-fn read_operands(words: &mut Words<'_>) -> Result<OperandRecord, String> {
-    Ok(OperandRecord { function: words.half()?, pc: words.half()?, words: [words.quad()?, words.quad()?] })
-}
-
 fn put_shape(out: &mut Vec<u8>, shape: &ShapeRecipe) {
     out.extend(shape.prototype.unwrap_or(NO_PROTOTYPE).to_le_bytes());
     put_count(out, shape.fields.len());
@@ -157,14 +146,6 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
             out.push(1);
             put_option(out, lane.fault_poll);
             put_code(out, &lane.code);
-            put_count(out, lane.stored.len());
-            for pairs in &lane.stored {
-                put_count(out, pairs.len());
-                for &(slot, scratch) in pairs.iter() {
-                    out.extend(slot.to_le_bytes());
-                    out.extend(scratch.to_le_bytes());
-                }
-            }
         }
         None => out.push(0),
     }
@@ -275,8 +256,7 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
         _ => {
             let fault_poll = read_option(words)?;
             let code = read_code(words)?;
-            let stored = (0..words.half()?).map(|_| read_pairs(words)).collect::<Result<_, String>>()?;
-            Some(LaneImage { code, fault_poll, stored })
+            Some(LaneImage { code, fault_poll })
         }
     };
     Ok(AotFunction { id, base, lane })
@@ -288,10 +268,6 @@ fn read_base(words: &mut Words<'_>) -> Result<BaseImage, String> {
     let generic = read_halves(words)?;
     let scratch = words.half()?;
     Ok(BaseImage { code, pc_offsets, generic, scratch })
-}
-
-fn read_pairs(words: &mut Words<'_>) -> Result<Box<[(u16, u16)]>, String> {
-    (0..words.half()?).map(|_| Ok((words.pair()?, words.pair()?))).collect()
 }
 
 fn read_halves(words: &mut Words<'_>) -> Result<Box<[u32]>, String> {

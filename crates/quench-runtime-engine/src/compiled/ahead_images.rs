@@ -47,8 +47,10 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
     let mut hash = mix(FNV_OFFSET, &(super::LaneHelper::COUNT as u32).to_le_bytes());
     hash = mix(hash, program.source_text().unwrap_or_default().as_bytes());
+    // Each function as the image lowered it (`lowered_function`): a tier-0 record and its promoted
+    // record differ in opcodes, so a program fingerprinted before and after a promotion would not match.
     for index in 0..program.function_count() {
-        let function = program.function(index);
+        let function = program.lowered_function(index);
         hash = mix(hash, &function.registers.to_le_bytes());
         hash = function.instructions().fold(hash, |hash, instruction| mix(hash, &(instruction.op() as u16).to_le_bytes()));
     }
@@ -57,11 +59,9 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
 
 /// The calls the unit of an image's lane body inlines: each call whose target the closed world
 /// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::closed_call`), to a callee whose leaves restart the call (`unit_or_refusal`).
-fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32), numeric_only: bool) -> Vec<lane_unit::CallTarget> {
-    let target = facts.function_facts(caller).call_target(pc)
-        .filter(|&callee| program.function_get(callee as usize).is_some())
-        .filter(|&callee| !numeric_only || super::lane_facts::numeric_restartable(program, callee));
+/// (`Lowering::closed_call`), to a callee whose leaves restart the call (`numeric_restartable`).
+fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
+    let target = facts.function_facts(caller).call_target(pc).filter(|&callee| super::lane_facts::numeric_restartable(program, callee));
     target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
 }
 
@@ -74,36 +74,32 @@ fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option
 /// `unit_of`, or why there is none.
 fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Result<lane_unit::Unit, &'static str> {
     let body = program.function_get(function as usize).ok_or("no such function")?;
-    let attempt = |numeric_only: bool| lane_unit::unit(program, function, body,
-            &|caller, pc| closed_targets(program, facts, (caller, pc), numeric_only),
-            &|callee| program.function_get(callee as usize));
-    // Every proven call target first; if one would rather not restart, the numeric calls alone,
-    // which every image body could inline before (`numeric_restartable`).
-    attempt(false).or_else(|| attempt(true)).ok_or("no restartable lane unit")
+    let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
+        .ok_or("no lane unit")?;
+    if !unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall) { return Err("an inlined frame does not restart"); }
+    Ok(unit)
 }
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads))
-    -> Result<(RelocatableCode, bool, Box<[Box<[(u16, u16)]>]>), &'static str> {
-    // An image has no feedback and no later tier: every record lowers as one a previous body left
-    // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
-    let generic: Vec<usize> = (0..unit.instructions.len()).collect();
-    let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Aot, facts: Default::default() }).compiled().ok_or("the image lowering is declined")?;
+    -> Result<(RelocatableCode, bool), &'static str> {
+    // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
+    // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
+    let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
+        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
-    let stored = lowered.region.exits.stores_by_pc(unit.instructions.len());
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
-    let code = quench_runtime::vm::jit_backend::compile_function(native, &*isa, Some(crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
+    let code = quench_runtime::vm::jit_backend::compile_function(native, &*isa, Some(admitted.code_ceiling()), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).map_err(|rejection| match rejection {
         NativeCompileRejection::CodeSizeBudget => "code past the lane body budget",
         NativeCompileRejection::Relocations => "a relocation the image cannot name",
         _ => "Cranelift rejects the code",
     })?;
-    Ok((code, lowered.region.fault_poll, stored))
+    Ok((code, lowered.region.fault_poll))
 }
 
 /// The lane body of `function` for an AOT image under the closed-world `facts`, whose leaves
@@ -117,21 +113,18 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
+    // A VM installs no lane body that inlines a frame (`ahead_lane_method`): its leaves inside one have no store list.
+    if !unit.frames.is_empty() { return Err("inlines a call (not installable)"); }
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
     let strings = string_constants(program, &unit, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
-    // A lane body's leaves continue in its base body (`AheadLeaves`) only under the join
-    // experiment: the join's store layout hands the base body the previous activation's values
-    // (`fbits9`), so a leave returns its exit word and the lane runs the record.
-    let ahead = quench_runtime::trace::Dev::AheadJoins.on()
-        .then(|| lane_region::AheadLeaves { calls: &proven, strings: &strings });
-    let facts = VmFacts { ahead, closed: Some(facts),
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let (code, fault_poll, stored) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     if fault_poll { return Err("polls for faults"); }
-    Ok(LaneImage { code, fault_poll: None, stored })
+    Ok(LaneImage { code, fault_poll: None })
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -247,26 +240,16 @@ impl Vm {
             return None;
         };
         let lanes_allowed = super::admission::within_trace_range(quench_runtime::trace::Dev::AotLanes, function);
-        // An image's lane bodies install only under their experiment: with them raytrace runs
-        // 7524 ms against 7260, deltablue 4470 against 4379, richards 6097 against 6089.
-        let lane = if lanes_allowed && quench_runtime::trace::Dev::AheadBodies.on() {
-            self.ahead_lane_method(program, &images, function)
-        } else { None };
-        let (mut method, kind) = match lane {
+        let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
+        let (method, kind) = match lane {
             Some(method) => (method, "lane"),
-            // An image's base body runs the whole function natively, which would swallow the lane
-            // bodies its callees would otherwise install; it stays an experiment.
-            None if quench_runtime::trace::Dev::AheadBaseBodies.on() => match Self::ahead_base_method(program, &images, function) {
+            None => match Self::ahead_base_method(program, &images, function) {
                 Some(method) => (method, "base"),
                 None => {
                     if traced { eprintln!("aot-lanes: install function {function}: refused, no base body"); }
                     return None;
                 }
             },
-            None => {
-                if traced { eprintln!("aot-lanes: install function {function}: refused, no lane body"); }
-                return None;
-            }
         };
         if quench_runtime::trace::Channel::AotLanes.on() {
             let name = program.functions.get(function as usize)
@@ -274,7 +257,6 @@ impl Vm {
                 .and_then(|atom| program.atoms.get(atom as usize)).map_or("", |name| &name[..]);
             eprintln!("aot-lanes: install function {function} ({name}): {kind} body");
         }
-        method.ahead = true;
         let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); }
@@ -289,31 +271,18 @@ impl Vm {
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;
         };
-        if quench_runtime::trace::Channel::AotLanes.on() && !unit.frames.is_empty() {
-            eprintln!("aot-lanes: install function {function}: {} inlined frame(s)", unit.frames.len());
-        }
-        let image = images.image.functions.get(function as usize)?.lane.as_ref()?;
-        if image.stored.len() != unit.instructions.len() { refused("stored list"); return None; }
-        // The body's code is linked where it will run: its page- and displacement-relative
-        // fields are its address's, so the placement comes first (`live::link_lane_at`).
-        let atom_bytes = live::value_words(&images.image) * std::mem::size_of::<u64>();
-        let mut roots = None;
-        let link = super::code_heap::publishing("u-jit-lane", function as usize, || {
-            // The value table follows its code in the block (`live::link_lane_at`).
-            super::code_heap::CodeMemory::assemble(image.code.code.len() + atom_bytes, |address, out| {
-                roots = Some(live::link_lane_at(&images.image, self, linked_live, function, address.addr() as u64, out)?);
-                Ok(())
-            })
-        });
-        let memory = match link { Ok(memory) => memory, Err(why) => { refused(&why); return None; } };
-        let Some(roots) = roots else { refused("roots"); return None; };
+        // An image has no lowering to ask which registers a leave inside an inlined frame stores.
+        if !unit.frames.is_empty() { refused("inlined frames"); return None; }
+        let Some((linked, roots)) = live::link_lane(&images.image, self, linked_live, function) else {
+            refused("link_lane"); return None;
+        };
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
-            exits: ExitTable::of_unit_stores(&unit, &image.stored) };
+            exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish_in(memory, None, None);
+        let method = plan.finish(&linked, None, None);
         if method.is_none() { refused("plan.finish"); }
         method
     }
@@ -372,10 +341,6 @@ impl Vm {
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
         images.linked = live::install(&images.image, self).ok();
         self.programs.add_ahead_images(images);
-        // An image body is compiled already, so the gate that keeps runtime lane-body compiles off
-        // on AArch64 (`enable_js_lane_methods`) does not apply to it: its lane bodies install where
-        // their experiment is on.
-        if quench_runtime::trace::Dev::AheadBodies.on() { self.programs.enable_ahead_lane_bodies(); }
     }
 
     /// Keeps the image the system linker placed at `table` for the program it was compiled from
@@ -385,7 +350,6 @@ impl Vm {
         if self.programs.has_linked_image(table) { return Ok(()); }
         for index in 0..program.function_count() { program.lowered_function(index); }
         self.programs.add_ahead_images(AheadImages::of_linked(table)?);
-        if quench_runtime::trace::Dev::AheadBodies.on() { self.programs.enable_ahead_lane_bodies(); }
         Ok(())
     }
 }

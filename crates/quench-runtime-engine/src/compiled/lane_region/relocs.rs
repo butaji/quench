@@ -96,7 +96,8 @@ pub(crate) fn address(helpers: LaneHelpers, builder: &mut FunctionBuilder<'_>, k
         return emit(builder).raw_const(Lane::I64, live as i64);
     }
     let symbol = crate::symbol_words::symbol_address(builder, kind as u32, key);
-    // A value's symbol is the address of its word in the loader's table (`live::place_values`).
+    // A value's symbol is a word the loader resolves to the value itself — a heap value's bits, an
+    // atom's id, a shape's id (`aot_image::live::resolve`); every other symbol is the address used.
     if kind.is_value() {
         let mut stage = emit(builder);
         return stage.raw_load(Lane::I64, super::super::invariant(), symbol, 0);

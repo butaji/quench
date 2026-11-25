@@ -173,28 +173,6 @@ impl ExitTable {
         table
     }
 
-    /// The values each unit PC's leave stores, as `(slot, scratch)` pairs: an image serializes
-    /// these beside its code, and `of_unit_stores` rebuilds the table from them.
-    pub(in crate::vm) fn stores_by_pc(&self, unit_pcs: usize) -> Box<[Box<[(u16, u16)]>]> {
-        let mut stores: Box<[Box<[(u16, u16)]>]> = (0..unit_pcs).map(|_| Box::default()).collect();
-        for site in &self.sites {
-            let sig = &self.sigs[site.sig as usize];
-            if sig.kind != ExitKind::Inlined { continue; }
-            let pairs: Box<[(u16, u16)]> = sig.live.iter().map(|value| match value.source {
-                Source::Scratch(scratch) => (value.slot, scratch),
-            }).collect();
-            if let Some(slot) = stores.get_mut(site.unit_pc as usize) { *slot = pairs; }
-        }
-        stores
-    }
-
-    /// The table `of_unit` builds, with each inlined leave's values read from `stores` (one entry
-    /// per unit PC, as `stores_by_pc` wrote them).
-    pub(in crate::vm) fn of_unit_stores(unit: &lane_unit::Unit, stores: &[Box<[(u16, u16)]>]) -> Self {
-        Self::of_unit(unit, |unit_pc, _frame| stores.get(unit_pc).map(|pairs| pairs.iter()
-            .map(|&(slot, scratch)| LiveValue { slot, source: Source::Scratch(scratch) }).collect()).unwrap_or_default())
-    }
-
     fn intern(&mut self, known: &mut HashMap<ExitSig, usize>, sig: ExitSig) -> usize {
         if let Some(&index) = known.get(&sig) { return index; }
         self.sigs.push(sig.clone());

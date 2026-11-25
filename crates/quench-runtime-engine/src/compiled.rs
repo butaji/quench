@@ -184,6 +184,8 @@ pub(crate) mod wasm_gc_callout;
 pub(crate) mod wasm_instance_switch;
 pub(crate) mod wasm_roots;
 pub(crate) mod wasm_simd_stage;
+// The one stitcher every b-jit family places its rows through.
+pub(crate) mod stitcher;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;
@@ -1218,19 +1220,6 @@ pub(crate) enum LaneHelpers {
     Linked(u32, u32),
     Bound(ir::Value, u32),
 }
-/// Whether an image body (`LaneHelpers::Ahead`) runs a record no row takes as its generic semantic row
-/// (`base_region::steps::generic`) instead of leaving at it. Its semantic entry steps a VM frame (`js_semantic_callout`),
-/// which no lane activation has, and an image's bodies run on the lane runner (`Vm::install_ahead_body`), so they
-/// leave as a JIT body does and the lane's interpreter takes the record.
-const AHEAD_GENERIC_ROWS: bool = false;
-
-impl LaneHelpers {
-    /// Whether a record no row takes runs as the generic semantic row (`AHEAD_GENERIC_ROWS`), which never leaves.
-    pub(crate) fn generic_rows(self) -> bool {
-        AHEAD_GENERIC_ROWS && matches!(self, Self::Ahead)
-    }
-}
-
 /// The process helper table a JIT publication binds.
 pub(crate) fn process_lane_helpers() -> LaneHelpers {
     LaneHelpers::Process(LaneHelper::addresses())
@@ -1515,7 +1504,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     let function = program.function_get(function_id as usize)?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize))?;
-    let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Aot, facts: Default::default() }).compiled()?;
+    let admitted = admission::ahead_unit(function_id)?;
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[], admitted,
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
@@ -7566,7 +7555,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 #[quench_macros::ext(CompiledVm4)]
 impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode; crate::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
+        self.execution_mode = mode; crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
         self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 

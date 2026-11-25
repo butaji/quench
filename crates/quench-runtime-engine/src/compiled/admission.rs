@@ -148,9 +148,8 @@ pub(crate) enum UnitKind {
     Body,
     /// A loop region, under its memory policy's loop tier.
     Region(quench_runtime::MemoryPolicy),
-    /// An eager (AOT) publication: no JIT mode or memory policy gates it.
-    Aot,
-    /// An ahead image's body of this function, under the `AotBodies` trace range.
+    /// An ahead image's body of this function, lowered at build time or installed at run time: the one
+    /// AOT kind. No JIT mode or memory policy gates it, only the `AotBodies` trace range.
     Ahead(u32),
     /// A b-jit (stencil) body: its facts decide it (`specialize`).
     Base,
@@ -229,7 +228,6 @@ fn may_compile(kind: UnitKind) -> bool {
     match kind {
         UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
-        UnitKind::Aot => true,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
         UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
         UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
@@ -277,17 +275,35 @@ impl<T> Decision<T> {
     }
 }
 
-/// A unit cleared to compile. Its only field is private to this module, so `specialize` is the
+/// A unit cleared to compile. Its fields are private to this module, so `specialize` is the
 /// only way to obtain one; copies of it are the same proof.
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledUnit {
-    _sealed: (),
+    /// The most machine code the unit may compile to (`code_ceiling`).
+    ceiling: usize,
 }
 
-/// A unit minted for a test, through `specialize` (an AOT unit, which no mode gates).
+impl CompiledUnit {
+    /// The most machine code the unit may compile to: the specializer's one code-size policy,
+    /// by the kind of unit, for every language's compile (`compile_function`'s budget).
+    pub(crate) fn code_ceiling(self) -> usize { self.ceiling }
+}
+
+/// The code-size policy of a unit of `kind`: a JavaScript function's numeric entry, a regexp
+/// program's search, or a lane body or region (every other kind).
+fn code_ceiling(kind: UnitKind) -> usize {
+    use quench_runtime::vm::tier_policy::{JS_COMPILED_MAX_CODE_BYTES, LANE_BODY_MAX_CODE_BYTES, REGEXP_NATIVE_MAX_CODE_BYTES};
+    match kind {
+        UnitKind::Entry => JS_COMPILED_MAX_CODE_BYTES,
+        UnitKind::Regexp => REGEXP_NATIVE_MAX_CODE_BYTES,
+        _ => LANE_BODY_MAX_CODE_BYTES,
+    }
+}
+
+/// A unit minted for a test, through `specialize` (an AOT unit of the root, which no mode gates).
 #[cfg(test)]
 pub(crate) fn test_unit() -> CompiledUnit {
-    specialize(UnitRequest { kind: UnitKind::Aot, facts: UnitFacts::default() }).compiled().expect("an AOT unit always compiles")
+    ahead_unit(0).expect("an AOT unit always compiles")
 }
 
 /// The one specializer entry: whether the request's unit may compile, under the process's JIT
@@ -325,10 +341,10 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if facts.entry_none && !facts.called_by_regions && facts.observed_none && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
             true
         }
-        UnitKind::Body | UnitKind::Region(_) | UnitKind::Aot | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
+        UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
     if cleared && bisected_out() { return Decision::Declined; }
-    if cleared { Decision::Compile(CompiledUnit { _sealed: () }) } else { Decision::Declined }
+    if cleared { Decision::Compile(CompiledUnit { ceiling: code_ceiling(kind) }) } else { Decision::Declined }
 }
 
 /// Whether the `unit-bisect` range leaves out the unit `specialize` is about to clear: each cleared

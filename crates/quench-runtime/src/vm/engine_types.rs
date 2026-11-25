@@ -150,7 +150,7 @@ pub struct LaneStack {
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
     /// A completion drops its activation's entries, as a frame's pop drops its list.
     pub iterators: Vec<(usize, crate::vm::ActiveIterator)>,
-    /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
+    /// The JavaScript-backed import a Wasm call last activated (`WasmActivation::activate_import` in `wasm_calls`),
     /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
     pub js_import: Option<JsImportPlan>,
     /// The bound function of a user function a `function_call_miss` last forwarded through,
@@ -969,9 +969,6 @@ pub struct LaneMethod {
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
     /// types no call, so its summary is not read.
     pub withdrawn: std::cell::Cell<bool>,
-    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
-    /// retires it (`LaneView::note_lane_body_end`).
-    pub ahead: bool,
 }
 
 /// The lane-body tier's per-function state (`LaneView::tier`).
@@ -1959,7 +1956,7 @@ pub enum Completion {
     ReturnsToBody,
     /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
     ConstructsToBody,
-    /// A Wasm call of a JavaScript-backed import (`wasm_calls::lane_activate_js_import`), of
+    /// A Wasm call of a JavaScript-backed import (`WasmActivation::activate_import` in `wasm_calls`), of
     /// another program than its Wasm caller's: its return gives the caller the value's Wasm
     /// form and runs the caller's program and instance again, as its side record keeps them
     /// (`SidePayload::ToWasm`, `lane_complete_to_wasm`). Made a frame, its pending call converts the value
@@ -2783,8 +2780,6 @@ pub struct AotImage {
     pub atoms: Vec<Box<str>>,
     /// The `(function, pc)` labels of `Symbol::BasePc` keys.
     pub labels: Vec<(u32, u32)>,
-    /// The operand records the generic rows pass their semantic entries, by `Symbol::Operands` key.
-    pub operands: Vec<OperandRecord>,
     /// The calls the closed world proves that bodies make by their callee's entry, by `Symbol::CallRecord` key.
     pub calls: Vec<CallSite>,
 }
@@ -2798,8 +2793,6 @@ pub struct LiveImage {
     /// as long as the code, and every lane body published from the image retires through it
     /// (`Vm::install_ahead_body`), so a broken fact of any one stops every fold.
     pub invalidation: Invalidation,
-    /// The operand records the generic rows pass their semantic entries; they live as long as the code.
-    pub operands: std::borrow::Cow<'static, [[u64; 2]]>,
     /// The records the direct rows of proven calls read in place, and their bindings; they live as
     /// long as the code.
     pub calls: BoundCalls,
@@ -2848,14 +2841,6 @@ pub enum HeapValueRecipe {
     ClosureOf(u32),
 }
 
-/// The operand record of record `pc` of `function` (`NativeJsOperands`), as its words.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OperandRecord {
-    pub function: u32,
-    pub pc: u32,
-    pub words: [u64; 2],
-}
-
 /// How the loader builds a shape the code folded: the prototype it has and its own fields in
 /// insertion order, each by image atom key and attribute bits, interned in the VM's shape tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -2902,10 +2887,6 @@ pub struct LaneImage {
     pub code: RelocatableCode,
     /// The fault-poll offset the lowering reported (`LaneRegion::fault_poll`).
     pub fault_poll: Option<u32>,
-    /// Per unit PC, the values a leave inside an inlined frame stores, as `(slot, scratch)` pairs
-    /// (`ExitTable::stores_by_pc`): the image's code was compiled with them, and the VM rebuilds
-    /// the exit table from them at install.
-    pub stored: Box<[Box<[(u16, u16)]>]>,
 }
 
 /// Where the records live: in the loader's own allocation (`aot_image::live::install`), or in the
@@ -3208,14 +3189,13 @@ pub struct InheritedConstant {
 }
 
 /// What the system linker placed of an image in this executable (`object::emit`): each function's
-/// entry and base body, and the image's file, operand records and call records, as its entry table
+/// entry and base body, and the image's file and call records, as its entry table
 /// lists them.
 #[derive(Clone, Copy)]
 pub struct LinkedTable {
     pub entries: &'static [usize],
     pub bases: &'static [usize],
     pub file: &'static [u8],
-    pub operands: *const [u64; 2],
     pub calls: *mut CallRecord,
 }
 
@@ -3508,7 +3488,7 @@ pub struct LaneContext {
     /// call right after it reads its callee from.
     pub indirect: IndirectSlot,
     /// The running instance's record address, cached for the environment (its bits) and program
-    /// it was found for (`lane_instance_address`); 0 where the environment has no record.
+    /// it was found for (`wasm_calls::running_instance_address`); 0 where the environment has no record.
     pub instance_address: (u64, ProgramId, usize),
     /// The running program's Wasm signature pool, shared with the program, for the program it is
     /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.

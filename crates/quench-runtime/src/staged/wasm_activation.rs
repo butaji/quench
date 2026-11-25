@@ -8,16 +8,6 @@
 use super::wasm::WasmStage;
 use crate::WasmType;
 
-/// Where a Wasm call continues.
-pub(crate) enum CallOutcome<R> {
-    /// The caller resumes as `R` says: an activation was pushed, or the call completed.
-    Resume(R),
-    /// The lane has no room for the callee's activation.
-    NoRoom,
-    /// The call leaves the lane for the general loop.
-    Exit,
-}
-
 /// The callee a reference call names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CallTarget {
@@ -63,6 +53,8 @@ pub trait WasmNativeEntry {
 pub trait WasmActivation: WasmStage + WasmNativeEntry {
     /// The activation shape a callee's frame takes, copied out of its view.
     type Shape: Copy;
+    /// The address of the caller's registers, where the call's window lies.
+    fn caller_registers(&mut self) -> u64;
     /// The callee of the reference the call names.
     fn reference(&mut self) -> CallTarget;
     /// Whether the lane may make calls inline (the frame is not leaving for native code).
@@ -127,22 +119,6 @@ pub(crate) fn push_frame<S: WasmActivation>(stage: &mut S) -> S::Resume {
     stage.push_pending_call(caller, guard);
     stage.refresh_activation_limit();
     stage.enter_frame(caller + 1)
-}
-
-/// Enters `function` as a Wasm call: out of the lane when inline calls are off, through native
-/// code where a tier holds it, out of the lane where a compile came due (the general loop makes
-/// it), else as an activation. The guard order is the lane's: depth, the frames and activations
-/// together, storage, then the value stack's room.
-#[inline(always)]
-pub(crate) fn enter_function<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutcome<S::Resume> {
-    if !stage.inline_calls() {
-        return CallOutcome::Exit;
-    }
-    match enter_native(stage, function) {
-        NativeEntry::Ran(resumed) => CallOutcome::Resume(resumed),
-        NativeEntry::Leave => CallOutcome::Exit,
-        NativeEntry::Interpret => enter_activation(stage, function),
-    }
 }
 
 /// Where a Wasm call's native entry (`enter_native`) leaves the call.
@@ -266,50 +242,6 @@ pub fn offer_entry<T: WasmEntryTiers>(tiers: &mut T, function: u32) -> EntryOffe
     EntryOffer::Interpret
 }
 
-/// The activation of `function` where the lane has its shape and room for it.
-#[inline(always)]
-fn enter_activation<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutcome<S::Resume> {
-    let Some(shape) = stage.shape(function) else {
-        return CallOutcome::NoRoom;
-    };
-    let registers = S::shape_registers(shape);
-    if stage.activation_room()
-        && stage.frame_room()
-        && stage.storage_room(registers)
-        && stage.values_room(registers)
-    {
-        CallOutcome::Resume(stage.push_activation(function, shape))
-    } else {
-        CallOutcome::NoRoom
-    }
-}
-
-/// A known call: an activation of `function`, or the call's frame where the lane has no room.
-/// `None` leaves the lane.
-#[inline(always)]
-pub fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
-    match enter_function(stage, function) {
-        CallOutcome::Resume(resumed) => Some(resumed),
-        CallOutcome::NoRoom => Some(push_frame(stage)),
-        CallOutcome::Exit => None,
-    }
-}
-
-/// A reference call: its callee is checked first (a function of the running program and
-/// instance, or an import), then entered as a known call would be. Any other callee, or no room,
-/// leaves the lane.
-#[inline(always)]
-pub fn call_reference<S: WasmActivation>(stage: &mut S) -> Option<S::Resume> {
-    match stage.reference() {
-        CallTarget::Function(function) => match enter_function(stage, function) {
-            CallOutcome::Resume(resumed) => Some(resumed),
-            CallOutcome::NoRoom | CallOutcome::Exit => None,
-        },
-        CallTarget::Import => call_import(stage),
-        CallTarget::Other => None,
-    }
-}
-
 /// A call native code runs: the caller resumes with its result, or leaves; `None` where the
 /// native tier declines the call.
 #[cold]
@@ -415,6 +347,62 @@ pub fn step_import_return_of<S: WasmReturn>(stage: &mut S, value: S::Value) -> S
     let mut popped = stage.pop();
     stage.enter_wasm_caller(import, &mut popped);
     stage.resume_caller(popped, converted)
+}
+
+/// The primitives of a lane's JavaScript call of an exported Wasm function (`step_export_call_of`)
+/// and of its frame's return (`step_export_frame_return_of`); the rules decide their order.
+pub trait WasmExportCall {
+    /// Where the run continues.
+    type Resume;
+    /// The export the call resolved: its program, function, instance and encoded arguments.
+    type Export;
+    /// The export frame's pending call, popped at its return.
+    type Pending;
+    /// The returned value.
+    type Value: Copy;
+    /// Whether the lane makes the call: the run is a frame's own JavaScript run, a returning call
+    /// completes a caller the lane completes, and native code may not run the callee.
+    fn admits(&mut self) -> bool;
+    /// The export the call names, where the lane admits its program and function.
+    fn export(&mut self) -> Option<Self::Export>;
+    /// The call as a frameless Wasm activation of the export, where its view and room allow.
+    fn export_activation(&mut self, export: &Self::Export) -> Option<Self::Resume>;
+    /// The call as the export's frame, pushed with the pending call that converts its result.
+    fn export_frame(&mut self, export: Self::Export) -> Self::Resume;
+    /// Retires the export's frame and pops its pending call; the caller's program runs again.
+    fn retire_frame(&mut self) -> Self::Pending;
+    /// The JavaScript form of the frame's encoded result.
+    fn export_value(&mut self, pending: &Self::Pending, value: Self::Value) -> Self::Value;
+    /// Whether the call returns its callee's completion, so the caller completes too.
+    fn caller_returns(pending: &Self::Pending) -> bool;
+    /// The caller's return of `value` at its call record.
+    fn complete_caller(&mut self, pending: Self::Pending, value: Self::Value) -> Self::Resume;
+    /// The call's register takes `value`, and the caller's frame resumes.
+    fn resume_caller(&mut self, pending: Self::Pending, value: Self::Value) -> Self::Resume;
+}
+
+/// A JavaScript call of an exported Wasm function: where the lane admits it, a frameless
+/// activation of the export, else the export's frame. `None` leaves the call to the native.
+#[inline(always)]
+pub fn step_export_call_of<S: WasmExportCall>(stage: &mut S) -> Option<S::Resume> {
+    if !stage.admits() {
+        return None;
+    }
+    let export = stage.export()?;
+    if let Some(resumed) = stage.export_activation(&export) {
+        return Some(resumed);
+    }
+    Some(stage.export_frame(export))
+}
+
+/// The return with its encoded `value` of an export's frame a JavaScript call pushed: the frame
+/// retires, and the call's register takes the value's JavaScript form, or, for a call that
+/// completes its caller, the caller returns it.
+#[inline(always)]
+pub fn step_export_frame_return_of<S: WasmExportCall>(stage: &mut S, value: S::Value) -> S::Resume {
+    let pending = stage.retire_frame();
+    let value = stage.export_value(&pending, value);
+    if S::caller_returns(&pending) { stage.complete_caller(pending, value) } else { stage.resume_caller(pending, value) }
 }
 
 /// The JavaScript number an import passes for a Wasm scalar argument of type `ty` whose word is

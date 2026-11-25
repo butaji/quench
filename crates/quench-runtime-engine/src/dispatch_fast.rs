@@ -706,7 +706,7 @@ impl LaneView {
 
     /// Whether its body left too often and specializes again at its next entry.
     #[inline]
-    fn respecializes(&self) -> bool {
+    pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
@@ -6843,12 +6843,11 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
-    // A function of a program with a loaded AOT image takes the image's body and no other
-    // (`install_ahead_lane_body`): no warm-up, no runtime tier.
-    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead
-    // image, the stencil tier at once, a wait for callees still compiling, or the lane body tier.
+    // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
+    // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
+    // tier at once, a wait for callees still compiling, or the lane body tier.
     let base_only = crate::compiled::admission::stencil_only();
-    let ahead_image = vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    let ahead_image = !own.respecializes() && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
@@ -10808,6 +10807,7 @@ fn promise_native_call_in_lane(cx: *mut LaneContext, ip: Ip, native: Native, cal
 
 pub(crate) mod named_keys;
 pub(crate) mod wasm_calls;
+pub(crate) mod wasm_exports; use wasm_exports::LaneExportCall;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use named_keys::named_key_element;
 pub(crate) mod in_place_natives;
@@ -15834,152 +15834,9 @@ fn push_frame_call_in_lane(
 /// does not admit.
 #[inline(never)]
 fn lane_wasm_export_frame(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-    if !unsafe { (*cx).script_calls }
-        || (returns && !returning_call_admitted(cx))
-        || vm.execution_mode == ExecutionMode::Compiled
-    {
-        return None;
-    }
-    // SAFETY: the call's window is registers of the running function, read before any
-    // activation becomes a frame.
-    let args = unsafe { call_window_in_lane(r, i) };
-    let (program, function, env, encoded, result) = vm.wasm_export_frame_call(r.get(i.b), args)?;
-    let callee_code = vm.programs.get(program)?;
-    if !vm.admits_in_lane(&callee_code) || !vm.call_may_derive_in_lane(program, function) {
-        return None;
-    }
-    if let Some(resumed) = lane_activate_wasm_export(cx, r, ip, program, function, env, &encoded, result) {
-        return Some(resumed);
-    }
-    vm.materialize_lane_activations(cx);
-    let caller = unsafe { (*cx).frame() };
-    // SAFETY: the call record lies in the running view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    vm.frames[caller].pc = call_pc + 1;
-    vm.frames[caller].pc_is_resume = true;
-    // The callee runs in its own program, which its frame belongs to and the loop's executing
-    // one sets aside as a frame call into another program does (`push_frame_call_in_lane`).
-    let caller_program = unsafe { (*cx).program };
-    enter_program_in_lane(cx, program);
-    let call_guard = match vm.push_wasm_frame_over(&callee_code, function, env, &encoded) {
-        Ok(guard) => guard,
-        Err(error) => {
-            // An exhausted guest stack traps, which reaches the caller as a `RuntimeError`.
-            enter_program_in_lane(cx, caller_program);
-            // SAFETY: the context's program, the caller's again, outlives the lane run.
-            let error = vm.trap_raised_in_javascript(unsafe { &*(*cx).code }, error); vm.lane_completion.raise(error);
-            return Some(Resumed::Exit(exit(ip)));
-        }
-    };
-    // SAFETY: the general loop's executing program outlives the lane run.
-    let executing = unsafe { &mut *(*cx).executing };
-    let saved = quench_runtime::vm::dispatch_frame::SavedProgram {
-        id: executing.id,
-        retained: std::mem::replace(&mut executing.retained, Some(callee_code)),
-    };
-    executing.id = program;
-    // The run goes on as a Wasm run (`LaneContext::inline_calls`) until the frame returns,
-    // which completes on the general path, as it completes any call into another program
-    // (`return_frame_in_lane`); the caller's lane run starts afresh there.
-    unsafe {
-        (*cx).inline_calls = true;
-        set_script_calls_in_lane(cx, false);
-    }
-    // SAFETY: the general loop's pending calls outlive the lane run.
-    unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
-        caller,
-        caller_cursor: None,
-        call_pc: call_pc as u32,
-        destination: i.a & quench_runtime::bytecode::REGISTER_MASK,
-        completion: CallCompletion::WasmExport(result),
-        returns,
-        call_guard: Some(call_guard),
-        caller_program: Some(saved),
-    });
-    // The pushed frame's guard narrows the activations the thread admits.
-    vm.lane_stack.refresh_activation_limit();
-    Some(enter_frame_in_lane(cx, caller + 1, 0))
+    quench_runtime::staged::wasm_activation::step_export_call_of(&mut LaneExportCall { cx, r, ip, i: std::ptr::from_ref(i), call: None })
 }
 
-/// `lane_wasm_export_frame`'s call as a frameless Wasm activation of the export
-/// (`ActivationKind::WasmEntry`) over its instance environment, pushed as a Wasm call's
-/// activation is (`wasm_activation::enter_function`) beside the caller's activations, which
-/// stay activations. The run goes on as a Wasm run (`LaneContext::inline_calls`) until the
-/// activation returns (`complete_activation_in_lane`). `None`, which changes nothing, where the
-/// callee has no lane view yet or the lane no room for it: the frame call takes it.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn lane_activate_wasm_export(
-    cx: *mut LaneContext,
-    r: Registers,
-    ip: Ip,
-    program: ProgramId,
-    function: u32,
-    instance: Value,
-    encoded: &[Value],
-    result: Option<quench_runtime::WasmType>,
-) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let view_in_lane = vm
-        .programs
-        .views_in_lane(program)?
-        .get(function as usize)
-        .and_then(quench_runtime::vm::program_store::derived_lane_view)?;
-    let shape = view_in_lane.activation?;
-    let base = view_in_lane.records();
-    let stack: &mut LaneStack = &mut vm.lane_stack;
-    let count = usize::from(shape.registers);
-    let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
-    if frame_storage_bytes
-        > quench_runtime::stack::GuestCallGuard::remaining_storage_bytes().saturating_sub(stack.wasm_storage_bytes)
-        || !stack.admits_activations(1)
-        || vm.frames.len() + stack.activation_count() >= quench_runtime::vm::dispatch_frame::WASM_ACTIVATION_LIMIT
-        || stack.values.room() < fill_room::<ACTIVATION_FILL_BLOCK>(count)
-    {
-        return None;
-    }
-    let window = stack.values.len();
-    let passed = encoded.len().min(usize::from(shape.params));
-    // SAFETY: capacity holds the window; each slot is written before the length covers it,
-    // and no activation's window moves.
-    let callee_registers = unsafe {
-        let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, usize::from(shape.fill), shape.initial);
-        for (offset, &value) in encoded[..passed].iter().enumerate() {
-            registers.add(usize::from(shape.parameters) + offset).write(value);
-        }
-        stack.values.set_len(window + count + lane_values::CONTEXT);
-        // A Wasm activation runs with its caller's receiver and environment (`ActivationState::of`).
-        Registers(registers).set_this(r.this());
-        Registers(registers).set_env(r.env());
-        Registers(registers).set_capture(r.capture());
-        Registers(registers)
-    };
-    let (caller_program, caller_base) = unsafe { ((*cx).program, (*cx).base) };
-    // SAFETY: capacity holds the activation.
-    unsafe {
-        let at = stack.values.as_mut_ptr().wrapping_add(window);
-        stack.push_activation(Activation::of_parts(
-            function, ip, caller_base, r, caller_program,
-            ActivationKind::WasmEntry { instance, result, frame_storage_bytes, program, pc: 0 },
-        ), at);
-    }
-    enter_program_in_lane(cx, program);
-    // A fresh activation's memory register holds no memory until the function's instance
-    // binding loads it.
-    unsafe {
-        (*cx).registers = callee_registers;
-        (*cx).base = base;
-        (*cx).memory = MemoryView::NONE;
-        (*cx).instance = instance;
-        (*cx).inline_calls = true;
-        set_script_calls_in_lane(cx, false);
-    }
-    let view = Carried { memory: MemoryView::NONE, integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
-    Some(Resumed::At(callee_registers, base, view))
-}
 
 /// `new` of a user constructor that needs a VM frame, made in place as the general loop's
 /// in-loop construction makes it (`Vm::inline_construct_target`): lane activations become
@@ -16183,35 +16040,8 @@ fn return_frame_in_lane(r: Registers, ip: Ip) -> Resumed {
 #[cold]
 #[inline(never)]
 fn lane_return_wasm_export(cx: *mut LaneContext, value: Value) -> Resumed {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the general loop's pending calls outlive the lane run.
-    let mut call = unsafe { &mut *(*cx).pending }.pop().expect("the export's frame has its pending call");
-    let CallCompletion::WasmExport(result) = call.completion else {
-        unreachable!("the caller tested the completion");
-    };
-    vm.retire_wasm_frame();
-    let saved = call.caller_program.take().expect("an export's frame runs its own program");
-    // SAFETY: the general loop's executing program outlives the lane run.
-    let executing = unsafe { &mut *(*cx).executing };
-    executing.id = saved.id;
-    executing.retained = saved.retained;
-    enter_program_in_lane(cx, saved.id);
-    unsafe {
-        (*cx).inline_calls = false;
-        set_script_calls_in_lane(cx, true);
-    }
-    drop(call.call_guard);
-    let frame = call.caller;
-    vm.active_registers = vm.frames[frame].registers.as_mut_ptr();
-    let value = vm.wasm_export_result(value, result);
-    if call.returns {
-        // The caller completes too, at its call record, as a returning frame call's does
-        // (`return_script_frame_in_lane`).
-        let (_, call_ip, _) = frame_state_in_lane(cx, frame, call.call_pc as usize);
-        return Resumed::Exit(return_script_frame_in_lane(cx, call_ip, value, true));
-    }
-    vm.write(frame, call.destination, value);
-    enter_script_frame_in_lane(cx, frame)
+    // The record is unused: a frame's return reads only its pending call.
+    quench_runtime::staged::wasm_activation::step_export_frame_return_of(&mut LaneExportCall { cx, r: Registers(std::ptr::null_mut()), ip: std::ptr::null(), i: std::ptr::null(), call: None }, value)
 }
 
 /// A lane opcode's handler, and whether that handler is an accumulator

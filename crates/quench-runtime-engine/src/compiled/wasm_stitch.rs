@@ -20,6 +20,7 @@ use quench_runtime::staged::wasm_operation::{Operand, WasmOperation};
 use quench_runtime::staged::wasm_step::Step;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use quench_bjit::wasm::{self as codes, WasmCode};
+use super::stitcher::{self, Behind};
 use quench_bjit::{HOLES, Row, Stencil, padded_holes};
 use super::CONTEXT_MEMORY_LENGTH;
 use quench_runtime::staged::frame::WASM_HEADER_WORDS;
@@ -389,16 +390,13 @@ const fn padded_frame(bytes: u64) -> u64 {
     (bytes + 15) & !15
 }
 
-fn stencil(name: &str) -> Option<Stencil> {
-    quench_bjit::rustc::stencil(name)
-}
 
 /// The entry for `params` arguments and `rest` zeroed registers: the variant of its parameter
 /// count (`wasm_entry.rs`, unzeroed when `rest` is 0), else the generic entry. A target without
 /// the variants (AArch64) has the generic entry alone.
 fn entry_stencil(params: usize, rest: u64) -> Option<Stencil> {
     let variants = if rest == 0 { &ENTRY_UNZEROED } else { &ENTRY_ZEROED };
-    variants.get(params).and_then(|name| stencil(name)).or_else(|| stencil("entry_wasm"))
+    variants.get(params).and_then(|name| stitcher::library(name)).or_else(|| stitcher::library("entry_wasm"))
 }
 
 /// The x86-64 entry variants by parameter count, zeroing the registers after the arguments.
@@ -450,14 +448,14 @@ pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &
     if !flat.last().is_some_and(|last| last.stencil.starts_with("leave_")) {
         return None;
     }
-    let stencils: Vec<Stencil> = flat.iter().map(|planned| stencil(planned.stencil)).collect::<Option<_>>()?;
+    let stencils: Vec<Stencil> = flat.iter().map(|planned| stitcher::library(planned.stencil)).collect::<Option<_>>()?;
     let placed: Vec<Row> = flat
         .iter()
         .zip(&stencils)
         .map(|(planned, stencil)| Row { stencil, hole: &planned.holes, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
-    let trap = stencil("leave_wasm_trap")?;
+    let trap = stitcher::library("leave_wasm_trap")?;
     // The parameters follow the instance bindings (`Function::parameter_registers`).
     let first_parameter = function.parameter_registers?;
     let past_parameters = u64::from(first_parameter) + params as u64;
@@ -467,15 +465,9 @@ pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &
     // entry's zeroing runs on through its two words per register.
     let rest = if vectors { rest + 2 * u64::from(function.registers) } else { rest };
     let entry = entry_stencil(params, rest)?;
-    let rows_at = entry.code.len() + trap.code.len();
-    let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
     let entry_holes = padded_holes([wasm_stitch_simd::frame_bytes(function.registers, vectors), params as u64, rest, slot(first_parameter)]);
-    patch_routine(&entry, &mut code[..entry.code.len()], &entry_holes, rows_at)?;
-    code[entry.code.len()..rows_at].copy_from_slice(&trap.code);
-    let trap_at = code.as_ptr() as usize + entry.code.len();
-    // SAFETY: `code` holds every row's full length past `rows_at`, which bounds the copy.
-    let (length, _) = unsafe { quench_bjit::copy_patch(&placed, code.as_mut_ptr().add(rows_at), |_, _| trap_at) };
-    code.truncate(rows_at + length);
+    // Every row's exit is the trap leave, the routine behind the entry.
+    let (code, _, _) = stitcher::stitch_behind((&entry, &entry_holes), &[&trap], &placed, Behind::Routine(0)).ok()?;
     Some(code)
 }
 
@@ -485,21 +477,6 @@ fn row_index(target: Target, first: &[usize]) -> usize {
         Target::Pc(pc) => first[pc],
         Target::Row(row) => row,
     }
-}
-
-/// Copies `routine` into `code` (its own length), its value holes `holes` and its one successor
-/// (the call of the first row) the rows at offset `rows_at`.
-fn patch_routine(routine: &Stencil, code: &mut [u8], holes: &[u64; HOLES], rows_at: usize) -> Option<()> {
-    code.copy_from_slice(&routine.code);
-    for reloc in &routine.relocs {
-        let at = reloc.offset as usize;
-        if quench_bjit::class::is_successor(reloc.class) {
-            quench_bjit::patch_successor(code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).ok()?;
-        } else {
-            quench_bjit::patch_value(code, at, reloc.class, holes[reloc.index as usize]);
-        }
-    }
-    Some(())
 }
 
 #[path = "wasm_stitch_memory.rs"]

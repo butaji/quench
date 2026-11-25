@@ -1,7 +1,7 @@
 //! Which row each instruction is: one dispatch, which the interpreter runs per step and the
 //! native compiler runs once per instruction.
 use super::{self as m, At, Machine, Next, Step};
-use crate::backtrack::{Inst, UnitTest};
+use super::super::{Inst, UnitTest};
 
 /// The meaning of `inst` at `at`: the instruction's row. The interpreter runs it on its
 /// state, the native compiler specializes it to the instruction.

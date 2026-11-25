@@ -5,10 +5,10 @@
 //! flag a branch condition), so each operation has one definition for both. What is static (a
 //! test, a flag of the pattern) is an argument; what is dynamic (a position, a unit, a flag
 //! computed from them) is a stage value.
-use crate::{Assertion, FOLDED_WORD_UNITS, LINE_TERMINATORS, WORD_UNITS};
+use super::insts::{Assertion, FOLDED_WORD_UNITS, LINE_TERMINATORS, WORD_UNITS};
 
 /// The dynamic accesses the operations make.
-pub trait MatchStage: quench_stack::projection::Sealed {
+pub trait MatchStage: crate::projection::Sealed {
     /// A position in the subject; `0..=length`.
     type Pos: Copy;
     /// A unit of the subject.
