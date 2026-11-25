@@ -2810,8 +2810,12 @@ impl quench_runtime::Host for NodeHost {
         context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_resume_time_origins");
-        commonjs::finish_initialize(context)?;
-        context.host_as::<crate::host::NodeHost>().bootstrapped = true;
+        // A run saved at its wait for input (`aot::prefix::reach_wait`) finished installing
+        // before it was saved: only the process's own inputs above are bound again.
+        if !context.host_as::<crate::host::NodeHost>().bootstrapped {
+            commonjs::finish_initialize(context)?;
+            context.host_as::<crate::host::NodeHost>().bootstrapped = true;
+        }
         Ok(())
     }
 }

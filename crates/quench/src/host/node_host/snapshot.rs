@@ -29,8 +29,10 @@ impl NodeHost {
             building_snapshot: _,
             // Read only while a snapshot is built.
             snapshot_builtins: _,
-            // False at the snapshot point; a restored host sets it in `Host::resume`.
-            bootstrapped: _,
+            // False at a startup snapshot's point, which a restored host's `Host::resume` sets
+            // after finishing installation; true at a wait for input (`aot::prefix::reach_wait`),
+            // where installation is finished and the run has begun.
+            bootstrapped,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
             esm_required: _,
@@ -40,6 +42,7 @@ impl NodeHost {
             "socket writes",
         )?;
         writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI);
+        writer.u8(u8::from(*bootstrapped));
         shared_state.borrow().write_snapshot(writer)
     }
 
@@ -47,6 +50,7 @@ impl NodeHost {
         if reader.u64()? != crate::host::shared_vm::BOOTSTRAP_ABI {
             return Err("Node bootstrap ABI does not match runtime".into());
         }
+        self.bootstrapped = reader.u8()? != 0;
         self.shared_state.borrow_mut().read_snapshot(reader)
     }
 }

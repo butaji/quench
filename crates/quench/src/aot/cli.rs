@@ -11,6 +11,10 @@ use std::{
 
 const COMPILE_REPORT_VERSION: u64 = 1;
 const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
+
+/// The compile worker option that runs a native entry's residual program at build time to its
+/// first wait for input and saves the run there (`build_rest`).
+const WAIT_WORKER_OPTION: &str = "--wait-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
@@ -126,12 +130,15 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
     enum Work {
         Application(Options),
         Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
+        Wait { program: PathBuf, output: PathBuf, assumptions: Vec<String> },
         Evaluation { entry: PathBuf, journal: PathBuf, assumptions: Vec<String> },
         Resumption { entry: PathBuf, rest: PathBuf, arguments: Vec<String> },
     }
     let work = match arguments.as_slice() {
         [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
             Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
+        [option, program, output, assumptions @ ..] if option == WAIT_WORKER_OPTION =>
+            Work::Wait { program: program.into(), output: output.into(), assumptions: assumptions.to_vec() },
         [option, entry, journal, assumptions @ ..] if option == super::strict::EVALUATION_WORKER_OPTION =>
             Work::Evaluation { entry: entry.into(), journal: journal.into(), assumptions: assumptions.to_vec() },
         [option, entry, rest, arguments @ ..] if option == super::strict::RESUMPTION_WORKER_OPTION =>
@@ -144,6 +151,7 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .spawn(move || match work {
             Work::Application(options) => compile(options),
             Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
+            Work::Wait { program, output, assumptions } => build_rest(&program, &output, &assumptions),
             Work::Evaluation { entry, journal, assumptions } => super::strict::evaluate(&entry, &journal, &assumptions),
             Work::Resumption { entry, rest, arguments } => super::strict::resume(&entry, &rest, arguments),
         })
@@ -164,6 +172,82 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     let mut runtime = quench_runtime::Runtime::new(host);
     let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
     fs::write(output, bytes).map_err(|error| error.to_string())
+}
+
+/// The worker: runs the native entry's residual `program` with the build-time gate armed
+/// (`aot::prefix`), under `assumptions` (`QUESTION=0|1`), to its first wait for input, and writes the run saved there to `output` and
+/// the writes it made before to `output` with the extension `effects` (JSON pairs of descriptor
+/// and bytes). Fails when the run does not reach such a wait, having read a dynamic input.
+fn build_rest(program: &Path, output: &Path, assumptions: &[String]) -> Result<(), String> {
+    if !crate::host::startup_snapshot::native_bootstrap_environment_is_neutral() {
+        return Err("native wait worker received process-specific configuration".into());
+    }
+    let program = quench_runtime::ResidualProgram::read_binary(program)?;
+    super::prefix::begin(super::strict::parse_assumptions(assumptions)?);
+    let host = crate::NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?;
+    let mut runtime = crate::shared_run::EntryRuntime::new(quench_runtime::Runtime::new(host), crate::shared_run::Teardown::Free);
+    let execution = runtime.execute_deferred_jobs(&program);
+    let completion = crate::shared_run::finish_shared_execution(&mut runtime, &program, execution);
+    match super::prefix::finish() {
+        super::prefix::Residual::Waiting(effects, rest) => {
+            fs::write(output, rest).map_err(|error| error.to_string())?;
+            fs::write(output.with_extension("effects"), serde_json::to_vec(&effects).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+        }
+        super::prefix::Residual::Dynamic(input) => Err(format!("the native entry's build-time run read {input} before its first wait")),
+        super::prefix::Residual::Question(question) => Err(format!("the native entry's build-time run asked {} before its first wait", question.key())),
+        super::prefix::Residual::Effects(_) => Err(format!("the native entry's build-time run did not wait for input ({:?})", completion.err())),
+    }
+}
+
+/// A run saved at its first wait for input: the answers it assumed, the writes it made before
+/// the wait, and the saved runtime's file.
+struct SavedWait {
+    answers: super::strict::Answers,
+    effects: Vec<(i32, Vec<u8>)>,
+    rest: PathBuf,
+}
+
+/// Saves, per answer set of `runs`, the native entry's run at its first wait (`--wait-worker`);
+/// none when any run cannot be saved, which `report` names.
+fn prepare_saved_waits(runs: &[super::strict::Answers], work: &Path, native_entry: &Path, report: &mut Value) -> Vec<SavedWait> {
+    let mut saved = Vec::new();
+    for (index, answers) in runs.iter().enumerate() {
+        let rest = work.join(format!("rest-{index}.bin"));
+        let prepared = std::env::current_exe().map_err(|error| error.to_string()).and_then(|compiler| {
+            let mut worker = Command::new(compiler);
+            worker.args(["compile", WAIT_WORKER_OPTION]).arg(native_entry).arg(&rest)
+                .args(answers.iter().map(|(question, answer)| format!("{}={}", question.key(), u8::from(*answer))));
+            crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
+            quench_runtime::native_link::checked_output(&mut worker, "native wait preparation")?;
+            let effects = fs::read(rest.with_extension("effects")).map_err(|error| error.to_string())?;
+            serde_json::from_slice(&effects).map_err(|error| error.to_string())
+        });
+        match prepared {
+            Ok(effects) => saved.push(SavedWait { answers: answers.clone(), effects, rest }),
+            Err(error) => {
+                report["resume"] = json!({"status": "unavailable", "diagnostic": error});
+                return Vec::new();
+            }
+        }
+    }
+    if !saved.is_empty() {
+        report["resume"] = json!({"status": "prepared", "runs": saved.iter().map(|wait| json!({
+            "answers": wait.answers.iter().map(|(question, answer)| (question.key(), *answer)).collect::<Vec<_>>(),
+            "writes": wait.effects.len(), "bytes": fs::metadata(&wait.rest).map_or(0, |metadata| metadata.len()),
+        })).collect::<Vec<_>>()});
+    }
+    saved
+}
+
+/// The catalog's `RESUMES_AT_REST` (`image_driver`): each saved run, which an image whose
+/// answers hold as it starts resumes.
+fn resumes_at_rest(saved: &[SavedWait]) -> String {
+    let runs = saved.iter().map(|wait| {
+        let answers = wait.answers.iter().map(|(question, answer)| format!("({:?}, {answer})", question.key())).collect::<Vec<_>>().join(", ");
+        let writes = wait.effects.iter().map(|(descriptor, bytes)| format!("({descriptor}, &{bytes:?})")).collect::<Vec<_>>().join(", ");
+        format!("quench::aot::SavedWait {{ answers: &[{answers}], effects: &[{writes}], rest: include_bytes!({:?}) }}", wait.rest.display().to_string())
+    }).collect::<Vec<_>>().join(", ");
+    format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\n")
 }
 
 fn compile(options: Options) -> Result<(), String> {
@@ -244,13 +328,18 @@ fn compile(options: Options) -> Result<(), String> {
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
     // A strict compile links no support when the program folds at build time; one that reads
     // a dynamic input links its support variant, and the report names the input.
+    let mut waits = Vec::new();
     if options.strict {
-        if let super::strict::Outcome::Image = super::strict::compile(&entry, &output, &work.0, &mut report)? {
-            report["status"] = json!("compiled");
-            report["support_variant"] = json!("strict");
-            report["execution_mode"] = json!("replay");
-            write_report(report_path.as_deref(), &report)?;
-            return Ok(());
+        match super::strict::compile(&entry, &output, &work.0, &mut report)? {
+            super::strict::Outcome::Image => {
+                report["status"] = json!("compiled");
+                report["support_variant"] = json!("strict");
+                report["execution_mode"] = json!("replay");
+                write_report(report_path.as_deref(), &report)?;
+                return Ok(());
+            }
+            super::strict::Outcome::Waits(runs) => waits = runs,
+            super::strict::Outcome::Dynamic => {}
         }
     }
     manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
@@ -273,27 +362,14 @@ fn compile(options: Options) -> Result<(), String> {
     let (table, unlinked) = operation_table(&graph);
     fs::OpenOptions::new().append(true).open(inputs.catalog()).and_then(|mut catalog| catalog.write_all(table.as_bytes())).map_err(|error| error.to_string())?;
     report["unlinked_host_operations"] = json!(unlinked);
-    let bootstrap = work.0.join("bootstrap.bin");
-    let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
-    worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
-        .arg(images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT)))
-        .arg(&bootstrap)
-        .args(graph.snapshot_builtins());
-    crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
-    let inputs = match quench_runtime::native_link::checked_output(&mut worker, "native bootstrap preparation") {
-        Ok(_) => {
-            let mut catalog = fs::OpenOptions::new().append(true).open(inputs.catalog()).map_err(|error| error.to_string())?;
-            writeln!(catalog, "const _: () = assert!(quench::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
-                .map_err(|error| error.to_string())?;
-            report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
-                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
-            inputs.with_bootstrap(bootstrap)
-        },
-        Err(error) => {
-            report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
-            inputs
-        },
-    };
+    let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
+    // A program whose build-time runs wait for input before reading any resumes the run whose
+    // answers hold as it starts: no entry run and no installation. The startup snapshot stays
+    // for a start no saved run answers.
+    let saved_waits = prepare_saved_waits(&waits, &work.0, &native_entry, &mut report);
+    fs::OpenOptions::new().append(true).open(inputs.catalog())
+        .and_then(|mut catalog| catalog.write_all(resumes_at_rest(&saved_waits).as_bytes())).map_err(|error| error.to_string())?;
+    let inputs = bootstrap_inputs(&graph, &work.0, &native_entry, inputs, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -548,4 +624,30 @@ fn operation_table(graph: &super::graph::DependencyGraph) -> (String, usize) {
     let table = format!("static OPERATIONS: [quench_runtime::HostCallback; {n}] = [{entries}];\n\
         const _: () = assert!(quench::host::OPERATION_CALLBACKS.len() == {n}, \"native image host operation table mismatch\");\n", n = paths.len());
     (table, unlinked)
+}
+
+/// The image's inputs with its startup snapshot (`--bootstrap-worker`), or without one when the
+/// snapshot cannot be prepared; the catalog gains the start's constants either way.
+fn bootstrap_inputs(graph: &super::graph::DependencyGraph, work: &Path, native_entry: &Path, inputs: quench_runtime::native_link::NativeImageInputs, report: &mut Value) -> Result<quench_runtime::native_link::NativeImageInputs, String> {
+    let bootstrap = work.join("bootstrap.bin");
+    let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
+        .arg(native_entry)
+        .arg(&bootstrap)
+        .args(graph.snapshot_builtins());
+    crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
+    Ok(match quench_runtime::native_link::checked_output(&mut worker, "native bootstrap preparation") {
+        Ok(_) => {
+            let mut catalog = fs::OpenOptions::new().append(true).open(inputs.catalog()).map_err(|error| error.to_string())?;
+            writeln!(catalog, "const _: () = assert!(quench::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
+                .map_err(|error| error.to_string())?;
+            report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
+                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
+            inputs.with_bootstrap(bootstrap)
+        },
+        Err(error) => {
+            report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
+            inputs
+        },
+    })
 }
