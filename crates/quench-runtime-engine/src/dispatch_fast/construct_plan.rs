@@ -264,7 +264,6 @@ pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn
 /// # Safety
 /// `context` is the running lane's context.
 pub(crate) unsafe fn context_constructs_in_lane(context: *mut ()) -> bool {
-    if !quench_runtime::DYNAMIC_EXECUTION_ENABLED { return false; }
     let cx = context.cast::<LaneContext>();
     quench_runtime::staged::call_construct::concrete_admits_construct_run(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs })
 }

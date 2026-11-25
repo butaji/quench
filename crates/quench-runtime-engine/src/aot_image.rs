@@ -68,7 +68,8 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         .collect::<Result<Vec<_>, String>>()?;
     if quench_runtime::trace::Channel::AotLanes.on() {
         let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
-        eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body", program.source_name, functions.len());
+        let leaves: usize = functions.iter().map(|function| function.base.generic_rows()).sum();
+        eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body; base bodies leave at {leaves} records", program.source_name, functions.len());
     }
     let symbols::Finished { shapes, heap_values, atoms, labels, calls } = symbols.finish();
     let calls = calls.into_iter().map(|site| sites.get(&site).copied().ok_or("a body names a call record no base body planned"))
@@ -102,8 +103,9 @@ fn lower_function(
 
 #[quench_macros::ext(AotImageOps1)]
 impl AotImage {
-    /// Records the image leaves to the generic semantic row, over all functions: the
-    /// shrink-only budget (`aot-exact-steps.txt`) the AOT gate requires to reach zero.
+    /// The records its base bodies leave at (`Step::Leave`), over all functions: what an image
+    /// with no interpreter behind it cannot run, the shrink-only budget (`aot-exact-steps.txt`)
+    /// the AOT gate requires to reach zero.
     pub(crate) fn generic_rows(&self) -> usize {
         self.functions.iter().map(|function| function.base.generic_rows()).sum()
     }

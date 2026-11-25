@@ -292,7 +292,7 @@ pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entr
 #[cfg(test)]
 pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
-    super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
+    super::entry::site_read(&mut stage, (entries, records, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// The value `object.first.second` reads through the field cache entries `first` and `second`

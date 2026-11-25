@@ -464,7 +464,7 @@ pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -1155,6 +1155,8 @@ lane_helper_inventory! {
     /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
     /// (`dispatch_fast::lane_body_step_packed`).
     StepPacked => crate::dispatch_fast::lane_body_step_packed,
+    /// A loop's interpreter kernel on the loop's entry edge, which the b-jit plans before its head (`base_region::kernel_entries`).
+    KernelStep => base_body::kernel_step_in_lane,
     /// ToBoolean of a value its cell decides (`truthy_in_lane`).
     Truthy => truthy_in_lane,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
@@ -1512,7 +1514,6 @@ pub(crate) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: 
 }
 
 pub use quench_runtime::vm::engine_types::ExecutionMode;
-
 
 
 /// A value's width inside compiled code. Each register has an integer and a
@@ -1910,7 +1911,6 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 pub(crate) use quench_runtime::vm::engine_types::CallContext;
 
 use quench_runtime::vm::engine_types::CallContextFields;
-
 
 
 
@@ -4091,6 +4091,14 @@ pub(crate) fn take_lane_exit_line() -> u64 {
 }
 
 #[inline]
+/// Whether a lane body runs on this thread now: its entry's words are the thread's lane frame's
+/// (`LaneEntry::residual`), which another body's entry must keep (`Vm::run_nested_lane_method`).
+pub(crate) fn body_running_in_lane() -> bool {
+    let frame = frame_in_lane();
+    // SAFETY: as `frame_in_lane`; the words are read and dropped here.
+    unsafe { LaneEntry::of(&(*frame).dispatch) }.residual != 0
+}
+
 fn frame_in_lane() -> *mut BodyRunContext {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -6000,19 +6008,9 @@ impl<'b> RegionCore<'b> {
         self.builder
     }
 
-    /// Read the call context's interrupt flag. A JS region uses the result to
-    /// take its exact-PC callout; scalar regions use it for termination exits.
-    fn interrupt_requested(&mut self) -> ir::Value {
-        use quench_runtime::staged::machine::{Lane, Relation};
-        let context = self.context;
-        let pointer = native_interrupt_pointer(&mut self.builder, context, false);
-        let requested = self.raw_atomic_load(Lane::I8, MemFlagsData::trusted(), pointer);
-        self.raw_compare_imm(Relation::NotEqual, requested, 0)
-    }
-
     /// Checks for a termination request: a read of the poll page, which faults once one is
-    /// made and resumes as the terminated status (`guard_fault`), else a test of the context's
-    /// flag that branches to `termination_block`.
+    /// made and resumes as the terminated status (`guard_fault`), else the shared back-edge poll
+    /// (`staged::poll::back_edge_poll`) of the context's flag, which leaves to `termination_block`.
     fn interrupt_safepoint(&mut self) {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
@@ -6020,19 +6018,11 @@ impl<'b> RegionCore<'b> {
             self.raw_atomic_load(quench_runtime::staged::machine::Lane::I8, MemFlagsData::trusted(), poll);
             return;
         }
-        let stop = self.interrupt_requested();
-        let termination = match self.termination_block {
-            Some(block) => block,
-            None => {
-                let block = self.builder.create_block();
-                self.termination_block = Some(block);
-                block
-            }
-        };
-        let next = self.builder.create_block();
-        self.branch_if(stop, (termination, &[]), (next, &[]));
-        self.builder.switch_to_block(next);
-        self.builder.seal_block(next);
+        let context = self.context;
+        let flag = native_interrupt_pointer(&mut self.builder, context, false);
+        let termination = *self.termination_block.get_or_insert_with(|| self.builder.create_block());
+        // The poll is no speculation: the forced-deopt switch leaves it alone (`unforced`).
+        unforced(|| quench_runtime::staged::poll::back_edge_poll(&mut object_slots::emit(&mut self.builder), flag, termination)).expect("a guard always emits");
     }
 }
 
@@ -7613,17 +7603,18 @@ impl Vm {
         id: ProgramId,
         function: u32,
     ) -> bool {
+        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size and mode: its
+        // image body is compiled already, so there is no compile to amortize, and an execution-only build has nothing else
+        // to run it with.
+        if self.images_run_in_lane() && self.programs.ahead_images(id, program).is_some() {
+            return true;
+        }
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
             cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT),
             base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::compiled::admission::Tier::Base]),
             wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
-        }
-        // A function of a program with a loaded AOT image is claimed at its first entry, whatever its size: its
-        // image body is compiled already, so there is no compile to amortize, and its callers' bodies are native.
-        if self.programs.js_jit_lane_methods_enabled() && self.programs.ahead_images(id, program).is_some() {
-            return true;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
@@ -7879,7 +7870,7 @@ impl Vm {
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
+        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);

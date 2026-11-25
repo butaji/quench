@@ -74,7 +74,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
             let interrupt = self.interrupt;
-            let proof = super::super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
+            let proof = super::super::EmitProof::Safepoint { interrupt };
             self.step(state, frame::Edges::Value, quench_runtime::staged::Operation::Safepoint { proof });
             return;
         }
@@ -87,7 +87,7 @@ impl Lowering<'_, '_> {
 
     pub(crate) fn emit_fault_poll(&mut self) {
         frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
-            super::super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
+            super::super::EmitProof::Safepoint { interrupt: self.interrupt });
     }
 
     /// Joining edges must not move a guard, conversion or recovery across the

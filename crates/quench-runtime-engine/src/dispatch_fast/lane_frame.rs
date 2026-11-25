@@ -2422,12 +2422,12 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     }
     if const { OP == quench_runtime::bytecode::TIER_PROLOGUE as u16 || OP == quench_runtime::bytecode::BODY_ENTRY as u16 } {
         // A prologue record enters the activation's function in the lane context `cx` (`tier_prologue_resumed`,
-        // `body_entry_resumed`), erased of its host so the frame names no `H`.
+        // `body_calls::enter_published_body`), erased of its host so the frame names no `H`.
         let entry = EntryHost {
             cx: cx.cast(),
             ip,
             tier: |context, r, view, function, parameters| tier_prologue_resumed(context.cast(), r, view, function, parameters),
-            body: |context, ip, r, view, function, binds_this| body_entry_resumed(context.cast(), ip, r, view, function, binds_this),
+            body: |context, ip, r, view, function, binds_this| body_calls::enter_published_body(context.cast(), ip, r, view, function, binds_this),
         };
         return LaneFrame::<ACC> { entry: Some(entry), ..LaneFrame::<ACC>::new(r, view) };
     }

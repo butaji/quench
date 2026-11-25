@@ -47,7 +47,7 @@ impl quench_runtime::staged::wasm_activation::WasmExportCall for LaneExportCall 
         self.call = vm.wasm_export_frame_call(r.get(i.b), args);
         let &Some((program, function, ..)) = &self.call else { return None };
         let callee_code = vm.programs.get(program)?;
-        if !vm.admits_in_lane(&callee_code) || !vm.call_may_derive_in_lane(program, function) {
+        if !vm.admits_in_lane(program, &callee_code) || !vm.call_may_derive_in_lane(program, function) {
             return None;
         }
         Some(callee_code)
