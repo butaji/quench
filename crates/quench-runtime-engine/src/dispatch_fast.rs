@@ -3529,10 +3529,10 @@ fn site_keyed_get_in_lane(vm: &mut Vm, ip: Ip, base: Value, key: Value) -> Optio
     Some(value)
 }
 
-/// A string's element in the lane (`Vm::string_element`), which allocates its one-unit string.
+/// An element whose lane `read` allocates: a one-unit string (`Vm::string_element`) or a BigInt (`Vm::bigint_typed_element`).
 #[inline(never)]
-fn string_element_in_lane(vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
-    let value = vm.string_element(base, key)?;
+fn allocated_element_in_lane(vm: &mut Vm, base: Value, key: Value, read: fn(&mut Vm, Value, Value) -> Option<Value>) -> Option<Value> {
+    let value = read(vm, base, key)?;
     note_allocation(vm);
     Some(value)
 }
@@ -3555,9 +3555,9 @@ lane_handler! {
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
-            .or_else(|| string_element_in_lane(vm, base, key))
+            .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
             .or_else(|| vm.absent_array_element(base, key))
-            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_keyed_get(base, key)).or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
             .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
@@ -3643,11 +3643,11 @@ fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) -> Option<V
     // which would only decline them.
     vm.dense_array_element(base, key)
         .or_else(|| named_key_element(vm, base, key))
-        // merge: theirs' `lane_typed_array_element` is undefined; HEAD's `row_typed_element` serves the typed read.
         .or_else(|| row_typed_element(ip, vm, base, key))
-        .or_else(|| string_element_in_lane(vm, base, key))
+        .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| site_keyed_get_in_lane(vm, ip, base, key))
+        .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
         .or_else(|| vm.keyed_array_length(base, key))
 }
 
@@ -4372,10 +4372,10 @@ const FIELD_LEAF_READ: u16 = {
 pub(crate) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
 
 /// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
-const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
+pub(crate) const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
 
 /// The generated typed keyed write (`generated_row` of `ELEMENT_WRITE`, `TYPED_SITE`).
-const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
+pub(crate) const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
 /// whose generated row (`generated_row`) a store record runs: its hint as a layout store.
@@ -10737,7 +10737,7 @@ fn native_value_in_lane(
             }
         }
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
-            return regexp_call_in_lane(cx, ip, i, native, callee, receiver, args);
+            return regexp_calls::regexp_call_in_lane(cx, ip, i, native, callee, receiver, args);
         }
         // A generator's resumption runs its body, and a Wasm export its function: guest code
         // that no in-place shortcut of `string_or_native_call_in_lane` makes.
@@ -10799,7 +10799,7 @@ pub(crate) mod name_probe; use name_probe::probe_handler;
 pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
-pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, vm_operation_step};
+pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
 pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
@@ -10945,45 +10945,6 @@ fn native_complete_in_lane(
     let r = unsafe { (*cx).registers };
     r.set(i.a, value);
     Resumed::At(r, following(ip), Carried::script(cx))
-}
-
-/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` or `match` of a RegExp, made in
-/// place when it runs no guest code and raises nothing, so it observes no frame
-/// (`Vm::steady_regexp_call`, `Vm::steady_string_replace`); any other such call goes on as
-/// `string_or_native_call_in_lane` makes it.
-#[inline(never)]
-fn regexp_call_in_lane(
-    cx: *mut LaneContext,
-    ip: Ip,
-    i: &LaneInstruction,
-    native: Native,
-    callee: Value,
-    receiver: Value,
-    args: &[Value],
-) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let result_used = ImmediateLayout::call_result_used_in_lane(i.imm());
-    let steady = match (native, args) {
-        (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
-        (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
-        (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
-        _ => None,
-    };
-    let Some(result) = steady else {
-        return string_or_native_call_in_lane(cx, ip, native, callee, receiver, args);
-    };
-    let result = vm.regexp_search_outcome(result);
-    // The call's allocations may make a collection due, which the lane's safepoints take.
-    note_allocation(vm);
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            vm.lane_completion.raise(error);
-            None
-        }
-    }
 }
 
 /// A lane native call that `native_call_miss` does not make inline: a pure string method or

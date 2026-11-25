@@ -72,8 +72,20 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
         let leaves: usize = functions.iter().map(|function| function.base.generic_rows()).sum();
         eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body; base bodies leave at {leaves} records", program.source_name, functions.len());
+        // The opcodes those records stand for, most first: what staging drives the leaves to zero.
+        let mut by_op = std::collections::BTreeMap::<&str, usize>::new();
+        for function in &functions {
+            let code: Vec<_> = program.function(function.id as usize).instructions().collect();
+            for &pc in function.base.generic.iter() {
+                if let Some(instruction) = code.get(pc as usize) { *by_op.entry(quench_runtime::bytecode::Op::NAMES[instruction.op() as usize]).or_default() += 1; }
+            }
+        }
+        let mut by_op: Vec<_> = by_op.into_iter().collect();
+        by_op.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("aot-lanes: {} leaves by opcode: {by_op:?}", program.source_name);
     }
-    let image = assemble(program, functions, symbols.finish(), &sites)?;
+    let mut image = assemble(program, functions, symbols.finish(), &sites)?;
+    image.regexps = regexps(program);
     if quench_runtime::trace::Channel::AotLanes.on() {
         eprintln!("aot-lanes: {} demand: {}", program.source_name, demand::of(&image, program));
     }
@@ -97,7 +109,22 @@ fn assemble(program: &ResidualProgram, functions: Vec<AotFunction>, symbols: sym
         labels,
         calls,
         wasm: None,
+        regexps: Vec::new(),
     })
+}
+
+/// The native searches of `program`'s RegExp literals (`AotImage::regexps`): each literal's programs, compiled as the
+/// regexp tier compiles a hot one (`regexp_native::ahead_code`), which a VM that loads the image adopts at their first
+/// search (`live::register_regexps`). A program whose code would name a live address has none (`Regex::ahead_plans`).
+#[cfg(not(feature = "jit"))]
+fn regexps(_: &ResidualProgram) -> Vec<quench_runtime::vm::engine_types::AotRegexp> { Vec::new() }
+#[cfg(feature = "jit")]
+fn regexps(program: &ResidualProgram) -> Vec<quench_runtime::vm::engine_types::AotRegexp> {
+    let mut keys = std::collections::BTreeSet::new();
+    quench_runtime::vm::Vm::regexp_literal_matchers(program).iter().flat_map(|matcher| matcher.ahead_plans())
+        .filter(|(key, _)| keys.insert(key.clone()))
+        .filter_map(|(key, plan)| crate::regexp_native::ahead_code(&plan).map(|code| quench_runtime::vm::engine_types::AotRegexp { key, code: code.into() }))
+        .collect()
 }
 
 /// The image of Wasm program `id`, every function planned from the module's binding types `bindings`: each

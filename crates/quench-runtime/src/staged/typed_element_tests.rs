@@ -276,3 +276,8 @@ fn element_types_are_the_kinds_exact_integer_ranges_and_numbers_for_floats() {
     assert_eq!(type_of(Kind::Float32), Type::NUMBER);
     assert_eq!(type_of(Kind::Float64), Type::NUMBER);
 }
+
+#[test]
+fn int32_kinds_are_the_int32_element_types() {
+    for kind in Kind::ALL { if let Some(native) = NativeKind::new(kind) { assert_eq!(native.is_int32(), native.element_type().is_int32(), "{kind:?}"); } }
+}

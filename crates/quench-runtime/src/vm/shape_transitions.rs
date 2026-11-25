@@ -86,8 +86,23 @@ impl ShapeTransitionIndex {
     }
 
     /// Every indexed child, for a snapshot (`crate::snapshot`).
-    pub(super) fn children(&self) -> impl Iterator<Item = u32> + '_ {
+    pub(super) fn children(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
         self.children.iter().copied()
+    }
+
+    /// The hash each of `children` is indexed under, for a snapshot: a restoring VM of this build
+    /// indexes them by it (`insert_hashed`) instead of deriving it again.
+    pub(super) fn hashes<'a>(shapes: &'a [Shape], children: &'a [u32]) -> impl ExactSizeIterator<Item = u64> + 'a {
+        children.iter().map(|&child| child_hash(shapes, child))
+    }
+
+    /// Indexes restored `child` under `hash`, which this build's index derived for it (`hashes`).
+    pub(super) fn insert_hashed(&mut self, shapes: &[Shape], child: u32, hash: u64) -> bool {
+        if child as usize >= shapes.len() {
+            return false;
+        }
+        self.children.insert_unique(hash, child, |&child| child_hash(shapes, child));
+        true
     }
 
     /// An empty index with room for `capacity` children.

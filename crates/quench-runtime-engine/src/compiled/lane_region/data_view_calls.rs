@@ -10,7 +10,6 @@ use super::*;
 use quench_runtime::bytecode::ImmediateLayout;
 use quench_runtime::tier_surface::Native;
 use quench_runtime::staged::data_view::{self, DataViewElement, DataViewWords};
-use quench_runtime::staged::typed_view::TypedRecords;
 use super::builtin_calls::continues;
 
 /// A DataView getter or setter of a fixed-width element, by its element kind and direction.
@@ -126,11 +125,7 @@ impl Lowering<'_, '_> {
 
     /// The proof of the DataView `bits` for an access, leaving at `miss`, whose bytes the variables then hold.
     fn prove_data_view_into(&mut self, values: Variable, length: Variable, bits: ir::Value, writable: bool, miss: ir::Block) {
-        let records = TypedRecords {
-            directory: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_directory)),
-            pages: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_pages)),
-            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
-        };
+        let records = self.typed_records();
         let view = data_view::prove_data_view(&mut super::super::object_slots::emit(&mut self.builder), records, bits, writable, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(values, view.values);

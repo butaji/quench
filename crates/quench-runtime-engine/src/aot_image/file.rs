@@ -13,7 +13,7 @@ use quench_runtime::vm::engine_types::WasmRows;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x03";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x05";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
@@ -43,6 +43,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
         put_function(&mut out, function);
     }
     put_wasm(&mut out, image.wasm.as_ref());
+    put_regexps(&mut out, &image.regexps);
     out
 }
 
@@ -60,7 +61,8 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
     let wasm = read_wasm(&mut words)?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls, wasm })
+    let regexps = read_regexps(&mut words)?;
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls, wasm, regexps })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -267,6 +269,28 @@ fn put_wasm(out: &mut Vec<u8>, wasm: Option<&WasmRows>) {
             None => out.push(0),
         }
     }
+}
+
+/// The RegExp literals' searches: per search its key's source, flags byte and bounds byte, then its code.
+fn put_regexps(out: &mut Vec<u8>, regexps: &[quench_runtime::vm::engine_types::AotRegexp]) {
+    put_count(out, regexps.len());
+    for regexp in regexps {
+        let (source, flags, bounds) = &regexp.key;
+        put_count(out, source.len());
+        out.extend(source.as_bytes());
+        out.extend([*flags, u8::from(*bounds)]);
+        put_count(out, regexp.code.len());
+        out.extend(&regexp.code);
+    }
+}
+
+fn read_regexps(words: &mut Words<'_>) -> Result<Vec<quench_runtime::vm::engine_types::AotRegexp>, String> {
+    (0..words.half()?).map(|_| {
+        let source = read_atom(words)?;
+        let (flags, bounds) = (words.byte()?, words.byte()? != 0);
+        let length = words.half()? as usize;
+        Ok(quench_runtime::vm::engine_types::AotRegexp { key: (source, flags, bounds), code: words.bytes(length)?.into() })
+    }).collect()
 }
 
 fn read_wasm(words: &mut Words<'_>) -> Result<Option<WasmRows>, String> {

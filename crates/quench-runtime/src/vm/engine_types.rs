@@ -98,9 +98,9 @@ pub struct LaneStack {
     /// reusing the entry of a frame it sealed (one-frame-one-call.md F5).
     pub body_top: Box<std::cell::Cell<usize>>,
     /// The running body (`LaneMethod`) of each native header, by its total frame index (`body_table`).
-    pub body_table: Vec<usize>,
+    pub body_table: ZeroedWords,
     /// The descriptor (`DirectCallee`) of each native header, by its total frame index (`native_table`).
-    pub native_table: Vec<usize>,
+    pub native_table: ZeroedWords,
     /// The return trampoline of the native callbacks pushed as plain activations
     /// (`CallbackTrampoline`), at an address their headers name.
     pub callback_return: Box<CallbackTrampoline>,
@@ -2416,13 +2416,6 @@ pub struct JsStepDispatch {
     /// Whether the host makes a strict function's terminal calls proper tail calls
     /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
     pub proper_tail_calls: u64,
-    /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
-    /// refreshed with the other record bases, and the address of the process's buffer-relocation count
-    /// (`buffer_relocations_address`): what a typed array's view proof reads
-    /// (`staged::typed_view::TypedRecords`).
-    pub typed_view_directory: usize,
-    pub typed_view_pages: usize,
-    pub buffer_relocations: usize,
     pub outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -2822,6 +2815,15 @@ pub struct AotImage {
     pub calls: Vec<CallSite>,
     /// A Wasm program's stitched rows, which the instance's Wasm tier links in place of stitching.
     pub wasm: Option<WasmRows>,
+    /// The native searches of the program's RegExp literals (`aot_image::regexps`).
+    pub regexps: Vec<AotRegexp>,
+}
+
+/// A RegExp literal's native search in an image: its pattern's key (`quench_regexp::backtrack::native::AheadKey`)
+/// and its code, which names no address (`regexp_native::compile`), so it runs wherever it is placed.
+pub struct AotRegexp {
+    pub key: quench_regexp::backtrack::native::AheadKey,
+    pub code: Box<[u8]>,
 }
 
 /// A Wasm program's rows in its image (`compiled::wasm_image`): the memory slot their entry reads
@@ -3251,6 +3253,8 @@ pub struct LinkedTable {
     pub calls: *mut CallRecord,
     /// The lane helpers the image names, by number (`LiveImage::helpers`).
     pub helpers: &'static [usize],
+    /// The native search of each of the image's RegExp literals (`AotImage::regexps`), by index.
+    pub regexps: &'static [usize],
 }
 
 /// Every body starts on a cache line, which also satisfies each target's function alignment.
@@ -3765,6 +3769,46 @@ pub struct ScriptActivation {
 #[repr(transparent)]
 pub struct Slot<T: Copy>(pub std::mem::MaybeUninit<T>);
 
+/// A fixed table of words, zero until written, in a mapping of its own: untouched zero pages, so it
+/// costs memory only as far as it is ever written. A zeroed allocation below the allocator's
+/// mapping threshold is written zero byte by byte on a worker thread's arena instead: the lane
+/// stack's two 512 KiB tables were set and faulted at every VM's start.
+pub struct ZeroedWords {
+    base: std::ptr::NonNull<usize>,
+    len: usize,
+}
+
+impl ZeroedWords {
+    pub fn new(len: usize) -> Self {
+        Self { base: super::site_table::storage::map_zeroed(len * size_of::<usize>()).cast(), len }
+    }
+}
+
+impl std::ops::Deref for ZeroedWords {
+    type Target = [usize];
+    fn deref(&self) -> &[usize] {
+        // SAFETY: `base` maps `len` words, zero or written, which this table owns.
+        unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
+    }
+}
+
+impl std::ops::DerefMut for ZeroedWords {
+    fn deref_mut(&mut self) -> &mut [usize] {
+        // SAFETY: as `deref`, borrowed uniquely.
+        unsafe { std::slice::from_raw_parts_mut(self.base.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for ZeroedWords {
+    fn drop(&mut self) {
+        // SAFETY: the mapping `new` made, which nothing reads again.
+        unsafe { super::site_table::storage::unmap(self.base.cast(), self.len * size_of::<usize>()) };
+    }
+}
+
+// SAFETY: the table owns its mapping as a `Vec` owns its buffer.
+unsafe impl Send for ZeroedWords {}
+
 impl Default for LaneStack {
     fn default() -> Self {
         Self {
@@ -3782,8 +3826,8 @@ impl Default for LaneStack {
             plain_depth_limit: Box::new(std::cell::Cell::new(0)),
             frames_below: Box::new(std::cell::Cell::new(0)),
             body_top: Box::new(std::cell::Cell::new(0)),
-            body_table: vec![0; LANE_STACK_ACTIVATIONS],
-            native_table: vec![0; LANE_STACK_ACTIVATIONS],
+            body_table: ZeroedWords::new(LANE_STACK_ACTIVATIONS),
+            native_table: ZeroedWords::new(LANE_STACK_ACTIVATIONS),
             callback_return: Box::new(CallbackTrampoline::new()),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
@@ -4671,15 +4715,17 @@ impl NativeRoots {
     #[inline]
 
     pub fn new() -> Box<Self> {
-        // Zeroed words, not `Value::UNDEFINED`: the allocator hands back untouched zero pages, so
-        // the buffer costs memory only as deep as roots are ever pushed. Only `..depth` is read,
-        // and every slot there was written first.
+        // Zeroed words, not `Value::UNDEFINED`, in a mapping of their own: untouched zero pages,
+        // so the buffer costs memory only as deep as roots are ever pushed. (A zeroed allocation
+        // below the allocator's mapping threshold is written zero byte by byte on a worker thread's
+        // arena: 512 KiB set and faulted at every VM's start.) Only `..depth` is read, and every
+        // slot there was written first.
         const _: () = assert!(size_of::<Value>() == size_of::<u64>() && align_of::<Value>() == align_of::<u64>());
-        let slots = vec![0_u64; NATIVE_ROOT_CAPACITY].into_boxed_slice();
+        let slots = super::site_table::storage::map_zeroed(NATIVE_ROOT_CAPACITY * size_of::<u64>());
         Box::new(Self {
             depth: 0,
             capacity: NATIVE_ROOT_CAPACITY as u64,
-            slots: Box::into_raw(slots).cast::<Value>(),
+            slots: slots.as_ptr().cast::<Value>(),
         })
     }
 
@@ -5798,9 +5844,10 @@ impl Drop for CodeMemory {
 
 impl Drop for NativeRoots {
     fn drop(&mut self) {
-        // SAFETY: `slots` is the boxed slice `new` leaked, of `capacity` values, and nothing else
-        // owns it.
-        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.slots.cast::<u64>(), self.capacity as usize)) });
+        // SAFETY: `slots` is the mapping `new` made, of `capacity` values, and nothing else owns it.
+        unsafe {
+            super::site_table::storage::unmap(std::ptr::NonNull::new_unchecked(self.slots.cast::<u8>()), self.capacity as usize * size_of::<u64>());
+        }
     }
 }
 unsafe impl Send for NativeRoots {}

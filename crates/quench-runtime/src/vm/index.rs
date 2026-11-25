@@ -79,8 +79,7 @@ impl Vm {
     /// `get_index` of a typed array at an index key where it allocates nothing: an element
     /// of a non-BigInt kind, or `undefined` past the end. `None` for any other read.
     pub fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
-        let index = self.array_index_key(key)? as usize;
-        self.typed_array_number_element(object, index)
+        self.typed_array_number_element(object, self.array_index_key(key)? as usize)
     }
 
     pub fn get_index(

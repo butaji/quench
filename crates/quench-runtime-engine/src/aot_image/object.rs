@@ -34,6 +34,8 @@ const CALL_RECORDS_RECORD: u32 = 2;
 const NARROW_WORDS_RECORD: u32 = 3;
 /// The lane helpers' addresses by number (`helper_data`), after the narrow words.
 const HELPERS_RECORD: u32 = 4;
+/// The data record of the RegExp literals' searches (`regexp_data`).
+const REGEXPS_RECORD: u32 = 5;
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
 
@@ -63,9 +65,10 @@ pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, 
     let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
     let definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
     functions.extend(definitions);
+    let regexps = regexp_data(namespace, image, &mut functions, targets.conv)?;
     let file = file::to_bytes(image);
-    let table = entry_table(isa, namespace, (&bases, first), file.len())?;
-    let data = vec![image_data(namespace, file), table, call_data(namespace, image), narrow_data(namespace), helpers];
+    let table = entry_table(isa, namespace, (&bases, first), (file.len(), image.regexps.len()))?;
+    let data = vec![image_data(namespace, file), table, call_data(namespace, image), narrow_data(namespace), helpers, regexps];
     Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
 }
 
@@ -184,6 +187,21 @@ fn helper_data(namespace: &str, image: &AotImage, imports: &BTreeMap<(u32, u32),
     }
 }
 
+/// The address of each RegExp literal's search by index (`AotImage::regexps`), each defined as its code, which names no
+/// symbol (`Regex::ahead_plans`): the executable registers them for the literals' first searches (`live::linked`).
+fn regexp_data(namespace: &str, image: &AotImage, functions: &mut Vec<NativeFunction>, conv: CallConv) -> Result<NativeData, String> {
+    let pointer = std::mem::size_of::<usize>();
+    let mut function_addresses = Vec::new();
+    for (index, regexp) in image.regexps.iter().enumerate() {
+        let function = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
+        functions.push(NativeFunction::Code(NativeCode { name: format!("{namespace}_regexp_{index}"), signature: ir::Signature::new(conv),
+            code: regexp.code.to_vec(), alignment: CODE_ALIGNMENT, relocations: Vec::new() }));
+        function_addresses.push(NativeFunctionAddress { offset: u32::try_from(index * pointer).map_err(|_| "RegExp table exceeds relocation offsets")?, function });
+    }
+    Ok(NativeData { name: format!("{namespace}_regexps"), bytes: vec![0; image.regexps.len().max(1) * pointer], alignment: pointer as u64,
+        writable: false, function_addresses, data_addresses: Vec::new() })
+}
+
 /// The narrow decode's upper words by code (`NarrowLayout::upper_words`), the runtime's own constant
 /// table: a base body's field and element reads decode a narrow value through it.
 fn narrow_data(namespace: &str) -> NativeData {
@@ -230,8 +248,8 @@ fn record_bytes(record: &CallRecord) -> Vec<u8> {
 /// The entry table (`crate::native_program::LinkedTable` reads it): the ABI header word; one
 /// entry per function, each the address of its entry definition (`first` plus the ID); one base body
 /// address per function (`bases`, by declaration); then the image file's address and length, the
-/// call records' address, and the helper record's address and count.
-fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u32), file_length: usize) -> Result<NativeData, String> {
+/// call records' address, the helper record's address and count, and the RegExp record's address and count.
+fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u32), (file_length, regexps): (usize, usize)) -> Result<NativeData, String> {
     let pointer_bytes = usize::from(isa.pointer_bytes());
     if pointer_bytes != std::mem::size_of::<usize>() {
         return Err("native image pointer width differs from host".into());
@@ -248,8 +266,10 @@ fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u3
         NativeDataAddress { offset: offset(tail)?, data: IMAGE_RECORD, addend: 0 },
         NativeDataAddress { offset: offset(tail + 2)?, data: CALL_RECORDS_RECORD, addend: 0 },
         NativeDataAddress { offset: offset(tail + 3)?, data: HELPERS_RECORD, addend: 0 },
+        NativeDataAddress { offset: offset(tail + 5)?, data: REGEXPS_RECORD, addend: 0 },
     ];
-    let mut bytes = vec![0; (tail + 5) * pointer_bytes];
+    let mut bytes = vec![0; (tail + 7) * pointer_bytes];
+    bytes[(tail + 6) * pointer_bytes..(tail + 7) * pointer_bytes].copy_from_slice(&regexps.to_ne_bytes());
     bytes[(tail + 1) * pointer_bytes..(tail + 2) * pointer_bytes].copy_from_slice(&file_length.to_ne_bytes());
     bytes[(tail + 4) * pointer_bytes..(tail + 5) * pointer_bytes].copy_from_slice(&crate::compiled::LaneHelper::COUNT.to_ne_bytes());
     Ok(NativeData {

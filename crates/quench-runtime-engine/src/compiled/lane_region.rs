@@ -25,7 +25,7 @@ use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Re
 use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
-use quench_runtime::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
+use quench_runtime::staged::typed_view::{prove_typed_view, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
@@ -1776,7 +1776,7 @@ pub(crate) fn lower_body(
     generic: &[usize],
     direct: &DirectSites,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
-    number_reads: &[super::facts::ObservedRead],
+    number_reads: &[super::facts::ObservedRead], views: ElementViews,
     admitted: super::admission::CompiledUnit,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
@@ -1785,7 +1785,7 @@ pub(crate) fn lower_body(
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
-            completion: Completion::Body, views: ElementViews::Dense } };
+            completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
@@ -2121,7 +2121,7 @@ pub(crate) fn lower(
     // A preliminary run of the facts over the arrays the loops index without their captured reads
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false, |at| lowering.held_field(at),
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
@@ -2132,7 +2132,7 @@ pub(crate) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::compiled::performed(&instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        |at| lowering.held_field(at), lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
         && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
@@ -4413,7 +4413,7 @@ impl Lowering<'_, '_> {
                         self.builder.def_var(checked, clear);
                     }
                 }
-                ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
+                ElementViews::Typed(_) => self.hoist_typed_view(ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable }, bits, variables, exit),
                 ElementViews::Double => {
                     let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     self.builder.def_var(variables.values, values);
@@ -4432,6 +4432,7 @@ impl Lowering<'_, '_> {
                 let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
                 Some(self.builder.use_var(read.value))
             }
+            ArraySource::Field(pc) => Some(self.loop_entry_word(self.entry_fields.get(pc).copied().flatten()?)),
         }
     }
 
@@ -4439,8 +4440,7 @@ impl Lowering<'_, '_> {
     /// (`prove_typed_view`): a proof that leaves takes the slow arm, where the VM publishes the
     /// record (`LaneHelper::TypedArrayView`) and the proof is made again, leaving at the loop's
     /// entry where it fails still.
-    fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
-        let access = ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable };
+    fn hoist_typed_view(&mut self, access: ViewAccess, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
         let publish = cold_block(&mut self.builder);
         let done = self.builder.create_block();
         self.prove_typed_view_into(variables, bits, access, publish);
@@ -4459,11 +4459,7 @@ impl Lowering<'_, '_> {
     /// The proof of the typed array `bits` for `access`, leaving at `miss`, whose view the
     /// array's variables then hold.
     fn prove_typed_view_into(&mut self, variables: ArrayVariables, bits: ir::Value, access: ViewAccess, miss: ir::Block) {
-        let records = TypedRecords {
-            directory: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_directory)),
-            pages: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_pages)),
-            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
-        };
+        let records = self.typed_records();
         let view = prove_typed_view(&mut super::object_slots::emit(&mut self.builder), records, bits, access, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(variables.values, view.values);
@@ -4739,7 +4735,7 @@ impl Lowering<'_, '_> {
             return self.held_length(string);
         }
         let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
-            && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
+            && (entering != Some(array.header) || !matches!(array.source, ArraySource::Capture(_)));
         if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
             let (_, count) = self.hoisted_view(array);
             let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));

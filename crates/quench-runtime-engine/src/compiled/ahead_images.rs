@@ -88,7 +88,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], admitted).ok_or("the lane lowering declines")?;
+        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
@@ -239,6 +239,8 @@ impl Vm {
     pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
         let _ = unit;
+        // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         let traced = quench_runtime::trace::Channel::AotLanes.on();
         if entry.is_some() || !generic.is_empty() {
             if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }

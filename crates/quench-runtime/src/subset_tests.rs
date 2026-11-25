@@ -589,7 +589,7 @@ print(out.join("|"));
 
 #[test]
 fn string_index_sites_read_units_before_array_probes() {
-    // A `GetIndex` that reads a string takes its unit inside the length (`string_element_in_lane`),
+    // A `GetIndex` that reads a string takes its unit inside the length (`allocated_element_in_lane`),
     // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is
     // no index, the read still finds `String.prototype`'s index property.
     let source = r#"
