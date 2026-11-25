@@ -48,8 +48,8 @@ impl Vm {
             let byte = bytes[position];
             return Some(((self.ascii_byte_string(byte), None), position + 1));
         }
-        let pair = units.get(position + 1).is_some_and(|low| crate::unicode::decode_surrogate_pair(units.at(position), low).is_some());
-        let after = position + 1 + usize::from(pair);
+        // The code point's units: two for a pair (`staged::strings::code_point_at_row`).
+        let after = position + 1 + usize::from(crate::staged::strings::code_point_at(units, position)? > 0xFFFF);
         let run = super::wtf16::JsString::from_unit_run(units.slice(position..after));
         Some(((self.heap.alloc_string(run), None), after))
     }
