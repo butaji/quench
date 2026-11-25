@@ -257,8 +257,7 @@ fn slice_bound(value: Option<Value>, default: usize, length: usize) -> Option<us
         return Some(default);
     };
     match value.as_int() {
-        Some(index) if index < 0 => Some(length.saturating_sub(index.unsigned_abs() as usize)),
-        Some(index) => Some((index as usize).min(length)),
+        Some(index) => Some(crate::staged::string_search::relative_bound(i64::from(index), length)),
         None => Some(crate::units::relative_index(value.immediate_number()?, length)),
     }
 }

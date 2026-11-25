@@ -177,10 +177,5 @@ fn fill_bound(value: Option<Value>, default: usize, length: usize) -> Option<usi
     let Some(value) = value.filter(|value| !value.is_undefined()) else {
         return Some(default);
     };
-    let index = value.as_int()?;
-    Some(if index < 0 {
-        length.saturating_sub(index.unsigned_abs() as usize)
-    } else {
-        (index as usize).min(length)
-    })
+    Some(crate::staged::string_search::relative_bound(i64::from(value.as_int()?), length))
 }
