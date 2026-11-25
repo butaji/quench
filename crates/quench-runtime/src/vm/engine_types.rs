@@ -4062,7 +4062,13 @@ impl AheadImages {
     #[inline]
     pub fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
-        let Ok(images) = Self::compile(program) else { return };
+        let images = match Self::compile(program) {
+            Ok(images) => images,
+            Err(why) => {
+                if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} records no image: {why}", program.source_name); }
+                return;
+            }
+        };
         if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
     }
 }

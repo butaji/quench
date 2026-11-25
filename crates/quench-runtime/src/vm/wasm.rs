@@ -1116,6 +1116,8 @@ impl Vm {
         let id = if let Some(id) = self.programs.find_shared(program) {
             id
         } else {
+            // A Wasm module lowers through the one image driver as any program does (`AheadImages::record`).
+            crate::vm::engine_types::AheadImages::record(program);
             let id = self
                 .programs
                 .insert_shared(program.clone())
