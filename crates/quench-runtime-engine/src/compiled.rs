@@ -2709,6 +2709,10 @@ fn stitched_entry(
     if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
         return None;
     }
+    // The program's image may hold the rows already (`wasm_image::linked`).
+    if let Some(rows) = wasm_image::linked(analysis, index, memory_slot, (cells, callable)) {
+        return Some(rows);
+    }
     let function = analysis.code.function_get(index)?;
     // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
     // the cell holds the entry once placed. A callee that is not callable is called through the

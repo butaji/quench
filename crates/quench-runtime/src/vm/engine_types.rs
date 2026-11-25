@@ -2774,6 +2774,16 @@ pub struct AotImage {
     pub labels: Vec<(u32, u32)>,
     /// The calls the closed world proves that bodies make by their callee's entry, by `Symbol::CallRecord` key.
     pub calls: Vec<CallSite>,
+    /// A Wasm program's stitched rows, which the instance's Wasm tier links in place of stitching.
+    pub wasm: Option<WasmRows>,
+}
+
+/// A Wasm program's rows in its image (`compiled::wasm_image`): the memory slot their entry reads
+/// (`WasmEntry`'s base and length), and by function index its rows, `None` where it has none. A row's
+/// absolute words name run-time addresses by relocation: only `Symbol::EntryCell`, a callee's entry cell.
+pub struct WasmRows {
+    pub memory_slot: Option<u32>,
+    pub functions: Vec<Option<RelocatableCode>>,
 }
 
 /// An image linked into this process: its code placed and every symbol resolved.

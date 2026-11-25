@@ -9,10 +9,13 @@
 use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
+use quench_runtime::vm::engine_types::WasmRows;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x02";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x03";
+/// The memory slot of Wasm rows whose entry reads no memory.
+const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
 const NO_PROTOTYPE: u32 = u32::MAX;
 const RECIPE_INTRINSIC: u8 = 0;
@@ -39,6 +42,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     for function in &image.functions {
         put_function(&mut out, function);
     }
+    put_wasm(&mut out, image.wasm.as_ref());
     out
 }
 
@@ -55,7 +59,8 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls })
+    let wasm = read_wasm(&mut words)?;
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls, wasm })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -244,6 +249,33 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
         }
     };
     Ok(AotFunction { id, base, lane })
+}
+
+/// The Wasm rows, behind a byte that says whether there are any: the memory slot (`NO_SLOT` for none),
+/// then per function a byte for whether it has rows, and its rows.
+fn put_wasm(out: &mut Vec<u8>, wasm: Option<&WasmRows>) {
+    let Some(wasm) = wasm else { return out.push(0) };
+    out.push(1);
+    out.extend(wasm.memory_slot.unwrap_or(NO_SLOT).to_le_bytes());
+    put_count(out, wasm.functions.len());
+    for rows in &wasm.functions {
+        match rows {
+            Some(code) => {
+                out.push(1);
+                put_code(out, code);
+            }
+            None => out.push(0),
+        }
+    }
+}
+
+fn read_wasm(words: &mut Words<'_>) -> Result<Option<WasmRows>, String> {
+    if words.byte()? == 0 {
+        return Ok(None);
+    }
+    let slot = words.half()?;
+    let functions = (0..words.half()?).map(|_| match words.byte()? { 0 => Ok(None), _ => read_code(words).map(Some) }).collect::<Result<_, String>>()?;
+    Ok(Some(WasmRows { memory_slot: (slot != NO_SLOT).then_some(slot), functions }))
 }
 
 fn read_base(words: &mut Words<'_>) -> Result<BaseImage, String> {
