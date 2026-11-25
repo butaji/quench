@@ -4160,7 +4160,7 @@ impl JsStepDispatch {
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
             typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
             outcome: None,
         }
@@ -4192,7 +4192,7 @@ impl JsStepDispatch {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
-        if self.vm == (vm as *const Vm).addr() && self.layout_seen == layout
+        if self.bases_vm == (vm as *const Vm).addr() && self.layout_seen == layout
             && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
             && self.store_watch == vm.heap_reads().store_watch_word()
@@ -4203,7 +4203,7 @@ impl JsStepDispatch {
             return;
         }
         self.reread_object_bases(vm);
-        self.layout_seen = layout;
+        (self.layout_seen, self.bases_vm) = (layout, (vm as *const Vm).addr());
     }
 
     #[cold]
