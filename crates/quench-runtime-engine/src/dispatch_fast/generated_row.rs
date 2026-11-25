@@ -58,16 +58,12 @@ lane_handler! {
             sibling!(crate::dispatch_fast::row_set_field_classify::<OP, false>, r, ip, Carried::script_in(script, view))
         }} }
         if property && !store {
-            // The flags a read's result may carry here: a returning site's return; none on any other
-            // (a sinking read's `a` carries its store flag, `LaneFields::wide`, and states no bound).
-            // A record with other flags (a numeric local target) is the general step's.
-            let returning = const { crate::dispatch_fast::returning_field_site(FLAG) };
-            let flags = if returning { quench_runtime::bytecode::RETURN_REGISTER } else { 0 };
+            // Other result flags than a returning site's return go to the general step.
+            let flags = if const { crate::dispatch_fast::returning_field_site(FLAG) } { quench_runtime::bytecode::RETURN_REGISTER } else { 0 };
             if const { !crate::dispatch_fast::sink_site(FLAG) } && i.a & !quench_runtime::bytecode::REGISTER_MASK & !flags != 0 {
                 sibling!(general_step_in_lane, r, ip, view)
             }
-            // The site fact names the base (`own_site`), `this` or a register, and the result has no
-            // other flags past the test above: stated so the decode's tests fold.
+            // The site fact names the base (`own_site`), `this` or a register: stated so the decode folds.
             unsafe {
                 if const { !crate::dispatch_fast::sink_site(FLAG) } {
                     std::hint::assert_unchecked(i.a & !flags <= quench_runtime::bytecode::REGISTER_MASK);
@@ -117,8 +113,7 @@ lane_handler! {
                 None => property_miss!(),
             }
         }
-        // A record whose result carries flags (a numeric local target, a return) is the general step's: the
-        // view's fields state a plain result register (`LaneFields::wide`).
+        // A record whose result carries flags is the general step's.
         if const { LaneFields::<OP, FLAG>::OPCODE.result_layout().allowed_flags() != 0 && !crate::dispatch_fast::sink_site(FLAG)
             && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } && i.a > quench_runtime::bytecode::REGISTER_MASK {
             sibling!(general_step_in_lane, r, ip, view)
