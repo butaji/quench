@@ -3430,7 +3430,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
     pub(crate) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
         // A plain or leaf script call's row (`call_form`) decodes by the call decoder, which the
         // generic decode (`row_decode!`) leaves out, and steps over a frame whose call hooks make the
-        // proved call (`call_frame`, `CallFrame::call_activate`).
+        // proved call (`call_frame`, `CallFrame::call_hand_over`).
         if const { call_form(MISS).is_some() } {
             // A call row's records are JavaScript, whose view carries its context (`script_handler!`).
             debug_assert_eq!(view.memory.bytes.cast::<LaneContext>(), context_in_lane(), "a JavaScript view carries its context");
@@ -3458,7 +3458,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
                     next!(cx, r, following(ip), Carried::script_in(cx, view))
                 }
                 Step::Control(LaneControl::Edge(Edge::Following)) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
-                // The frame activated the callee (`CallFrame::call_activate`): its first record, as the
+                // The frame activated the callee (`CallFrame::call_hand_over`): its first record, as the
                 // proved handlers continue (`script_call_miss`, `script_call_leaf_miss`).
                 Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
                 Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),

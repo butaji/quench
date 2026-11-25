@@ -8,7 +8,7 @@
 //!   makes no calls inline;
 //! - `call_room`: the native entry first (`enter_native`, the rule the general loop makes too), whose
 //!   code runs on the native stack; else the callee's shape and the lane's room for its activation;
-//! - `call_activate`: the native run's resumption, or the activation pushed and entered.
+//! - `call_hand_over`: the native run's resumption, or the activation pushed and entered.
 //!
 //! A call the step leaves (`Step::Unresolved`) goes where the frame recorded: the general frame
 //! push where the lane had no room (`push_frame`), else out of the lane.
@@ -135,7 +135,7 @@ impl<A: WasmActivation> CallFrame<Concrete> for WasmCallFrame<'_, A> {
 
     /// The native run's resumption, or the activation pushed and entered.
     #[inline(always)]
-    fn call_activate(&mut self, _stage: &mut Concrete, _this: u64, _room: Room<u64>) -> Option<A::Resume> {
+    fn call_hand_over(&mut self, _stage: &mut Concrete, _this: u64, _room: Room<u64>) -> Option<A::Resume> {
         if let Some(resumed) = self.ran.take() {
             return Some(resumed);
         }

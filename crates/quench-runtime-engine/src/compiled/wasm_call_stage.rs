@@ -5,7 +5,7 @@
 //!
 //! A tail call (`is_tail_call`: a call whose destination is flagged as a return) is a true tail
 //! call when its callee is compiled natively and returns the same result as this function: a
-//! `return_call` (here, the known call's activation, `KnownCall::call_activate`) or a `return_call_indirect` (the native fast path of
+//! `return_call` (here, the known call's activation, `KnownCall::call_hand_over`) or a `return_call_indirect` (the native fast path of
 //! `wasm_table_stage`). Bodies use `BODY_CALL_CONV` (`Tail`) so the convention allows it. The
 //! other shapes (a callout, a VM call-out, a foreign instance, a result of another type) are a
 //! call that writes the result, followed by the return of that result (`return_if_tail`), as
@@ -59,7 +59,7 @@ impl Emitter<'_, '_> {
     }
 
     /// Ends a tail call that wrote its result to its destination: the function returns it.
-    /// A tail call that was a true tail call already left (`KnownCall::call_activate`, `call_reference`).
+    /// A tail call that was a true tail call already left (`KnownCall::call_hand_over`, `call_reference`).
     pub(crate) fn return_if_tail(&mut self, instruction: WideInstruction) {
         if is_tail_call(instruction) {
             self.return_register(instruction.result_register());
@@ -358,7 +358,7 @@ impl CallFrame<Emit<'_, '_>> for KnownCall {
     }
 
     /// A tail call replaces this activation with the callee's.
-    fn call_activate(&mut self, stage: &mut Emit<'_, '_>, _this: ir::Value, _room: Room<ir::Value>) -> Option<()> {
+    fn call_hand_over(&mut self, stage: &mut Emit<'_, '_>, _this: ir::Value, _room: Room<ir::Value>) -> Option<()> {
         if !self.replaces { return None; }
         stage.tail_call(self.target, &self.arguments);
         Some(())
