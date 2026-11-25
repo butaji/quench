@@ -125,6 +125,16 @@ pub fn opcode_name_debt(text: &str) -> usize {
     })
 }
 
+/// The listed fallbacks of one kind (`crates/quench-tier-corpus/fallbacks.txt`, lines `kind operation (reason)`).
+fn fallbacks_of(text: &str, kind: &str) -> usize {
+    text.lines().filter(|line| line.split_once(' ').is_some_and(|(first, _)| first == kind)).count()
+}
+
+pub fn fallback_jit_rejects(text: &str) -> usize { fallbacks_of(text, "jit-reject") }
+pub fn fallback_helper_calls(text: &str) -> usize { fallbacks_of(text, "helper-call") }
+pub fn fallback_deopts(text: &str) -> usize { fallbacks_of(text, "deopt") }
+pub fn fallback_opaque_natives(text: &str) -> usize { fallbacks_of(text, "opaque-native") }
+
 /// What the tier crates still take of the runtime's internals: Value words made from raw bits, outside
 /// comments, and the heap names `tier_surface` re-exports. The heap module and `Vm::heap` are
 /// `pub(crate)` (S1.4), so paths into the heap and reads of the heap field cannot be written; this

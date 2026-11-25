@@ -110,6 +110,7 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
+pub(crate) mod fallback_sites;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
@@ -7847,6 +7848,9 @@ impl Vm {
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
     /// the specializer declines it or the tier does not install it.
     fn js_tier_compile(&mut self, unit: admission::CompiledUnit, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
+        if !cfg!(feature = "jit") {
+            return None; // no run-time compile without the JIT: only image bodies run natively
+        }
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
@@ -8692,7 +8696,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn offer_compiled_cold(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !cfg!(feature = "jit") || self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
         let wasm_root_only = jit_wasm_root_only_enabled()

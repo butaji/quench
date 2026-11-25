@@ -4073,14 +4073,16 @@ impl AheadImages {
     /// Adds `program`'s image while recording; a program that does not lower adds none.
     #[inline]
     pub fn record(program: &ResidualProgram) {
-        if recorded().is_none() { return; }
+        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
+        if !cfg!(feature = "jit") || recorded().is_none() { return; }
         Self::keep(program, Self::compile(program));
     }
 
     /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
     #[inline]
     pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
-        if recorded().is_none() { return; }
+        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
+        if !cfg!(feature = "jit") || recorded().is_none() { return; }
         Self::keep(program, Self::compile_wasm(vm, id, program, bindings));
     }
 
