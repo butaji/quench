@@ -191,10 +191,12 @@ impl AheadImages {
     pub fn from_bytes(file: &[u8]) -> Result<Self, String> { Ok(Self::of(aot_image::file::from_bytes(file)?)) }
 
     /// Starts collecting the images of every program this thread stores (`finish_recording`).
-    pub fn start_recording() { *recorded() = Some(Vec::new()); }
+    pub fn start_recording() {
+        *recorded() = Some(quench_runtime::vm::engine_types::Recording { lower: |program| AheadImages::compile(program), images: Vec::new() });
+    }
 
     /// What was recorded since `start_recording`, which stops.
-    pub fn finish_recording() -> Vec<AheadImages> { recorded().take().unwrap_or_default().into_iter().map(Self::of).collect() }
+    pub fn finish_recording() -> Vec<AheadImages> { recorded().take().map(|recording| recording.images).unwrap_or_default().into_iter().map(Self::of).collect() }
 
     /// A file of several programs' images: each as `to_bytes` wrote it, after its length.
     pub fn bundle(all: &[AheadImages]) -> Vec<u8> {
