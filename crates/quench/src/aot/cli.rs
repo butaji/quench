@@ -170,7 +170,7 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
     host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
-    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
+    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 

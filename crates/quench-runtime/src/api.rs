@@ -294,6 +294,7 @@ impl<H: Host> Runtime<H> {
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> Result<Vec<u8>, String> {
         self.vm.forget_spare_await_state();
+        self.vm.materialize_named_lazy_globals(program).map_err(|error| error.to_string())?;
         self.vm.collect_now(program);
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
     }
