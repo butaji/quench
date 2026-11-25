@@ -128,6 +128,8 @@ pub(crate) struct HostSourceRoutes {
     pub(crate) module_source: fn(&mut NodeHost, &std::path::Path, String, Vec<u8>) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError>,
     /// The goal of a CommonJS file whose wrapper failed to compile (`commonjs::failed_wrapper_goal`).
     pub(crate) failed_wrapper_goal: fn(&RootedError, &std::path::Path, &str) -> quench_runtime::SourceKind,
+    /// A module request the image does not embed, resolved on the file system (`NodeHost::resolve_filesystem_import`).
+    filesystem_import: fn(&mut NodeHost, &str, &str, bool) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError>,
 }
 static SOURCE_ROUTES: std::sync::OnceLock<HostSourceRoutes> = std::sync::OnceLock::new();
 
@@ -144,6 +146,7 @@ pub fn enable_dynamic_source() {
     SOURCE_ROUTES.get_or_init(|| HostSourceRoutes {
         module_source: NodeHost::module_source_text,
         failed_wrapper_goal: commonjs::failed_wrapper_goal_parsed,
+        filesystem_import: NodeHost::resolve_filesystem_import,
     });
 }
 
@@ -3170,7 +3173,11 @@ impl NodeHost {
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         #[cfg(feature = "native-execution")]
         if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
-        let module = self.resolve_filesystem_import(referrer, specifier, from_require)?;
+        // A binary whose program makes no code resolves only what it embeds (`enable_dynamic_source`).
+        let Some(filesystem_import) = source_route(|routes| routes.filesystem_import) else {
+            return Err(format!("module {specifier} cannot load: this executable compiles no source").into());
+        };
+        let module = filesystem_import(self, referrer, specifier, from_require)?;
         if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
         Ok(module)
     }
