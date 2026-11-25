@@ -618,18 +618,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         Ok(id)
     }
 
-    /// The next id of the cursor's run, bumped: the inline allocation, with no occupancy write
-    /// (the refill occupied the run). `None` once the run is spent.
+    /// The next id of the cursor's run, bumped (the staged `bump::cursor_take` row): the inline
+    /// allocation, with no occupancy write (the refill occupied the run). `None` once spent.
     #[inline(always)]
     pub(super) fn cursor_take(&mut self) -> Option<RecordId> {
-        let cursor = &mut self.cursor;
-        if cursor.next < cursor.limit {
-            let id = cursor.next;
-            cursor.next = id + 1;
-            Some(id)
-        } else {
-            None
-        }
+        let mut stage = crate::staged::Concrete::new(core::ptr::null());
+        crate::staged::bump::cursor_take(&mut stage, (&raw mut self.cursor) as u64, ()).map(|id| id as RecordId)
     }
 
     /// Claims the rest of the block the high water mark is in as the cursor's run, occupying
