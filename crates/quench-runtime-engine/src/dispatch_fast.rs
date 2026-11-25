@@ -6821,6 +6821,8 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
+        // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
+        if let Some(body) = code.function_get(function as usize) && unsafe { (*own.prologue.get()).handler }.is_null() { own.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow); }
         let published = own.entry_published();
         let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
