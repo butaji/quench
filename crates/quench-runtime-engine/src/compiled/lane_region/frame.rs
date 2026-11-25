@@ -442,6 +442,12 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
 }
 
 impl quench_runtime::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    /// A row the VM's operator answers (`Operation::Binary`, `Unary`) takes the VM's step: `vm_step`
+    /// calls the helper where the lowering made the record a call-out site, and leaves at the miss
+    /// edge where it made none. Answering `false` left the row `Unresolved`, which a lane body ran as no
+    /// instruction at all: `10 ** (b + 1)` returned its result register's last value.
+    fn general_operators(&self) -> bool { true }
+
     /// A register's tagged bits, or an immediate constant's.
     fn operand_word(&mut self, stage: &mut Emit<'_, '_>, operand: quench_runtime::bytecode::Operand) -> Option<ir::Value> {
         use quench_runtime::bytecode::OperandKind;

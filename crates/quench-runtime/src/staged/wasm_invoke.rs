@@ -8,7 +8,7 @@
 //!   makes no calls inline;
 //! - `call_room`: the native entry first (`enter_native`, the rule the general loop makes too), whose
 //!   code runs on the native stack; else the callee's shape and the lane's room for its activation;
-//! - `call_activate`: the native run's resumption, or the activation pushed and entered.
+//! - `call_hand_over`: the native run's resumption, or the activation pushed and entered.
 //!
 //! A call the step leaves (`Step::Unresolved`) goes where the frame recorded: the general frame
 //! push where the lane had no room (`push_frame`), else out of the lane.
@@ -135,7 +135,7 @@ impl<A: WasmActivation> CallFrame<Concrete> for WasmCallFrame<'_, A> {
 
     /// The native run's resumption, or the activation pushed and entered.
     #[inline(always)]
-    fn call_activate(&mut self, _stage: &mut Concrete, _this: u64, _room: Room<u64>) -> Option<A::Resume> {
+    fn call_hand_over(&mut self, _stage: &mut Concrete, _this: u64, _room: Room<u64>) -> Option<A::Resume> {
         if let Some(resumed) = self.ran.take() {
             return Some(resumed);
         }
@@ -164,21 +164,30 @@ impl<A: WasmActivation> WasmCallFrame<'_, A> {
     }
 }
 
-/// The call of `function` with the window `window` and result `result` through the one call step:
-/// where the caller resumes, else where the frame admitted the call.
+/// The known call of `function` with the window `window` into `result` through the one call step,
+/// at any stage: the interpreter's lane (`step_call_known_of`) and the native tier's lowering run
+/// this one site, a return call (`returns`) the frame's activation where it replaces the caller.
 #[inline(always)]
-fn invoke_function<A: WasmActivation>(call: &mut A, function: FunctionId, (first, count): (Register, u16), result: Register)
-    -> Result<A::Resume, Admitted> {
+pub fn step_known_call_of<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss,
+    (function, (first, count), result, returns): (FunctionId, (Register, u16), Register, bool)) -> Step<S::Word, F::Control> {
     let site = Invocation {
         callee: Callee::Known(function),
         receiver: Receiver::Undefined,
         arguments: Arguments::Window { first, count },
         result,
-        returns: false,
+        returns,
         forwards: false,
     };
+    invoke(stage, frame, miss, site)
+}
+
+/// The call of `function` with the window `window` and result `result` through the one call step:
+/// where the caller resumes, else where the frame admitted the call.
+#[inline(always)]
+fn invoke_function<A: WasmActivation>(call: &mut A, function: FunctionId, window: (Register, u16), result: Register)
+    -> Result<A::Resume, Admitted> {
     let mut frame = WasmCallFrame { call, function: u32::from(function), shape: None, admitted: Admitted::Pending, ran: None };
-    match invoke(&mut Concrete::new(std::ptr::null()), &mut frame, (), site) {
+    match step_known_call_of(&mut Concrete::new(std::ptr::null()), &mut frame, (), (function, window, result, false)) {
         Step::Control(resumed) => Ok(resumed),
         _ => Err(frame.admitted),
     }
