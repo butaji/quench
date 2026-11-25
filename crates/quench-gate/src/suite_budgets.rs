@@ -41,7 +41,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{config::Config, step::Verdict};
+use crate::{config::Config, step::Verdict, suite_order};
 
 /// One suite the step judges: where its debt list lives, the variables naming its inputs, and
 /// whether its no-jit rows are held against the peers' jitless runs.
@@ -54,6 +54,8 @@ pub struct Suite {
     /// JetStream holds no-jit against node-jitless and bun-nojit; the data-structure suite holds
     /// every mode against node and bun (user, 2026-11-25: "C/Node/Bun you target for").
     jitless_peers: bool,
+    /// The tier-order debt list, where the suite's sweep writes `order.txt` (`suite_order`).
+    order: Option<&'static str>,
 }
 
 pub const JS3: Suite = Suite {
@@ -63,6 +65,7 @@ pub const JS3: Suite = Suite {
     comparators_variable: "QUENCH_JS3_COMPARATORS",
     title: "JetStream 3 budgets",
     jitless_peers: true,
+    order: None,
 };
 
 pub const DS: Suite = Suite {
@@ -72,6 +75,7 @@ pub const DS: Suite = Suite {
     comparators_variable: "QUENCH_DS_COMPARATORS",
     title: "Data-structure suite budgets (TOD-2275)",
     jitless_peers: false,
+    order: Some("crates/quench-tier-corpus/ds_tier_order.txt"),
 };
 
 /// `1` rewrites the debt list shrink-only (seeds it when it is header-only) instead of judging.
@@ -528,6 +532,46 @@ pub fn run_ds(config: &Config) -> Verdict {
 }
 
 fn run(config: &Config, suite: &Suite) -> Verdict {
+    let order = match suite.order {
+        Some(file) => Some(order(config, suite.step, file, &env::var_os(suite.sweep_variable).map(PathBuf::from).unwrap_or_default())?),
+        None => None,
+    };
+    let scores = budgets(config, suite);
+    match (scores, order) {
+        (Ok(scores), None) => Ok(scores),
+        (Ok(scores), Some(Ok(order))) => Ok(format!("{scores}\n{order}")),
+        (Err(scores), Some(Ok(order) | Err(order))) => Err(format!("{scores}\n{order}")),
+        (Ok(scores), Some(Err(order))) => Err(format!("{order}\n\n{scores}")),
+        (Err(scores), None) => Err(scores),
+    }
+}
+
+/// The tier order of the suite's sweep against its debt list (`suite_order`), shrink-only under
+/// `QUENCH_DEBT_WRITE=1` like the score list. The outer error is an input error.
+fn order(config: &Config, step: &str, file: &str, sweep: &Path) -> Result<Verdict, String> {
+    let cells = suite_order::parse_cells(&finished(&read(&sweep.join("order.txt"))?, "order.txt")?)?;
+    let path = config.root.join(file);
+    let write = env::var(DEBT_WRITE).as_deref() == Ok("1");
+    let before = match read(&path) {
+        Ok(text) => text,
+        Err(_) if write => String::new(),
+        Err(error) => return Err(format!("{error}; seed it with {DEBT_WRITE}=1 on a finished sweep")),
+    };
+    let recorded = suite_order::parse_debt(file, &before)?;
+    let mut judged = suite_order::judge(file, &cells, &recorded);
+    if write {
+        let next = suite_order::shrink(&recorded, &judged);
+        let head = if before.is_empty() { suite_order::default_header(step) } else { header(&before) };
+        let text = suite_order::render_debt(&head, &next);
+        if text != before {
+            fs::write(&path, &text).map_err(|error| format!("{}: {error}", path.display()))?;
+        }
+        judged = suite_order::judge(file, &cells, &next);
+    }
+    Ok(if judged.failures.is_empty() { Ok(judged.report) } else { Err(format!("{}\n{}", judged.failures.join("\n"), judged.report)) })
+}
+
+fn budgets(config: &Config, suite: &Suite) -> Verdict {
     let (sweep, comparators) = inputs(suite, env::var_os(suite.sweep_variable), env::var_os(suite.comparators_variable))?;
     let scores = parse_sweep_scores(&read(&sweep.join("score.txt"))?)?;
     let ir = parse_ir(&read(&sweep.join("ir.txt"))?)?;

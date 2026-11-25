@@ -16,7 +16,9 @@ Quench runs the Node solution, the same source Node runs. Linear: TOD-2275.
 
 Gate: quench-gate step `ds-budgets` (crates/quench-gate/src/suite_budgets.rs, the same judge as
 `js3-budgets`) holds every structure in every mode to the target below, with the shrink-only
-debt list crates/quench-tier-corpus/ds_budgets.txt (seed: QUENCH_DEBT_WRITE=1):
+debt list crates/quench-tier-corpus/ds_budgets.txt, plus the tier order (no-jit -> b-jit -> default
+never slower beyond 5%, never more Ir per op beyond 2%; TOD-2152) against ds_tier_order.txt
+(seed both: QUENCH_DEBT_WRITE=1):
 
     QUENCH_DS_SWEEP=OUT QUENCH_DS_COMPARATORS=OUT/comparators.txt quench-gate --only ds-budgets
 
