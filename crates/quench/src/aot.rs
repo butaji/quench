@@ -136,7 +136,9 @@ pub fn resume_native_process_entry(
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
     runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    crate::host::resident_pages::phase_peak("saved wait runtime made");
     let execution = runtime.resume_native_from_snapshot(std::rc::Rc::new(wait.rest), program, |host, reader| host.read_snapshot(reader));
+    crate::host::resident_pages::phase_peak("saved wait resumed");
     crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)
 }
 
