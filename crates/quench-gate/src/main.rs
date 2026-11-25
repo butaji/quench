@@ -21,7 +21,7 @@ mod fallbacks;
 mod ir_budget;
 mod ir_floor;
 mod ir_predict;
-mod js3_budgets;
+mod suite_budgets;
 mod known_lists;
 mod lint;
 mod no_jit_ir;
@@ -45,7 +45,7 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 16] = [
+const STEPS: [Step; 17] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "known-lists", quick: true, blocking: false, run: known_lists::run },
@@ -58,7 +58,8 @@ const STEPS: [Step; 16] = [
     Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
     Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "ir-predict", quick: false, blocking: false, run: ir_predict::run },
-    Step { name: "js3-budgets", quick: false, blocking: false, run: js3_budgets::run },
+    Step { name: "js3-budgets", quick: false, blocking: false, run: suite_budgets::run_js3 },
+    Step { name: "ds-budgets", quick: false, blocking: false, run: suite_budgets::run_ds },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
     Step { name: "aot", quick: false, blocking: false, run: aot::run },
     Step { name: "startup", quick: false, blocking: false, run: startup::run },
