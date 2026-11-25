@@ -515,6 +515,8 @@ struct GuardExit {
     virtuals: smallvec::SmallVec<[virtual_objects::VirtualObject; 1]>,
     pc: u32,
     line: u32,
+    /// The fact the guard tests (`guard_exit_for`); `Unclassified` where it names none.
+    fact: ExitFact,
 }
 
 /// What a step's frame needs beyond its edges: the plans and held read of a named field access,
@@ -965,26 +967,6 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
         let block = self.exit_block(pc, stored);
         self.goto(block, &[]);
-    }
-
-    /// A guard's failure block: it leaves at `pc` from the state where the guard sits. It is
-    /// filled after the region, since the current block is still open.
-    #[track_caller]
-    fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
-        if self.proving_entry {
-            let builder = &mut self.builder;
-            return *self.entry_exit.get_or_insert_with(|| cold_block(builder));
-        }
-        // A guard after another that leaves at the same PC from the same facts shares its
-        // block: the leave it builds is the same, and SSA joins the variables' values.
-        if !self.vm.diagnostics && let Some(last) = self.pending.last()
-            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed && last.virtuals == state.virtuals {
-            return last.block;
-        }
-        let block = cold_block(&mut self.builder);
-        self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(), virtuals: state.virtuals.clone(),
-            pc, line: std::panic::Location::caller().line() });
-        block
     }
 
     /// Lowers into `block` from here, sealed where every edge into it is lowered.
@@ -2307,22 +2289,20 @@ pub(crate) fn lower(
     // A prefix pays for its entry with a loop, or with the calls it runs inlined.
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); mark = now; }
-    for GuardExit { block, values, homed, virtuals, pc, line } in lowering.take_leaves() {
+    let named = lowering.named_leaves();
+    for GuardExit { block, values, homed, virtuals, pc, line, .. } in lowering.take_leaves() {
         lowering.switch_to(block, true);
         if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
             eprintln!("aot-lanes: function {function_id}: a leave at {pc} (lowering line {line})");
         }
         let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals };
-        if lowering.vm.diagnostics {
-            let line = lowering.raw_const(Lane::I64, i64::from(line));
-            lowering.store_word(regions::dispatch(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
-        }
+        lowering.record_line(line);
         lowering.leave_at(&mut leaving, pc);
     }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }
     lowering.fill_call_out_stop();
     if lowering.fill_exits().is_none() { declined("an exit fill declines", usize::MAX); return None; }
-    let exits = ExitTable::of_unit(unit, |pc, frame| lowering.inlined_stores(pc, frame));
+    let exits = ExitTable::of_unit(unit, |pc, frame| lowering.inlined_stores(pc, frame), |pc| named.get(pc).copied().flatten());
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Exits, now - mark); mark = now; }
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];

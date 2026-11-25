@@ -50,7 +50,7 @@ impl Lowering<'_, '_> {
     /// field value the receiver's register proves from here on.
     fn hoisted_field(&mut self, state: &mut State, pc: usize, lookup: FieldLookup, read: LoopRead) -> ir::Value {
         let FieldLookup::Atom { atom, base, cache_site } = lookup else { unreachable!("a hoisted field read names an atom") };
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
         let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
         let value = self.field_value(state, (base, lookup), &[], held, exit)
             .expect("a hoisted read answers from its variable");

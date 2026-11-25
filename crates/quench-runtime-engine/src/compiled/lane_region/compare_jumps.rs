@@ -173,7 +173,7 @@ impl Lowering<'_, '_> {
         [left, right]: [Operand; 2]) {
         let (target, pc32) = (instruction.jump_target() as usize, pc as u32);
         if target <= pc { self.interrupt_check(state, pc32); }
-        let exit = self.guard_exit(state, pc32);
+        let exit = self.guard_exit_for(state, pc32, ExitFact::NumberKind);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         let row = Operation::CompareJump { comparison, left, right, negate: true };
         // A relation the VM decides by its operator alone (`Decided`) has no record step: where the

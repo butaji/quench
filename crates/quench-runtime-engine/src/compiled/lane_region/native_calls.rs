@@ -216,7 +216,7 @@ impl Lowering<'_, '_> {
             Some(quench_runtime::staged::Receiver::Undefined) => None,
             _ => return false,
         };
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         let held = self.tagged(state, instruction.register_b());
         // An in-place native's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
         if !matches!(inline, Inline::InPlace) {
@@ -337,7 +337,7 @@ impl Lowering<'_, '_> {
             return None;
         }
         let arguments: Vec<ScalarArgument> = (0..argc).map(|index| self.scalar_argument(header, end, pc, window + index)).collect::<Option<_>>()?;
-        let exit = self.guard_exit(state, header as u32);
+        let exit = self.guard_exit_for(state, header as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
         let same = self.is_identity(entry, identity);

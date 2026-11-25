@@ -69,7 +69,7 @@ impl Lowering<'_, '_> {
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
         for (register, shape) in self.invariant_receiver_shapes(header, end) {
             if !(online.shape_stable)(shape) { continue; }
-            let exit = self.guard_exit(state, header as u32);
+            let exit = self.guard_exit_for(state, header as u32, ExitFact::Shape);
             let proof = self.object_header(state, Some(register), false, exit);
             headers::prove_header_shape(&mut self.builder, state, Some(register), proof, shape, exit);
             state.values[usize::from(register)] = RegisterFact { tagged: state.values[usize::from(register)].tagged,

@@ -13,7 +13,7 @@ impl Lowering<'_, '_> {
     /// (`hold_lexical`); else the lane's own read, which leaves where it misses.
     pub(crate) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let (binding, held) = self.global_binding(pc);
-        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, pc as u32));
+        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit_for(state, pc as u32, ExitFact::Global));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
@@ -36,7 +36,7 @@ impl Lowering<'_, '_> {
         let instruction = self.unit.instructions[pc];
         if !matches!(quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(quench_runtime::staged::Operation::LoadName { .. })) { return None; }
         let (binding, held) = self.global_binding(pc);
-        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, header as u32));
+        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit_for(state, header as u32, ExitFact::Global));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
@@ -98,7 +98,7 @@ impl Lowering<'_, '_> {
         let folds = reads || stores;
         let stable = folds && !(stores && reads) && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
-        let exit = self.guard_exit(state, header as u32);
+        let exit = self.guard_exit_for(state, header as u32, ExitFact::Global);
         if stable && !state.proofs.stable { self.read_invalidation(state, exit); }
         // A loop whose stores all leave on a miss runs no store that could unset `stores_specialized`.
         if stable && stores { self.hold_specialized(state, exit); }

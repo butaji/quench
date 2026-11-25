@@ -104,7 +104,7 @@ impl Lowering<'_, '_> {
             _ => return None,
         };
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Shape);
         if let (Some(register), Some(link)) = (receiver, array_link) {
             let bits = self.tagged(state, register);
             let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));

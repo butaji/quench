@@ -45,7 +45,7 @@ impl Lowering<'_, '_> {
     /// An element read into `destination`: a hoisted array's through its view (a typed array's a
     /// Number), any other the row. The element an observation typed (`number_reads`) is proved after it.
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, quench_runtime::bytecode::Operand)) -> bool {
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
         let array = self.loop_array(pc, Some(base));
         if let Some(pending) = self.unit_compare(state, pc, (destination, base, key), exit) {
             self.pending_unit = Some(pending);
@@ -341,7 +341,7 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         }
-        let exit = self.guard_exit(state, pc as u32);
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
         // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
         // a typed view takes a Number alone.
