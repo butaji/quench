@@ -67,6 +67,8 @@ pub(crate) struct Intrinsics {
     webcrypto: RootId,
 }
 
+crate::host::startup_snapshot::host_snap_struct!(Intrinsics { handle, key_type, classes, module, webcrypto });
+
 /// The native state behind one guest object.
 pub(crate) enum Native {
     Cipher(Box<cipher::CipherState>),
@@ -115,12 +117,15 @@ impl State {
         entries.filter_map(|(index, handle)| handle.as_ref().filter(|handle| !is_live(handle.owner)).map(|_| index)).collect()
     }
 
-    pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
-        let quiescent = self.live() == 0 && self.intrinsics.is_none();
-        crate::host::startup_snapshot::require_quiescent(quiescent, "crypto state")
+    /// A snapshot holds the module a preload built (its intrinsics), never a native handle:
+    /// the handle table must be empty, and a restored process starts its own.
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        crate::host::startup_snapshot::require_quiescent(self.live() == 0, "crypto state")?;
+        crate::host::startup_snapshot::HostSnap::write(&self.intrinsics, writer)
     }
 
-    pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.intrinsics = crate::host::startup_snapshot::HostSnap::read(reader)?;
         Ok(())
     }
 }
