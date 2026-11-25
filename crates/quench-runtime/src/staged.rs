@@ -136,9 +136,7 @@ pub mod slot_store;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
 pub mod strings;
-/// The natives every tier runs on a staged row: the table (`native_row_table`, which the runtime
-/// reads through `quench_bjit::call`, so planner and runtime share one type) and the bodies.
-#[cfg(stencil_build)]
+/// The natives run in place by identity: the table (`native_row_table`) and the map to it (`native_row`).
 pub mod native_row_table;
 pub mod native_row;
 pub mod string_length;

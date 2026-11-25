@@ -31,18 +31,7 @@ pub enum CallRow {
     /// The unconditional leave at the instruction: successor EXIT0 alone, every register as it
     /// came (the exit stub writes the live pinned ones back).
     Here,
-    /// A builtin of a native the callee is, run on its staged row (`stencils/builtin_rows.rs`): value
-    /// hole 0 is the `CallRecord`'s address, whose `callee` is the identity the callee register must hold;
-    /// successors TAKEN (completed: the result is in the call's register), NEXT (a miss, nothing written:
-    /// the helper row the planner lays out behind it).
-    Builtin(BuiltinRow),
 }
-
-/// The builtin rows: the runtime's table of natives run on staged rows (`staged::native_row_table`),
-/// read here so the planner and the stencils name the same rows.
-#[path = "../../quench-runtime/src/staged/native_row_table.rs"]
-mod native_row_table;
-pub use native_row_table::NativeRow as BuiltinRow;
 
 /// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
 /// global for nullish (sloppy), or none for an arrow, whose body reads its environment's (lexical).
@@ -65,7 +54,6 @@ impl CallRow {
                 Ok(format!("call_direct_a{argc}_{mode}{}{window}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
-            CallRow::Builtin(row) => Ok(format!("builtin_{}", row.symbol())),
             other => Err(format!("no call row {other:?}")),
         }
     }
@@ -118,10 +106,6 @@ mod tests {
                 CallRow::Reload(_) => {
                     assert!(successors.iter().all(|s| *s == NEXT), "{successors:?}");
                     assert!(stencil.imm32.iter().any(|field| field.index == 0), "the slot offset is hole 0");
-                }
-                CallRow::Builtin(_) => {
-                    assert!([NEXT, TAKEN].iter().all(|s| successors.contains(s)), "{successors:?}");
-                    assert!(values.contains(&0), "the record address is the value hole: {values:?}");
                 }
             }
         }
