@@ -379,7 +379,8 @@ pub(crate) fn snapshot_path(
     worker: bool,
 ) -> Option<std::path::PathBuf> {
     let entry = entry?;
-    if worker || !crate::shared_run::names_only_inline_source(&host.shared_state.borrow().exec_argv) {
+    // A build-time evaluation boots fresh, so that the process identity it installs stays lazy.
+    if worker || crate::aot::prefix::active() || !crate::shared_run::names_only_inline_source(&host.shared_state.borrow().exec_argv) {
         return None;
     }
     if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some()) {

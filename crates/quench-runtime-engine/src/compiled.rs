@@ -7555,7 +7555,9 @@ const FUNCTION_ALIGNMENT: usize = 64;
 #[quench_macros::ext(CompiledVm4)]
 impl Vm {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode; crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
+        self.execution_mode = mode;
+        #[cfg(feature = "jit")]
+        crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
         self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 

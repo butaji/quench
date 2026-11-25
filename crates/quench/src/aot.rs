@@ -12,6 +12,8 @@ mod graph;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;
+pub(crate) mod prefix;
+mod strict;
 pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 pub use quench_runtime::native_link::NativeImageInputs;
 

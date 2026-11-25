@@ -493,6 +493,7 @@ impl Vm {
             }
             Native::MathSumPrecise => self.math_sum_precise(p, args.first().copied()),
             Native::MathRandom => {
+                crate::clock::note_input("Math.random");
                 let mut state = self.random_state;
                 state ^= state << 13;
                 state ^= state >> 7;

@@ -558,6 +558,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         context.scoped(crate::modules::eval_globals_shared_vm::install)?;
     }
     if context.is_module()? {
+        crate::aot::prefix::arm(context)?;
         return Ok(());
     }
     if let Some(entry) = context.host_as::<crate::host::NodeHost>().commonjs_entry.clone() {
@@ -574,6 +575,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         let filename = context.string_rooted(&filename.to_string_lossy());
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_entry_run_main_ready");
+        crate::aot::prefix::arm(context)?;
         context.call_rooted(run_main, module, &[filename])?;
     } else {
         let filename = inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
@@ -3330,17 +3332,18 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
         .borrow()
         .process_module
         .ok_or_else(|| RootedError::host("process module owner unavailable"))?;
-    let argv = get(context, process, "argv")?;
-    let entry = get(context, argv, "1")?;
-    if !context.truthy_rooted(entry)? {
-        return Ok(());
-    }
     // The environment as `process.env` starts from: reading `process.env` itself would copy
-    // every variable on each run that is no cluster worker.
+    // every variable on each run that is no cluster worker. Tested before `process.argv`,
+    // which a run that is no cluster worker then leaves unread.
     if !crate::modules::process_shared_vm::environment(context)
         .iter()
         .any(|(name, value)| name == "NODE_UNIQUE_ID" && !value.is_empty())
     {
+        return Ok(());
+    }
+    let argv = get(context, process, "argv")?;
+    let entry = get(context, argv, "1")?;
+    if !context.truthy_rooted(entry)? {
         return Ok(());
     }
     let env = get(context, process, "env")?;
