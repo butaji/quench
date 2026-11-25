@@ -1018,6 +1018,8 @@ macro_rules! lane_helper_inventory {
             const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
             const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
+            /// The name of helper number `index` (`Symbol::Helper`), as an image's demand lists it.
+            pub(crate) fn name(index: usize) -> Option<&'static str> { Self::NAMES.get(index).copied() }
             pub(crate) fn addresses() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
@@ -2708,6 +2710,10 @@ fn stitched_entry(
     // The indirect call row calls the non-diagnostic reference callout.
     if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
         return None;
+    }
+    // The program's image may hold the rows already (`wasm_image::linked`).
+    if let Some(rows) = wasm_image::linked(analysis, index, memory_slot, (cells, callable)) {
+        return Some(rows);
     }
     let function = analysis.code.function_get(index)?;
     // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);

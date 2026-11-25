@@ -96,7 +96,7 @@ impl Lowering<'_, '_> {
                 self.set_int(state, result, length);
             }
             Builtin::Pop => {
-                let popped = self.pop(state, receiver, exit);
+                let popped = self.pop(state, pc, receiver, exit);
                 self.set_tagged(state, result, popped);
             }
             Builtin::IsInteger => {
@@ -139,7 +139,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The word of the dispatch payload at `offset`.
-    fn dispatch_word(&mut self, offset: usize) -> ir::Value {
+    pub(super) fn dispatch_word(&mut self, offset: usize) -> ir::Value {
         emit_js_payload_word(&mut self.builder, self.payload, offset)
     }
 
@@ -311,14 +311,17 @@ impl Lowering<'_, '_> {
     }
 
     /// `pop` of the array in `receiver`: its last element, which the backing no longer holds,
-    /// and the lane's array storage proofs retire (`LaneHelper::RetireArrayProofs`).
-    fn pop(&mut self, state: &mut State, receiver: Register, exit: ir::Block) -> ir::Value {
+    /// and the lane's array storage proofs retire (`LaneHelper::RetireArrayProofs`). Each view a
+    /// loop around `pc` hoisted reads its count again (`reload_dense_views`): the pop shortened one in
+    /// place, through whichever register names it.
+    fn pop(&mut self, state: &mut State, pc: usize, receiver: Register, exit: ir::Block) -> ir::Value {
         let array = self.tagged(state, receiver);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
         let popped = continues(builtins::step_array_native_of(&mut stage, builtins::ArrayNative::Pop, backing, exit));
         self.helper_call(LaneHelper::RetireArrayProofs, &[]);
+        self.reload_dense_views(pc);
         popped
     }
 }

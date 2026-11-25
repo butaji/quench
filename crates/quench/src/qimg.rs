@@ -90,14 +90,15 @@ pub fn compile(arguments: Vec<String>) -> Result<ExitCode, String> {
     status
 }
 
-/// `<x>.qimg [args]`: stage the image file's programs, then run its entry.
-pub fn run(image: &str, arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
+/// `[options] <x>.qimg [args]`: stage the image file's programs, then run its entry under `options`
+/// (the mode flags, as `--b-jit`, which precede a script).
+pub fn run(options: &[String], image: &str, arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     let file = std::fs::read(image).map_err(|error| format!("{image}: {error}"))?;
-    run_file(image, &file, arguments)
+    run_file(options, image, &file, arguments)
 }
 
 /// Runs the entry an image file names, with its programs' images staged.
-fn run_file(image: &str, file: &[u8], arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
+fn run_file(options: &[String], image: &str, file: &[u8], arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     let (length, body) = file.split_at_checked(LENGTH_BYTES).ok_or("truncated image file")?;
     let length = u32::from_le_bytes(length.try_into().map_err(|_| "truncated image file")?) as usize;
     let (entry, bundle) = body.split_at_checked(length).ok_or("truncated image file")?;
@@ -106,7 +107,7 @@ fn run_file(image: &str, file: &[u8], arguments: impl IntoIterator<Item = String
         Err(error) => eprintln!("quench: {image}: {error}; running without images"),
     }
     let entry = String::from_utf8(entry.to_vec()).map_err(|error| error.to_string())?;
-    crate::shared_run::run_shared_cli(std::iter::once(entry).chain(arguments))
+    crate::shared_run::run_shared_cli(options.iter().cloned().chain(std::iter::once(entry)).chain(arguments))
 }
 
 /// Hands the staged images, if any, to a freshly built runtime.
@@ -116,11 +117,11 @@ pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
     for images in AheadImages::unbundle(&staged).unwrap_or_default() { runtime.load_ahead_images(images); }
 }
 
-/// The image command line, if it is one: an executable with an embedded image, or `<x>.qimg ...`.
+/// The image command line, if it is one: an executable with an embedded image, or `[options] <x>.qimg ...`.
 pub fn route(arguments: &[String]) -> Option<Result<ExitCode, String>> {
-    if let Some(payload) = embedded() { return Some(run_file("this executable", &payload, arguments.iter().cloned())); }
-    match arguments {
-        [image, rest @ ..] if image.ends_with(EXTENSION) => Some(run(image, rest.iter().cloned())),
-        _ => None,
-    }
+    if let Some(payload) = embedded() { return Some(run_file(&[], "this executable", &payload, arguments.iter().cloned())); }
+    // Options (`--b-jit`, `--no-jit`) may precede the image, as they precede a script.
+    let at = arguments.iter().position(|argument| !argument.starts_with("--"))?;
+    let (options, [image, rest @ ..]) = arguments.split_at(at) else { return None };
+    image.ends_with(EXTENSION).then(|| run(options, image, rest.iter().cloned()))
 }

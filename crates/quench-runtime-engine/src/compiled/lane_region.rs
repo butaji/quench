@@ -1452,11 +1452,11 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
-        // An element store or an append may grow its array, which changes its `length`; a store
+        // An element store, an append or a pop may change its array's `length`; a store
         // `quiet_store` proves through a typed view changes none.
         let resizes = body.iter().enumerate().any(|(offset, candidate)| {
             let pc = header + offset;
-            (stores_element(*candidate) && !quiet_store(pc)) || native_calls::appends(intrinsics, pc)
+            (stores_element(*candidate) && !quiet_store(pc)) || native_calls::resizes(intrinsics, pc)
         });
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
@@ -3479,71 +3479,24 @@ impl Lowering<'_, '_> {
         Some(self.held_strings_equal(pair, bits))
     }
 
-    /// `Vm::strict_equal` (`strict`) or `==` of two tagged operands. Identical bits are equal
-    /// unless NaN, and two Numbers compare as Numbers. Strictly, a pair of strings or of
-    /// legacy cells (BigInts) of one family compares by contents (`strict_equal_cells_in_lane`)
-    /// and every other pair is unequal. Loosely, without conversions only: `null` and
-    /// `undefined` equal each other and no object record, and two distinct object records are
-    /// unequal; any other pair (a string, a Boolean, a function, which may be the IsHTMLDDA
-    /// object) leaves at `pc`.
+    /// `Vm::strict_equal` (`strict`) or `==` of two tagged operands, by the staged equality row's
+    /// word decision (`staged::equality_decided`). A pair its words leave: loosely, a leave at `pc`;
+    /// strictly, two heap values compare by contents where they are strings or legacy cells
+    /// (BigInts) of one family (`strict_equal_cells_in_lane`), and are unequal otherwise.
     fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
         pub use quench_runtime::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
-        let [identical, distinct, numbers, others, cells, join] = std::array::from_fn(|_| self.builder.create_block());
-        let equal = self.builder.append_block_param(join, types::I8);
-        let same = self.raw_compare(Relation::Equal, left, right);
-        self.branch_if(same, (identical, &[]), (distinct, &[]));
-        self.builder.switch_to_block(identical);
-        let ordered = self.raw_compare_imm(Relation::NotEqual, left, ValueLayout::CANONICAL_NAN as i64);
-        self.goto(join, &[ordered]);
-        self.builder.switch_to_block(distinct);
-        // Distinct int-tagged bits are distinct int32 values: an int32 has one tagged form,
-        // so the pair is unequal without a Number decode, which only other Numbers take.
-        let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
-        let ints = self.raw_binary(Binary::And, left_int, right_int);
-        let (decoded, unequal_ints) = (self.builder.create_block(), self.raw_const(Lane::I8, 0));
-        self.branch_if(ints, (join, &[unequal_ints]), (decoded, &[]));
-        self.builder.switch_to_block(decoded);
-        self.builder.set_cold_block(numbers);
-        let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value, int: ir::Value| {
-            let double = quench_runtime::staged::value::is_double(&mut emit(builder), bits);
-            emit(builder).raw_binary(Binary::Or, double, int)
-        };
-        let (left_number, right_number) = (is_number(&mut self.builder, left, left_int), is_number(&mut self.builder, right, right_int));
-        let both = self.raw_binary(Binary::And, left_number, right_number);
-        self.branch_if(both, (numbers, &[]), (others, &[]));
-        self.builder.switch_to_block(numbers);
-        // A Number a test already projected in this block is reused; the decode is only for the rest.
-        let left_value = frame::number_word(&mut self.builder, state, left, exit);
-        let right_value = frame::number_word(&mut self.builder, state, right, exit);
-        let number_equal = self.raw_compare(Relation::FloatEqual, left_value, right_value);
-        self.goto(join, &[number_equal]);
-        self.builder.switch_to_block(others);
+        let (decided, equal) = quench_runtime::staged::equality_decided(&mut emit(&mut self.builder), [left, right], strict);
         if !strict {
-            let nullish = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-                let null = emit(builder).raw_compare_imm(Relation::Equal, bits, Value::NULL.to_bits() as i64);
-                let undefined = emit(builder).raw_compare_imm(Relation::Equal, bits, Value::UNDEFINED.to_bits() as i64);
-                emit(builder).raw_binary(Binary::Or, null, undefined)
-            };
-            let record = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-                let object = quench_runtime::staged::value::is_direct_object(&mut super::object_slots::emit(builder), bits);
-                let array = quench_runtime::staged::value::is_direct_array(&mut super::object_slots::emit(builder), bits);
-                emit(builder).raw_binary(Binary::Or, object, array)
-            };
-            let (left_nullish, right_nullish) = (nullish(&mut self.builder, left), nullish(&mut self.builder, right));
-            let (left_record, right_record) = (record(&mut self.builder, left), record(&mut self.builder, right));
-            // Each side nullish or an object record: decided without a conversion.
-            let left_known = self.raw_binary(Binary::Or, left_nullish, left_record);
-            let right_known = self.raw_binary(Binary::Or, right_nullish, right_record);
-            let known = self.raw_binary(Binary::And, left_known, right_known);
-            emit_js_guard(&mut self.builder, known, exit);
-            // Distinct bits: equal only as `null` and `undefined`.
-            let nullish_pair = self.raw_binary(Binary::And, left_nullish, right_nullish);
-            self.goto(join, &[nullish_pair]);
-            self.builder.switch_to_block(join);
+            emit_js_guard(&mut self.builder, decided, exit);
             return Some(equal);
         }
+        let [open, cells, join] = std::array::from_fn(|_| self.builder.create_block());
+        let joined = self.builder.append_block_param(join, types::I8);
+        self.builder.set_cold_block(open);
+        self.branch_if(decided, (join, &[equal]), (open, &[]));
+        self.builder.switch_to_block(open);
         let family = self.raw_binary_imm(Binary::And, left, ValueLayout::HEAP_FAMILY_MASK as i64);
         let right_family = self.raw_binary_imm(Binary::And, right, ValueLayout::HEAP_FAMILY_MASK as i64);
         let one_family = self.raw_compare(Relation::Equal, family, right_family);
@@ -3592,7 +3545,7 @@ impl Lowering<'_, '_> {
         let cells_equal = self.raw_unary(Unary::Narrow(Lane::I8), result);
         self.goto(join, &[cells_equal]);
         self.builder.switch_to_block(join);
-        Some(equal)
+        Some(joined)
     }
 
     fn number_relation(&mut self, state: &mut State, pc: u32, operator: u32,
@@ -4517,6 +4470,13 @@ impl Lowering<'_, '_> {
     /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
         self.forget_append_rooms(pc);
+        self.reload_dense_views(pc);
+    }
+
+    /// `reload_dense_arrays` after a step that moves no backing and grows none (`pop`, which
+    /// shortens one in place): each view reads its count again, and its append room, the
+    /// backing's capacity, and its prototypes' proof stay.
+    fn reload_dense_views(&mut self, pc: usize) {
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
             .filter(|array| matches!(array.views, ElementViews::Dense | ElementViews::Double) && (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
