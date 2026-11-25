@@ -425,7 +425,7 @@ impl Lowering<'_, '_> {
             self.valid = false;
             return true;
         };
-        let proof = super::EmitProof::GlobalRead { miss: None, binding: GlobalBinding::Held { value, ty } };
+        let proof = super::EmitProof::GlobalRead { miss: None, binding: GlobalBinding::Held { value, ty }, slot: None };
         let row = Operation::decode_load_name(instruction, proof).expect("a global read is a name read");
         self.step(state, frame::Edges::Value, row);
         true

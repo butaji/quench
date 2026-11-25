@@ -76,7 +76,7 @@ pub(crate) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
         GlobalRead::Lexical(slot) => lexical_row(instruction, slot),
         // A held object (`lane_sites::held_objects`): its load is the constant, held by the cell's fact, with no read per use.
         GlobalRead::Stable { value, fact, global, realm_offset, .. } if instruction.op().loads_name() => Some(Decoded {
-            cell: Some(StableCell { fact, global, realm_offset }),
+            cell: Some(StableCell { fact, global, realm_offset, value }),
             ..word_row(instruction, value)
         }),
         _ => None,

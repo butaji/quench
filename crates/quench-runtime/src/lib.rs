@@ -122,6 +122,7 @@ pub mod number_inputs;
 #[doc(hidden)]
 pub mod profile;
 pub mod trace;
+pub mod fallback;
 pub mod clock;
 #[doc(hidden)]
 pub mod snapshot;

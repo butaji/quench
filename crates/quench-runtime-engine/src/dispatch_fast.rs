@@ -6571,6 +6571,7 @@ script_handler! {
             // An instruction no region runs leaves the loop to a body, which runs what it can
             // natively and leaves at the rest (`loop_body::offer_body`).
             if loop_body::offer_body(cx, r, site) { next!(cx, r, header, Carried::script_in(cx, view)) }
+            if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_rejected(cx, site); }
             loop_retire_in_lane(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
@@ -6664,17 +6665,15 @@ fn loop_run_native_in_lane(
     region: &crate::compiled::LoopRegion,
     entry: &mut crate::compiled::LoopEntry,
 ) -> Option<LoopContinuation> {
-    let mut tier = site.tier.borrow_mut();
-    if tier.awaits_code(unsafe { vm(cx) }, site) {
+    let wait = { let mut tier = site.tier.borrow_mut(); tier.awaits_code(unsafe { vm(cx) }, site).then(|| tier.take_wait()) };
+    if let Some(wait) = wait {
         // The code is compiling: the back edges until the next look run the header untried
         // (`skips_entry`) rather than each paying the whole entry attempt (~200 Ir) to count
         // the wait down.
-        site.skipped_entries.set(tier.take_wait());
-        drop(tier);
+        site.skipped_entries.set(wait);
         site.count_decline(RegionDecline::Awaiting);
         return None;
     }
-    drop(tier);
     let views = match loop_entry_checked_in_lane(cx, r, region, entry) {
         Ok(views) => views,
         Err(decline) => {
@@ -6686,6 +6685,7 @@ fn loop_run_native_in_lane(
     // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
     let continuation = loop_run_in_lane(cx, r, site, region, entry, views, site.header);
     count_continuation(cx, &continuation);
+    if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_left(cx, site, &continuation); }
     if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
     Some(continuation)
 }
@@ -6976,7 +6976,7 @@ fn loop_release_header_in_lane(header: Ip, site: &LoopSite) {
 }
 
 /// Where the lane goes after a loop site's native attempt.
-enum LoopContinuation {
+pub(crate) enum LoopContinuation {
     /// Take the backward jump in the interpreter.
     Jump,
     Resume(u32),
@@ -9813,7 +9813,7 @@ script_handler! {
 
 /// The function the lane runs: its innermost activation's, or else its frame's.
 #[inline(always)]
-fn running_function_in_lane(cx: *mut LaneContext) -> u32 {
+pub(crate) fn running_function_in_lane(cx: *mut LaneContext) -> u32 {
     let vm = unsafe { vm(cx) };
     vm.lane_stack.innermost_function().unwrap_or_else(|| vm.frames[unsafe { (*cx).frame() }].function)
 }
@@ -12980,7 +12980,7 @@ fn note_warming_leave_in_lane(cx: *mut LaneContext, own: &LaneView) {
 /// registers are `r`: the activations of the native frames it left inside first
 /// (`native_frames::advance_into_frames`), then the record its leave names in the innermost, or the
 /// innermost's completion; `body_left_in_lane` adds the leave as feedback (`LaneMethod::feedback`).
-enum LaneBodyLeft {
+pub(crate) enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,
     Resume(Registers, Ip, Carried),
@@ -12996,9 +12996,7 @@ enum LaneBodyLeft {
 /// Counts a run of `own`'s body that ended at `exit` on its typed edge (`ExitTable::cross`), and in the diagnostics leave table.
 #[inline(always)]
 fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
-    if !matches!(exit, crate::compiled::LaneExit::Returned { .. }) && quench_runtime::trace::Channel::BodyLeave.on() {
-        eprintln!("QUENCH_BODY_LEAVE function={} exit={exit:?}", running_function_in_lane(cx));
-    }
+    crate::compiled::fallback_sites::body_ended(cx, method, exit);
     method.exits.cross(exit);
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());

@@ -102,6 +102,39 @@ pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }
 
+/// The counts of a `... token count` debt file (`staged/derivation_debt.txt`, `staged/fixpoint_debt.txt`):
+/// the last field of each line that is not a comment, summed, over the lines `keep` admits.
+fn debt_counts(text: &str, keep: impl Fn(&str) -> bool) -> usize {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX) && keep(line))
+        .filter_map(|line| line.rsplit_once(' ')?.1.parse::<usize>().ok())
+        .sum()
+}
+
+/// Every count of a `file count` or `file token count` debt file.
+pub fn debt_total(text: &str) -> usize {
+    debt_counts(text, |_| true)
+}
+
+/// The opcode and family names of `staged/derivation_debt.txt`: the counts of its `op:X`, `Class:X` and
+/// `JsDenotation:X` tokens, a tier file that names an opcode or an opcode family outside its staged row.
+pub fn opcode_name_debt(text: &str) -> usize {
+    debt_counts(text, |line| {
+        line.split(' ').nth(1).is_some_and(|token| ["op:", "Class:", "JsDenotation:"].iter().any(|tag| token.starts_with(tag)))
+    })
+}
+
+/// The listed fallbacks of one kind (`crates/quench-tier-corpus/fallbacks.txt`, lines `kind operation (reason)`).
+fn fallbacks_of(text: &str, kind: &str) -> usize {
+    text.lines().filter(|line| line.split_once(' ').is_some_and(|(first, _)| first == kind)).count()
+}
+
+pub fn fallback_jit_rejects(text: &str) -> usize { fallbacks_of(text, "jit-reject") }
+pub fn fallback_helper_calls(text: &str) -> usize { fallbacks_of(text, "helper-call") }
+pub fn fallback_deopts(text: &str) -> usize { fallbacks_of(text, "deopt") }
+pub fn fallback_opaque_natives(text: &str) -> usize { fallbacks_of(text, "opaque-native") }
+
 /// What the tier crates still take of the runtime's internals: Value words made from raw bits, outside
 /// comments, and the heap names `tier_surface` re-exports. The heap module and `Vm::heap` are
 /// `pub(crate)` (S1.4), so paths into the heap and reads of the heap field cannot be written; this
@@ -406,6 +439,14 @@ mod tests {
     #[test]
     fn text_lines_skip_comments_and_blanks() {
         assert_eq!(text_lines("# note\n\nfoo Op::A 1\n  bar 2\n"), 2);
+    }
+
+    #[test]
+    fn debt_files_sum_their_counts() {
+        let derivation = "# total 9\na.rs fn:lane_* 4\na.rs op:Add 2\nb.rs Class:Call 1\nc.rs list:Nop 2\n";
+        assert_eq!(debt_total(derivation), 9);
+        assert_eq!(opcode_name_debt(derivation), 3);
+        assert_eq!(debt_total("# total 3\nquench-runtime/src/webs.rs 1\nx/y.rs 2\n"), 3);
     }
 
     #[test]

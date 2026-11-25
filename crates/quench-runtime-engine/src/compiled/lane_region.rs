@@ -3025,6 +3025,20 @@ impl Lowering<'_, '_> {
     }
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
+    /// The instruction at unit `pc`, which this body hands back to the lane, as an expensive fallback
+    /// (`quench_runtime::fallback`), at its own function's instruction.
+    #[cold]
+    fn unlowered_fallback(&self, pc: usize) {
+        let (function, at) = match self.unit.origins.get(pc) {
+            Some(super::lane_unit::Origin::Inlined { frame, pc }) => (self.unit.frames.get(*frame).map_or(self.function_id, |call| call.target.function), *pc),
+            Some(super::lane_unit::Origin::Caller(pc)) => (self.function_id, *pc),
+            None => (self.function_id, pc as u32),
+        };
+        let what = if self.helpers == LaneHelpers::Ahead { "unlowered in an ahead image" } else { "unlowered" };
+        quench_runtime::fallback::note(quench_runtime::fallback::Fallback::HelperCall, format_args!("{what}"),
+            quench_runtime::fallback::Site::new(self.program, function, at));
+    }
+
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
         // A construction readiness a loop's entry tested holds only across quiet instructions
@@ -3148,6 +3162,7 @@ impl Lowering<'_, '_> {
             }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
+                if quench_runtime::fallback::on() { self.unlowered_fallback(pc); }
                 if self.helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
                     let name = instruction.op().loads_name().then(|| self.program.atoms.get(instruction.atom_index() as usize).map(|atom| format!("({atom})"))).flatten();
                     UNLOWERED.with(|unlowered| unlowered.borrow_mut().insert(format!("{:?}{}", instruction.op(), name.unwrap_or_default())));

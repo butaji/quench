@@ -2,7 +2,20 @@
 # `fingerprint path:text`, where text is the trimmed source line. A hit outside its home that no line
 # allows fails, and so does a line no hit uses. Lines may only go away. Goal: an empty file.
 canonical_nan quench-bjit/stencils/words.rs:} else if f.is_nan() {
+char_code_at quench-bjit/stencils/heap_rows.rs:if index < 0 || index as u64 >= string.length {
+char_code_at quench-runtime/src/vm/string.rs:fn string_unit_index(index: Value) -> Option<i64> {
+char_code_at quench-runtime/src/vm/string.rs:Some(unit.map_or_else(|| Value::number(f64::NAN), |unit| Value::number(unit.into())))
+clamp_u8 quench-runtime-engine/src/compiled/object_slots/emit.rs:let (zero, max) = (self.raw_const(Lane::F64, f64::from(u8::MIN).to_bits() as i64), self.raw_const(Lane::F64, f64::from(u8::MAX).to_bits() as i64));
 clz32 quench-bjit/stencils/numeric.rs:fn clz32_row(mut frame: Places) -> Out {
+ecma_whitespace quench-runtime/src/vm/date/legacy_parse.rs:ch.is_whitespace() || ch == '\u{feff}'
+ecma_whitespace quench-runtime/src/vm/eval.rs:&& (character == '\u{feff}' || character.is_whitespace())
+ecma_whitespace quench-runtime/src/vm/regexp.rs:} else if character.is_control() || character.is_whitespace() || character == '\u{FEFF}' {
+equality quench-runtime-engine/src/compiled/lane_region.rs:fn number_strict_equality(&mut self, state: &mut State, pc: u32, number: Operand, other: Operand) -> Option<ir::Value> {
+equality quench-runtime-engine/src/compiled/lane_region.rs:fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
+equality quench-runtime-engine/src/compiled/lane_region.rs:let both_short = self.raw_compare_imm(Relation::Equal, either, i64::from(quench_runtime::vm::wtf16::native_string::TAG_SHORT));
+exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
+exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:pub(crate) fn exact_int32(x: f64) -> Option<i32> {
+exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
 imul quench-runtime-engine/src/compiled/lane_region/known_branches.rs:Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
 imul quench-runtime-engine/src/compiled/object_slots/emit.rs:fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
 imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),
@@ -10,8 +23,35 @@ imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithme
 imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:Part::Linear { start, step } => last!($a, |k: usize| start.wrapping_add(step.wrapping_mul(k as i32))),
 imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:Self::Linear { start, step } => start.wrapping_add(step.wrapping_mul(k as i32)),
 imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Multiply) => map(out, a, b, i32::wrapping_mul),
+increment quench-runtime-engine/src/dispatch_fast.rs:if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
+increment quench-runtime/src/vm/dispatch/increment.rs:fn increment_delta(is_decrement: bool) -> f64 {
+increment quench-runtime/src/vm/dispatch/increment.rs:pub(in crate::vm) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
+increment quench-runtime/src/vm/dispatch/increment.rs:integer.checked_sub(1)
+increment quench-runtime/src/vm/dispatch/increment.rs:integer.checked_add(1)
+increment quench-runtime/src/vm/operations.rs:integer.checked_sub(1)
+increment quench-runtime/src/vm/operations.rs:integer.checked_add(1)
 int32_tag quench-bjit/stencils/facade.rs:if self.0 & words::TAG_MASK == words::INT_TAG { Some(self.0 as u32 as i32) } else { None }
 int32_tag quench-bjit/stencils/facade.rs:} else if self.0 & words::TAG_MASK == words::INT_TAG {
 int32_tag quench-bjit/stencils/words.rs:x >> TAG_SHIFT == INT_TAG >> TAG_SHIFT
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => words!(|v: i32, x: i32| v.wrapping_add(x)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, true) => words!(|v: i32, x: i32| v.wrapping_sub(x)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, false) => words!(|v: i32, x: i32| x.wrapping_sub(v)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => value.wrapping_sub(last_x),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, true) => entry.wrapping_sub(x.wrapping_mul(count as i32)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, false) => if count % 2 == 0 { entry } else { x.wrapping_sub(entry) },
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Add) => map(out, a, b, i32::wrapping_add),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Subtract) => map(out, a, b, i32::wrapping_sub),
+nan_box_tag quench-bjit/stencils/facade.rs:((self.0 >> words::TAG_SHIFT) as u32).wrapping_sub(words::FIRST_TAG_FIELD as u32) <= words::TAG_FIELD_SPAN as u32
+nan_box_tag quench-bjit/stencils/site_rows.rs:if !GATED && A == MEM && !is_int(value) && (value.wrapping_sub(FIRST_TAG) >> TAG_SHIFT) < hole::<HOLE_FOURTH>() as u32 as u64 {
+nan_box_tag quench-bjit/stencils/words.rs:pub(crate) fn is_double(x: u64) -> bool {
+nan_box_tag quench-bjit/stencils/words.rs:x.wrapping_sub(FIRST_TAG) >= TAG_SPAN
+nan_box_tag quench-bjit/stencils/words.rs:pub(crate) fn int_word(v: i32) -> u64 {
+nan_box_tag quench-bjit/stencils/words.rs:u64::from(v as u32) | INT_TAG
+op_algebra quench-bjit/src/numeric.rs:pub fn is_bitwise(self) -> bool {
+op_algebra quench-bjit/src/numeric.rs:pub fn commutes(self) -> bool {
+op_algebra quench-bjit/src/numeric.rs:pub fn neutral(self) -> Option<i32> {
+op_algebra quench-bjit/src/numeric.rs:pub fn has_float_form(self) -> bool {
+sqrt quench-runtime-engine/src/dispatch_fast.rs:produce!(cx, r, ip, i.a, Value::from_float_bits64(input.sqrt().to_bits()), view)
 to_uint32 quench-bjit/stencils/units.rs:pub(crate) fn to_int32(value: f64) -> i32 {
 to_uint32 quench-runtime-engine/src/compiled/object_slots/emit.rs:fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {

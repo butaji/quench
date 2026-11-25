@@ -16,7 +16,10 @@ name = "number_primitives"
 required-features = ["bench-primitives"]
 
 [features]
-default = ["jit", "native-execution"]
+default = ["jit", "native-execution", "source"]
+# The front end: parsing and compiling JS/TS source (`Engine::specialize*`). A static image's support
+# build leaves it out, so no parser or compiler is linked; source compilation then refuses.
+source = []
 jit = []
 native-execution = []
 # What quench-runtime-engine's own tests reach of the core: `test_support` and the test-only
