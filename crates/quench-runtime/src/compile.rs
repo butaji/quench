@@ -622,6 +622,10 @@ impl Engine {
     }
 
     pub(crate) fn typescript_parameter_sites_source(source: &str) -> Option<Vec<typescript::ParameterSite>> {
+        // Without the front end no source is parsed (a static image's support).
+        if !cfg!(feature = "source") {
+            return None;
+        }
         let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
         let parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
@@ -1168,7 +1172,7 @@ impl Engine {
         match source_routes::routes() {
             Some(routes) => (routes.specialize)(source, name, mode, atom_prefix, source_type, module_goal, capture_script_completion,
                 inherited_strict, private_name_overrides, annex_b_forbidden_names, expected_shape, released, provided_text),
-            None => Err(Vec::new()),
+            None => Err(vec![Diagnostic::unsupported(name, "native guest code required: source compilation is unavailable")]),
         }
     }
 
@@ -1187,6 +1191,14 @@ impl Engine {
         released: ReleasedRecords,
         provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        // Without the front end (a static image's support) no source compiles: nothing links the parser.
+        #[cfg(not(feature = "source"))]
+        {
+            let _ = (source, mode, atom_prefix, source_type, module_goal, capture_script_completion, inherited_strict,
+                private_name_overrides, annex_b_forbidden_names, expected_shape, released, provided_text);
+            return Err(vec![Diagnostic::unsupported(name, "native guest code required: source compilation is unavailable")]);
+        }
+        #[cfg(feature = "source")]
         let compile = |lazy| {
             Self::specialize_parsing(
                 source,
@@ -1214,13 +1226,16 @@ impl Engine {
         // (`BodyFacts::check`). Its declarations are collected where it compiles, against the
         // program's type names (`compile_parsed_again`).
         // A streamed body's first run parses the body lazily, to compile one run of it.
-        let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
-        if (expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len()) || first_run)
-            && let Ok(program) = compile(true)
+        #[cfg(feature = "source")]
         {
-            return Ok(program);
+            let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
+            if (expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len()) || first_run)
+                && let Ok(program) = compile(true)
+            {
+                return Ok(program);
+            }
+            compile(false)
         }
-        compile(false)
     }
 
     /// `specialize_with_mode_and_private_names`, with the function bodies parsed lazily when

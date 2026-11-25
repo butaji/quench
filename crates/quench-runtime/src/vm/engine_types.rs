@@ -1522,7 +1522,7 @@ pub struct DirectCallee {
     pub forwarder: Option<SkippedForwarder>,
 }
 
-pub use super::fact_edge::{Fact, FactMissing};
+pub use super::fact_edge::{ExitFact, FactMissing};
 /// A unit's leaves, each place once, ordered by leave word, over its interned sigs, and per site its crossings
 /// (`FactMissing`). Built once per compile and kept by the body it publishes; its tables hold no spare capacity.
 #[derive(Default)]
@@ -2121,7 +2121,7 @@ pub struct ExitSig {
 pub struct ExitSite {
     /// The leave's word (`LaneExit::word`, read back by `decode`), the table's key; not a `LaneExit`, three words wide.
     pub word: u64,
-    pub sig: u32, pub id: u32, pub unit_pc: u32, pub fact: Fact,
+    pub sig: u32, pub id: u32, pub unit_pc: u32, pub fact: ExitFact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2777,6 +2777,16 @@ pub struct AotImage {
     pub labels: Vec<(u32, u32)>,
     /// The calls the closed world proves that bodies make by their callee's entry, by `Symbol::CallRecord` key.
     pub calls: Vec<CallSite>,
+    /// A Wasm program's stitched rows, which the instance's Wasm tier links in place of stitching.
+    pub wasm: Option<WasmRows>,
+}
+
+/// A Wasm program's rows in its image (`compiled::wasm_image`): the memory slot their entry reads
+/// (`WasmEntry`'s base and length), and by function index its rows, `None` where it has none. A row's
+/// absolute words name run-time addresses by relocation: only `Symbol::EntryCell`, a callee's entry cell.
+pub struct WasmRows {
+    pub memory_slot: Option<u32>,
+    pub functions: Vec<Option<RelocatableCode>>,
 }
 
 /// An image linked into this process: its code placed and every symbol resolved.
@@ -4064,7 +4074,19 @@ impl AheadImages {
     #[inline]
     pub fn record(program: &ResidualProgram) {
         let Some(lower) = recorded().as_ref().map(|recording| recording.lower) else { return };
-        let images = match lower(program) {
+        Self::keep(program, lower(program));
+    }
+
+    /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
+    #[inline]
+    pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower_wasm) else { return };
+        Self::keep(program, lower(vm, id, program, bindings));
+    }
+
+    /// Adds a lowering's image to the recording, or traces why `program` has none.
+    fn keep(program: &ResidualProgram, compiled: Result<Self, String>) {
+        let images = match compiled {
             Ok(images) => images,
             Err(why) => {
                 if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} records no image: {why}", program.source_name); }
@@ -5382,6 +5404,8 @@ pub static RECORDED: std::sync::Mutex<Option<Recording>> = std::sync::Mutex::new
 /// A recording: the lowering that started it, which only a build links, and its images.
 pub struct Recording {
     pub lower: fn(&ResidualProgram) -> Result<AheadImages, String>,
+    /// The lowering of a Wasm program, from its module's binding types.
+    pub lower_wasm: fn(&Vm, ProgramId, &ResidualProgram, &[crate::WasmBindingType]) -> Result<AheadImages, String>,
     pub images: Vec<AotImage>,
 }
 

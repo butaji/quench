@@ -3,6 +3,7 @@
 
 use super::OPERATION_DESCRIPTORS;
 use quench_runtime::HostFunctionId;
+use quench_runtime::property_names::same_text;
 
 const ABI_HASH_OFFSET: u64 = 0xcbf29ce484222325;
 const ABI_HASH_PRIME: u64 = 0x100000001b3;
@@ -45,21 +46,10 @@ pub(super) const fn operation_bits<const WORDS: usize>(policies: &[bool]) -> [u6
     words
 }
 
-/// String equality during constant evaluation.
-const fn same_name(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut byte = 0;
-    while byte < left.len() && left[byte] == right[byte] { byte += 1; }
-    byte == left.len()
-}
-
 pub(super) const fn operation_beside_activations(name: &str) -> bool {
     let mut index = 0;
     while index < BESIDE_ACTIVATIONS.len() {
-        if same_name(BESIDE_ACTIVATIONS[index], name) { return true; }
+        if same_text(BESIDE_ACTIVATIONS[index], name) { return true; }
         index += 1;
     }
     false
@@ -69,7 +59,7 @@ pub(super) const fn operation_beside_activations(name: &str) -> bool {
 pub(crate) const fn static_operation(name: &str) -> HostFunctionId {
     let mut position = 0;
     while position < OPERATION_DESCRIPTORS.len() {
-        if same_name(OPERATION_DESCRIPTORS[position].name, name) {
+        if same_text(OPERATION_DESCRIPTORS[position].name, name) {
             assert!(position <= u32::MAX as usize);
             return HostFunctionId(position as u32);
         }

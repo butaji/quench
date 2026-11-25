@@ -24,6 +24,8 @@ pub use element::{WasmElement, WasmElementItems, WasmElementMode};
 pub use table::{WasmTable, WasmTableInitializer};
 pub(crate) mod atomic;
 pub mod memory;
+mod bindings;
+pub use bindings::{WasmBinding, WasmBindingType, WasmLayout};
 mod wait;
 pub const INDEX_GROW_FAILURE: i64 = -1;
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
@@ -1471,7 +1473,7 @@ impl ModuleBindings<'_> {
         }
         let global_slots = lowering.global_registers.iter().map(|&(global, register)| (global as usize, register));
         let memory_slots = lowering.memory_registers.iter().enumerate()
-            .filter_map(|(memory, register)| Some((lowering.globals.len() + memory, (*register)?)));
+            .filter_map(|(memory, register)| Some((lowering.layout().slot(WasmBinding::Memory(memory)), (*register)?)));
         let bindings: Vec<_> = global_slots.chain(memory_slots).collect();
         for (slot, register) in bindings {
             lowering.emit_emission(wasm_emit::instance_binding(register, slot as u32))?;
@@ -1687,6 +1689,18 @@ enum WasmCallTarget {
 }
 
 impl Lowering<'_> {
+    /// The layout of the instance environment the lowered code reads (`WasmLayout`).
+    fn layout(&self) -> WasmLayout {
+        WasmLayout {
+            globals: self.globals.len(),
+            memories: self.memories.len(),
+            data: self.data.len(),
+            tables: self.tables.len(),
+            elements: self.elements.len(),
+            tags: self.tags.len(),
+        }
+    }
+
     /// The register the prologue loads `global`'s binding into, if the body accesses it.
     fn global_register(&self, global: u32) -> Option<Register> {
         let at = self.global_registers.binary_search_by_key(&global, |&(used, _)| used).ok()?;

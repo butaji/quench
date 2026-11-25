@@ -94,6 +94,7 @@ pub(crate) use crate::typed_ir::Type;
 // The runtime's root names its stencil layout numbers `layout_offsets`; the stencils' are `crate::layout`.
 pub(crate) use crate::layout as layout_offsets;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/protocol.rs"] pub(crate) mod protocol;
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/native_frame.rs"] pub(crate) mod native_frame;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use protocol::CallOperation;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/invoke.rs"] pub(crate) mod invoke;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use invoke::{CallFrame, Entered, Room};

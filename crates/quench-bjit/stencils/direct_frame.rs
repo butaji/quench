@@ -18,7 +18,7 @@
 //! and refuses, an exception pops, counts and raises, and a leave keeps the frames for the lane.
 
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
-use crate::heap_rows::{context_word, payload, set_context_word, word_at};
+use crate::heap_rows::{payload, set_context_word, word_at};
 use crate::layout::call_record::{CallRecord, LaneStatus, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_RECOVERY_AT, CELL_ROWS_AT,
     CELL_USES_THIS_AT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, JS_STEP_ACTIVATION_COUNT,
@@ -27,7 +27,7 @@ use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_NUMBERS_
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::bytecode::Register;
-use crate::staged::frame::{CONTEXT_PACKED, NATIVE_FLAG, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
+use crate::staged::frame::{PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
 use crate::staged::invoke::{Entered, Room};
 use crate::staged::plan::{Bound, WordList};
 use crate::staged::region::Region;
@@ -91,10 +91,6 @@ struct Admitted {
     /// The plain depth and innermost window before the push.
     depth: u64,
     registers: u64,
-    /// The body table entry for the frame's body, at the total frame count (records + plain depth), and
-    /// the native table entry for its descriptor at the same index (`JsStepHead::native_table`).
-    table: usize,
-    native: usize,
     /// The dispatch payload, whose VM and spilled-header helper a pop reads.
     payload: usize,
     frames: u64,
@@ -181,18 +177,14 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
     #[inline(always)]
     fn pop(a: &Admitted) {
         let mut stage = StencilStage::from_hole(0);
-        if word_at(a.tops.plain_at as usize, PLAIN_DEPTH_AT) == 0 || context_word(a.top, CONTEXT_PACKED) & NATIVE_FLAG == 0 {
+        protocol::pop_native_frame(&mut stage, &a.tops, a.top as u64, a.frames, Some((a.depth, a.registers)), #[inline(always)] |_| {
             core::hint::cold_path();
             // SAFETY: the payload's helper is `pop_observed_header_in_lane`, which takes the VM and residual words.
             unsafe {
                 let helper: unsafe extern "C" fn(u64, u64) -> u64 = transmute(word_at(a.payload, JS_STEP_POP_OBSERVED_HEADER) as usize);
                 helper(word_at(a.payload, JS_STEP_VM), word_at(a.payload, JS_STEP_RESIDUAL));
             }
-        } else {
-            protocol::set_plain(&mut stage, a.tops, a.depth, a.registers);
-        }
-        protocol::set_body_top(&mut stage, a.tops, a.frames);
-        protocol::set_values(&mut stage, a.tops, a.top as u64);
+        });
     }
 
     /// The row entry a direct call enters: the callee's proven-arguments entry where every Number guard it skips (the cell's
@@ -365,10 +357,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         }
         let registers = word_at(tops.plain_at as usize, PLAIN_REGISTERS_AT);
         let records = word_at(word_at(payload, JS_STEP_ACTIVATION_COUNT) as usize, 0);
-        let index = ((records + depth) as usize) * REGISTER_BYTES;
-        let table = word_at(payload, JS_STEP_BODY_TABLE) as usize + index;
-        let native = word_at(payload, JS_STEP_NATIVE_TABLE) as usize + index;
-        self.admitted = Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers, table, native,
+        self.admitted = Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers,
             payload, tops, frames: records + depth });
         Some(Room { cell: cell as u64, top, next: top + ((room + FRAME_CONTEXT_WORDS as u64) << WORD_SHIFT), shadow: 0 })
     }
@@ -393,15 +382,14 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
             caller_base: self.field(offset_of!(CallRecord, caller_base)), packed: self.field(offset_of!(CallRecord, packed)),
             callee: self.field(offset_of!(CallRecord, callee)) };
         let mut stage = StencilStage::from_hole(0);
-        protocol::push_body_header(&mut stage, a.top as u64, header);
-        // The running body, at the frame's depth in the body table; the depth and window it bumps.
-        stage.store_u64(Region::Frame.mutable(), a.table as u64, 0, word_at(a.cell, CELL_BODY_AT));
-        // Its descriptor at the same index, which links the native header where Rust observes it
-        // (`native_frames::link_header`), as the u-jit's `push_native` writes it.
-        stage.store_u64(Region::Frame.mutable(), a.native as u64, 0, self.field(offset_of!(CallRecord, descriptor)));
-        protocol::set_plain(&mut stage, a.tops, a.depth + 1, a.top as u64);
-        protocol::set_body_top(&mut stage, a.tops, a.frames + 1);
-        protocol::set_values(&mut stage, a.tops, (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64);
+        // Its body and descriptor at the frame's index (the descriptor links the native header where Rust observes
+        // it, `native_frames::link_header`), the plain depth and window it bumps: the native frame every tier pushes.
+        protocol::push_native_frame(&mut stage, &a.tops, protocol::NativeFrame { window: a.top as u64, header, body: word_at(a.cell, CELL_BODY_AT),
+            descriptor: self.field(offset_of!(CallRecord, descriptor)), index: a.frames,
+            next: (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64 },
+            // The tables load here, past the window's fill, so their addresses are not live across it.
+            #[inline(always)] |_| protocol::NativePlaces { bodies: word_at(a.payload, JS_STEP_BODY_TABLE), descriptors: word_at(a.payload, JS_STEP_NATIVE_TABLE),
+                plain_at: a.tops.plain_at, depth: a.depth });
         let body = self.run_body(&a, this, captures);
         self.returned = Some(body);
         Some(Entered { status: u64::from(body.status), word: body.value, unfinished: () })

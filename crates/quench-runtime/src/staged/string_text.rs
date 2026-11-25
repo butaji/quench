@@ -9,6 +9,12 @@ use std::ops::Range;
 /// The filler of `padStart` and `padEnd` when none is given.
 pub(crate) const PAD_FILL: &[u8] = b" ";
 
+/// The ECMAScript WhiteSpace and LineTerminator code points (StrWhiteSpaceChar) that `trim`,
+/// number parsing and the host's parsers strip: one definition for every crate.
+pub fn is_ecma_whitespace_char(character: char) -> bool {
+    u16::try_from(u32::from(character)).is_ok_and(is_ecma_whitespace)
+}
+
 /// The ECMAScript WhiteSpace and LineTerminator code units that `trim` strips: the staged test
 /// (`strings::is_trim_space`) on `Concrete`.
 pub(crate) fn is_ecma_whitespace(unit: u16) -> bool {

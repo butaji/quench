@@ -192,7 +192,11 @@ impl AheadImages {
 
     /// Starts collecting the images of every program this thread stores (`finish_recording`).
     pub fn start_recording() {
-        *recorded() = Some(quench_runtime::vm::engine_types::Recording { lower: |program| AheadImages::compile(program), images: Vec::new() });
+        *recorded() = Some(quench_runtime::vm::engine_types::Recording {
+            lower: |program| AheadImages::compile(program),
+            lower_wasm: |vm, id, program, bindings| AheadImages::compile_wasm(vm, id, program, bindings),
+            images: Vec::new(),
+        });
     }
 
     /// What was recorded since `start_recording`, which stops.
@@ -293,7 +297,7 @@ impl Vm {
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
-            exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
+            exits: ExitTable::of_unit(&unit, |_, _| Vec::new(), |_| None) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish(&linked, None, None);

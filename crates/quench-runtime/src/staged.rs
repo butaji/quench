@@ -108,7 +108,7 @@ pub use callout::{CallOut, OperandValues};
 pub use spread::Passing;
 pub use decode::{DecodeContext, Fields};
 #[allow(unused_imports)]
-pub use compare::{nullish_of, Comparison};
+pub use compare::{nullish_of, Comparison}; pub use generic::decide as equality_decided;
 pub use concrete::Concrete;
 #[allow(unused_imports)]
 pub use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
@@ -149,6 +149,7 @@ pub mod host_rows;
 pub(crate) mod parse_int;
 /// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
 pub(crate) mod string_text;
+pub use string_text::is_ecma_whitespace_char;
 /// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
 pub(crate) mod string_search;
 /// String.prototype.split with a string separator: the cut offsets, once.
@@ -170,6 +171,7 @@ pub mod naming;
 pub mod call; pub mod frame;
 pub mod forms;
 pub mod protocol;
+pub(crate) mod native_frame;
 pub mod call_keeping;
 pub mod call_environment;
 pub mod call_leaf;
