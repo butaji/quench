@@ -7853,6 +7853,7 @@ impl Vm {
             return None; // no run-time compile without the JIT: only image bodies run natively
         }
         let residual = self.programs.get(program_id)?;
+        self.keep_slot_representations();
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter

@@ -137,6 +137,13 @@ impl Writer {
             self.u32(*value);
         }
     }
+
+    pub(crate) fn u64s(&mut self, values: impl ExactSizeIterator<Item = u64>) {
+        self.len(values.len());
+        for value in values {
+            self.u64(value);
+        }
+    }
 }
 
 /// A snapshot's bytes as they are read back.
@@ -321,6 +328,10 @@ impl<'a> Reader<'a> {
 
     pub(crate) fn u32s(&mut self) -> SnapshotResult<Vec<u32>> {
         Ok(self.u32_iter()?.collect())
+    }
+
+    pub(crate) fn u64_iter(&mut self) -> SnapshotResult<impl ExactSizeIterator<Item = u64> + '_> {
+        Ok(self.words()?.iter().copied().map(u64::from_le_bytes))
     }
 
     /// Admit the entire word span once, then decode directly from the snapshot.

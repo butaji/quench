@@ -654,6 +654,8 @@ impl Vm {
     pub(crate) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
+        // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         if !cfg!(feature = "jit") {
             return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
         }

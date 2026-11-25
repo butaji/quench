@@ -269,6 +269,8 @@ pub(crate) fn loop_compile_in_lane(
     count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    // Native code reads slot representations, which the runtime keeps from its first compile on.
+    machine.keep_slot_representations();
     // The tier of this compile: b-jit where the u-jit region is not yet ahead of it, counting
     // the interpreter's jumps and the native iterations the loop took so far.
     let base = crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
