@@ -923,13 +923,6 @@ fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value
     integer_code(&mut stage, value)
 }
 
-/// Binding time changes the table address, never the packed-value semantics.
-#[derive(Clone, Copy)]
-enum NarrowTable {
-    Process,
-    Linked(u32),
-}
-
 /// The linked data symbol `symbol` as a global value of `builder`'s function.
 fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
     let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
@@ -939,19 +932,24 @@ fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Glo
     })
 }
 
-/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
-/// passed to `join`.
+/// The narrow decode's upper-word table in a live compile: this process's own table.
+fn process_narrow_table(builder: &mut FunctionBuilder<'_>) -> ir::Value {
+    object_slots::emit(builder).constant(quench_runtime::value::NarrowLayout::upper_words() as u64)
+}
+
+/// The narrow decode's upper-word table of a statically linked image: the object's copy.
+fn linked_narrow_table(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Value {
+    let global = linked_data_symbol(builder, symbol);
+    object_slots::emit(builder).symbol_address(global)
+}
+
+/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow` and the
+/// table `address` it decodes through, passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
-    table: NarrowTable, join: ir::Block)
+    address: ir::Value, join: ir::Block)
 {
     use quench_runtime::staged::machine::{Lane, Unary};
-    let table = match table {
-        NarrowTable::Process => object_slots::emit(builder).constant(quench_runtime::value::NarrowLayout::upper_words() as u64),
-        NarrowTable::Linked(symbol) => {
-            let global = linked_data_symbol(builder, symbol);
-            object_slots::emit(builder).symbol_address(global)
-        }
-    };
+    let table = address;
     let mut stage = object_slots::emit(builder);
     let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
     let encoded = quench_runtime::staged::object::decode_narrow_through(&mut stage, narrow, table);
@@ -9307,7 +9305,8 @@ mod tests {
         let narrow = builder.block_params(entry)[0];
         let done = builder.create_block();
         let result = builder.append_block_param(done, types::I64);
-        emit_narrow_read(&mut builder, narrow, NarrowTable::Process, done);
+        let table = process_narrow_table(&mut builder);
+        emit_narrow_read(&mut builder, narrow, table, done);
         builder.switch_to_block(done);
         builder.ins().return_(&[result]);
         builder.seal_all_blocks();

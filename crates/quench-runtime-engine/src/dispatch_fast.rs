@@ -8736,7 +8736,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
+                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers(), false)
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -16642,6 +16642,7 @@ fn derive_lane_view<'live>(
     plan: crate::compiled::admission::RecordPlan,
     diagnostics: bool,
     tiers: &'static Tiers,
+    image_entry: bool,
 ) -> LaneView {
     let loop_tier = plan.loop_sites;
     // Each pass below reads instructions by PC; they are decoded once, here.
@@ -16792,13 +16793,13 @@ fn derive_lane_view<'live>(
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
             // a record whose `a` carries result flags (a numeric local target) runs the general
-            // step, which decodes them, so no row tests for them.
-            let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
+            // step, which decodes them, so no row tests for them — whichever row this record's
+            // opcode and accumulator chose, a specialized one included.
             let selected = selected.map(|chosen| {
                 let flagged = admits_row(op)
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
-                if flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ()) {
+                if flagged && chosen.handler as *const () != general_step_in_lane as *const () {
                     LaneHandler { handler: general_step_in_lane, ..chosen }
                 } else {
                     chosen
@@ -17022,7 +17023,14 @@ fn derive_lane_view<'live>(
     let runs = runs_ahead_in_lane(&decoded, &exits, min_run, !wasm);
     let mut entries = vec![0u64; runs.len().div_ceil(u64::BITS as usize)];
     for (pc, (run, reads)) in runs.iter().zip(&reads_accumulator).enumerate() {
-        if *run >= min_run && !reads {
+        // An image body runs from its function's entry and resumes at the record a leave names, so
+        // its records are entries wherever entering is safe: the record does not read the
+        // accumulator (its instruction stands on its own), its fields fit the rows (`exits`), and
+        // its result field carries no flags (a flagged record runs the general step, not a row).
+        // The run length only decides what pays for a JIT body, which an image does not compile.
+        let unflagged = decoded[pc].a() & !quench_runtime::bytecode::REGISTER_MASK == 0;
+        let image = image_entry && !*reads && !exits[pc] && unflagged;
+        if image || *run >= min_run && !reads {
             entries[pc / u64::BITS as usize] |= 1 << (pc % u64::BITS as usize);
         }
     }
@@ -18170,11 +18178,9 @@ impl Vm {
         kind: quench_runtime::bytecode::ProgramKind,
         live: &dyn Fn() -> Option<&'a std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
         sites: &[quench_runtime::bytecode::FieldSite], image: bool) -> LaneView {
-        let mut view = derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites,
+        derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites,
             crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-            self.programs.reports_on_drop(), self.programs.tiers());
-        if image { view.admit_every_record(); }
-        view
+            self.programs.reports_on_drop(), self.programs.tiers(), image)
     }
 
     /// Whether a lane run of `program` credits its functions' loop work: a Wasm program in

@@ -536,6 +536,12 @@ pub const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 /// again with less inlined (`Vm::compile_lane_method`).
 pub const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 
+/// The code one ahead-of-time image body may take. An image compiles once, offline, into a file
+/// the process loads: nothing of its cost is paid under a guest's warm-up, so the JIT's lane-body
+/// limit (a warm-up resource bound) does not apply, and a body it would replan is instead part of
+/// the image. The bound stays a resource limit: the image is loaded whole.
+pub const AHEAD_BODY_MAX_CODE_BYTES: usize = 4 * LANE_BODY_MAX_CODE_BYTES;
+
 /// The callee instructions one unit inlines in all, the region's budget: what a lane body's
 /// code-size budget holds (`LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
 /// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call

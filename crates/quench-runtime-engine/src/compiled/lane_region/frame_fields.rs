@@ -296,8 +296,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         builder.switch_to_block(packed);
         let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
         let table = match self.helpers {
-            LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
-            _ => NarrowTable::Process,
+            LaneHelpers::Bound(_, symbol) => super::super::linked_narrow_table(builder, symbol),
+            // A linking lowering names the loader's table by symbol, never this process's address.
+            LaneHelpers::Ahead => crate::symbol_words::symbol_address(builder, crate::aot_image::symbols::NARROW_WORDS_NAMESPACE, 0),
+            _ => super::super::process_narrow_table(builder),
         };
         emit_narrow_read(builder, narrow, table, done);
         builder.switch_to_block(slow);
