@@ -275,20 +275,7 @@ impl Vm {
         {
             return *prototype;
         }
-        match kind {
-            TypedArrayKind::Uint8 => self.uint8_array_proto,
-            TypedArrayKind::Uint8Clamped => self.uint8_clamped_array_proto,
-            TypedArrayKind::Uint16 => self.uint16_array_proto,
-            TypedArrayKind::Uint32 => self.uint32_array_proto,
-            TypedArrayKind::Int8 => self.int8_array_proto,
-            TypedArrayKind::Int16 => self.int16_array_proto,
-            TypedArrayKind::Int32 => self.int32_array_proto,
-            TypedArrayKind::BigInt64 => self.bigint64_array_proto,
-            TypedArrayKind::BigUint64 => self.biguint64_array_proto,
-            TypedArrayKind::Float16 => self.float16_array_proto,
-            TypedArrayKind::Float32 => self.float32_array_proto,
-            TypedArrayKind::Float64 => self.float64_array_proto,
-        }
+        self.typed_array_protos[kind as usize]
     }
 
     pub(super) fn install_typed_array_species(
