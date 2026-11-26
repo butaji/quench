@@ -505,23 +505,14 @@ impl Vm {
         new_target: Value,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        if self.object_data(prototype).is_some() {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        let (native, fallback) = if shared {
-            (Native::SharedArrayBuffer, self.shared_array_buffer_proto)
-        } else {
-            (Native::ArrayBuffer, self.array_buffer_proto)
-        };
-        Ok(self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(realm, native))
-            .copied()
-            .unwrap_or(fallback))
+        self.prototype_from_new_target(p, new_target, |vm, _, realm| {
+            let (native, fallback) = if shared {
+                (Native::SharedArrayBuffer, vm.shared_array_buffer_proto)
+            } else {
+                (Native::ArrayBuffer, vm.array_buffer_proto)
+            };
+            Ok(vm.realm.intrinsics.builtin_prototypes.get(&(realm, native)).copied().unwrap_or(fallback))
+        })
     }
 
     pub(super) fn array_buffer_zeroed_bytes(
