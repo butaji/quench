@@ -5071,7 +5071,6 @@ impl CompiledJsFunction {
             _code: code,
             result: artifact.result,
             params: artifact.params,
-            #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
     }
@@ -8542,9 +8541,7 @@ impl Vm {
                     entry,
                     params: plan.params,
                     result: plan.result,
-                    #[cfg(test)]
                     native_entries: std::cell::Cell::new(0),
-                    #[cfg(test)]
                     direct_reference_entries: std::cell::Cell::new(0),
                 }
             })

@@ -8,20 +8,11 @@ mod arguments;
 /// one descriptor-table entry.
 const INDEX_PROBE_COST_RATIO: usize = 8;
 
-const ARRAY_LENGTH_MODULUS: f64 = crate::units::MAX_ARRAY_LENGTH as f64 + 1.0;
 pub(super) const ARRAY_LENGTH_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     enumerable: false,
     configurable: false,
     ..DEFAULT_PROPERTY_ATTRIBUTES
 };
-
-fn array_length_uint32(number: f64) -> u32 {
-    if !number.is_finite() || number == 0.0 {
-        0
-    } else {
-        number.trunc().rem_euclid(ARRAY_LENGTH_MODULUS) as u32
-    }
-}
 
 impl Vm {
     /// An own array's `length`: inline for a direct array without extras, whose dense
@@ -130,7 +121,7 @@ impl Vm {
             }
             let descriptor_value = descriptor.resolve(&self.heap).value;
             let requested_len = if let Some(value) = descriptor_value {
-                let uint32 = array_length_uint32(self.to_number(p, value)?);
+                let uint32 = crate::value::number_to_u32(self.to_number(p, value)?);
                 let value = descriptor.resolve(&self.heap).value.unwrap();
                 let number_len = self.to_number(p, value)?;
                 if number_len != f64::from(uint32) {

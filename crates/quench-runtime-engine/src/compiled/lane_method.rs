@@ -21,13 +21,16 @@ pub(crate) struct LaneMethodFacts {
     pub(crate) exits: ExitTable,
     pub(crate) summary: Option<lane_region::TypeSummary>,
     pub(crate) clif: Option<String>,
+    /// Whether the code makes proven calls (`LaneMethod::proven_calls`): an image body's, whose
+    /// calls name no `direct` callee but still bind shadow frames.
+    pub(crate) proven_calls: bool,
 }
 
 /// The method one lane body's code makes, from what its plan or its image established. Shared by
 /// a freshly compiled body and by an image body, so installing an image never constructs the
 /// lowering or its machine IR.
 pub(crate) fn finish_lane_method(memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>, facts: LaneMethodFacts) -> Option<LaneMethod> {
-    let LaneMethodFacts { unit, stable, fields, direct, closed, function, invalidation, tiers, fault_poll, exits, summary, clif } = facts;
+    let LaneMethodFacts { unit, stable, fields, direct, closed, function, invalidation, tiers, fault_poll, exits, summary, clif, proven_calls } = facts;
     let amortizes = amortizes_entry(tiers, &unit, function, &direct);
     let (dependencies, recovery_space) = (LaneDependencies::of(fields.iter().flatten().flatten().copied(), &direct), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
     let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
@@ -44,7 +47,7 @@ pub(crate) fn finish_lane_method(memory: CodeMemory, scalar: Option<usize>, prov
         fault_poll: fault_poll || direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
         // A body that names a callee's body retires with it (`DirectCallee::method`).
         names_shapes, exits, inlined: unit.frames, scratch_width, caller_registers, frame_reach: 0,
-        amortizes, direct, closed, framed: false, _records: Vec::new(), constructors: Box::default(),
+        amortizes, direct, proven_calls, closed, framed: false, _records: Vec::new(), constructors: Box::default(),
         realm_bound: false, summary, withdrawn: Default::default(),
     })
 }

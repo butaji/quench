@@ -105,9 +105,8 @@ impl FactTables {
         use quench_runtime::vm::global_facts::GlobalRead;
         let mut tables = Self::default();
         let read_values = (0..unit.instructions.len()).filter_map(|pc| match global_reads.get(&pc)? {
-            GlobalRead::Constant(value) | GlobalRead::Stable { value, .. } | GlobalRead::Frozen { value, .. }
-                | GlobalRead::NativeMember { value, .. } => Some(*value),
-            _ => None,
+            GlobalRead::NativeMember { value, .. } => Some(*value),
+            read => read.folded_value(),
         });
         let frame_values = unit.frames.iter().filter_map(|frame| frame.target.identity());
         for value in read_values.chain(frame_values) {
@@ -877,7 +876,7 @@ impl LanePlan {
             unit: self.unit, stable: std::mem::take(&mut lowered.region.stable), fields: self.fields,
             direct: self.direct, closed: self.closed, function: self.function, invalidation: self.invalidation,
             tiers: self.tiers, fault_poll: lowered.region.fault_poll,
-            exits: std::mem::take(&mut lowered.region.exits), summary: lowered.region.summary.take(), clif: lowered.clif,
+            exits: std::mem::take(&mut lowered.region.exits), summary: lowered.region.summary.take(), clif: lowered.clif, proven_calls: false,
         };
         finish_lane_method(memory, scalar, proven, facts)
     }

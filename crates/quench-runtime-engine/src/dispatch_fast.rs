@@ -700,6 +700,16 @@ impl LaneView {
         self.entry.body.get() != 0
     }
 
+    /// Whether a lane call of it enters its published body (`enter_cell_body_in_lane`): one whose entry pays for
+    /// itself (`LaneMethod::amortizes`). A body that does not serves native callers only (`LaneView::specialized`):
+    /// the lane's call runs the callee in records, which costs a tiny method less than the body's entry.
+    #[inline(always)]
+    fn enters_cell_body(&self) -> bool {
+        let body = self.entry.body.get();
+        // SAFETY: a published cell's body word names a live body (`EntryCell::publish`), zeroed when it retires.
+        body != 0 && unsafe { (*(body as *const crate::compiled::LaneMethod)).amortizes }
+    }
+
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
     pub(crate) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
 
@@ -9004,8 +9014,8 @@ macro_rules! lane_plain_activation {
         }
         // SAFETY: the record's window of `r` holds its values.
         let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-        // A callee whose entry cell holds a body runs it before any activation exists.
-        if !returns && unsafe { (*target.view).entry_published() } {
+        // A callee whose entry cell holds a body that pays its entry runs it before any activation exists.
+        if !returns && unsafe { (*target.view).enters_cell_body() } {
             if let Some(resumed) = enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
                 resume!(cx, resumed)
             }
@@ -10331,7 +10341,7 @@ fn forwarded_cell_entry_in_lane(
         && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
         && !vm.with_scope_entered
         && activation_room_in_lane(vm, target)
-        && unsafe { (*target.view).entry_published() })
+        && unsafe { (*target.view).enters_cell_body() })
     .then_some(())?;
     enter_cell_body_in_lane(cx, r, ip, target, args.as_ptr(), argc, this)
 }

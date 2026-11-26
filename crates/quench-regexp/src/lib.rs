@@ -334,6 +334,14 @@ pub(crate) fn literal_finder(bytes: &[u8]) -> LiteralFinder {
 }
 
 impl CompleteMatcher {
+    /// Whether the required-literal prefilter proves a search finds nothing: the search is not
+    /// sticky (a sticky search tests one position, where the literal check costs more than the
+    /// match), the pattern has a required literal, and `contains` (the subject's own form of the
+    /// containment test) says the searched rest lacks it. The one prefilter rule of every subject form.
+    fn prefilter_rejects(&self, sticky: bool, contains: impl FnOnce(&Self) -> bool) -> bool {
+        !sticky && !self.required_literal.is_empty() && !contains(self)
+    }
+
     /// `required_wide`, built on first use.
     fn required_wide(&self) -> Option<&LiteralFinder> {
         self.required_wide
@@ -547,12 +555,9 @@ impl Regex {
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
-            if !sticky
-                && !complete.required_literal.is_empty()
-                && !complete
-                    .required_wide()
-                    .is_some_and(|literal| contains_code_unit_bytes(&units[start..], literal.as_ref()))
-            {
+            if complete.prefilter_rejects(sticky, |complete| {
+                complete.required_wide().is_some_and(|literal| contains_code_unit_bytes(&units[start..], literal.as_ref()))
+            }) {
                 return None;
             }
             return complete.backtracking.find(units, start, sticky, captures).map(|found| self.offset_match(found, captures));
@@ -590,7 +595,7 @@ impl Regex {
     /// positions and captures in UTF-16 offsets.
     fn find_units(&self, input: &[Unit], first: usize, sticky: bool) -> Option<Match> {
         let complete = self.complete();
-        if !sticky && !complete.required_literal.is_empty() && !contains_literal(&input[first.min(input.len())..], &complete.required_literal) {
+        if complete.prefilter_rejects(sticky, |complete| contains_literal(&input[first.min(input.len())..], &complete.required_literal)) {
             return None;
         }
         let found = complete.backtracking.find(input, first, sticky, true)?;

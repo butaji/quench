@@ -172,28 +172,11 @@ impl Vm {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            let constructor_name = if native == Native::WeakMap {
-                "WeakMap"
-            } else {
-                "WeakSet"
-            };
-            let constructor_atom = self.intern_atom(constructor_name);
-            let constructor = self.get_property(p, realm, constructor_atom)?;
-            let fallback = self.get_property(p, constructor, prototype_atom)?;
-            if self.object_data(fallback).is_some() {
-                fallback
-            } else if native == Native::WeakMap {
-                self.weak_map_proto
-            } else {
-                self.weak_set_proto
-            }
-        };
+        let prototype = self.prototype_from_new_target(p, new_target, |vm, p, realm| {
+            let (name, intrinsic) =
+                if native == Native::WeakMap { ("WeakMap", vm.weak_map_proto) } else { ("WeakSet", vm.weak_set_proto) };
+            vm.realm_constructor_prototype(p, realm, name, Some(intrinsic))
+        })?;
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
                 object: Box::new(Self::empty_object(prototype)),
@@ -322,16 +305,8 @@ impl Vm {
             .heap
             .weak_handle(target)
             .ok_or_else(|| self.type_error(p, "WeakRef target is not a live object".into()))?;
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            let weak_ref_atom = self.intern_atom("WeakRef");
-            let constructor = self.get_property(p, realm, weak_ref_atom)?;
-            self.get_property(p, constructor, prototype_atom)?
-        };
+        let prototype =
+            self.prototype_from_new_target(p, new_target, |vm, p, realm| vm.realm_constructor_prototype(p, realm, "WeakRef", None))?;
         Ok(self.heap.alloc(Cell::WeakRef {
             object: Box::new(Self::empty_object(prototype)),
             target: Some(target),
@@ -637,24 +612,10 @@ impl Vm {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            let constructor_atom =
-                self.intern_atom(if native == Native::Map { "Map" } else { "Set" });
-            let constructor = self.get_property(p, realm, constructor_atom)?;
-            let fallback = self.get_property(p, constructor, prototype_atom)?;
-            if self.object_data(fallback).is_some() {
-                fallback
-            } else if native == Native::Map {
-                self.map_proto
-            } else {
-                self.set_proto
-            }
-        };
+        let prototype = self.prototype_from_new_target(p, new_target, |vm, p, realm| {
+            let (name, intrinsic) = if native == Native::Map { ("Map", vm.map_proto) } else { ("Set", vm.set_proto) };
+            vm.realm_constructor_prototype(p, realm, name, Some(intrinsic))
+        })?;
         let collection = match native {
             Native::Map => self.heap.alloc_map(Self::empty_object(prototype), Default::default()),
             Native::Set => self.heap.alloc_set(Self::empty_object(prototype), Default::default()),

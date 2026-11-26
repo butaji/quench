@@ -8,12 +8,7 @@ impl Vm {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        if self.object_data(prototype).is_some() {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        Ok(self.array_prototype_for_realm(realm))
+        self.prototype_from_new_target(p, new_target, |vm, _, realm| Ok(vm.array_prototype_for_realm(realm)))
     }
 
     /// `new Array(length)` of a Number `length` with `prototype` (ECMA-262 23.1.1.1 step 5):

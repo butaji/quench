@@ -1,0 +1,4 @@
+# Tier order (quench-gate step `ds-budgets`, TOD-2152): no-jit -> b-jit -> default must not get slower (5% band) or run more Ir per op (2% band).
+# `<bench>/<case> <from>-<to> <time|ir> <ratio>`: an inversion, the ratio upper/lower recorded when it inverted.
+# Shrink-only: an unlisted inversion fails, a listed one that no longer inverts fails ("remove it"), a ratio that grew past its band fails.
+# Seeded by `QUENCH_DEBT_WRITE=1 quench-gate --only ds-budgets` on a finished sweep. Never add a line by hand.
