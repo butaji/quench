@@ -295,9 +295,16 @@ impl InheritedConstant {
 #[quench_macros::ext(NativeFieldLoadOps1)]
 impl NativeFieldLoad {
     /// Whether a read of it proves its receiver a direct object of its shape: an own slot of
-    /// a shape no function record held.
+    /// a shape no function record held. A guessed shape proves nothing (`guessed`).
     pub(crate) fn own_direct(self) -> bool {
-        self.holder.is_none() && !self.function_shape
+        self.holder.is_none() && !self.function_shape && !self.guessed()
+    }
+
+    /// Whether the shape is an ahead image's guess (`ic::SYMBOLIC_SHAPE`), never an observation:
+    /// its miss asks the VM's caches and goes on, so no fact of the receiver follows from it, and
+    /// its id is a symbol only the guard itself emits.
+    pub(crate) fn guessed(self) -> bool {
+        self.shape & quench_runtime::staged::ic::SYMBOLIC_SHAPE != 0
     }
 
     pub(crate) fn slot_dependency(self) -> Option<quench_runtime::code_dependencies::SlotDependency> {
@@ -310,8 +317,11 @@ impl NativeFieldLoad {
     /// Whether a miss of a site's `loads` asks the VM's caches before it leaves: a slot held
     /// by the immediate prototype proves only that prototype, where a deeper holder's read
     /// may answer, and a polymorphic site's other receivers may be cached. A monomorphic
-    /// site's inherited constant proves its value exactly; its miss leaves.
+    /// site's inherited constant proves its value exactly; its miss leaves. An ahead image's
+    /// shape (`ic::SYMBOLIC_SHAPE`) is the closed world's guess, never an observation: its miss
+    /// asks the caches, so a wrong guess costs a compare, never a leave.
     pub(crate) fn probes_misses(loads: &[Self]) -> bool {
+        if loads.iter().any(|load| load.guessed()) { return true; }
         match loads {
             [load] => load.holder.is_some() && load.inherited.is_none(),
             loads => loads.iter().any(|load| load.holder.is_some()),

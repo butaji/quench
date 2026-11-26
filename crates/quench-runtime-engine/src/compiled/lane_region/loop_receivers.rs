@@ -58,7 +58,7 @@ impl Lowering<'_, '_> {
             _ => return None,
         };
         let [load] = site_loads(self.fields, site)?.as_slice() else { return None };
-        (load.holder.is_none() && load.valid() && !load.function_shape).then_some(load.shape)
+        (load.holder.is_none() && load.valid() && !load.function_shape && !load.guessed()).then_some(load.shape)
     }
 
     /// On the entering edge of the loop at `header`, the proof that each invariant register

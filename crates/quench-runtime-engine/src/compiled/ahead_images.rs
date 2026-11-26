@@ -12,6 +12,7 @@ use quench_runtime::compile::aot_facts::AotFacts;
 use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, file::Words, live::{self, LiveImage}};
 #[path = "ahead_images/constructions.rs"] pub(crate) mod constructions;
+#[path = "ahead_images/fields.rs"] pub(crate) mod fields;
 
 /// This build of the engine and the core (`build.rs`): the only build an ahead image runs on.
 pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_ENGINE_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
@@ -82,12 +83,12 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
-fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads))
-    -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
+fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads),
+    fields: &lane_region::FieldSites) -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
-    let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
+    let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, fields,
         global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
@@ -115,17 +116,32 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
     let strings = string_constants(program, &unit, symbols);
+    let fields = fields::guessed_fields(program, &unit, facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let crosses = crosses_bodies(&unit);
-    let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads), &fields)?;
     // A lane body that polls and calls enters its callee's body through the VM's call helper, where
     // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
     // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
     if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
     Ok(LaneImage { code, fault_poll, exits })
+}
+
+/// The slot observations the guessed field reads of `code` depend on (`fields`): each guard its
+/// loader resolved to a shape whose slot holds a type within Number, which a widening may recode to
+/// raw doubles, where float slots are on; under tagged slots no word is raw.
+fn guard_dependencies(image: &AotImage, vm: &mut Vm, code: &RelocatableCode) -> Box<[quench_runtime::code_dependencies::SlotDependency]> {
+    if !quench_runtime::vm::switches::float_slots() { return Box::new([]); }
+    let mut keys: Vec<u32> = code.relocations.iter().filter(|relocation| relocation.namespace == super::lane_region::relocs::RelocKind::GuardShape as u32)
+        .map(|relocation| relocation.key).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter().filter_map(|key| aot_image::symbols::guarded_shape(image, vm, key))
+        .filter(|(_, _, ty)| *ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER))
+        .map(|(shape, slot, ty)| quench_runtime::code_dependencies::SlotDependency { shape, slot, ty }).collect()
 }
 
 /// Whether `unit` may enter another body: a call of any form or a construction that it does not inline (a call whose
@@ -296,9 +312,12 @@ impl Vm {
         let Some((linked, roots)) = live::link_lane(&images.image, self, linked_live, function) else {
             refused("link_lane"); return None;
         };
-        // The heap values the code names are its roots, which its publication keeps alive.
+        // The heap values the code names are its roots, which its publication keeps alive; the
+        // Number slots its guessed field reads read as tagged words retire it where they widen to
+        // raw doubles (`fields`).
+        let slots = guard_dependencies(&images.image, self, &lane.code);
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
-            fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
+            fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, slots, ..Default::default() }, entry_types: Default::default(), summary: None,
             // The leaves the image's lowering laid out, each inlined one with the values it stores.
             exits: ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone(),
                 crossings: (0..lane.exits.sites.len()).map(|_| std::cell::Cell::new(0)).collect() } };
