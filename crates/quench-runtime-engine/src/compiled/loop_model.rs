@@ -127,6 +127,12 @@ fn base_admission_taken(priors: &Priors, loops: &Loops, span: u64) -> Option<u32
     Some(u32::try_from(taken).unwrap_or(u32::MAX).max(loops.warmup_taken))
 }
 
+/// Whether a loop `span` bytecodes long whose runs take `trip` iterations each repays a region's entry within one run:
+/// its b-jit saving per iteration (`base_saved_per_iteration`) over them, against the measured entry (`entry_ns`).
+pub(crate) fn trip_repays_entry(tiers: &Tiers, span: u64, trip: u64) -> bool {
+    trip.saturating_mul(base_saved_per_iteration(&tiers.priors, span)) >= entry_ns(&tiers.priors)
+}
+
 /// Notes the fitted entry of a site `span` bytecodes long, `iterations` of its own (`RunStats::entry_iterations`),
 /// once its code's timed runs are in (`LoopTier::weigh_time`).
 pub(crate) fn note_site_entry(iterations: f64, span: u64, ns_per_iteration: f64) {

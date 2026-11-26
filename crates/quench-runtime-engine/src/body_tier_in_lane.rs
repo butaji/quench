@@ -170,10 +170,10 @@ impl LaneView {
     }
 
     /// Whether the default mode starts this function's body on b-jit (`LaneBodyHistory::base_first`): one not promoted
-    /// past it, whose loops never ran. A function whose loops ran keeps them on their own regions, which tier up by their
-    /// measured runs; a stencil body around a loop never would (c_i32_indirect: 263 Ir/iter in it, 13 in the loop's u-jit region).
+    /// past it, none of whose loops holds its work (`holds_work`). Such a loop keeps its own region, which tiers up by its
+    /// measured runs; a stencil body around it never would (c_i32_indirect: 263 Ir/iter in it, 13 in the loop's u-jit region).
     pub(crate) fn starts_on_base(&self, history: LaneBodyHistory) -> bool {
-        !history.promoted && !self.loops.iter().any(|site| site.taken.get() > 0 || { let tier = site.tier.borrow(); tier.code.is_some() || tier.iterations() > 0 })
+        !history.promoted && !self.loops.iter().any(|site| holds_work(self.tiers, site))
     }
 
     /// Retires the b-jit body the default mode started its function on once its `completions` repay the u-jit
@@ -426,6 +426,16 @@ impl LaneView {
         self.entry.reset_evidence();
         LaneBody::Specialized { method, tier_prologue,
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
+    }
+}
+
+/// Whether the loop at `site` holds its function's work: its native runs' mean trip repays a region's entry on its own
+/// (`loop_model::trip_repays_entry`); before any native run, its interpreted iterations reached its region's admission.
+/// A short loop (union-find's root walks: a trip or two per call) does not, and its function takes its body.
+fn holds_work(tiers: &Tiers, site: &quench_runtime::vm::engine_types::LoopSite) -> bool {
+    match site.tier.borrow().mean_trip() {
+        Some(trip) => crate::compiled::loop_model::trip_repays_entry(tiers, site.span(), trip),
+        None => site.needed.get() > 0 && site.taken.get() >= site.needed.get(),
     }
 }
 
