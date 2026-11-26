@@ -157,10 +157,15 @@ impl Vm {
     /// Records `function`, a closure of a non-module program's top level, as found again by plan
     /// (`cached_functions`): Wasm functions, which have no parent, and a script's top-level
     /// functions. A module's closures are not recorded: its hoisted declarations are its instance's
-    /// (`ModuleFunctions`), and any other closure is made fresh each evaluation. A nested closure
-    /// is never looked up, so it is not recorded either.
+    /// (`ModuleFunctions`), and any other closure is made fresh each evaluation. A function the top
+    /// level declares inside a function of its own (a CommonJS module's wrapper, an outer IIFE) is
+    /// recorded too: an ahead image finds its one closure there (`aot_image::symbols::closure_of`).
+    /// A closure nested deeper is never looked up, so it is not recorded.
     fn record_top_level_closure(&mut self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32, function: Value) {
-        if !p.is_module() && plan.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID) {
+        let root = |parent: u32| parent == crate::vm::ROOT_FUNCTION_ID;
+        let top_level = plan.parent.is_none_or(|parent| root(parent)
+            || p.functions.get(parent as usize).is_some_and(|outer| outer.header().parent.is_none_or(root)));
+        if !p.is_module() && top_level {
             let handle = self.heap.weak_handle(function).expect("new closure is live");
             self.function_values.record((self.active_program, id), [handle]);
         }

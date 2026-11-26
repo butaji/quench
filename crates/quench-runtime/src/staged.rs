@@ -74,7 +74,7 @@ pub(crate) mod int_math;
 mod names;
 pub mod protocol_literals;
 pub mod protocol_classes;
-pub(crate) mod protocol_values;
+pub(crate) mod protocol_values; #[cfg(not(stencil_build))] pub use protocol_values::strict_reference_step;
 pub mod protocol_owned;
 pub(crate) mod protocol_wasm;
 mod callout;

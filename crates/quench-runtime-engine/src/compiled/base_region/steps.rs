@@ -179,10 +179,10 @@ pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     }
 }
 
-/// The helper that makes the general step of `decoded`: an owner step's own helper (`LaneHelper::OwnerStep`, which
-/// runs the owner step alone over the running window or frame) where the table has it, else the general step.
+/// The helper that makes the step of `decoded`: its instruction's typed helper (`Decoded::own_step`) where the table has
+/// it, else the general step.
 fn step_helper(decoded: &Decoded, helpers: LaneHelpers) -> LaneHelper {
-    if decoded.owner && decoded.packed.is_none() && call_plan::helper_address(helpers, LaneHelper::OwnerStep).is_some() { LaneHelper::OwnerStep } else { LaneHelper::Step }
+    decoded.own_step.filter(|helper| decoded.packed.is_none() && call_plan::helper_address(helpers, *helper).is_some()).unwrap_or(LaneHelper::Step)
 }
 
 /// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest
@@ -256,7 +256,9 @@ fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, S
 /// after it and no registers are reloaded; a helper that did not raise (it ran beside a native
 /// callee's frames, where it makes nothing) falls to the leave at the record, as every exit does.
 fn plan_throw(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers), None)?;
+    // The typed raise where the table has it, else the general step's.
+    let raise = if call_plan::helper_address(helpers, LaneHelper::ThrowStep).is_some() { LaneHelper::ThrowStep } else { LaneHelper::Step };
+    let mut row = helper_chain(layout, pc, &[], (raise, helpers), None)?;
     row.post.push(Planned { exits: vec![Exit::At(layout.record(pc))], ..Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, None) });
     Ok(row)
 }

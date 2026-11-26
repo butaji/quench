@@ -33,6 +33,9 @@ pub(crate) struct Emit<'a, 'b> {
 #[derive(Clone, Copy)]
 pub(crate) enum EmitImm {
     Const(u64),
+    /// Shape recipe `key` of an ahead image (`ic::SYMBOLIC_SHAPE`): the symbol its loader resolves
+    /// to the shape's id in the VM it links to, or to an id no record has where it builds none.
+    Shape(u32),
 }
 
 impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
@@ -49,13 +52,23 @@ impl Emit<'_, '_> {
 
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
     fn word(&mut self, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.constant(bits) }
+        match imm {
+            EmitImm::Const(bits) => self.constant(bits),
+            EmitImm::Shape(key) => crate::symbol_words::symbol_address(self.builder, crate::compiled::lane_region::relocs::RelocKind::GuardShape as u32, key),
+        }
     }
     fn compare(&mut self, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_compare(relation, a, b) }
     /// `a` against an immediate at `a`'s own width (`icmp_imm`): a record's 32-bit shape word
     /// against a shape id is a 32-bit test, where an `i64` constant would not verify.
     fn compare_imm(&mut self, relation: Relation, a: ir::Value, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64) }
+        match imm {
+            EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64),
+            EmitImm::Shape(_) => {
+                let symbol = self.word(imm);
+                let b = if self.builder.func.dfg.value_type(a) == ir::types::I32 { self.narrow(symbol) } else { symbol };
+                self.raw_compare(relation, a, b)
+            }
+        }
     }
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
@@ -71,9 +84,14 @@ impl Stage for Emit<'_, '_> {
     type Imm = EmitImm;
 
     fn site(&mut self, v: u64) -> EmitImm { EmitImm::Const(v) }
+    fn shape_site(&mut self, shape: u32) -> EmitImm {
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        if shape & tag != 0 { EmitImm::Shape(shape & !tag) } else { EmitImm::Const(u64::from(shape)) }
+    }
     fn load_site(&mut self, at: Access, base: ir::Value, offset: EmitImm) -> ir::Value {
         match offset {
             EmitImm::Const(bits) => self.load_u64(at, base, bits as i32),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
@@ -184,12 +202,6 @@ impl Stage for Emit<'_, '_> {
         };
         self.counts_clear(payload)
     }
-    fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
-        // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
-        let zero = self.constant(0);
-        let never = self.ne_imm(zero, 0u32);
-        (zero, never)
-    }
     fn assumption(&mut self, _watch: EmitImm) -> ir::Value {
         // A watched op never reaches emitted code: the specializer holds the watch's subject as a
         // code dependency instead (`StableHold::hold_holder`, `HeldShapes`), the invalidation hook
@@ -275,9 +287,20 @@ impl Stage for Emit<'_, '_> {
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.raw_select(cond, then, otherwise)
     }
+    /// An ahead image's guessed shapes (`ic::SYMBOLIC_SHAPE`) are each compared with their
+    /// symbol; the others form the set (`shape_in_set`).
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
         let word = if self.raw_lane(shape) == Lane::I32 { shape } else { self.narrow(shape) };
-        super::shape_in_set(self.builder, word, shapes)
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        let (guessed, known): (Vec<u32>, Vec<u32>) = shapes.iter().partition(|shape| *shape & tag != 0);
+        let mut member = (!known.is_empty()).then(|| super::shape_in_set(self.builder, word, &known));
+        for shape in guessed {
+            let symbol = self.word(EmitImm::Shape(shape & !tag));
+            let symbol = self.narrow(symbol);
+            let same = self.raw_compare(Relation::Equal, word, symbol);
+            member = Some(match member { Some(member) => self.or(member, same), None => same });
+        }
+        member.expect("a shape set is non-empty")
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
         let number = self.raw_unary(Unary::Bitcast(Lane::F64), bits);

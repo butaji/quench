@@ -3,9 +3,8 @@
 use super::scope::Scope;
 use super::value::{Fact, Key, Origin};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
-use crate::staged::protocol_literals::LiteralStep;
 use crate::typed_ir::Type;
-use crate::staged::{DecodeContext, NumberOperation, Operation, Protocol};
+use crate::staged::{DecodeContext, NumberOperation, Operation};
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -75,6 +74,10 @@ fn value_of(
         events.wild_global |= ctx.scope.is_global_object(atom);
         return Fact::from(Origin::Binding(Key::Global(atom)));
     }
+    // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
+    if let Some((_, crate::staged::Allocation::Closure { function })) = crate::staged::Allocation::decode(instruction, &[]) {
+        return Fact::closure(function);
+    }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
             state[usize::from(source)]
@@ -86,9 +89,6 @@ fn value_of(
             .scope
             .owner(ctx.id, depth)
             .map_or(Fact::UNKNOWN, |owner| Fact::from(Origin::Binding(Key::Slot { owner, slot }))),
-        Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => {
-            Fact::closure(function)
-        }
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
         _ => Fact::UNKNOWN,
     }

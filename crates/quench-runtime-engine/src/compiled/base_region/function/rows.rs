@@ -30,7 +30,7 @@ pub(crate) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
     }
     match () {
         _ if crate::compiled::meaning_compiled::is_return(instruction) && plain && instruction.register_a() < sites.registers => returned(instruction.register_a()),
-        _ => Decoded { owner: instruction.without_return().op().steps_on_owner(), ..locals::fast_row(sites.function, sites.id, instruction, sites.ending)
+        _ => Decoded { own_step: own_step(instruction), ..locals::fast_row(sites.function, sites.id, instruction, sites.ending)
             .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)) },
     }
 }
@@ -40,6 +40,37 @@ pub(crate) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
 #[cfg(test)]
 pub(crate) fn is_fast(row: &Decoded) -> bool {
     matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some() || row.lexical.is_some()
+}
+
+/// The typed helper that makes `instruction`'s step, where one does (`Decoded::own_step`).
+fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper> {
+    use crate::compiled::LaneHelper;
+    let plain = instruction.without_return();
+    if plain.op().steps_on_owner() { return Some(LaneHelper::OwnerStep); }
+    // A value step over registers and constants alone (`value_steps::activation_value_step` reads no local in a frame).
+    let held = |operand: quench_runtime::bytecode::Operand| matches!(operand.kind(), Some(quench_runtime::bytecode::OperandKind::Register | quench_runtime::bytecode::OperandKind::Constant));
+    let operands = match plain.op().value_step() {
+        Some(quench_runtime::bytecode::ValueStep::Unary) => true,
+        Some(_) => held(plain.operand_b()) && held(plain.operand_c()),
+        None => false,
+    };
+    if operands && instruction.result_flags() == 0 { return Some(LaneHelper::ValueStep); }
+    // A closure captures its owner's binding environment, a frame's or an activation's (`base_body::closure_step`).
+    if instruction.result_flags() == 0 && quench_runtime::staged::makes_closure(plain.op()) { return Some(LaneHelper::ClosureStep); }
+    // An array literal's element define (`base_body::define_element_step`).
+    if instruction.result_flags() == 0 && matches!(quench_runtime::staged::Operation::<(), ()>::decode_literal(instruction, ()), Some(quench_runtime::staged::Operation::DefineElement { .. })) {
+        return Some(LaneHelper::DefineElementStep);
+    }
+    // An allocation the lane's allocator makes (`base_body::allocation_step`).
+    if instruction.result_flags() == 0 && quench_runtime::staged::Allocation::decode(instruction, &[]).is_some() { return Some(LaneHelper::AllocationStep); }
+    // Any other step the staged row makes as a call-out (`staged::CallOut`, not a decision a jump reads) is the VM's call-out
+    // over the running frame (`base_body::call_out_step`).
+    let call = quench_runtime::staged::Operation::<(), ()>::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
+    if instruction.result_flags() == 0 && !plain.op().control_flow_layout().jumps()
+        && call.is_some_and(|(call, _)| !matches!(call, quench_runtime::staged::CallOut::Decide { .. })) {
+        return Some(LaneHelper::CallOutStep);
+    }
+    (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls

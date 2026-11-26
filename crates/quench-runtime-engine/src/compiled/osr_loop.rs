@@ -56,6 +56,9 @@ pub(crate) mod iteration;
 pub(crate) mod receivers;
 #[path = "osr_loop/lifetime.rs"]
 pub(crate) mod lifetime;
+#[path = "osr_loop/stores.rs"]
+mod stores;
+use stores::{admit_binding_store, admit_stored, admitted_store, stores_binding};
 
 pub(crate) use quench_runtime::vm::engine_types::ArrayUse;
 
@@ -778,14 +781,6 @@ fn array_read(instruction: WideInstruction) -> Option<Register> {
         opcode if quench_runtime::staged::indexes_receiver(opcode) => Some(instruction.register_b()),
         _ => None,
     }
-}
-
-/// Whether a loop region admits `instruction` as a named field store: every named store the
-/// decoder makes (`SetField`, its `base` the receiver register or `None` for `this`) but a strict
-/// store to `this`.
-fn admitted_store(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded_completed(instruction),
-        Some(quench_runtime::staged::Operation::SetField { base, strict, .. }) if !(strict && base.is_none()))
 }
 
 /// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
@@ -1926,15 +1921,6 @@ fn admit_loaded(admission: &mut Admission<'_>, instruction: WideInstruction,
     if tagged.contains(&instruction.result_register()) { admission.tagged(instruction.result_register()) }
     else { admission.result(instruction).map(drop) }
 }
-
-/// A stored value's role: boxed where its register is tagged or holds an unchanged entry value
-/// (any tagged value), else a number.
-fn admit_stored(admission: &mut Admission<'_>, register: Register, tagged: &std::collections::BTreeSet<Register>,
-    defined_registers: &std::collections::BTreeSet<Register>) -> Option<()> {
-    if tagged.contains(&register) || !defined_registers.contains(&register) { admission.tagged(register) }
-    else { admission.number(register) }
-}
-
 fn admit(
     admission: &mut Admission<'_>,
     instruction: WideInstruction,
@@ -2041,10 +2027,7 @@ fn admit(
         }
         // A capture's or global's store runs as the binding's own (`Lowering::global_cell`), and a binding it does not take
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
-        _ if stores_binding(instruction) => {
-            let value = instruction.register_a();
-            admit_stored(admission, value, tagged, defined_registers)?;
-        }
+        _ if stores_binding(instruction) => admit_binding_store(admission, instruction, tagged, defined_registers)?,
         // A global binding's read (`Vm::global_reads_in_lane`), a Number where arithmetic reads it.
         opcode if quench_runtime::staged::reads_name(opcode) => {
             (instruction.result_flags() == 0).then_some(())?;
@@ -2304,11 +2287,6 @@ fn is_move_row(instruction: WideInstruction) -> bool {
 /// Whether `instruction` jumps on its register's truthiness, by its staged row (`Operation::JumpIf`).
 fn is_truthiness_row(instruction: WideInstruction) -> bool {
     matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::JumpIf { .. }))
-}
-
-/// Whether `instruction` stores to a capture, by its staged row (`Operation::StoreCapture`).
-fn stores_binding(instruction: WideInstruction) -> bool {
-    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. } | Operation::GlobalWrite { initialize: false, .. }))
 }
 
 /// Whether `instruction` reads a capture, by its staged row (`Operation::LoadCapture`, which the

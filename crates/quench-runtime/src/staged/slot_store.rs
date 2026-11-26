@@ -22,7 +22,7 @@ use crate::typed_ir::{Representation, Type};
 fn admitted_word<S: Stage>(stage: &mut S, record: S::Word, shape: u32, hinted: bool, miss: S::Miss) -> Option<S::Word> {
     if hinted {
         let id = super::ic::layout_id(stage, record);
-        let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(id, shape) };
+        let same = { let shape = stage.shape_site(shape); stage.eq_imm(id, shape) };
         stage.guard(same, miss)?;
         // A hint of extras or a narrow run admits no store here: the form is the id's fact,
         // read once the id matched (a cleared hint names no layout).
@@ -35,7 +35,7 @@ fn admitted_word<S: Stage>(stage: &mut S, record: S::Word, shape: u32, hinted: b
     }
     let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     let exact = recorded_shape(stage, word);
-    let shape = stage.site(u64::from(shape));
+    let shape = stage.shape_site(shape);
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
     // Neither extras nor a narrow run: the payload is a packed word or a wide run's start.
@@ -149,7 +149,7 @@ pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id
 #[inline(always)]
 pub(crate) fn own_flat_known<S: Stage>(stage: &mut S, record: S::Word, shape: u32, miss: S::Miss) -> Option<()> {
     let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    let shape = stage.site(u64::from(shape));
+    let shape = stage.shape_site(shape);
     let same = stage.eq_imm(word, shape);
     stage.guard(same, miss)
 }

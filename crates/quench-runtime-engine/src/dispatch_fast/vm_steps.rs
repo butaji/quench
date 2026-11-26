@@ -368,7 +368,7 @@ unsafe fn lane_allocate_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
 ///
 /// # Safety
 /// As `body_general_step`.
-unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64> {
+pub(crate) unsafe fn decided_compare_jump(cx: *mut LaneContext, call_pc: u64) -> Option<u64> {
     use crate::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED};
     // A body entered as a frameless leaf (`enter_cell_body_in_lane`) runs before its activation is made: the
     // running function is still its caller's, whose record at `call_pc` is another instruction

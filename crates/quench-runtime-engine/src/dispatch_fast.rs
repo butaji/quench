@@ -3131,7 +3131,7 @@ fn step_beside_activations_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip) -
 /// frames, and `None` is returned for the general path to raise it. The running function's
 /// registers are `(*cx).registers` afterwards.
 #[inline(always)]
-fn in_place_in_lane<T>(
+pub(crate) fn in_place_in_lane<T>(
     cx: *mut LaneContext,
     ip: Ip,
     operation: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<T, JsError>,

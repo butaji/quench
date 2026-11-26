@@ -89,7 +89,7 @@ script_handler! {
     pub(crate) fn throw_record<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let value = r.get(i.a);
-        let error = JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, vm.detail_string(value)));
+        let error = vm.thrown_error(value);
         vm.lane_completion.raise(error);
         unwind_raised(cx, ip)
     }

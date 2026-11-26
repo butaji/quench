@@ -6,10 +6,16 @@
 //! specializer emits it once where a loop enters. A proof that fails leaves at `miss`, where the
 //! VM publishes the view again (`Vm::publish_typed_view`) or declines it.
 
-use super::typed_elements::{element_number, field_bits, store_element_number, store_field_bits, typed_read, NativeKind, TypedView, ViewKind};
+use super::typed_elements::{NativeKind, TypedView, ViewKind};
+#[cfg(not(stencil_build))]
+use super::typed_elements::{element_number, field_bits, store_element_number, store_field_bits, typed_read};
 use super::region::Region;
-use super::{value, Concrete, Stage};
-use crate::heap::{TypedArrayKind, NATIVE_TYPED_ARRAY_LAYOUT as VIEW};
+use super::{value, Stage};
+#[cfg(not(stencil_build))]
+use super::Concrete;
+use crate::heap::NATIVE_TYPED_ARRAY_LAYOUT as VIEW;
+#[cfg(not(stencil_build))]
+use crate::heap::TypedArrayKind;
 
 /// Where a proof reads the typed arrays' records and the buffer-relocation count, which a
 /// stage holds as words: the directory of the pages of record addresses by legacy slot, its page
@@ -29,6 +35,7 @@ pub struct ViewAccess {
     pub writable: bool,
 }
 
+#[cfg(not(stencil_build))]
 impl ViewAccess {
     pub(crate) const READ: Self = Self { kind: None, writable: false };
 }
@@ -91,6 +98,7 @@ pub fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>,
 /// The interpreter's view of the typed array `base` among the record pages of `directory`: the proof
 /// without a frame; `None` for any other value, a record the VM has not published (or has
 /// withdrawn) or one whose published address is stale.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn concrete_typed_view(directory: (*const usize, usize), base: crate::Value) -> Option<TypedView<u64>> {
     concrete_typed_access(directory, base, ViewAccess::READ)
@@ -99,6 +107,7 @@ pub(crate) fn concrete_typed_view(directory: (*const usize, usize), base: crate:
 /// The interpreter's view of the typed array `base` proved for `access` (a kind the site observed,
 /// and whether it stores), among the record pages of `directory`: the element row's proof without
 /// a frame, a store's `unshared` test included.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub fn concrete_typed_access((directory, pages): (*const usize, usize), base: crate::Value, access: ViewAccess)
     -> Option<TypedView<u64>> {
@@ -109,6 +118,7 @@ pub fn concrete_typed_access((directory, pages): (*const usize, usize), base: cr
 
 /// The interpreter's Number (an `f64`'s bits) at element `index` of `view`: the element row
 /// without a frame; `None` for a kind without a native element or an index past the elements.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<u64> {
     typed_read(&mut Concrete::new(std::ptr::null()), view, index as u64, ())
@@ -117,6 +127,7 @@ pub(crate) fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<
 /// The Number of the DataView element `kind` at byte `index` of `bytes` (a view's bytes), in
 /// `little_endian` order: the bounds check and the element's read (`element_number`). The fast
 /// path and the native DataView get are this one body. `None` past the bytes.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn data_view_get(bytes: &[u8], index: usize, kind: TypedArrayKind, little_endian: bool) -> Option<f64> {
     let field = bytes.get(index..index.checked_add(kind.width())?)?;
@@ -125,6 +136,7 @@ pub(crate) fn data_view_get(bytes: &[u8], index: usize, kind: TypedArrayKind, li
 
 /// `data_view_get`'s set: the Number `number` written as the element `kind` at byte `index` of
 /// `bytes` (`store_element_number`). `None` past the bytes, writing nothing.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn data_view_set(bytes: &mut [u8], index: usize, kind: TypedArrayKind, number: f64,
     little_endian: bool) -> Option<()> {
@@ -135,6 +147,7 @@ pub(crate) fn data_view_set(bytes: &mut [u8], index: usize, kind: TypedArrayKind
 
 /// The unsigned `width`-byte field at byte `index` of `bytes`, in `little_endian` order: a DataView
 /// BigInt element's bits (`field_bits`). `None` past the bytes.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn data_view_bits(bytes: &[u8], index: usize, width: usize, little_endian: bool) -> Option<u64> {
     let field = bytes.get(index..index.checked_add(width)?)?;
@@ -143,6 +156,7 @@ pub(crate) fn data_view_bits(bytes: &[u8], index: usize, width: usize, little_en
 
 /// `data_view_bits`' set: the low `width` bytes of `bits` at byte `index` of `bytes`
 /// (`store_field_bits`). `None` past the bytes, writing nothing.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn data_view_store_bits(bytes: &mut [u8], index: usize, width: usize, bits: u64,
     little_endian: bool) -> Option<()> {

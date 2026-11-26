@@ -2081,18 +2081,12 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         prototype(context, self.read_value(constructor)).map(u64::from)
     }
 
-    /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
-    /// is read as an int and never converted to binary64.
+    /// ToInt32 of an operand, as the bitwise operators read it: the staged `Int32::guard_truncating`, so the
+    /// lane computes no conversion of its own (an int32 is its own, a Boolean its 0 or 1, a Number truncates).
     #[inline(always)]
-    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
-        let value = Value::from_bits(self.operand_word(stage, operand)?);
-        if let Some(int) = Int32::checked(value) {
-            return Some(int);
-        }
-        // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
-        // computes no conversion of its own.
-        let number = Float64::checked(value)?;
-        Int32::truncating(stage, number, ())
+    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<Int32<u64>> {
+        let word = self.operand_word(stage, operand)?;
+        Int32::guard_truncating(stage, word, miss)
     }
 
     #[inline(always)]
@@ -3566,7 +3560,8 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     // SAFETY: the function's contract.
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
     debug_assert!(target.entry.activates() && !target.settles());
-    debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+    // A leaf entry's own call form proves it published or not (`script_call_leaf_prove_miss`).
+    debug_assert!(target.entry != super::CallEntry::Activates || !unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };

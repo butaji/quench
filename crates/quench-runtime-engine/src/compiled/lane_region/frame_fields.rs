@@ -141,9 +141,27 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         miss: ir::Block) -> Option<Reached<ir::Value, ir::Value>> {
         let entry = self.entry()?;
         if self.is_receiver(owner) {
+            // The entry proved a direct object's record, or none: a function `this` (a method of a
+            // constructor) reads its own record here, a store of it leaves.
             let receiver = &entry.receiver;
-            return Some(Reached { shape: Some(stage.builder.use_var(receiver.shape)), inline: Some(stage.builder.use_var(receiver.inline)),
-                ..Reached::bare(stage.builder.use_var(receiver.object)) });
+            let (object, shape, inline) = (stage.builder.use_var(receiver.object), stage.builder.use_var(receiver.shape), stage.builder.use_var(receiver.inline));
+            let present = stage.raw_compare_imm(Relation::NotEqual, object, 0);
+            if !readable {
+                emit_js_guard(stage.builder, present, miss);
+                return Some(Reached { shape: Some(shape), inline: Some(inline), ..Reached::bare(object) });
+            }
+            let (other, join) = (stage.builder.create_block(), stage.builder.create_block());
+            stage.builder.set_cold_block(other);
+            let [record, shape_at, inline_at] = [types::I64, types::I32, types::I8].map(|ty| stage.builder.append_block_param(join, ty));
+            stage.branch_if(present, (join, &[object, shape, inline]), (other, &[]));
+            stage.builder.switch_to_block(other);
+            let this = stage.builder.use_var(self.this?);
+            let records = headers::object_table_base(stage.builder, entry, self.payload);
+            let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
+            let header = ObjectHeader::prove_readable(stage.builder, this, records, functions, miss);
+            stage.goto(join, &[header.address, header.shape, header.inline]);
+            stage.builder.switch_to_block(join);
+            return Some(Reached { shape: Some(shape_at), inline: Some(inline_at), ..Reached::bare(record) });
         }
         let header = match owner {
             Owner::Temporary => {

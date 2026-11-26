@@ -2911,12 +2911,16 @@ pub enum HeapValueRecipe {
     ClosureOf(u32),
 }
 
-/// How the loader builds a shape the code folded: the prototype it has and its own fields in
-/// insertion order, each by image atom key and attribute bits, interned in the VM's shape tree.
+/// How the loader builds a shape the code folded: the prototype it has, the constructor whose
+/// construction made the object (`Vm::constructed_root_shape`), and its own fields in insertion
+/// order, each by image atom key and attribute bits, interned in the VM's shape tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShapeRecipe {
     /// The `HeapValueRecipe` key of the prototype, or `None` for a null prototype.
     pub prototype: Option<u32>,
+    /// The `HeapValueRecipe` key of the closure `new` constructed the object by, or `None` for an
+    /// object no construction made.
+    pub constructor: Option<u32>,
     pub fields: Box<[(u32, u8)]>,
 }
 
@@ -2958,6 +2962,9 @@ pub struct LaneImage {
     /// Whether its back edges poll by fault (`LoweredRegion::fault_poll`): the runner maps the poll page
     /// for it, as for a JIT lane body, and a fault lands at the entry's termination.
     pub fault_poll: bool,
+    /// The leaves its lowering laid out (`LoweredRegion::exits`): each place, its missing fact, and the values a leave inside
+    /// an inlined frame stores, which the install takes as the body's table, as a JIT lane body keeps its own.
+    pub exits: ExitTable,
 }
 
 /// Where the records live: in the loader's own allocation (`aot_image::live::install`), or in the

@@ -114,7 +114,7 @@ pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, va
 #[inline(always)]
 pub fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let exact = shape_word(stage, at);
-    let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(exact, shape) };
+    let same = { let shape = stage.shape_site(shape); stage.eq_imm(exact, shape) };
     stage.guard(same, miss)?;
     Some(Shaped::of_guard(at.record))
 }
