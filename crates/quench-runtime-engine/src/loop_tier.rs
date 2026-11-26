@@ -66,9 +66,11 @@ impl LoopTier {
     }
 
     /// Whether the site times the current code's next run (`weigh_time`): every `RUN_SAMPLE`th, while it may
-    /// still move between b-jit and u-jit.
+    /// still move between b-jit and u-jit and its code has fewer than `MAX_TIMED_RUNS` timed runs. Past those the
+    /// test has had its window: a loop entered every outer iteration (v_unipoker_rank's 5-trip inner loop) would
+    /// otherwise read the clock and take a logarithm every fourth run for as long as it runs (~150 Ir a run).
     pub(crate) fn times_run(&self) -> bool {
-        !self.demoted && self.tier_runs % RUN_SAMPLE == 0
+        !self.demoted && self.native.runs < MAX_TIMED_RUNS && self.tier_runs % RUN_SAMPLE == 0
     }
 
     /// The run share that left inside the loop, per mille, of the current code's runs.
@@ -293,6 +295,8 @@ impl LoopTier {
 const RUN_SAMPLE: u32 = 4;
 /// The timed runs of a tier before its cost is compared.
 const TIMED_RUNS: u32 = 16;
+/// The timed runs of a tier after which it is timed no more (`LoopTier::times_run`).
+const MAX_TIMED_RUNS: u32 = 4 * TIMED_RUNS;
 /// The standard errors by which a u-jit region must be slower than its b-jit region to go back (one-sided 97.5%).
 const SLOWER_BY: f64 = 2.0;
 
