@@ -9,12 +9,14 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
-use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
+use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_BUFFER_RELOCATIONS, JS_STEP_TYPED_VIEW_DIRECTORY, JS_STEP_TYPED_VIEW_PAGES, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
 use crate::numeric::{HOLE_A, HOLE_B};
 use crate::places::on_place;
 use crate::typed_ir::Representation;
 use crate::places::{LEFT, RIGHT, Places, index_of};
 use crate::staged::{Concrete, ElementFrame, Frame, elements, entry, value};
+use crate::staged::element_rows::ElementView;
+use crate::staged::typed_view::{TypedRecords, ViewAccess, prove_typed_view};
 use crate::words::{int_word, is_double, is_int};
 
 /// The table of array records the dispatch payload holds, where one is reserved.
@@ -47,6 +49,23 @@ impl ElementFrame<Concrete> for Places {
     fn array_store_gate(&mut self, _stage: &mut Concrete, _base: u64, value: u64, _miss: ()) -> Option<()> {
         let uncounted = word_at(payload(&self.s), JS_STEP_STORE_WATCH) & STORE_WATCH_COUNTS == 0;
         (uncounted && (is_int(value) || is_double(value))).then_some(())
+    }
+
+    /// A typed array's element reads deliver the element's Value word (`typed_read_value`), as the rows' places hold.
+    #[inline(always)]
+    fn typed_values(&self) -> bool { true }
+
+    /// A typed array this access proves the view of (`prove_typed_view`, any native kind, read from the payload's
+    /// view records): the same element row then reads or stores its element in place. A direct array, or a
+    /// value no view proof admits, keeps no view: the dense proof takes it.
+    #[inline(always)]
+    fn kept_view(&mut self, stage: &mut Concrete, base: u64, writable: bool) -> Option<ElementView<u64>> {
+        if value::is_direct_array(stage, base) { return None; }
+        let payload = payload(&self.s);
+        let records = TypedRecords { directory: word_at(payload, JS_STEP_TYPED_VIEW_DIRECTORY), pages: word_at(payload, JS_STEP_TYPED_VIEW_PAGES),
+            relocations: word_at(payload, JS_STEP_BUFFER_RELOCATIONS) };
+        (records.directory != 0).then_some(())?;
+        prove_typed_view(stage, records, base, ViewAccess { kind: None, writable }, ()).map(ElementView::Typed)
     }
 }
 
