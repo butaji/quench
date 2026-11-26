@@ -921,6 +921,7 @@ impl FunctionCompiler<'_, '_> {
     pub(in crate::compile) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::UpdateExpression(value) => self.update(value, false),
+            Expression::AssignmentExpression(value) if let Some(register) = self.literal_array_pattern(value) => register,
             _ => self.expression(expression),
         }
     }

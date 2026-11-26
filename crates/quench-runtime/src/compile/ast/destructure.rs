@@ -309,44 +309,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         match target {
-            AssignmentTarget::ArrayAssignmentTarget(array) => {
-                let targets = if array.rest.is_some() || array.elements.is_empty() || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
-                    array.elements.iter().map(|element| match element {
-                        None => Some(None),
-                        Some(AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier)) => {
-                            let atom = self.owner.atom(identifier.name.as_str());
-                            self.stores_locally(atom, false).then_some(Some(atom))
-                        }
-                        Some(_) => None,
-                    }).collect::<Option<Vec<_>>>()
-                };
-                let direct = targets.map(|targets| self.direct_array_pattern(value, &targets, false));
-                let iterator = self.binding_iterator(value);
-                let (protected_start, error_atom) =
-                    self.begin_binding_iterator_protection(iterator);
-                for element in &array.elements {
-                    if let Some(element) = element {
-                        self.assign_iterator_element(iterator, element);
-                    } else {
-                        self.binding_iterator_step(iterator);
-                    }
-                }
-                if let Some(rest) = &array.rest {
-                    if let Some(target) = rest.target.as_simple_assignment_target() {
-                        let reference = self.prepare_assignment_reference(target);
-                        let reference = self.canonicalize_assignment_reference(reference, false);
-                        let rest_value = self.binding_iterator_rest(iterator);
-                        self.store_assignment_reference(reference, rest_value);
-                    } else {
-                        let rest_value = self.binding_iterator_rest(iterator);
-                        self.assign_pattern(&rest.target, rest_value);
-                    }
-                }
-                self.end_binding_iterator_protection(iterator, protected_start, error_atom);
-                if let Some(done) = direct {
-                    self.patch(done);
-                }
-            }
+            AssignmentTarget::ArrayAssignmentTarget(array) => self.assign_array_pattern(array, value, true),
             AssignmentTarget::ObjectAssignmentTarget(object) => {
                 self.require_object_coercible(value);
                 let mut excluded = Vec::with_capacity(object.properties.len());
@@ -847,6 +810,95 @@ impl FunctionCompiler<'_, '_> {
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, argument, 1);
         self.emit(Op::Throw, error, 0, 0, 0);
+    }
+
+    /// An array pattern's assignment of `value`: its direct reads where `direct` and they apply
+    /// (`direct_array_pattern`), else the iterator protocol.
+    fn assign_array_pattern(&mut self, array: &ArrayAssignmentTarget<'_>, value: Register, direct: bool) {
+        let targets = if !direct || array.rest.is_some() || array.elements.is_empty() || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
+            array.elements.iter().map(|element| match element {
+                None => Some(None),
+                Some(AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier)) => {
+                    let atom = self.owner.atom(identifier.name.as_str());
+                    self.stores_locally(atom, false).then_some(Some(atom))
+                }
+                Some(_) => None,
+            }).collect::<Option<Vec<_>>>()
+        };
+        let direct = targets.map(|targets| self.direct_array_pattern(value, &targets, false));
+        let iterator = self.binding_iterator(value);
+        let (protected_start, error_atom) =
+            self.begin_binding_iterator_protection(iterator);
+        for element in &array.elements {
+            if let Some(element) = element {
+                self.assign_iterator_element(iterator, element);
+            } else {
+                self.binding_iterator_step(iterator);
+            }
+        }
+        if let Some(rest) = &array.rest {
+            if let Some(target) = rest.target.as_simple_assignment_target() {
+                let reference = self.prepare_assignment_reference(target);
+                let reference = self.canonicalize_assignment_reference(reference, false);
+                let rest_value = self.binding_iterator_rest(iterator);
+                self.store_assignment_reference(reference, rest_value);
+            } else {
+                let rest_value = self.binding_iterator_rest(iterator);
+                self.assign_pattern(&rest.target, rest_value);
+            }
+        }
+        self.end_binding_iterator_protection(iterator, protected_start, error_atom);
+        if let Some(done) = direct {
+            self.patch(done);
+        }
+    }
+
+    /// `[a, b] = [x, y]` whose value is discarded (`effect_expression`): an array pattern of locals only
+    /// (`stores_locally`) and no rest, assigned an array literal of at least as many plain elements. The
+    /// elements are evaluated in order into fresh registers; while `UNARY_FRESH_ARRAY_PATTERN` holds, the
+    /// pattern's iteration of the array the literal would make runs no guest code, so the stores take the
+    /// values with no array made. Else the array is made of the values and the pattern runs as written.
+    /// `None` where the assignment is not of that form.
+    pub(super) fn literal_array_pattern(&mut self, value: &AssignmentExpression<'_>) -> Option<Register> {
+        if value.operator != AssignmentOperator::Assign { return None; }
+        let AssignmentTarget::ArrayAssignmentTarget(array) = &value.left else { return None };
+        let Expression::ArrayExpression(literal) = &value.right else { return None };
+        if array.rest.is_some() || array.elements.is_empty() || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize
+            || literal.elements.len() < array.elements.len() || literal.elements.len() > u16::MAX as usize {
+            return None;
+        }
+        let targets = array.elements.iter().map(|element| match element {
+            None => Some(None),
+            Some(AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier)) => {
+                let atom = self.owner.atom(identifier.name.as_str());
+                self.stores_locally(atom, false).then_some(Some(atom))
+            }
+            Some(_) => None,
+        }).collect::<Option<Vec<_>>>()?;
+        let expressions = literal.elements.iter().map(ArrayExpressionElement::as_expression).collect::<Option<Vec<_>>>()?;
+        // Each value in a register of its own: a store may overwrite a local an element read (`[a, b] = [b, a]`).
+        let values = expressions.iter().map(|expression| {
+            let register = self.reg();
+            self.expression_into(expression, register);
+            register
+        }).collect::<Vec<_>>();
+        let fits = self.reg();
+        self.emit(Op::Unary, fits, values[0], 0, crate::bytecode::UNARY_FRESH_ARRAY_PATTERN);
+        let made = self.emit(Op::JumpFalse, fits, 0, 0, 0);
+        for (target, value) in targets.iter().zip(&values) {
+            if let Some(atom) = *target { self.store_atom_with_initialization(atom, *value, false); }
+        }
+        let done = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(made);
+        let made = self.reg();
+        self.emit(Op::MakeArray, made, 0, 0, values.len() as u32);
+        for (index, value) in values.iter().enumerate() {
+            self.emit(Op::DefineArrayElement, *value, made, 0, index as u32);
+        }
+        // The made array's iteration is not intact either: the protocol, with no direct reads.
+        self.assign_array_pattern(array, made, false);
+        self.patch(done);
+        Some(made)
     }
 
     /// The direct reads of an array pattern whose `targets` (an atom, or `None` for an
