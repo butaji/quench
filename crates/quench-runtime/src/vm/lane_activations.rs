@@ -45,7 +45,7 @@ impl LaneActivations {
 
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
-    pub fn top_word(&mut self) -> *mut *mut Activation { &raw mut self.top }
+    pub fn top_word(&self) -> *mut *mut Activation { (&raw const self.top).cast_mut() }
 
     /// The tag of the kind of `slot`'s activation, read without a reference to the activation:
     /// a native frame has written only its prefix and this tag.

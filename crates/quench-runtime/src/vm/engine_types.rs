@@ -334,18 +334,18 @@ pub struct LaneView {
     pub accumulator_registers: Box<[u16]>,
     pub plain_backward_jump_sites: usize,
     pub osr_rejections: Option<Box<[(RegionRejection, usize)]>>,
-    /// The `GetField`, `SetField` and `LoadCapture` records past the loop headers its sites
-    /// hold, whose own-field hints a shape compaction clears.
+    /// The `GetField`, `SetField` and `LoadCapture` records past its sites' loop headers, whose own-field hints a shape compaction clears.
     pub field_records: Box<[u32]>,
-    /// The by-name load and store records past the loop headers its sites hold, whose
-    /// global-object hints (`name_row`, the `StoreName` row's `global_name_store`)
-    /// a shape compaction clears, and a change of the global
-    /// lexical names they answer past (`LaneView::clear_name_hints`).
+    /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
+    /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
     pub name_records: Box<[u32]>,
-    /// The operator records whose proven form reads a speculative int32 register
-    /// (`Kind::Speculative`), each with that proven handler and its checked form:
-    /// what `retire_int_speculation` restores once an update overflowed one.
+    /// The operator records whose proven form reads a `Kind::Speculative` register, each with that proven handler and its
+    /// checked form: what `retire_int_speculation` restores once an update overflowed one.
     pub int_speculating: Box<[(u32, *const (), *const ())]>,
+    /// The held back edges' `IncDec` records whose counter the kinds prove, with it and whether it is speculative (`int_steps`).
+    pub proven_counters: Box<[(u32, u16, bool)]>,
+    /// The registers its records read as `Speculative` int32s (`int_steps::native_handed_doubles`).
+    pub speculative_registers: Box<[u16]>,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI

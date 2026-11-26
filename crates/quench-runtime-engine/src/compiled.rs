@@ -4015,11 +4015,10 @@ impl LaneEntry {
     }
 }
 
-/// The words of the dispatch payload and context that stay as they are for every entry of one
-/// lane run: its VM, program, residual and store specialization, and what follows
-/// from them, the program's field cache entries (`BodyRunContext::bind_run`). An entry writes them
-/// only where its run is not the one that bound them; the words it writes per entry are its lane
-/// context (compared here only after it is written), its registers and the stack's room.
+/// The words of the dispatch payload and context that stand for every entry of one lane run: its VM, program, residual,
+/// store specialization and lane stack (its values' top word's address), and what follows from them, the field cache
+/// entries and the stack's storage addresses (`BodyRunContext::bind_run`). Per entry it writes its lane context
+/// (compared only after it is written), its registers and the stack's room.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LaneRun {
     vm: usize,
@@ -4027,12 +4026,13 @@ struct LaneRun {
     lane_context: usize,
     residual: usize,
     stores_specialized: usize,
+    stack: usize,
 }
 
 impl LaneRun {
     #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
-        Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
+        Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized, stack: dispatch.lane_values_top }
     }
 }
 
@@ -4046,19 +4046,18 @@ struct BodyRunContext {
 }
 
 impl BodyRunContext {
-    /// Binds the payload and context to `run`'s words, written once per run: a nested entry
-    /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
-    /// find them standing. `field_entries` derives the program's field cache entries, which
-    /// stand until the table moves (`Vm::rebind_lane_field_entries`). The run's VM is bound
-    /// after it (`JsStepDispatch::bind_lane_storage`), so a VM that is not the last entry's
-    /// makes a new run. The native stack's limit is anchored where the run binds: the lane
-    /// run's frame is at one depth for all its entries (its calls are activations, not native
-    /// frames), a deeper run (a native callback's) has its own context and so binds its own,
-    /// and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget.
-    /// The interrupt and the payload, whose address is the frame's, bind once per interrupt owner.
+    /// Binds the payload and context to `run`'s words, written once per run: a nested entry of the same run
+    /// (`Vm::run_nested_lane_method`) and each next entry of the lane's calls find them standing. `field_entries` derives
+    /// the program's field cache entries, which stand until the table moves (`Vm::rebind_lane_field_entries`). The run's VM
+    /// is bound after it (`JsStepDispatch::bind_lane_storage`), so a VM that is not the last entry's makes a new run. The
+    /// native stack's limit is anchored where the run binds: the lane run's frame is at one depth for all its entries (its
+    /// calls are activations, not native frames), a deeper run (a native callback's) has its own context and so binds its
+    /// own, and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget. The interrupt and the
+    /// payload, whose address is the frame's, bind once per interrupt owner. The lane stack's storage addresses (`storage`)
+    /// bind with the run: no reallocation moves them.
     /// Whether the entry bound a different run than the last one's.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &quench_runtime::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &quench_runtime::ExecutionInterrupt, field_entries: impl FnOnce() -> usize, storage: impl FnOnce() -> crate::dispatch_fast::LaneStackStorage) -> bool {
         let owner = std::ptr::from_ref(interrupt);
         // The lane context is the entry's own activation, written by every entry; the other
         // words stand for the whole run.
@@ -4070,6 +4069,7 @@ impl BodyRunContext {
             self.dispatch.program_id = run.program_id;
             self.dispatch.residual = run.residual;
             self.dispatch.stores_specialized = run.stores_specialized;
+            storage().bind(&mut self.dispatch);
         }
         if self.context.interrupt_owner != owner {
             self.context.interrupt = interrupt.atomic_flag() as *const _;
