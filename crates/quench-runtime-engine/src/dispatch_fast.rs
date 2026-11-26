@@ -10805,7 +10805,7 @@ pub(crate) mod name_probe; use name_probe::probe_handler;
 pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
-pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, vm_operation_step};
+pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
 pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
