@@ -93,7 +93,10 @@ enum Element {
 
 /// The kinds whose elements native code reads and writes in place, in the order a kind word is
 /// tried. Float16 and BigInt elements stay on the general path.
-const ELEMENTS: [NativeKind; 9] = [
+/// How many kinds are native (`ELEMENTS`).
+pub const NATIVE_KINDS: usize = 9;
+
+const ELEMENTS: [NativeKind; NATIVE_KINDS] = [
     NativeKind { kind: TypedArrayKind::Float64, element: Element::Float64 },
     NativeKind { kind: TypedArrayKind::Int32, element: Element::Integer(Integer::Signed32) },
     NativeKind { kind: TypedArrayKind::Uint8, element: Element::Integer(Integer::Unsigned8) },
