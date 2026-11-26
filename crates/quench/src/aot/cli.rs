@@ -188,8 +188,7 @@ fn compile(options: Options) -> Result<(), String> {
     };
     // A strict compile that reads a dynamic input falls back to full support: static support
     // still retains the interpreter, which its link audit refuses (TOD-2196).
-    let variant = if options.strict { variant::Variant::Full } else { variant::select(explicit, &graph) };
-    let support = variant.image_support();
+    let support = if options.strict { quench_runtime::NativeImageSupport::DynamicSource } else { variant::select(explicit, &graph) };
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -218,7 +217,7 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant::name(support),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -233,7 +232,7 @@ fn compile(options: Options) -> Result<(), String> {
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });
-    if graph.requirements.iter().any(|requirement| variant::blocks(variant, requirement)) {
+    if graph.requirements.iter().any(|requirement| variant::blocks(support, requirement)) {
         report["status"] = json!("unsupported_requirements");
         write_report(report_path.as_deref(), &report)?;
         return Err(format!(

@@ -534,7 +534,7 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
         // The Number operations' own values: `Value::number` makes an integral quotient or remainder the
         // integer it is, and -0 the double it is.
         BinaryOperator::Division => Value::number(number_arithmetic_result(NumberArithmetic::Divide, f64::from(left), f64::from(right))),
-        BinaryOperator::Remainder => Value::number(number_remainder(f64::from(left), f64::from(right))),
+        BinaryOperator::Remainder => Value::number(remainder(f64::from(left), f64::from(right))),
         BinaryOperator::Exponential => return None,
         operator => number_bitwise_result(
             NumberBitwise::from_binary_operator(operator)
