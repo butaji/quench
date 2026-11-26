@@ -3590,8 +3590,9 @@ lane_handler! {
             && i.c <= quench_runtime::bytecode::REGISTER_MASK;
         let Some(value) = vm
             .dense_array_element(base, key)
-            .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
+            // A BigInt kind's element has no typed row, so its record misses here each read: asked first.
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
+            .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
@@ -3680,8 +3681,8 @@ fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) -> Option<V
     // come before the ordinary array probes, which would only decline them.
     vm.dense_array_element(base, key)
         .or_else(|| named_key_element(vm, base, key))
-        .or_else(|| row_typed_element(ip, vm, base, key))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
+        .or_else(|| row_typed_element(ip, vm, base, key))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| site_keyed_get_in_lane(vm, ip, base, key))

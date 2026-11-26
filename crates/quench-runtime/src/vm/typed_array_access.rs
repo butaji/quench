@@ -410,8 +410,20 @@ impl Vm {
 
     /// `get_index` of a BigInt typed array at an index key (the BigInt it allocates); `None` for any other read.
     pub fn bigint_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
+        // One cell read decides the kind; a Number kind's or any other object's read declines here.
+        let view = self.typed_array_view(object).filter(|view| view.kind.is_bigint())?;
         let index = self.array_index_key(key)? as usize;
-        self.typed_array_kind_of(object)?.is_bigint().then(|| self.typed_array_get(object, index)).flatten()
+        let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
+        Some(self.bigint_element(view.kind, bytes))
+    }
+
+    /// A BigInt kind's element word as its one-digit BigInt, made in place: no `num_bigint` value and its
+    /// digit vector.
+    #[inline(always)]
+    fn bigint_element(&mut self, kind: TypedArrayKind, bytes: [u8; 8]) -> Value {
+        let (word, signed) = (u64::from_ne_bytes(bytes), kind == TypedArrayKind::BigInt64);
+        let negative = signed && (word as i64) < 0;
+        self.heap.alloc(Cell::BigInt(crate::bigint::JsBigInt::from_digits(negative, &[if negative { (word as i64).unsigned_abs() } else { word }])))
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
@@ -421,12 +433,10 @@ impl Vm {
             return Some(Value::number(number));
         }
         let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
-        // A BigInt kind's one-digit BigInt, made in place: no `num_bigint` value and its digit vector.
-        let (word, signed) = (u64::from_ne_bytes(bytes), kind == TypedArrayKind::BigInt64);
-        let negative = signed && (word as i64) < 0;
-        Some(match kind {
-            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => self.heap.alloc(Cell::BigInt(crate::bigint::JsBigInt::from_digits(negative, &[if negative { (word as i64).unsigned_abs() } else { word }]))),
-            _ => Value::number(element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN)),
+        Some(if kind.is_bigint() {
+            self.bigint_element(kind, bytes)
+        } else {
+            Value::number(element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN))
         })
     }
 
