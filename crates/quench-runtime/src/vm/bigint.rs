@@ -176,6 +176,23 @@ impl Vm {
         }
     }
 
+    /// `BigInt.asIntN` (`signed`) or `BigInt.asUintN` where it runs no guest code and cannot
+    /// throw: a width that is a Number integer in [0, 2^53) and a BigInt value. `None` for any other
+    /// pair, which the native's general call answers (conversions, errors).
+    pub fn bigint_as_n_steady(&mut self, width: Value, value: Value, signed: bool) -> Option<Value> {
+        let width = width.as_number().filter(|width| (0.0..MAX_SAFE_INTEGER).contains(width) && width.fract() == 0.0)? as usize;
+        let Some(Cell::BigInt(value)) = self.heap.get(value) else { return None };
+        let wrapped = crate::staged::bigint_small::wrap_bits(value, width, signed).ok()?;
+        Some(self.heap.alloc_bigint(wrapped))
+    }
+
+    /// `BigInt(n)` of a Number `n` that is a safe integer: its one digit, made in place. `None`
+    /// for any other argument, which the native's general call answers.
+    pub fn bigint_of_safe_integer(&mut self, value: Value) -> Option<Value> {
+        let integer = crate::vm::operations::safe_integer(value.as_number()?)?;
+        Some(self.heap.alloc_bigint(crate::bigint::JsBigInt::from_digits(integer < 0, &[integer.unsigned_abs()])))
+    }
+
     fn bigint_width(
         &mut self,
         p: &ResidualProgram,

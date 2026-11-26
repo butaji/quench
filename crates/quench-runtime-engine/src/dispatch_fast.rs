@@ -10873,6 +10873,9 @@ impl Vm {
                 self.fast_declined(native, text)
             }
             Native::DateNow => Some(self.date_now()),
+            Native::BigIntAsIntN | Native::BigIntAsUintN =>
+                self.bigint_as_n_steady(first?, args.get(1).copied()?, native == Native::BigIntAsIntN),
+            Native::BigInt => self.bigint_of_safe_integer(first?),
             _ => None,
         }
     }
