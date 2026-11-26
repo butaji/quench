@@ -236,7 +236,7 @@ impl NativeSupport {
         let mut command = self.base_command(driver)?;
         self.add_externs(&mut command, node_host)?;
         command.arg("-o").arg(executable).env("QUENCH_NATIVE_CATALOG", inputs.catalog());
-        self.apply_link_options(&mut command, inputs);
+        self.apply_link_options(&mut command, inputs, executable)?;
         self.add_objects(&mut command, inputs, executable);
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
@@ -282,7 +282,7 @@ impl NativeSupport {
 
     /// Dynamic-source, bootstrap, LTO and platform link flags, then the support's native paths
     /// and the host's own executable link arguments.
-    fn apply_link_options(&self, command: &mut Command, inputs: &NativeImageInputs) {
+    fn apply_link_options(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
         if self.support.allows_dynamic_source() {
             command.args(["--cfg", "quench_native_dynamic_source"]);
         }
@@ -292,17 +292,18 @@ impl NativeSupport {
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
-        self.apply_platform_flags(command, inputs);
+        self.apply_platform_flags(command, inputs, executable)?;
         for path in &self.native_paths {
             command.arg("-L").arg(path);
         }
         command.args(self.executable_link_args.iter().flat_map(|argument| ["-C".to_owned(), format!("link-arg={argument}")]));
+        Ok(())
     }
 
     /// The platform's link flags: static C runtime and unwind hooks on Linux, chained fixups and
     /// dead dylib stripping on macOS.
     #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
-    fn apply_platform_flags(&self, command: &mut Command, inputs: &NativeImageInputs) {
+    fn apply_platform_flags(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
         // A self-contained image links glibc statically and position-dependent.
         #[cfg(target_os = "linux")]
         if inputs.is_self_contained() {
@@ -336,6 +337,7 @@ impl NativeSupport {
         command.args(["-C", "link-arg=-Wl,-dead_strip_dylibs"]);
         #[cfg(target_os = "linux")]
         command.args(["-C", "link-arg=-Wl,--as-needed"]);
+        Ok(())
     }
 
     /// The image objects, the linker's map, and `QUENCH_EXTRA_LINK_ARGS` diagnostics.

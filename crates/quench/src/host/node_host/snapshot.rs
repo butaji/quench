@@ -71,7 +71,7 @@ impl NodeHost {
             #[cfg(feature = "native-execution")]
             module_assets,
             compile_cache,
-            operations,
+            capabilities,
             #[cfg(feature = "native-execution")]
             native_program_resolver,
             shared_state,
@@ -97,7 +97,7 @@ impl NodeHost {
             adopt(&mut self.native_program_resolver, native_program_resolver);
         }
         adopt(&mut self.compile_cache, compile_cache);
-        adopt(&mut self.operations, operations);
+        adopt(&mut self.capabilities, capabilities);
         adopt(&mut self.commonjs_entry, commonjs_entry);
         adopt(&mut self.inline_source, inline_source);
         adopt(&mut self.eval_builtin_globals, eval_builtin_globals);

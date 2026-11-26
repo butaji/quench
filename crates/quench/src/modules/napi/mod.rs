@@ -28,6 +28,8 @@ mod memory;
 mod objects;
 mod values;
 mod work;
+/// The event loop's addon source (`host::pollers::napi`).
+pub(crate) use work::poll;
 
 pub(crate) use abi::*;
 pub(crate) use work::WakeSignal;

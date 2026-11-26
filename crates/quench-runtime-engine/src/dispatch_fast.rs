@@ -7804,10 +7804,10 @@ fn frame_state_in_lane(
             if !vm.runs_lane {
                 unreachable!("a host that runs no lane has no lane frame");
             }
-            // The same derivation as every entry's (`ahead_runner::lane_view`).
+            // The same derivation as every entry's (`ahead_runner::view_in_lane`).
             let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                crate::ahead_runner::lane_view(vm, function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::view_in_lane(vm, function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
@@ -8755,7 +8755,7 @@ impl Vm {
         if !self.runs_lane || !self.may_run_in_lane(program, code) { return None; }
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            crate::ahead_runner::lane_view(self, function, code, constants, kind, live, sites, image)
+            crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -16584,7 +16584,7 @@ fn plain_frame_local(function: &Function, slot: usize) -> bool {
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
 #[cfg(feature = "jit")]
-use crate::jit_routes::lane_handler;
+use crate::jit_routes::handler_in_lane;
 #[cfg(feature = "jit")]
 pub(crate) fn derive_lane_view<'live>(
     function_id: u32,
@@ -16675,7 +16675,7 @@ pub(crate) fn derive_lane_view<'live>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                lane_handler(backward_jump, acc, op as usize)
+                handler_in_lane(backward_jump, acc, op as usize)
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
                             ACC_NONE => protocol_row!({ quench_runtime::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }) as Handler,
@@ -16690,7 +16690,7 @@ pub(crate) fn derive_lane_view<'live>(
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
             {
                 // The count of the function's kept arguments: its row with that fact (`row_near`).
-                let row = lane_handler(backward_jump, acc, op as usize);
+                let row = handler_in_lane(backward_jump, acc, op as usize);
                 row.map(|row| LaneHandler { handler: row_near::<ARGUMENTS_COUNT>(row.handler as *const ()).unwrap_or(row.handler), ..row })
             } else if quench_runtime::staged::local_read_family(op)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
@@ -16703,7 +16703,7 @@ pub(crate) fn derive_lane_view<'live>(
                     quench_runtime::staged::forwarded_call_family(next.op()) && next.call_window().last() == Some(instruction.result_register())
                 });
                 let object = kept == quench_runtime::bytecode::KeptArguments::Passes && !forwards;
-                lane_handler(backward_jump, acc, op as usize)
+                handler_in_lane(backward_jump, acc, op as usize)
                     .and_then(|row| lane_frame::kept_row(row.handler as *const (), object)
                         .map(|handler| LaneHandler { handler, ..row }))
             } else if quench_runtime::staged::calls(op) && iteration_step_in_lane(&decoded, pc) {
@@ -16739,12 +16739,12 @@ pub(crate) fn derive_lane_view<'live>(
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler(instruction)).flatten() {
                 handler
             } else {
-                lane_handler(backward_jump, acc, op as usize)
+                handler_in_lane(backward_jump, acc, op as usize)
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
             // a record whose `a` carries result flags (a numeric local target) runs the general
             // step, which decodes them, so no row tests for them.
-            let row = lane_handler(backward_jump, acc, op as usize);
+            let row = handler_in_lane(backward_jump, acc, op as usize);
             let selected = selected.map(|chosen| {
                 let flagged = admits_row(op)
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
@@ -16796,7 +16796,7 @@ pub(crate) fn derive_lane_view<'live>(
     let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: u16, acc: u8| {
-        lane_handler(false, acc, usize::from(op))
+        handler_in_lane(false, acc, usize::from(op))
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`
@@ -16804,7 +16804,7 @@ pub(crate) fn derive_lane_view<'live>(
     let plain_served = |handler: *const (), op: u16, accs: &[u8]| {
         [false, true].into_iter().find_map(|backward| {
             accs.iter().copied().find(|&acc| {
-                lane_handler(backward, acc, usize::from(op))
+                handler_in_lane(backward, acc, usize::from(op))
                     .is_some_and(|served| handler == served.handler as *const ())
             })
             .map(|acc| (backward, acc))
@@ -16850,7 +16850,7 @@ pub(crate) fn derive_lane_view<'live>(
     // A record's plain jump, with its direction.
     let jump_direction = |handler: *const ()| {
         [false, true].into_iter().find(|&backward| {
-            lane_handler(backward, ACC_NONE, quench_runtime::staged::JUMP_ROW as usize)
+            handler_in_lane(backward, ACC_NONE, quench_runtime::staged::JUMP_ROW as usize)
                 .is_some_and(|jump| handler == jump.handler as *const ())
         })
     };
@@ -16952,7 +16952,7 @@ pub(crate) fn derive_lane_view<'live>(
             }
             let op = decoded[pc].op() as u16;
             let Some((backward, _)) = plain_served(records[pc].handler, op, &[ACC_A, ACC_B, ACC_C, ACC_PAIR]) else { continue };
-            if let Some(plain) = lane_handler(backward, ACC_NONE, usize::from(op)) {
+            if let Some(plain) = handler_in_lane(backward, ACC_NONE, usize::from(op)) {
                 records[pc].handler = plain.handler as *const ();
             }
         }
@@ -18110,7 +18110,7 @@ impl Vm {
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs
             .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
-                crate::ahead_runner::lane_view(self, function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
     }

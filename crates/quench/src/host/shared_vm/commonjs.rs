@@ -1731,7 +1731,7 @@ fn cached_builtin(
 /// object) built by its builder operation, so `require` links only the builders a program reaches.
 fn uncached_builtin(context: &mut Context<'_>, key: &str) -> Result<RootId, RootedError> {
     let operation = builtin_operation(key).ok_or_else(|| RootedError::host(format!("node:{key} has no builder")))?;
-    let build = context.host_as::<crate::host::NodeHost>().operations[operation.0 as usize];
+    let build = context.host_as::<crate::host::NodeHost>().capabilities.operations[operation.0 as usize];
     let undefined = context.undefined();
     build(context, undefined, &[])
 }
@@ -1771,7 +1771,7 @@ fn linked_builtin(context: &mut Context<'_>, key: &str) -> Result<Option<RootId>
     let Some(operation) = builtin_operation(key) else {
         return Ok(None);
     };
-    let callback = context.host_as::<crate::host::NodeHost>().operations[operation.0 as usize];
+    let callback = context.host_as::<crate::host::NodeHost>().capabilities.operations[operation.0 as usize];
     if std::ptr::fn_addr_eq(callback, crate::host::unlinked_operation as quench_runtime::HostCallback) {
         return Ok(None);
     }

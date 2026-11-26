@@ -22,7 +22,7 @@ use quench_runtime::vm::ProgramId;
 /// `Vm::view_any_in_lane` and `frame_state_in_lane`).
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn lane_view<'a>(vm: &Vm, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(vm: &Vm, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
     live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, sites: &[FieldSite], image: bool) -> LaneView {
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
         crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
@@ -37,7 +37,7 @@ pub(crate) fn lane_view<'a>(vm: &Vm, function: u32, code: &Function, constants: 
 /// general loop.
 #[cfg(not(feature = "jit"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn lane_view<'a>(vm: &Vm, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(vm: &Vm, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
     _live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, _sites: &[FieldSite], _image: bool) -> LaneView {
     ahead_lane_view(code, constants, vm.programs.tiers())
 }

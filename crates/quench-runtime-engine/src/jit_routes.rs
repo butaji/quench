@@ -144,7 +144,7 @@ pub fn install_lane_rows(rows: &[&'static LaneRow]) {
 
 /// The installed handler of opcode `op` for one jump direction and accumulator field.
 #[inline]
-pub(crate) fn lane_handler(backward: bool, acc: u8, op: usize) -> Option<LaneHandler> {
+pub(crate) fn handler_in_lane(backward: bool, acc: u8, op: usize) -> Option<LaneHandler> {
     let group = LANE_ROWS.get()?.get(op / usize::from(TABLE_ROW))?;
     group[op % usize::from(TABLE_ROW)]?.1[usize::from(backward)][usize::from(acc)]
 }

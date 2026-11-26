@@ -54,7 +54,7 @@ impl Veneers<'_> {
 }
 
 /// The stub space one lane body's placement may need (`link_lane_at`).
-pub(crate) fn lane_stub_bytes(code: &RelocatableCode) -> usize {
+pub(crate) fn stub_bytes_in_lane(code: &RelocatableCode) -> usize {
     code.relocations.iter().filter(|relocation| relocation.kind == cranelift_codegen::binemit::Reloc::Arm64Call).count() * VENEER_BYTES
 }
 
