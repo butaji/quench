@@ -4,7 +4,7 @@
 use super::blocks::Blocks;
 use super::effects::{Ctx, Events, step};
 use super::scope::Scope;
-use super::value::{Fact, Key};
+use super::value::{Fact, Key, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
 use crate::typed_ir::Representation;
@@ -29,6 +29,8 @@ pub(super) struct FunctionFlow {
     pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
+    /// The named properties stored into a function's `prototype`, in code order.
+    pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -121,6 +123,7 @@ struct Record {
     wild_owner: bool,
     wild_global: bool,
     wild_member: bool,
+    prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Fact>>,
     /// Per register, whether a read saw a value that is not a Number.
@@ -135,6 +138,7 @@ impl Record {
             wild_owner: false,
             wild_global: false,
             wild_member: false,
+            prototype_writes: Vec::new(),
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
         }
@@ -161,6 +165,7 @@ impl Record {
         self.wild_global |= events.wild_global;
         self.wild_member |= events.wild_member;
         self.writes.extend(events.writes);
+        self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
             let index = usize::from(register);
             self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
@@ -181,6 +186,7 @@ impl Record {
             global_wild: self.wild_global,
             member_wild: self.wild_member,
             numbers,
+            prototype_writes: self.prototype_writes,
         }
     }
 }
