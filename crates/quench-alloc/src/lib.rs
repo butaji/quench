@@ -27,10 +27,14 @@
 //! the next new thread adopts it. Allocation on a thread whose heap is already gone (late
 //! thread-exit destructors) uses one shared heap behind a lock.
 
+mod dump;
 mod fixed_space;
+mod fixed_thread;
+pub use fixed_thread::{run_fixed as run_on_fixed_stack, STACK_BASE as FIXED_STACK_BASE};
+pub use dump::{begin_dump, end_dump, owns_dump, DUMP_BASE};
 mod large;
 mod scratch;
-pub use fixed_space::{fixed_layout_held, map_anonymous};
+pub use fixed_space::{fixed_layout_held, fixed_space_next, fixed_space_range, map_anonymous, resume_fixed_space};
 pub use scratch::{adopt as adopt_scratch_thread, leave as leave_scratch_thread, release as release_scratch, release_phase as release_scratch_phase};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
@@ -385,6 +389,10 @@ impl QuenchAlloc {
     /// Serves small requests from now on; until called, every request goes to the system
     /// allocator. Blocks either allocator handed out are freed by it (`owns`).
     pub fn enable() {
+        // A dump serves every request from its arena until it ends (`dump`).
+        if dump::DUMPING.load(Ordering::Relaxed) {
+            return;
+        }
         ENABLED.store(true, Ordering::Relaxed);
     }
 
@@ -721,6 +729,9 @@ unsafe impl GlobalAlloc for QuenchAlloc {
             // SAFETY: forwarded unchanged.
             return unsafe { Self::alloc_enabled(layout) };
         }
+        if dump::DUMPING.load(Ordering::Relaxed) {
+            return dump::alloc(layout);
+        }
         // SAFETY: forwarded unchanged.
         unsafe { System.alloc(layout) }
     }
@@ -746,6 +757,10 @@ unsafe impl GlobalAlloc for QuenchAlloc {
         }
         // The system allocator's zeroed allocation: a large one maps fresh zero pages
         // instead of writing every byte resident.
+        if dump::DUMPING.load(Ordering::Relaxed) {
+            // The arena's pages are fresh and never reused, so already zero.
+            return dump::alloc(layout);
+        }
         // SAFETY: forwarded unchanged.
         unsafe { System.alloc_zeroed(layout) }
     }
@@ -759,6 +774,10 @@ unsafe impl GlobalAlloc for QuenchAlloc {
             unsafe { free(block) };
             return;
         }
+        // A dump's block is never freed (`dump`).
+        if owns_dump(block) {
+            return;
+        }
         // SAFETY: any other block came from the system allocator.
         unsafe { large::free(block, layout) }
     }
@@ -766,7 +785,7 @@ unsafe impl GlobalAlloc for QuenchAlloc {
     #[inline]
     unsafe fn realloc(&self, block: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let owned = owns(block);
-        if !owned && !ENABLED.load(Ordering::Relaxed) {
+        if !owned && !ENABLED.load(Ordering::Relaxed) && !owns_dump(block) && !dump::DUMPING.load(Ordering::Relaxed) {
             // SAFETY: the system allocator's block, and it serves every request.
             return unsafe { System.realloc(block, layout, new_size) };
         }
@@ -776,7 +795,7 @@ unsafe impl GlobalAlloc for QuenchAlloc {
         if owned && Self::small_class(layout) == Self::small_class(new_layout) {
             return block;
         }
-        if !owned && Self::system_keeps(block, new_layout) {
+        if !owned && !owns_dump(block) && !dump::DUMPING.load(Ordering::Relaxed) && Self::system_keeps(block, new_layout) {
             // SAFETY: both sides are the system allocator's.
             return unsafe { System.realloc(block, layout, new_size) };
         }
@@ -800,6 +819,29 @@ mod tests {
     fn enabled() -> QuenchAlloc {
         QuenchAlloc::enable();
         QuenchAlloc::new()
+    }
+
+    #[test]
+    fn a_dump_serves_every_request_and_never_frees() {
+        // Runs before anything enables the small-object allocator in this test binary only if
+        // first; otherwise the dump refuses, which this asserts too.
+        let allocator = QuenchAlloc::new();
+        if !begin_dump() {
+            assert!(ENABLED.load(Ordering::Relaxed));
+            return;
+        }
+        let layout = Layout::from_size_align(5000, 64).unwrap();
+        let block = unsafe { allocator.alloc(layout) };
+        assert!(owns_dump(block) && block as usize % 64 == 0);
+        let grown = unsafe { allocator.realloc(block, layout, 9000) };
+        assert!(owns_dump(grown) && grown != block);
+        let (base, used) = end_dump();
+        assert!(base == dump::DUMP_BASE && used >= 14000);
+        // After the dump, its blocks are dropped on free and copied out on realloc.
+        unsafe { allocator.dealloc(grown, Layout::from_size_align(9000, 64).unwrap()) };
+        let moved = unsafe { allocator.realloc(block, layout, 6000) };
+        assert!(!owns_dump(moved));
+        unsafe { allocator.dealloc(moved, Layout::from_size_align(6000, 64).unwrap()) };
     }
 
     #[test]

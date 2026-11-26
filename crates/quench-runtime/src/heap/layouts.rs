@@ -34,6 +34,15 @@ pub const LAYOUT_CAPACITY: usize = 1 << 22;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as usize;
 
+/// The layout table's range where it sits at its fixed address, mapped before `main`: a dump of
+/// the process (`quench::aot::image_dump`) carries its written pages.
+pub fn fixed_table_range() -> Option<(usize, usize)> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    return Some((FIXED_TABLE, LAYOUT_CAPACITY * size_of::<u64>()));
+    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    None
+}
+
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 extern "C" fn map_fixed_table() {
     const MAP_FIXED_NOREPLACE: libc::c_int = 0x100000;

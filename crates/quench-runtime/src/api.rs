@@ -85,7 +85,7 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
-    /// A runtime only ever restored from one saved at rest (`resume_native_from_snapshot` of a
+    /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
     /// `snapshot_at_rest`): it never installs its host.
     pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }
     /// A runtime only ever restored from its startup snapshot (`execute_native_from_snapshot`):
@@ -355,16 +355,16 @@ impl<H: Host> Runtime<H> {
         self.vm.resume_restored()
     }
 
-    /// `resume_restored` for a run saved at rest that `program`'s native image continues.
+    /// `restore_snapshot` of a run saved at rest that `program`'s native image continues; the
+    /// run goes on from `resume_restored`.
     #[cfg(feature = "native-execution")]
-    pub fn resume_native_from_snapshot(
+    pub fn restore_native_at_rest(
         &mut self,
         snapshot: crate::KeptBytes,
         program: &crate::NativeJsProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<(), JsError> {
-        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
-        self.vm.resume_restored()
+        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))
     }
 
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).

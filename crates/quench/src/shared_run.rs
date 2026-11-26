@@ -248,16 +248,40 @@ pub fn run_node_worker<T: Send + 'static>(
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
             .map_err(|error| format!("runtime worker signal mask: {error}"))?;
+    let work = move || {
+        #[cfg(target_os = "linux")]
+        worker_mask
+            .restore()
+            .map_err(|error| format!("runtime execution signal mask: {error}"))?;
+        execute()
+    };
+    // The worker's stack, and with it every thread-local the runtime keeps, lies at one fixed
+    // address, so a runtime saved from an earlier run that names them maps back valid
+    // (`quench_alloc::run_on_fixed_stack`); where that range is taken, an ordinary thread.
+    #[cfg(unix)]
+    let work = {
+        let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = result.clone();
+        let body: Box<dyn FnOnce() + Send> = Box::new(move || {
+            let outcome = work();
+            *slot.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(outcome);
+        });
+        match quench_alloc::run_on_fixed_stack(c"quench-shared-exec", quench_runtime::WORKER_STACK_SIZE, body) {
+            Ok(_) => {
+                return result.lock().unwrap_or_else(|poison| poison.into_inner()).take()
+                    .unwrap_or_else(|| Err("runtime worker panicked".into()));
+            }
+            Err(body) => move || {
+                body();
+                result.lock().unwrap_or_else(|poison| poison.into_inner()).take()
+                    .unwrap_or_else(|| Err("runtime worker panicked".into()))
+            },
+        }
+    };
     std::thread::Builder::new()
         .name("quench-shared-exec".into())
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
-        .spawn(move || {
-            #[cfg(target_os = "linux")]
-            worker_mask
-                .restore()
-                .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute()
-        })
+        .spawn(work)
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
         .unwrap_or_else(|_| Err("runtime worker panicked".into()))

@@ -14,6 +14,7 @@ mod variant;
 mod compiler;
 pub(crate) mod prefix;
 mod strict;
+pub(crate) mod image_dump;
 pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 pub use quench_runtime::native_link::NativeImageInputs;
 
@@ -135,24 +136,52 @@ pub struct SavedWait {
     pub rest: &'static [u8],
 }
 
-/// The first of `saved` whose answers hold in this process.
-pub fn saved_wait(saved: &'static [SavedWait]) -> Option<&'static SavedWait> {
-    saved.iter().find(|wait| wait.answers.iter().all(|&(key, answer)| prefix::Question::of_key(key).is_ok_and(|question| question.holds() == answer)))
+/// The first of `saved` whose answers hold in this process, with its index; in a run that
+/// dumps one (`image_dump`), that one.
+pub fn saved_wait(saved: &'static [SavedWait]) -> Option<(usize, &'static SavedWait)> {
+    if let Some(index) = image_dump::requested_wait() {
+        return saved.get(index).map(|wait| (index, wait));
+    }
+    saved.iter().enumerate().find(|(_, wait)| wait.answers.iter().all(|&(key, answer)| prefix::Question::of_key(key).is_ok_and(|question| question.holds() == answer)))
 }
 
-/// Continues a linked entry from `wait`: its writes before the wait are made again in order,
-/// then the event loop waits for the same input. The entry does not run.
+/// Starts the image dump the environment asks for (`image_dump`); an image's driver calls it
+/// first in `main`.
+pub fn begin_image_dump() {
+    image_dump::begin()
+}
+
+/// Continues a linked entry from `wait`, the saved run `index`: its writes before the wait are
+/// made again in order, then the event loop waits for the same input. The entry does not run.
+/// The runtime at rest is mapped from the image's dump of it where it can be
+/// (`image_dump::adopt`), else decoded from the saved run.
 pub fn resume_native_process_entry(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram, support: NativeImageSupport, wait: &'static SavedWait,
+    host: NodeHost, program: quench_runtime::NativeJsProgram, support: NativeImageSupport, index: usize, wait: &'static SavedWait,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     for &(descriptor, bytes) in wait.effects {
         prefix::replay(descriptor, bytes);
+    }
+    type Rest = (crate::shared_run::EntryRuntime, quench_runtime::NativeJsProgram);
+    if let Some(root) = image_dump::adopt(index) {
+        // SAFETY: the dump's root is the `Rest` its run leaked, mapped back at its address.
+        let (mut runtime, entry) = *unsafe { Box::from_raw(root.cast::<Rest>()) };
+        drop(program);
+        runtime.host_mut().adopt_process(host);
+        runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+        crate::host::resident_pages::phase_peak("saved wait mapped");
+        let execution = runtime.resume_restored();
+        crate::host::resident_pages::phase_peak("saved wait resumed");
+        return crate::shared_run::finish_shared_execution(&mut runtime, entry.residual(), execution);
     }
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_at_rest(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
     runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     crate::host::resident_pages::phase_peak("saved wait runtime made");
-    let execution = runtime.resume_native_from_snapshot(std::rc::Rc::new(wait.rest), program, |host, reader| host.read_snapshot(reader));
+    let restored = runtime.restore_native_at_rest(std::rc::Rc::new(wait.rest), &program, |host, reader| host.read_snapshot(reader));
+    if restored.is_ok() && image_dump::requested_wait().is_some() {
+        image_dump::write(index, Box::into_raw(Box::new((runtime, program))).cast());
+    }
+    let execution = restored.and_then(|()| runtime.resume_restored());
     crate::host::resident_pages::phase_peak("saved wait resumed");
     crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)
 }

@@ -55,7 +55,7 @@ fn run() -> Result<std::process::ExitCode, String> {
         quench::host::enable_wasm();
     }
     let result = match quench::aot::saved_wait(RESUMES_AT_REST) {
-        Some(wait) => quench::aot::resume_native_process_entry(host, &entry, SUPPORT, wait),
+        Some((index, wait)) => quench::aot::resume_native_process_entry(host, entry, SUPPORT, index, wait),
         None if RESUME_ONLY => Err("no saved run answers this start".into()),
         #[cfg(quench_native_bootstrap)]
         None if RESTORED => quench::aot::execute_native_process_entry_restored(
@@ -74,6 +74,7 @@ fn run() -> Result<std::process::ExitCode, String> {
 quench::install_process_start!();
 
 fn main() -> std::process::ExitCode {
+    quench::aot::begin_image_dump();
     if let Err(error) = quench::host::process_start::begin_main() {
         eprintln!("quench: {error}");
         return std::process::ExitCode::FAILURE;

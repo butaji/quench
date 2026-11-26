@@ -2121,6 +2121,7 @@ dependencies = [
  "libc",
  "libz-rs-sys",
  "memchr",
+ "object 0.39.1",
  "openssl",
  "openssl-sys",
  "oxc_allocator",

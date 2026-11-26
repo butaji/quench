@@ -162,6 +162,7 @@ pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use compile::source_routes::enable as enable_dynamic_source;
 pub use compile::{CheckedParameters, ParameterSite};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, memory_mix_has};
+pub use heap::layouts::fixed_table_range as fixed_layout_table_range;
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,

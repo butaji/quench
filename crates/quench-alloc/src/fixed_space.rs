@@ -32,6 +32,22 @@ pub fn fixed_layout_held() -> bool {
     HELD.load(Ordering::Relaxed)
 }
 
+/// The range every fixed reservation lies in.
+pub fn fixed_space_range() -> std::ops::Range<usize> {
+    FIXED_SPACE_BASE..FIXED_SPACE_END
+}
+
+/// Where the next reservation goes: a dump (`dump`) records it, so the run that adopts the dump
+/// reserves past what the dump holds (`resume_fixed_space`).
+pub fn fixed_space_next() -> usize {
+    NEXT.load(Ordering::Relaxed)
+}
+
+/// Continues reservations from `next`, a dump's `fixed_space_next`, once its ranges are mapped.
+pub fn resume_fixed_space(next: usize) {
+    NEXT.store(next, Ordering::Relaxed);
+}
+
 /// An anonymous private mapping of `length` bytes with `protection` and the extra `flags`
 /// (`MAP_NORESERVE`), at the next fixed range where the kernel grants it; `MAP_FAILED` as
 /// `mmap` answers when no address can be had.

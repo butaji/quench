@@ -277,6 +277,168 @@ fn resumes_at_rest(saved: &[SavedWait], lane_opcodes: Option<&[u16]>) -> String 
     format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\nfn install_lanes() {{ {lanes} }}\n", !saved.is_empty())
 }
 
+/// The statics and thread-locals a dump of a saved run never carries (`image_dump::finish`):
+/// the process's own (the standard library's, the allocator's, its signal, memory-policy and
+/// page-release state, its clocks and trace switches, which the environment sets) and
+/// libraries' thread pools and caches of the build machine's time zone. Each is a crate root
+/// and module names under it, as v0 symbols spell them.
+const UNDUMPED: &[&[&str]] = &[
+    &["std"], &["core"], &["alloc"], &["quench_alloc"],
+    &["quench", "shared_run"], &["quench", "allocator_policy"], &["quench", "host", "resident_pages"],
+    &["quench", "host", "process_start"], &["quench", "modules", "process_signals_state"],
+    &["quench_runtime", "trace"], &["quench_runtime", "clock"], &["quench_runtime", "vm", "date", "local_zone"],
+    &["tracing_core"], &["parking_lot_core"], &["crossbeam_epoch"], &["rayon_core"], &["chrono"],
+];
+
+/// The crate root and the identifiers after it of a Rust symbol (v0 or legacy mangling).
+fn rust_path(symbol: &str) -> Option<(String, String)> {
+    let take_ident = |bytes: &[u8], at: &mut usize| -> Option<String> {
+        let start = *at;
+        while *at < bytes.len() && bytes[*at].is_ascii_digit() {
+            *at += 1;
+        }
+        let length: usize = std::str::from_utf8(&bytes[start..*at]).ok()?.parse().ok()?;
+        if bytes.get(*at) == Some(&b'_') {
+            *at += 1;
+        }
+        let ident = std::str::from_utf8(bytes.get(*at..*at + length)?).ok()?.to_owned();
+        *at += length;
+        Some(ident)
+    };
+    let bytes = symbol.as_bytes();
+    if let Some(rest) = symbol.strip_prefix("_ZN") {
+        let mut at = 0;
+        let crate_name = take_ident(rest.as_bytes(), &mut at)?;
+        return Some((crate_name, rest[at..].to_owned()));
+    }
+    let mut at = 2;
+    if !symbol.starts_with("_R") {
+        return None;
+    }
+    loop {
+        match *bytes.get(at)? {
+            b'N' => at += 2,
+            b'M' | b'X' | b'Y' => {
+                at += 1;
+                if bytes.get(at) == Some(&b's') {
+                    while *bytes.get(at)? != b'_' {
+                        at += 1;
+                    }
+                    at += 1;
+                }
+            }
+            b'C' => {
+                at += 1;
+                if bytes.get(at) == Some(&b's') {
+                    while *bytes.get(at)? != b'_' {
+                        at += 1;
+                    }
+                    at += 1;
+                }
+                let crate_name = take_ident(bytes, &mut at)?;
+                return Some((crate_name, symbol[at..].to_owned()));
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Whether a dump carries the static or thread-local `symbol` (`UNDUMPED`).
+fn dumped_symbol(symbol: &str) -> bool {
+    let Some((crate_name, rest)) = rust_path(symbol) else { return false };
+    !UNDUMPED.iter().any(|path| path[0] == crate_name && path[1..].iter().all(|ident| rest.contains(&format!("{}{ident}", ident.len()))))
+}
+
+/// Dumps each saved run of the linked image at `image`, which still has its symbol table
+/// (`image_dump`); none where any cannot be dumped, which `report` names.
+fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut Value) -> Vec<Vec<u8>> {
+    use object::{Object, ObjectSection, ObjectSymbol};
+    let dumped = (|| -> Result<(Vec<Vec<u8>>, Value), String> {
+        let bytes = fs::read(image).map_err(|error| error.to_string())?;
+        let file = object::File::parse(&*bytes).map_err(|error| error.to_string())?;
+        // The thread-local segment: its initial image and its block's size below the thread pointer.
+        let elf = object::read::elf::ElfFile64::<object::Endianness>::parse(&*bytes).map_err(|error| error.to_string())?;
+        use object::read::elf::ProgramHeader;
+        let endian = elf.endian();
+        let header = elf.elf_program_headers().iter().find(|header| header.p_type(endian) == object::elf::PT_TLS).ok_or("the image has no thread-local segment")?;
+        let (tls_offset, tls_file, tls_memory, tls_align) = (header.p_offset(endian), header.p_filesz(endian), header.p_memsz(endian), header.p_align(endian).max(1));
+        let block = tls_memory.next_multiple_of(tls_align);
+        let mut keep_statics = Vec::new();
+        let mut keep_tls = Vec::new();
+        for symbol in file.symbols() {
+            if symbol.size() == 0 || !symbol.name().is_ok_and(dumped_symbol) {
+                continue;
+            }
+            match symbol.kind() {
+                object::SymbolKind::Tls => keep_tls.push((block - symbol.address(), block - symbol.address() - symbol.size())),
+                object::SymbolKind::Data => {
+                    let writable = symbol.section_index().and_then(|index| file.section_by_index(index).ok()).is_some_and(|section| {
+                        matches!(section.flags(), object::SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_WRITE) != 0)
+                    });
+                    if writable {
+                        keep_statics.push((symbol.address(), symbol.address() + symbol.size()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let initial = |address: u64, length: usize| -> Vec<u8> {
+            let mut out = vec![0u8; length];
+            for section in file.sections() {
+                let (start, size) = (section.address(), section.size());
+                if address >= start && address + length as u64 <= start + size {
+                    if let Ok(data) = section.data() {
+                        if let Some(slice) = data.get((address - start) as usize..(address - start) as usize + length) {
+                            out.copy_from_slice(slice);
+                        }
+                    }
+                }
+            }
+            out
+        };
+        let tls_initial = |below: u64, length: usize| -> Vec<u8> {
+            let offset = block - below;
+            (0..length as u64).map(|index| {
+                let at = offset + index;
+                if at < tls_file { bytes[(tls_offset + at) as usize] } else { 0 }
+            }).collect()
+        };
+        let mut dumps = Vec::new();
+        let mut summary = Vec::new();
+        for (index, wait) in saved.iter().enumerate() {
+            let raw_path = work.join(format!("dump-{index}.raw"));
+            let mut run = Command::new(image);
+            crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut run);
+            for name in ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"] {
+                run.env_remove(name);
+            }
+            for (question, answer) in &wait.answers {
+                if let (super::prefix::Question::Environment(name, value), true) = (question, answer) {
+                    run.env(name, value);
+                }
+            }
+            run.env(super::image_dump::DUMP_VARIABLE, format!("{index}:{}", raw_path.display()))
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+            quench_runtime::native_link::checked_output(&mut run, "image dump")?;
+            let raw = fs::read(&raw_path).map_err(|error| error.to_string())?;
+            let dump = super::image_dump::finish(&raw, &keep_statics, &keep_tls, &initial, &tls_initial)?;
+            summary.push(json!({"raw_bytes": raw.len(), "bytes": dump.len()}));
+            dumps.push(dump);
+        }
+        Ok((dumps, json!(summary)))
+    })();
+    match dumped {
+        Ok((dumps, summary)) => {
+            report["dump"] = json!({"status": "prepared", "runs": summary});
+            dumps
+        }
+        Err(error) => {
+            report["dump"] = json!({"status": "unavailable", "diagnostic": error});
+            Vec::new()
+        }
+    }
+}
+
 fn compile(options: Options) -> Result<(), String> {
     let entry = options
         .entry
@@ -478,12 +640,16 @@ fn compile(options: Options) -> Result<(), String> {
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
+    let dumps = dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
         report["symbol_audit_stage"] = json!("before_symbol_removal");
         report["binary_bytes"] = json!(payload.binary_bytes);
         report["payload_reduction"] = json!(payload);
+    }
+    if !dumps.is_empty() {
+        super::image_dump::append(&staged, &dumps)?;
     }
     report["native_dependencies"] = json!(native_dependencies(&staged)?);
     report["status"] = json!("compiled");
