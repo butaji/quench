@@ -341,15 +341,15 @@ pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
 fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
     (function, calls, invalidation): (u32, RegionCalls, Invalidation), base: bool) -> Option<Option<PendingOsrRegion>> {
     let base_only = crate::compiled::admission::stencil_only();
-    // A b-jit region the default mode picked that BaseJIT declines falls to Cranelift.
-    if !base || region.inlining.is_some() {
-        return base_only.then_some(None);
-    }
+    // A u-jit region lowers in Cranelift. A b-jit region BaseJIT declines is declined here, in every mode: the default
+    // mode compiles the site again as a u-jit region, from the u-jit region's own inputs (`loop_compile_in_lane`).
+    if !base { return base_only.then_some(None); }
+    if region.inlining.is_some() { return Some(None); }
     let registers = known.program.function(function as usize).registers;
     let spec = BodySpec { function, registers, known, realm: Some(calls.realm), widened, seen: observation.entry_types, kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
-    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
+    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return Some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }

@@ -1953,10 +1953,10 @@ impl LaneStack {
     /// Whether the lane admits activating a script callee of `program` with no link to prove
     /// it (a getter, a native's callback, a body's call): script calls allowed, no construction
     /// pending and `program` the active one, in one compare of the admission word, the same
-    /// word every link's admission is compared with.
+    /// word every link's admission is compared with; the diagnostics bit (`Admission::DIAGNOSED`) refuses only proved links.
     #[inline(always)]
     pub(crate) fn admits_program(&self, program: ProgramId) -> bool {
-        self.admission.0 >> Admission::PROGRAM_SHIFT == program.raw() as u64
+        (self.admission.0 & !Admission::DIAGNOSED) >> Admission::PROGRAM_SHIFT == program.raw() as u64
     }
 
     /// Whether any condition refuses every unlinked activation (`Admission::CONDITIONS`).
@@ -6847,9 +6847,13 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only: base_only || base_first, callees_compiling }) {
             // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
             crate::compiled::admission::LaneRoute::Base => {
-                let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
-                let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
-                return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
+                let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
+                match vm.base_unit_or_outcome(code, function, parameters, own) {
+                    Ok(unit) => return vm.base_body_work(unit, code, function, generic, parameters, own, &direct),
+                    // A body the stencil tier refuses in default starts on the tier above it, never stays in the lane.
+                    Err(_) if base_first => own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: false, promoted: true, ..own.tier().history.get() }),
+                    Err(outcome) => return outcome,
+                }
             }
             crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,
             crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
@@ -6858,8 +6862,10 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         let started: Option<Vec<crate::compiled::LaneExit>> = match &work { crate::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
         let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
         // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
-        // b-jit, so a function it would not beat takes the stencil body, stitched at once.
-        if let (crate::compiled::LaneBodyOutcome::Base, Some(generic)) = (&outcome, &started) {
+        // b-jit, so a function it would not beat takes the stencil body, stitched at once. A body
+        // promoted from b-jit whose u-jit compile is refused goes back to b-jit, never down to the lane.
+        let back_to_base = matches!(outcome, crate::compiled::LaneBodyOutcome::Unpaid | crate::compiled::LaneBodyOutcome::Short | crate::compiled::LaneBodyOutcome::Declined) && own.tier().history.get().promoted && crate::compiled::admission::stencil_below();
+        if let Some(generic) = &started && (matches!(outcome, crate::compiled::LaneBodyOutcome::Base) || back_to_base) {
             let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
             return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }

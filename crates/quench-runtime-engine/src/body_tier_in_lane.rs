@@ -218,7 +218,12 @@ impl LaneView {
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
     pub(crate) fn warmup_entries(&self) -> u32 {
-        u32::from(self.tiers.lane_body.warmup()) << self.tier().history.get().lifetimes.min(MAX_DOUBLINGS)
+        let history = self.tier().history.get();
+        // The default mode starts a body on b-jit (`specialize_in_lane`), whose stitch warms as `--b-jit`'s does, where
+        // the function has no loop: a loop tiers on its own, b-jit region first, then u-jit once its iterations repay it,
+        // and a b-jit body stitched early would run that loop at b-jit's speed in place of its u-jit region.
+        let warmup = if !history.promoted && self.loops.is_empty() && !self.tiers.admits_all && crate::compiled::admission::stencil_below() { self.tiers.lane_body.base_warmup() } else { self.tiers.lane_body.warmup() };
+        u32::from(warmup) << history.lifetimes.min(MAX_DOUBLINGS)
     }
 
     /// The bytecodes one entry runs in the interpreter inside its loops: each loop that runs in no

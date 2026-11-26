@@ -1779,6 +1779,18 @@ pub struct LoopTier {
     /// The entries up to which the site is known to repay its native code (`LoopSite::settle`):
     /// the iterations only add, so until the entries pass this count the check is not due.
     pub settle_at: u64,
+    /// The current code's native runs and those that left inside the loop: what the u-jit region a
+    /// promotion publishes is measured against (`LoopTier::weigh_run`).
+    pub tier_runs: u32,
+    pub tier_left: u32,
+    /// The b-jit region's share of runs that left, per mille, measured when the u-jit region took its
+    /// place; none before a promotion publishes.
+    pub base_left_permille: Option<u32>,
+    /// Whether the u-jit region left more often than the b-jit region it replaced: the site keeps the
+    /// b-jit region from then on (`loop_model::base_region` is not asked again).
+    pub demoted: bool,
+    /// Whether BaseJIT declined the site's b-jit region in the default mode: the site compiles u-jit regions only.
+    pub stencil_declined: bool,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's

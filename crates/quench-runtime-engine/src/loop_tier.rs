@@ -20,11 +20,34 @@ impl LoopTier {
         self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
         self.fruitless = if left && backedges == 0 { self.fruitless.saturating_add(1) } else { 0 };
+        self.tier_runs = self.tier_runs.saturating_add(1);
+        self.tier_left = self.tier_left.saturating_add(u32::from(left));
+        if self.demotes(tiers) {
+            // Measured: the u-jit region leaves more often than the b-jit region it replaced, so each of its
+            // runs pays more exits than its code saves. The site goes back to b-jit for good.
+            self.demoted = true;
+            self.base = true;
+            self.promote_at = None;
+            if let Some(code) = self.code.take() { code.retire(); }
+        }
         if self.fruitless >= tiers.loops.widen_after_leaves {
             self.compilations = tiers.loops.max_compilations;
             if let Some(code) = self.code.take() { code.retire(); }
         }
         self.promote(tiers);
+    }
+
+    /// The run share that left inside the loop, per mille, of the current code's runs.
+    fn left_permille(&self) -> u32 {
+        (u64::from(self.tier_left) * quench_runtime::vm::tier_policy::PER_MILLE / u64::from(self.tier_runs.max(1))) as u32
+    }
+
+    /// Whether the u-jit region a promotion published has left more often than the b-jit region it
+    /// replaced (`base_left_permille`), over a window of `loops.warmup_taken` runs, where a compilation remains.
+    fn demotes(&self, tiers: &Tiers) -> bool {
+        let Some(base) = self.base_left_permille else { return false };
+        !self.base && !self.demoted && self.compilations < tiers.loops.max_compilations
+            && self.tier_runs >= tiers.loops.warmup_taken && self.left_permille() > base
     }
 
     /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations reach
@@ -224,6 +247,9 @@ impl LoopTier {
     fn publish(&mut self, vm: &mut Vm, region: crate::compiled::CompiledOsrRegion) {
         // A promoted site's stencil code goes as the u-jit region takes its place.
         if let Some(replaced) = self.code.take() { replaced.retire(); }
+        // The b-jit region's measured exits, which the u-jit region taking its place is held to (`demotes`).
+        if self.promoting { self.base_left_permille = Some(self.left_permille()); }
+        (self.tier_runs, self.tier_left) = (0, 0);
         self.promoting = false;
         self.code = Some({ let (mut facts, programs) = vm.fact_watch(); programs.publish_region(region, &mut facts) });
     }
@@ -283,10 +309,10 @@ pub(crate) fn loop_compile_in_lane(
     machine.keep_slot_representations();
     // The tier of this compile: b-jit first, u-jit once the loop's native iterations repay it (`base_region`).
     // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
-    let base = region.stencil_only || crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(), tier.iterations);
+    let base = compiles_base(machine.programs.tiers(), site, region, tier);
     tier.base = base && !crate::compiled::admission::stencil_regions();
     let _mark = quench_runtime::trace::CompileMark::begin(if base { "b-jit" } else { "u-jit" }, "region", site.function(), u32::from(region.header));
-    tier.promote_at = crate::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span()).filter(|_| !region.stencil_only);
+    tier.promote_at = promotion_at(machine.programs.tiers(), site, region, tier);
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = crate::compiled::process_lane_helpers();
@@ -333,7 +359,35 @@ pub(crate) fn loop_compile_in_lane(
         machine.programs.note_pending_native_calls(&watch, callees);
     }
     machine.host.after_native_compilation();
+    // BaseJIT declined the default mode's b-jit region: the site compiles again at once as a u-jit region, from the
+    // u-jit region's own inputs (its online facts, its direct callees), never the b-jit region's.
+    if recompiles_ultra(region, tier, [base, started.is_none(), admitted.is_some()]) {
+        drop(_mark);
+        return loop_compile_in_lane(cx, r, site, region, tier, number_arrays, int_entries, typed_captures, int_captures);
+    }
     tier.start(started, machine, site);
+}
+
+/// Whether the site's next compile is a b-jit region: the stencil tier's own loop, a demoted site (`LoopTier::demoted`),
+/// or one not yet repaid at u-jit (`loop_model::base_region`); a site BaseJIT declined in the default mode compiles as a
+/// u-jit region (`LoopTier::stencil_declined`).
+fn compiles_base(tiers: &quench_runtime::vm::tier_policy::Tiers, site: &LoopSite, region: &crate::compiled::LoopRegion, tier: &LoopTier) -> bool {
+    region.stencil_only || (!tier.stencil_declined && (tier.demoted || crate::compiled::loop_model::base_region(tiers, site.span(), tier.iterations)))
+}
+
+/// The iterations at which the site's b-jit region moves to u-jit (`loop_model::promotion_taken`): never for the stencil
+/// tier's own loop, nor for a demoted site, which keeps its b-jit region (`LoopTier::demotes`).
+fn promotion_at(tiers: &quench_runtime::vm::tier_policy::Tiers, site: &LoopSite, region: &crate::compiled::LoopRegion, tier: &LoopTier) -> Option<u64> {
+    crate::compiled::loop_model::promotion_taken(tiers, site.span()).filter(|_| !region.stencil_only && !tier.demoted)
+}
+
+/// Whether a site whose b-jit region BaseJIT declined compiles again as a u-jit region: in the default mode, once
+/// (`LoopTier::stencil_declined`, which it sets), where the loop is not the stencil tier's alone.
+fn recompiles_ultra(region: &crate::compiled::LoopRegion, tier: &mut LoopTier, [base, unstarted, admitted]: [bool; 3]) -> bool {
+    use crate::compiled::admission::{stencil_regions, tier_runs, Tier};
+    let recompiles = base && unstarted && admitted && !region.stencil_only && !tier.stencil_declined && !stencil_regions() && tier_runs(&[Tier::Ultra]);
+    tier.stencil_declined |= recompiles;
+    recompiles
 }
 
 /// The calls of `function` that a BaseJIT region of it may inline: the callees its call sites

@@ -329,6 +329,13 @@ impl LaneBody {
     pub fn warmup(&self) -> u16 {
         if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
     }
+
+    /// The entries before a body's first attempt where the stencil tier serves it first: under
+    /// `--b-jit`, and in the default mode until its b-jit body is promoted to u-jit
+    /// (`LaneBodyHistory::base_first`), since a stitch costs a fiftieth of a compile.
+    pub fn base_warmup(&self) -> u16 {
+        self.base_entries
+    }
 }
 
 impl Tiers {
