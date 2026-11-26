@@ -3366,6 +3366,12 @@ unsafe fn binary_values_classified(
 ) -> Option<Value> {
     match unsafe { vm(cx) }.number_binary_classified(operator, left, right, pair) {
         Some(value) => Some(value),
+        // Two strings ordered (`a < b` over string keys, a sort's comparator): their texts decide it
+        // before the BigInt, immediate and relation probes, which would only decline them.
+        None if left.is_heap() && right.is_heap()
+            && (STRICT_INEQUALITY_OPERATOR + 1..=quench_runtime::vm::operations::LAST_COMPARISON_OPERATOR).contains(&operator)
+            && let Some(holds) = unsafe { vm(cx) }.string_relation(operator, left, right) =>
+            Some(if holds { Value::TRUE } else { Value::FALSE }),
         // Two BigInts ordered (`a < b` over BigInt keys): their cells decide it before the string and
         // immediate probes, which would only decline them.
         None if left.is_heap() && right.is_heap() && let Some(holds) = unsafe { vm(cx) }.bigint_relation(operator, left, right) =>
