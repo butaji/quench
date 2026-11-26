@@ -196,6 +196,9 @@ setting! {
         /// Emitted direct calls take the helper row instead of pushing native headers
         /// (one-frame-one-call.md F5), which is the default: to compare against the old path.
         NoNativeFrames = "no-native-frames",
+        /// No compiled body is audited against the interpreter (`lane_body_audit`): every entry runs the
+        /// body, so a profile measures the body itself.
+        KeepBodies = "keep-bodies",
         /// Every expensive fallback (a refused compile, a helper call, a deopt, an opaque native
         /// in compiled code) stops the process naming its operation and source location;
         /// `=report` lists them all at exit instead, `=deopt+helper-call` stops at those kinds

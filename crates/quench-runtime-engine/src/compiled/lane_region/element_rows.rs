@@ -194,7 +194,9 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(dense);
         self.row_arm(state, (row, destination, exit, join));
         self.builder.switch_to_block(typed);
-        let arms = self.typed_arms(&entry, bits, (row, destination, exit, join));
+        // The kind the interpreter's record observed (`body_views::typed_reads`) proves the view for that kind alone.
+        let kind = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new);
+        let arms = self.typed_arms(&entry, (bits, kind), (row, destination, exit, join));
         self.builder.switch_to_block(join);
         // A register whose arms each made their own tagged word (the key's, beside its int32) is tagged again past the
         // join, as one arm leaves it: a later join with a tagged arm needs it current.
@@ -216,9 +218,9 @@ impl Lowering<'_, '_> {
     /// The arms of `row_or_typed` past its direct array test, each from `entry`: the row over the typed view proved here
     /// (`Held::TypedValues`); a base that is no typed array leaves at `exit` for a read (as the row's array proof would),
     /// and takes the row's VM store for a write. The arms' states.
-    fn typed_arms(&mut self, entry: &State, bits: ir::Value, (row, destination, exit, join): (Operation<ir::Value, EmitProof>, Option<Register>, ir::Block, ir::Block)) -> Vec<State> {
+    fn typed_arms(&mut self, entry: &State, (bits, kind): (ir::Value, Option<quench_runtime::staged::typed_elements::NativeKind>), (row, destination, exit, join): (Operation<ir::Value, EmitProof>, Option<Register>, ir::Block, ir::Block)) -> Vec<State> {
         let other = if destination.is_some() { exit } else { self.builder.create_block() };
-        let view = self.typed_view_here(bits, destination.is_none(), other, destination.is_some());
+        let view = self.typed_view_here((bits, kind), destination.is_none(), other, destination.is_some());
         let held = self.held_view.replace(frame_elements::Held::TypedValues(view));
         let mut arms = vec![entry.clone()];
         self.row_arm(&mut arms[0], (row, destination, exit, join));
@@ -234,13 +236,14 @@ impl Lowering<'_, '_> {
     /// The view of the typed array `bits` (of any native kind), proved here as a loop's entering edge
     /// proves it (`hoist_typed_view`): a base no loop array holds, which the dense row declined.
     /// Unpublished, a view is the VM's to publish (`hoist_typed_view`'s slow arm), else `miss` is taken at once.
-    fn typed_view_here(&mut self, bits: ir::Value, writable: bool, miss: ir::Block, publish: bool) -> TypedView<ir::Value> {
+    fn typed_view_here(&mut self, (bits, kind): (ir::Value, Option<quench_runtime::staged::typed_elements::NativeKind>), writable: bool, miss: ir::Block, publish: bool) -> TypedView<ir::Value> {
         let mut declare = |ty| self.builder.declare_var(ty);
         let variables = ArrayVariables { bits: declare(types::I64), values: declare(types::I64), length: declare(types::I64), kind: declare(types::I64), room: declare(types::I32) };
-        let access = ViewAccess { kind: None, writable };
+        let access = ViewAccess { kind, writable };
         if publish { self.hoist_typed_view(access, bits, variables, miss) } else { self.prove_typed_view_into(variables, bits, access, miss) }
         let mut used = |variable| self.builder.use_var(variable);
-        TypedView { values: used(variables.values), length: used(variables.length), kind: ViewKind::Dynamic(used(variables.kind)), within: false }
+        let kind = match kind { Some(native) => ViewKind::Static(native), None => ViewKind::Dynamic(used(variables.kind)) };
+        TypedView { values: used(variables.values), length: used(variables.length), kind, within: false }
     }
 
     /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.

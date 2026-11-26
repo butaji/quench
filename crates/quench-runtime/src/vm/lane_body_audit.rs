@@ -83,7 +83,8 @@ impl LaneView {
     #[inline(always)]
     pub fn audit_entry(&self, counts_interpreted: bool, recursive: impl FnOnce() -> bool) -> bool {
         let mut history = self.tier().history.get();
-        if history.audit.done {
+        // `QUENCH_DEV=keep-bodies` runs every entry in the body, so a body's own cost can be measured.
+        if history.audit.done || crate::trace::Dev::KeepBodies.on() {
             return false;
         }
         // Another body's audit runs: this entry runs the body, uncounted, until it ends.
