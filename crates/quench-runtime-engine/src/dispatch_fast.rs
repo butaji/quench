@@ -832,6 +832,12 @@ fn requicken(ip: Ip, handler: Handler) {
         if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
             return;
         }
+        // A numeric local target's row (`FLAG_LOCAL_RESULT`) is the only row that reads such an `a`: any other
+        // handler the record would take is the general step.
+        if is_local_result_row((*ip).handler) && !is_local_result_row(handler as *const ()) {
+            (*ip.cast_mut()).handler = general_step_in_lane as Handler as *const ();
+            return;
+        }
         (*ip.cast_mut()).handler = handler as *const ();
     }
 }
@@ -2162,6 +2168,26 @@ unsafe fn frame_locals(cx: *mut ()) -> (*mut Value, usize) {
         // A job's activations run in no frame (`LaneRoot::Job`).
         root.frame().map_or((std::ptr::null_mut(), 0), |frame| (frames[frame].locals.as_mut_ptr(), frames[frame].locals.len()))
     })
+}
+
+/// The frame slot `local` a numeric local target writes (`WideInstruction::numeric_local_target`), as the
+/// VM's completion writes it (`Vm::run_row_completed`, the frame's own locals): in a frame run only (its
+/// registers hold the deleted environment marker), not a root body's. `None` elsewhere: a frameless
+/// activation's slot is the general step's.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+pub(crate) unsafe fn numeric_local_slot(cx: *mut LaneContext, local: u16) -> Option<*mut Value> {
+    if !unsafe { (*cx).registers }.env().is_deleted() {
+        return None;
+    }
+    let vm = unsafe { vm(cx) };
+    let frame = &mut vm.frames[unsafe { (*cx).frame() }];
+    if frame.function == ROOT_FUNCTION_ID {
+        return None;
+    }
+    frame.locals.get_mut(usize::from(local)).map(std::ptr::from_mut)
 }
 
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
@@ -16390,6 +16416,37 @@ fn binding_step_in_lane(decoded: &[WideInstruction], pc: usize) -> bool {
         && pc + BINDING_VALUE_READ + 1 < decoded.len()
 }
 
+/// The row of a `Binary` or `NumericAdd` record whose only result flag is a numeric local target
+/// (`FLAG_LOCAL_RESULT`), at accumulator field `acc`; `None` for any other record.
+fn local_result_row(instruction: WideInstruction, acc: u8) -> Option<Handler> {
+    if instruction.result_flags() != quench_runtime::bytecode::NUMERIC_LOCAL_TARGET || !instruction.writes_numeric_local() {
+        return None;
+    }
+    macro_rules! at {
+        ($op:expr) => {
+            match acc {
+                ACC_NONE => generated_row!($op, ACC_NONE, lane_frame::FLAG_LOCAL_RESULT) as Handler,
+                ACC_B => generated_row!($op, ACC_B, lane_frame::FLAG_LOCAL_RESULT) as Handler,
+                _ => generated_row!($op, ACC_C, lane_frame::FLAG_LOCAL_RESULT) as Handler,
+            }
+        };
+    }
+    match instruction.op() as u16 {
+        quench_runtime::staged::BINARY_ROW => Some(at!(quench_runtime::staged::BINARY_ROW)),
+        quench_runtime::staged::NUMERIC_ADD_ROW => Some(at!(quench_runtime::staged::NUMERIC_ADD_ROW)),
+        _ => None,
+    }
+}
+
+/// Whether `handler` is a numeric local target's row (`local_result_row`).
+fn is_local_result_row(handler: *const ()) -> bool {
+    [quench_runtime::staged::BINARY_ROW, quench_runtime::staged::NUMERIC_ADD_ROW].into_iter().any(|op| {
+        let instruction = WideInstruction::new(quench_runtime::bytecode::Op::from_index(usize::from(op)).unwrap(),
+            quench_runtime::bytecode::NUMERIC_LOCAL_TARGET, 0, 0, 0);
+        [ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| local_result_row(instruction, acc).is_some_and(|row| row as *const () == handler))
+    })
+}
+
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
 /// (`row_get_field_sink`).
 fn sinks_field_in_lane(instruction: WideInstruction) -> bool {
@@ -16642,7 +16699,9 @@ fn derive_lane_view<'live>(
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
                 if flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ()) {
-                    LaneHandler { handler: general_step_in_lane, ..chosen }
+                    // A Number row whose only flag is a numeric local target moves its result to the slot itself.
+                    let handler = local_result_row(instruction, acc).unwrap_or(general_step_in_lane);
+                    LaneHandler { handler, ..chosen }
                 } else {
                     chosen
                 }
