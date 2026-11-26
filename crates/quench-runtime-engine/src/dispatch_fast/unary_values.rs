@@ -71,6 +71,9 @@ fn unary_query(vm: &mut Vm, operator: u32, operand: Value) -> Option<Value> {
     if let Some(elements) = quench_runtime::bytecode::array_pattern_test(operator) {
         return Some(Value::boolean(vm.array_pattern_fits(operand, elements)));
     }
+    if operator == quench_runtime::bytecode::UNARY_FRESH_ARRAY_PATTERN {
+        return Some(Value::boolean(vm.fresh_array_pattern_fits()));
+    }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);
         // Interning the type's name can allocate.

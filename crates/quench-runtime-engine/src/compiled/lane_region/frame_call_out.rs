@@ -146,18 +146,22 @@ fn leave(stage: &mut Emit<'_, '_>, miss: ir::Block) -> (ir::Value, RegisterFact)
 
 /// The projection of the global object's arena run behind its extras, and the object's tagged
 /// word: its record by id, the realm and the layout proved by dependencies the lowering took.
-fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fact): (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
+/// The block's proof of it, where an earlier access made one (`LocalProofs::global`), is reused.
+fn global_layout(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fact): (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
     -> Option<(CheckedObject, ir::Value)> {
-    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let bits = stage.constant(cell.global.to_bits());
+    if let Some((kept, len)) = frame.state.proofs.global && kept.fact() == fact && len == cell.storage_len { return Some((kept, bits)); }
+    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
     let inline = inline_storage(stage.builder, address);
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
-    Some((CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?, bits))
+    let layout = CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?;
+    frame.state.proofs.global = Some((layout, cell.storage_len));
+    Some((layout, bits))
 }
 
 /// The tagged word of the global's slot `held` names, read live under the layout the lowering holds.
-pub(crate) fn global_slot_read(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
+pub(crate) fn global_slot_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
     -> Option<ir::Value> {
     let (layout, _) = global_layout(frame, stage, held, miss)?;
     let address = layout.arena_address(stage.builder, held.0.slot, miss)?;
@@ -193,5 +197,7 @@ pub(crate) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     site_step(frame, stage, frame.call_out?, false, None)?;
     stage.jump(done, &[]);
     stage.builder.switch_to_block(done);
+    // The VM's store may have moved the property arena.
+    frame.state.proofs.global = None;
     Some(())
 }
