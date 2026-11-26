@@ -144,9 +144,9 @@ impl Lowering<'_, '_> {
         let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::performed(**instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })))
             .filter_map(|(pc, instruction)| {
                 let array = self.loop_array(pc, instruction.operand_b().register_index())?;
-                Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type() })
+                Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type(), kind: None })
             }).collect();
-        let mut reads: Vec<ObservedRead> = self.observed.0.iter().filter(|read| typed.iter().all(|seed| seed.pc != read.pc))
+        let mut reads: Vec<ObservedRead> = self.observed.0.iter().filter(|read| read.ty != quench_runtime::typed_ir::Type::ANY && typed.iter().all(|seed| seed.pc != read.pc))
             .copied().chain(typed.iter().copied()).collect();
         reads.sort_by_key(|read| read.pc);
         reads
