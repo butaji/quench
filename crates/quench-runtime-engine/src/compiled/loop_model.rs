@@ -51,7 +51,7 @@ pub(crate) fn admission_taken(tiers: &Tiers, span: u64) -> u32 {
 /// beyond the entries' region entries, in ns, the prior's `prior_runs` entries credited as having
 /// repaid themselves. Negative where the entries cost more than the iterations save.
 fn spare_ns(priors: &Priors, loops: &Loops, span: u64, entries: u64, iterations: u64) -> i128 {
-    let entry_ns = i128::from(priors.region_entry_ns);
+    let entry_ns = i128::from(entry_ns(priors));
     let credit = i128::from(loops.prior_runs) * entry_ns;
     i128::from(iterations) * i128::from(saved_per_iteration(priors, span)) + credit - i128::from(entries) * entry_ns
 }
@@ -61,7 +61,34 @@ fn spare_ns(priors: &Priors, loops: &Loops, span: u64, entries: u64, iterations:
 /// more. Iterations only add, so until the entries pass this count the site keeps entering.
 pub(crate) fn repaid_entries(tiers: &Tiers, span: u64, entries: u64, iterations: u64) -> Option<u64> {
     let spare = u64::try_from(spare_ns(&tiers.priors, &tiers.loops, span, entries, iterations)).ok()?;
-    Some(spare.checked_div(tiers.priors.region_entry_ns).unwrap_or(u64::MAX))
+    Some(spare.checked_div(entry_ns(&tiers.priors)).unwrap_or(u64::MAX))
+}
+
+/// What entering a loop region and leaving it costs, in ns: the mean of the sites' fitted entries in compiled
+/// bytecodes (`note_site_entry`) at the prior's compiled ns per bytecode, never below the prior's `region_entry_ns`
+/// (TOD-2194: entries measured ~2,000-2,400 instructions on R-tree against the prior's ~470).
+pub(crate) fn entry_ns(priors: &Priors) -> u64 {
+    let [sites, sum] = SITE_ENTRIES.each_ref().map(|sum| sum.load(std::sync::atomic::Ordering::Relaxed));
+    if sites < MIN_SITES { return priors.region_entry_ns; }
+    (sum / sites * priors.interpreter_ns * priors.body_share / PER_MILLE).max(priors.region_entry_ns)
+}
+
+/// The sites whose entry was fitted (`note_site_entry`), and the sum of their entries in compiled bytecodes.
+static SITE_ENTRIES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
+/// The fitted sites before their mean replaces the prior.
+const MIN_SITES: u64 = 4;
+/// The entry a site's fit is held to, in compiled bytecodes: past it the fit is the noise of a few runs, not a
+/// cost (an entry is a few thousand instructions, a compiled bytecode a few).
+const MAX_ENTRY_BYTECODES: f64 = 10_000.0;
+
+/// Notes the fitted entry of a site `span` bytecodes long, `iterations` of its own (`RunStats::entry_iterations`),
+/// once its code's timed runs are in (`LoopTier::weigh_time`).
+pub(crate) fn note_site_entry(iterations: f64, span: u64) {
+    let bytecodes = (iterations * span as f64).clamp(0.0, MAX_ENTRY_BYTECODES) as u64;
+    for (sum, add) in SITE_ENTRIES.iter().zip([1, bytecodes]) {
+        sum.fetch_add(add, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// The iterations after which a loop body whose iterations work through `work` bytecodes pays
@@ -130,6 +157,17 @@ pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
     // Its IR is the region compiles' measured ratio over the span (`lane_facts::measured_ir_per_bytecode`).
     let outlay = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
     Some((outlay / gain + 1).saturating_mul(priors.remaining_divisor))
+}
+
+/// The interpreted iterations after which a u-jit region of a loop `span` bytecodes long repays its whole compile and
+/// its entry over the interpreter, where BaseJIT declined the b-jit region (`loop_tier::recompiles_ultra`): the
+/// ski-rental point, where the iterations run so far (and so, by the Lindy prior, those to come) cover the compile.
+/// Unpriced, radix compiled a u-jit region at every declined site; refused for good, a hot loop stayed interpreted.
+pub(crate) fn ultra_region_taken(tiers: &Tiers, span: u64) -> u64 {
+    if tiers.admits_all { return 0; }
+    let priors = &tiers.priors;
+    let compile = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
+    body_required_taken(priors, saved_per_iteration(priors, span), entry_ns(priors).saturating_add(compile))
 }
 
 /// Whether a loop running a b-jit region in the default mode moves to a u-jit region after

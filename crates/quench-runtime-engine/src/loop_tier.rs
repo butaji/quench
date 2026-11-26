@@ -15,8 +15,8 @@ impl LoopTier {
     /// exit. Runs that each leave before their first backward edge, `widen_after_leaves` in a row, pay their entry
     /// for nothing: the code goes and the site compiles no more, so its backward jump stays the interpreter's.
     /// A run that keeps the code may move it to u-jit (`promote`).
-    pub(crate) fn weigh_run(&mut self, tiers: &Tiers, backedges: u64, left: bool, timed_ns: Option<u64>) {
-        if let Some(ns) = timed_ns { self.weigh_time(ns, backedges); }
+    pub(crate) fn weigh_run(&mut self, tiers: &Tiers, span: u64, backedges: u64, left: bool, timed_ns: Option<u64>) {
+        if let Some(ns) = timed_ns { self.weigh_time(tiers, span, ns, backedges); }
         self.runs = self.runs.saturating_add(1);
         self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
@@ -39,15 +39,15 @@ impl LoopTier {
     }
 
     /// Weighs a sampled run of the current code that took `ns` for `backedges` iterations, entry and exit included
-    /// (TOD-2295): a u-jit region slower per iteration than the b-jit region it replaced, both timed the same way,
-    /// goes back to b-jit for good.
-    fn weigh_time(&mut self, ns: u64, backedges: u64) {
-        self.native = (self.native.0.saturating_add(ns), self.native.1.saturating_add(backedges.max(1)));
-        let Some(native) = self.measured_native() else { return };
-        if quench_runtime::trace::Channel::JsJit.on() && self.tier_runs == TIMED_RUNS * RUN_SAMPLE {
-            eprintln!("QUENCH_LOOP_TIMED ns_per_iteration={native} b_jit_ns={:?} b_jit={} iterations={}", self.base_ns_per_iteration, self.base, self.native.1);
-        }
-        if self.base_ns_per_iteration.is_some_and(|base| native > base) && !self.base && !self.demoted {
+    /// (TOD-2295): a u-jit region that Welch's test finds slower per iteration than the b-jit region it replaced,
+    /// both timed the same way, goes back to b-jit for good. A single sample decides nothing: the test needs
+    /// `TIMED_RUNS` runs of each and a difference past `SLOWER_BY` standard errors.
+    fn weigh_time(&mut self, tiers: &Tiers, span: u64, ns: u64, backedges: u64) {
+        self.native.add(ns, backedges);
+        if self.native.runs < TIMED_RUNS { return; }
+        if self.native.runs == TIMED_RUNS { self.note_timed(tiers, span); }
+        let slower = self.base_runs.is_some_and(|base| base.runs >= TIMED_RUNS && self.native.slower_by(&base) > SLOWER_BY);
+        if slower && !self.base && !self.demoted {
             self.demoted = true;
             self.base = true;
             self.promote_at = None;
@@ -55,9 +55,12 @@ impl LoopTier {
         }
     }
 
-    /// The current code's ns per iteration, once `TIMED_RUNS` sampled runs measure it.
-    fn measured_native(&self) -> Option<u64> {
-        (self.tier_runs >= TIMED_RUNS * RUN_SAMPLE).then(|| self.native.0 / self.native.1.max(1))
+    /// Notes the site's fitted entry once its code's timed runs are in, and reports them under `QUENCH_TRACE=js-jit`.
+    fn note_timed(&self, tiers: &Tiers, span: u64) {
+        if let Some(entry) = self.native.entry_iterations() { crate::compiled::loop_model::note_site_entry(entry, span); }
+        if !quench_runtime::trace::Channel::JsJit.on() { return; }
+        eprintln!("QUENCH_LOOP_TIMED ns_per_iteration={:.0} log_error={:.2} b_jit_ns={:?} b_jit={} entry_ns={}", self.native.ns_per_iteration(), self.native.mean_variance().sqrt(),
+            self.base_runs.map(|base| base.ns_per_iteration() as u64), self.base, crate::compiled::loop_model::entry_ns(&tiers.priors));
     }
 
     /// Whether the site times the current code's next run (`weigh_time`): every `RUN_SAMPLE`th, while it may
@@ -277,8 +280,8 @@ impl LoopTier {
         // A promoted site's stencil code goes as the u-jit region takes its place.
         if let Some(replaced) = self.code.take() { replaced.retire(); }
         // The b-jit region's measured exits, which the u-jit region taking its place is held to (`demotes`).
-        if self.promoting { self.base_left_permille = Some(self.left_permille()); self.base_ns_per_iteration = self.measured_native(); }
-        (self.tier_runs, self.tier_left, self.native) = (0, 0, (0, 0));
+        if self.promoting { self.base_left_permille = Some(self.left_permille()); self.base_runs = Some(self.native); }
+        (self.tier_runs, self.tier_left, self.native) = (0, 0, Default::default());
         self.promoting = false;
         self.code = Some({ let (mut facts, programs) = vm.fact_watch(); programs.publish_region(region, &mut facts) });
     }
@@ -286,12 +289,29 @@ impl LoopTier {
 
 /// The runs one timed sample stands for (`LoopTier::times_run`).
 const RUN_SAMPLE: u32 = 4;
-/// The samples that measure a cost per iteration.
+/// The timed runs of a tier before its cost is compared.
 const TIMED_RUNS: u32 = 16;
+/// The standard errors by which a u-jit region must be slower than its b-jit region to go back (one-sided 97.5%).
+const SLOWER_BY: f64 = 2.0;
 
 /// The process clock in ns (virtual under the virtual clock, so a run repeats), 0 where unavailable.
-pub(crate) fn clock_ns() -> u64 {
+fn clock_ns() -> u64 {
     quench_runtime::clock::monotonic_ns().map_or(0, |ns| ns as u64)
+}
+
+/// A timed run's start: the clock, and the compiles begun by then (`trace::compiles_begun`).
+pub(crate) struct Timing(u64, u64);
+
+impl Timing {
+    pub(crate) fn start() -> Self {
+        Self(clock_ns(), quench_runtime::trace::compiles_begun())
+    }
+
+    /// The run's ns, where no compile began while it ran: one that did measures the compile too, an outlier no
+    /// estimate of the code's cost or of its entry takes in.
+    pub(crate) fn ns(self) -> Option<u64> {
+        (quench_runtime::trace::compiles_begun() == self.1).then(|| clock_ns().saturating_sub(self.0))
+    }
 }
 
 /// Counts a compilation of `site`'s region, in the tier and, with diagnostics, at the site.
@@ -402,7 +422,7 @@ pub(crate) fn loop_compile_in_lane(
     // u-jit region's own inputs (its online facts, its direct callees), never the b-jit region's.
     if recompiles_ultra(region, tier, [base, started.is_none(), admitted.is_some()]) {
         drop(_mark);
-        return loop_compile_in_lane(cx, r, site, region, tier, number_arrays, int_entries, typed_captures, int_captures);
+        return ultra_compile_when_due(cx, r, site, region, tier, (number_arrays, int_entries), (typed_captures, int_captures));
     }
     tier.start(started, machine, site);
 }
@@ -427,6 +447,27 @@ fn recompiles_ultra(region: &crate::compiled::LoopRegion, tier: &mut LoopTier, [
     let recompiles = base && unstarted && admitted && !region.stencil_only && !tier.stencil_declined && !stencil_regions() && tier_runs(&[Tier::Ultra]);
     tier.stencil_declined |= recompiles;
     recompiles
+}
+
+/// Compiles the u-jit region of a site whose b-jit region BaseJIT declined, once it has run long enough to repay the
+/// compile (`loop_model::ultra_region_taken`). One not repaid yet interprets on until it is (`LoopSite::interprets`),
+/// and its next attempt compiles the u-jit region (`compiles_base`, the site being `stencil_declined`).
+#[allow(clippy::type_complexity)]
+fn ultra_compile_when_due(
+    cx: *mut LaneContext,
+    r: Registers,
+    site: &LoopSite,
+    region: &crate::compiled::LoopRegion,
+    tier: &mut LoopTier,
+    (number_arrays, int_entries): (&[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)], &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::IntRange)]),
+    (typed_captures, int_captures): (&[u16], &[u16]),
+) {
+    // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+    let due = crate::compiled::loop_model::ultra_region_taken(unsafe { vm(cx) }.programs.tiers(), site.span());
+    if u64::from(site.taken.get()) >= due {
+        return loop_compile_in_lane(cx, r, site, region, tier, number_arrays, int_entries, typed_captures, int_captures);
+    }
+    site.needed.set(u32::try_from(due).unwrap_or(u32::MAX));
 }
 
 /// The calls of `function` that a BaseJIT region of it may inline: the callees its call sites

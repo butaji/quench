@@ -1791,10 +1791,75 @@ pub struct LoopTier {
     pub demoted: bool,
     /// Whether BaseJIT declined the site's b-jit region in the default mode: the site compiles u-jit regions only.
     pub stencil_declined: bool,
-    /// The current code's timed runs (ns, iterations), and the b-jit region's ns per iteration when a promotion
-    /// replaced it (TOD-2295, `LoopTier::weigh_time`).
-    pub native: (u64, u64),
-    pub base_ns_per_iteration: Option<u64>,
+    /// The current code's timed runs, and the b-jit region's when a promotion replaced it (TOD-2295,
+    /// `LoopTier::weigh_time`).
+    pub native: RunStats,
+    pub base_runs: Option<RunStats>,
+}
+
+/// Timed runs of one tier's code at a loop site: their count, and the sum and sum of squares of each run's log ns per
+/// iteration (entry and exit included). Timing noise multiplies (caches, frequency, a collection), so the logs are
+/// near normal where the raw times are heavy-tailed; the tier's cost and its uncertainty are estimated on them.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RunStats {
+    pub runs: u32,
+    pub sum: f64,
+    pub squares: f64,
+    /// The sums of 1, iterations, ns, their product and the iterations squared: the least-squares line
+    /// ns = entry + iterations x cost of this site's code (`intercept`).
+    pub line: [f64; 5],
+}
+
+/// The fewest runs a sample variance is taken over.
+const MIN_VARIANCE_RUNS: u32 = 2;
+
+impl RunStats {
+    /// Adds a run of `iterations` that took `ns`.
+    pub fn add(&mut self, ns: u64, iterations: u64) {
+        let rate = (ns.max(1) as f64 / iterations.max(1) as f64).ln();
+        self.runs = self.runs.saturating_add(1);
+        self.sum += rate;
+        self.squares += rate * rate;
+        let (x, y) = (iterations as f64, ns as f64);
+        for (sum, add) in self.line.iter_mut().zip([1.0, x, y, x * y, x * x]) { *sum += add; }
+    }
+
+    /// What entering and leaving this site's code costs, in its own iterations: the intercept of its runs' line
+    /// over its slope, where their iterations vary enough to fit one. One line per site, as every site's cost per
+    /// iteration differs (pooled over sites, the slopes' spread lands in the intercept); and a ratio of two times,
+    /// so a slower clock (a profiler, a loaded machine) scales both alike.
+    pub fn entry_iterations(&self) -> Option<f64> {
+        let [n, x, y, xy, xx] = self.line;
+        let spread = n * xx - x * x;
+        if spread <= n * n { return None; }
+        let slope = (n * xy - x * y) / spread;
+        (slope > 0.0).then(|| (y * xx - x * xy) / spread / slope)
+    }
+
+    /// The mean log ns per iteration.
+    fn mean(&self) -> f64 {
+        self.sum / f64::from(self.runs.max(1))
+    }
+
+    /// The typical ns per iteration (the geometric mean).
+    pub fn ns_per_iteration(&self) -> f64 {
+        self.mean().exp()
+    }
+
+    /// The variance of the mean log (the sample variance over the runs, divided by the runs).
+    pub fn mean_variance(&self) -> f64 {
+        let runs = self.runs.max(MIN_VARIANCE_RUNS);
+        let n = f64::from(runs);
+        ((self.squares - self.sum * self.sum / n) / f64::from(runs - 1)).max(0.0) / n
+    }
+
+    /// Welch's statistic for `self` being slower than `other`: the difference of the mean logs over its standard
+    /// error; past about 2 the difference is real at the 97.5% level.
+    pub fn slower_by(&self, other: &RunStats) -> f64 {
+        let error = (self.mean_variance() + other.mean_variance()).sqrt();
+        if error == 0.0 { return if self.mean() > other.mean() { f64::INFINITY } else { 0.0 }; }
+        (self.mean() - other.mean()) / error
+    }
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's

@@ -217,10 +217,20 @@ pub extern "C" fn quench_compile_mark() {
 #[must_use = "the mark ends where it drops"]
 pub struct CompileMark(Option<(&'static str, &'static str, u32, u32)>);
 
+/// The compiles begun in the process (`CompileMark::begin`): a timed run across which it moved shared the machine
+/// with a compile, and measures the compile as much as its code (`LoopTier::weigh_time`).
+static COMPILES_BEGUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The compiles begun so far (`COMPILES_BEGUN`).
+pub fn compiles_begun() -> u64 {
+    COMPILES_BEGUN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl CompileMark {
     /// Begins the mark of a `tier` (`b-jit`, `u-jit`) compile of a `kind` (`region`, `body`,
     /// `plan`) unit of `function` at `pc` (a loop header, or 0 for a whole body).
     pub fn begin(tier: &'static str, kind: &'static str, function: u32, pc: u32) -> Self {
+        COMPILES_BEGUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !Dev::IrMark.on() { return Self(None); }
         let tag = (tier, kind, function, pc);
         print_compile_mark("begin", tag);
