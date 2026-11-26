@@ -84,7 +84,7 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads),
-    fields: &lane_region::FieldSites) -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
+    fields: &lane_region::FieldSites, target: &quench_runtime::vm::jit_backend::NativeTarget) -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
@@ -92,7 +92,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
         global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-    let isa = quench_runtime::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
+    let isa = quench_runtime::vm::jit_backend::ahead_lane_isa(target).ok_or("no lane ISA")?;
     let code = quench_runtime::vm::jit_backend::compile_function(native, &*isa, Some(admitted.code_ceiling()), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).map_err(|rejection| match rejection {
@@ -110,7 +110,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 /// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
 /// `None` where it gives no native record.
 pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
-    (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
+    (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
     let proven = proven_calls(program, &unit, function, calls, symbols);
@@ -121,11 +121,12 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let crosses = crosses_bodies(&unit);
-    let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads), &fields)?;
-    // A lane body that polls and calls enters its callee's body through the VM's call helper, where
-    // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
-    // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
+    let crosses = crosses_bodies(&unit, &proven);
+    let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads), &fields, target)?;
+    // A lane body that polls and makes a call the closed world does not prove enters its callee's body
+    // through the VM's call helper, where the base body binds its callee directly: deltablue's drivers
+    // cost 3.4x the base body as lanes (4.46G -> 15.3G Ir). A proven call reads its callee from the
+    // base body's record (`proven_calls`), so a loop whose every call is proven runs as a lane.
     if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
     Ok(LaneImage { code, fault_poll, exits })
 }
@@ -144,9 +145,10 @@ fn guard_dependencies(image: &AotImage, vm: &mut Vm, code: &RelocatableCode) -> 
         .map(|(shape, slot, ty)| quench_runtime::code_dependencies::SlotDependency { shape, slot, ty }).collect()
 }
 
-/// Whether `unit` may enter another body: a call of any form or a construction that it does not inline (a call whose
-/// frame the unit holds runs in the body; its alternatives' last leaves at the call, as any guard does).
-fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
+/// Whether `unit` may enter another body through the VM's call: a call of any form or a construction
+/// that it neither inlines (a call whose frame the unit holds runs in the body; its alternatives' last
+/// leaves at the call, as any guard does) nor calls through a proven record (`proven`).
+fn crosses_bodies(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     let inlined = |unit_pc: usize| {
         let site = match unit.origins.get(unit_pc) {
@@ -156,7 +158,7 @@ fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
         };
         unit.frames.iter().any(|frame| (frame.parent, frame.call) == site)
     };
-    unit.instructions.iter().enumerate().any(|(unit_pc, instruction)| !inlined(unit_pc)
+    unit.instructions.iter().enumerate().any(|(unit_pc, instruction)| !inlined(unit_pc) && !proven.contains_key(&unit_pc)
         && [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 

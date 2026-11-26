@@ -64,7 +64,7 @@ pub fn lower_native_js_module_for(program: &ResidualProgram, namespace: &str, ta
     }
     let facts = quench_runtime::compile::aot_facts::analyze(program);
     let image = crate::aot_image::lower(program, &facts, target)?;
-    crate::aot_image::object::emit(&image, namespace)
+    crate::aot_image::object::emit(&image, namespace, target)
 }
 
 /// Defines `code` as the already-compiled body of `id`, its relocations named by declaration.
