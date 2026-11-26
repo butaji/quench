@@ -3731,7 +3731,7 @@ fn requicken_typed(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
     // SAFETY: `ip` is a live element record of the view; an element record's operand holds no
     // loop site or call target, so its immediate is free for the kind.
     unsafe { (*ip.cast_mut()).operand.imm = index };
-    let handler = if read { element_typed_read_row() } else { element_typed_write_row() };
+    let handler = element_typed_row(read, index);
     requicken(ip, handler);
 }
 
@@ -4433,11 +4433,49 @@ const FIELD_LEAF_READ: u16 = {
 // merge: HEAD's typed element rows are restored: the shared `requicken_typed` and `row_typed_element` use them.
 pub(crate) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
 
+/// The typed sites whose rows fix the element kind when compiled: the first three native kinds
+/// (`typed_elements::native_kind_at` 0, 1, 2: Float64, Int32, Uint8), the kinds most code indexes. Their
+/// rows read and store with no dispatch on the kind; any other kind's record keeps `TYPED_SITE`, whose
+/// row reads the kind from its immediate.
+pub(crate) const TYPED_FLOAT64_SITE: u8 = own_site(false, OWN_FORMS.len() + 27);
+pub(crate) const TYPED_INT32_SITE: u8 = own_site(false, OWN_FORMS.len() + 28);
+pub(crate) const TYPED_UINT8_SITE: u8 = own_site(false, OWN_FORMS.len() + 29);
+
+/// The native kind index a typed site fixes (`TYPED_FLOAT64_SITE`..), `None` for any other site.
+pub(crate) const fn typed_site_kind(site: u8) -> Option<u32> {
+    match site {
+        TYPED_FLOAT64_SITE => Some(0),
+        TYPED_INT32_SITE => Some(1),
+        TYPED_UINT8_SITE => Some(2),
+        _ => None,
+    }
+}
+
 /// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
 pub(crate) const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
 
 /// The generated typed keyed write (`generated_row` of `ELEMENT_WRITE`, `TYPED_SITE`).
 pub(crate) const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
+
+/// The typed keyed read or write row of the native kind at `index`: a fixed kind's own row
+/// (`typed_site_kind`), else the row that reads the kind from the record.
+pub(crate) const fn element_typed_row(read: bool, index: u32) -> Handler {
+    match (read, index) {
+        (true, 0) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_FLOAT64_SITE),
+        (true, 1) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_INT32_SITE),
+        (true, 2) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_UINT8_SITE),
+        (true, _) => element_typed_read_row(),
+        (false, 0) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_FLOAT64_SITE),
+        (false, 1) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_INT32_SITE),
+        (false, 2) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_UINT8_SITE),
+        (false, _) => element_typed_write_row(),
+    }
+}
+
+/// Whether `handler` is a typed keyed read row (`read`) or write row, of any kind (`element_typed_row`).
+pub(crate) fn is_typed_element_row(handler: *const (), read: bool) -> bool {
+    (0..4).any(|index| element_typed_row(read, index) as *const () == handler)
+}
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
 /// whose generated row (`generated_row`) a store record runs: its hint as a layout store.
