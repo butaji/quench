@@ -121,4 +121,11 @@ pub struct JsStepHead<V> {
     /// refreshed with the other bases, as a callout may move the block list.
     pub array_mark_blocks: usize,
     pub array_mark_block_count: usize,
+    /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
+    /// refreshed with the other record bases, and the address of the process's buffer-relocation count
+    /// (`buffer_relocations_address`): what a typed array's view proof reads
+    /// (`staged::typed_view::TypedRecords`), in a u-jit lowering and a b-jit row alike.
+    pub typed_view_directory: usize,
+    pub typed_view_pages: usize,
+    pub buffer_relocations: usize,
 }

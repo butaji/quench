@@ -7,6 +7,8 @@ use super::dispatch::Interval;
 use super::matcher::Admission;
 use super::{canonical, Inst, Program, Search, StringClass, Text, UnitTest, ASCII_UNITS, MAXIMUM_STACK_FRAMES};
 use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::task::Poll;
 use std::sync::OnceLock;
 
@@ -139,6 +141,19 @@ static COMPILER: OnceLock<NativeCompiler> = OnceLock::new();
 thread_local! {
     /// Whether this thread's programs may compile (`enable_native_search`).
     static ENABLED: Cell<bool> = const { Cell::new(false) };
+    /// The native searches an ahead image holds (`register_ahead`), by pattern (`AheadKey`).
+    static AHEAD: RefCell<HashMap<AheadKey, (NativeFn, Rc<dyn std::any::Any>)>> = RefCell::new(HashMap::new());
+}
+
+/// An ahead search's pattern: its normalized source (`Regex::source`), its flags (`Flags::bits`), and
+/// whether it is the capture-free bounds program (`CompleteMatcher::bounds`) or the search program.
+pub type AheadKey = (Box<str>, u8, bool);
+
+/// Registers an ahead image's native search of a pattern (`AheadKey`) on this thread: a program
+/// of the pattern lowered from now on runs it from its first search, whatever the mode
+/// (`Program::adopt_ahead`), as the code an image's other bodies are.
+pub fn register_ahead(key: AheadKey, entry: NativeFn, keep: Rc<dyn std::any::Any>) {
+    AHEAD.with_borrow_mut(|ahead| ahead.insert(key, (entry, keep)));
 }
 
 /// Lets the programs searched on this thread compile once hot, or not (`--no-jit`).
@@ -170,6 +185,21 @@ const INITIAL_STACK_FRAMES: usize = 1024;
 const STACK_GROWTH: usize = 4;
 
 impl Program {
+    /// The program's native plan for an ahead image, compiled before any program lives: `None`
+    /// where its code would name a live program's address (a class of strings, `NativePlan::classes`).
+    pub(crate) fn ahead_plan(&self) -> Option<NativePlan> {
+        self.classes.is_empty().then(|| self.native_plan())
+    }
+
+    /// Adopts the ahead search registered for this program's pattern (`register_ahead`), where
+    /// there is one: the program's code from its first search, with no tier above it.
+    pub(crate) fn adopt_ahead(&self, key: AheadKey) {
+        let Some((entry, keep)) = AHEAD.with_borrow(|ahead| ahead.get(&key).map(|(entry, keep)| (*entry, Rc::clone(keep)))) else { return };
+        if self.native.code.set(Some(NativeCode { entry, keep: Box::new(keep) })).is_ok() {
+            self.native.settled.set(true);
+        }
+    }
+
     /// The program as a native plan: its instructions and the tables they name.
     fn native_plan(&self) -> NativePlan {
         let starts = self.starts.as_ref().map(|starts| (starts.at_start, starts.at_end, starts.units.table.0));
@@ -214,6 +244,7 @@ impl Program {
     /// run `NativeCompiler::runs` searches; `None` while it has none.
     #[inline(always)]
     fn native_code(&self) -> Option<&NativeCode> {
+
         if let Some(code) = self.native.code.get() {
             if let Some(optimized) = self.native.optimized.get() {
                 return Some(optimized);

@@ -40,26 +40,47 @@ fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register)
 
 /// The PCs a previous body left at: its rows there take the general (tagged) semantics.
 /// A loop's interpreter kernel, run on the loop's entry edge (`LaneHelper::KernelStep`, `base_region::kernel_entries`): the
-/// record at `call_pc`, the loop's head, runs its kernel (`loop_kernel::enter_kernel`) over the frame's registers, as
-/// the interpreter's head does, and the body's rows continue the loop from where it left them. A head the kernel stood
-/// down from, and a body running as a frameless leaf (whose records are its caller's) or under a native callee's frame
-/// (whose window is not the context's), runs nothing here: the rows run the loop.
-pub(super) unsafe extern "C" fn kernel_step_in_lane(vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// record at `call_pc`, the loop's head, runs its kernel (`loop_kernel::enter_kernel`) over the running activation's
+/// registers, as the interpreter's head does, and the body's rows continue the loop from where it left them. A body
+/// running as a native callee runs it in its own frame, which the helper makes the context's
+/// (`native_frames::in_innermost_frame`), as every helper of a native callee does. A head the kernel stood down from,
+/// and a body running as a frameless leaf (whose records are its caller's), runs nothing here: the rows run the loop.
+pub(super) unsafe extern "C" fn kernel_step_in_lane(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
-    // SAFETY: the payload holds the running VM and its lane context, live while the body runs.
-    let stack = &unsafe { &*(vm as *const Vm) }.lane_stack;
-    if !unsafe { (*cx).leaf.call }.is_null() || stack.top_is_native() || stack.top_native().is_some() {
+    // SAFETY: the payload holds the running lane context, live while the body runs.
+    if !unsafe { (*cx).leaf.call }.is_null() {
         return super::LANE_CALL_COMPLETED;
     }
-    // SAFETY: the context's records and registers are the running activation's (`dispatch_fast::owner_step_in` reads
-    // the same record), and its view holds `call_pc`.
-    let ip = unsafe { (*cx).base.add(call_pc as usize) };
-    // SAFETY: the kernel runs over the frame's registers, which the chain spilled the pinned ones to.
-    let ran = unsafe { crate::dispatch_fast::loop_kernel::kernel_at(ip) }.is_some_and(|kernel| unsafe { crate::dispatch_fast::loop_kernel::enter_kernel(kernel, cx, (*cx).registers, ip) });
-    // A run wrote the registers the loop writes, whose values the body's pins and int proofs did not see: the
-    // interpreter continues at the head from the frame as the kernel left it (a missed step's leave, which spills
-    // nothing), where the loop's test now fails, as the interpreter's own head goes on after its kernel.
-    if ran { super::LANE_CALL_MISSED } else { super::LANE_CALL_COMPLETED }
+    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records and registers are the running activation's (`in_innermost_frame`), and its
+        // view holds `call_pc`.
+        let ip = unsafe { (*cx).base.add(call_pc as usize) };
+        // SAFETY: the kernel runs over the frame's registers, which the chain spilled the pinned ones to.
+        let ran = unsafe { crate::dispatch_fast::loop_kernel::kernel_at(ip) }.is_some_and(|kernel| unsafe { crate::dispatch_fast::loop_kernel::enter_kernel(kernel, cx, (*cx).registers, ip) });
+        // A run wrote the registers the loop writes, whose values the body's pins and int proofs did not see: the
+        // interpreter continues at the head from the frame as the kernel left it (a missed step's leave, which spills
+        // nothing), where the loop's test now fails, as the interpreter's own head goes on after its kernel.
+        if ran { super::LANE_CALL_MISSED } else { super::LANE_CALL_COMPLETED }
+    })
+}
+
+/// The `LoadConst` record at `call_pc` of the running body (`LaneHelper::ConstantStep`): the running program's constant as
+/// the VM materialized it (`ProgramStore::constant`), written to the record's register. `LANE_CALL_MISSED` for any other
+/// record, which nothing ran for. A body running as a native callee runs it in its own frame (`in_innermost_frame`).
+pub(super) unsafe extern "C" fn constant_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
+    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's program, records and registers are the running activation's (`in_innermost_frame`).
+        let (code, program, registers) = unsafe { (&*(*cx).code, (*cx).program, (*cx).registers) };
+        let body = code.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let instruction = body.widened(body.code[call_pc as usize]);
+        let loaded = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) && instruction.result_flags() == 0;
+        // SAFETY: the VM is the running lane's.
+        match loaded.then(|| unsafe { &*(*cx).vm }.programs.constant(program, instruction.constant_index())).flatten() {
+            Some(value) => { registers.set(instruction.result_register(), value); super::LANE_CALL_COMPLETED }
+            None => super::LANE_CALL_MISSED,
+        }
+    })
 }
 
 /// Whether a loop of `code` has an interpreter kernel (`LoopKernel::recurrence`) that `cheaper`
@@ -197,6 +218,8 @@ impl Vm {
     /// `NotAmortized`), or indexing a typed parameter.
     pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+        // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
         let code: Vec<_> = body.instructions().collect();
         let facts = super::admission::UnitFacts {
@@ -217,7 +240,12 @@ impl Vm {
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        if !cfg!(feature = "jit") {
+            return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
+        }
         let _ = unit;
+        // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
+        let _focus = quench_runtime::fallback::focus(program, function, 0);
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
@@ -323,6 +351,7 @@ pub(crate) struct ImageBody {
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
 pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quench_runtime::compile::aot_facts::AotFacts) -> Result<ImageBody, String> {
+    let _focus = quench_runtime::fallback::focus(program, function, 0);
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
     // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree

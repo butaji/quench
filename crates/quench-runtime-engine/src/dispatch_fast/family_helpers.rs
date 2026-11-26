@@ -27,12 +27,10 @@ pub(crate) fn covers(instruction: WideInstruction) -> bool {
 
 /// Whether the site's feedback admits the direct run of the packed instruction `words` (`Step::Helper` rows
 /// carry them): a binary operator whose operands are not of an unseen kind, an element access that met a dense
-/// or typed element, a field access whose cache site is filled (`fields`, `Known::fields`), and the pure unary
-/// queries. Other rows decline the direct run.
+/// or typed element, a field access whose cache site is filled (`fields`, `Known::fields`; with none, as an image's body
+/// lowered before any run, the arm's cache probe decides), and the pure unary queries. Other rows decline the direct run.
 pub(crate) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields: Option<&dyn Fn(u16) -> bool>) -> bool {
-    let Ok(imm) = u32::try_from(words[1]) else {
-        return false;
-    };
+    let Ok(imm) = u32::try_from(words[1]) else { return false };
     let Some(instruction) = WideInstruction::from_words(words[0], imm) else {
         return false;
     };
@@ -42,8 +40,8 @@ pub(crate) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields: Option
     match operation {
         Operation::Binary { .. } => site.is_some_and(|site| site.class() != OperandClass::Any),
         Operation::ElementRead { .. } | Operation::ElementWrite { .. } => site.is_some_and(OperandKinds::element_admitted),
-        Operation::GetField { lookup: FieldLookup::Atom { cache_site, .. }, .. } => fields.is_some_and(|filled| filled(cache_site)),
-        Operation::SetField { .. } => fields.is_some_and(|filled| filled(instruction.cache_site_index())),
+        Operation::GetField { lookup: FieldLookup::Atom { cache_site, .. }, .. } => fields.is_none_or(|filled| filled(cache_site)),
+        Operation::SetField { .. } => fields.is_none_or(|filled| filled(instruction.cache_site_index())),
         Operation::LogicalNot { .. } | Operation::TypeofIndex { .. } => true,
         _ => false,
     }
@@ -58,13 +56,12 @@ pub(crate) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields: Option
 /// `cx` is the running lane's context.
 pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Option<u64> {
     let raw = WideInstruction::from_words(first, u32::try_from(imm).ok()?)?;
-    if raw.returns_from_frame() {
-        return None;
-    }
+    if raw.returns_from_frame() { return None; }
     let instruction = raw.without_return();
     let operation = direct_operation(instruction)?;
     // SAFETY: the running lane's context; the VM, frame and program are the ones `lane_in_place` dispatches.
     let (vm, frame, program) = unsafe { (&mut *(*cx).vm, (*cx).frame(), &*(*cx).code) };
+    if let Operation::SetField { value, base, .. } = operation { return unsafe { set_field(cx, program, instruction, value, base) }; }
     if !vm.lane_stack.activations().is_empty() || !unsafe { (*cx).leaf.call }.is_null() {
         return None;
     }
@@ -77,7 +74,6 @@ pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Optio
         Operation::ElementWrite { value, base, key, .. } => element_write(vm, frame, value, base, key),
         Operation::GetField { lookup: FieldLookup::Atom { atom, base, cache_site }, .. } =>
             get_field(vm, program, frame, instruction, (atom, base, cache_site)),
-        Operation::SetField { value, base: Some(base), .. } => set_field(vm, program, frame, instruction, value, base),
         Operation::LogicalNot { destination, source } => query(vm, frame, (destination, source), Vm::logical_not),
         Operation::TypeofIndex { destination, source } => query(vm, frame, (destination, source), Vm::typeof_index_value),
         _ => false,
@@ -150,12 +146,14 @@ fn get_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideIn
     true
 }
 
-/// A store to an object's own data field the site's entry holds (`cached_field_store_hit`), the interpreter's
-/// first `set_field_cached` arm; any other store declines to the general path.
-fn set_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
-    value: Register, base: Register) -> bool {
-    let (object, value) = (vm.read(frame, base), vm.read(frame, value));
-    vm.cached_field_store_hit(p, object, instruction.atom_index(), value, instruction.cache_site_index())
+/// A store to an own data field the site's entry holds (`cached_field_store_hit`, the interpreter's first `set_field_cached` arm) of a register's object or the fixed `this` (`fixed_this_in_lane`), in the innermost window, as the general step (`native_frames::in_innermost_frame`).
+unsafe fn set_field(cx: *mut LaneContext, p: &ResidualProgram, instruction: WideInstruction, value: Register, base: Option<Register>) -> Option<u64> {
+    Some(super::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the running lane's context, its innermost body's state installed.
+        let (vm, r) = unsafe { (&mut *(*cx).vm, (*cx).registers) };
+        let object = match base { Some(base) => Some(r.get(base)), None => unsafe { super::fixed_this_in_lane(cx, r) } };
+        if object.is_some_and(|object| vm.cached_field_store_hit(p, object, instruction.atom_index(), r.get(value), instruction.cache_site_index())) { LANE_CALL_COMPLETED } else { crate::compiled::LANE_CALL_MISSED }
+    })).filter(|status| *status == LANE_CALL_COMPLETED)
 }
 
 /// A pure unary query of a register (`logical_not`, `typeof_index_value`), written to its destination.

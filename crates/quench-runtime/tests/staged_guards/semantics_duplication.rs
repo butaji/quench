@@ -11,6 +11,9 @@ struct Fingerprint {
     home: &'static [&'static str],
     /// A line matches when it contains every literal of some group.
     groups: &'static [&'static [&'static str]],
+    /// Directories (relative to `crates/`) scanned for this fingerprint alone, beyond `TIER_DIRECTORIES`:
+    /// a meaning a host crate re-implements, whose other fingerprints would not apply there.
+    also: &'static [&'static str],
 }
 
 /// The JS meanings the tiers must take from their staged home. Each group is a spelling that only a
@@ -30,6 +33,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
             &["fn to_uint32("],
             &["fn to_u32("],
         ],
+        also: &[],
     },
     Fingerprint {
         name: "clz32",
@@ -39,6 +43,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
             &["leading_zeros()", "to_uint32"],
             &["fn clz32"],
         ],
+        also: &[],
     },
     Fingerprint {
         name: "imul",
@@ -50,6 +55,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
             &["fn imul("],
             &["fn int_multiply("],
         ],
+        also: &[],
     },
     Fingerprint {
         name: "canonical_nan",
@@ -60,6 +66,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
             &["NAN.to_bits()"],
             &["is_nan()", "CANONICAL_NAN"],
         ],
+        also: &[],
     },
     Fingerprint {
         name: "int32_tag",
@@ -71,12 +78,140 @@ const FINGERPRINTS: &[Fingerprint] = &[
             &["TAG_INT", "=="],
             &["TAG_INT", "^"],
         ],
+        also: &[],
+    },
+    // SSOT 1 (TOD-2231): `===`/`==` decided by hand beside the staged `generic::decide` row: the
+    // identical-but-not-NaN test, the `null == undefined` pair, the short-string record compare, and
+    // the bodies that hold them.
+    Fingerprint {
+        name: "equality",
+        home: &["quench-runtime/src/staged/generic.rs"],
+        groups: &[
+            &["Relation::NotEqual", "CANONICAL_NAN"],
+            &["Binary::And, left_nullish, right_nullish"],
+            &["TAG_SHORT", "Relation::Equal"],
+            &["fn equality_words("],
+            &["fn number_strict_equality("],
+        ],
+        also: &[],
+    },
+    // SSOT 3 (TOD-2233): `++`/`--` of a Number by hand (an int32 `checked_add(1)`, a binary64 on
+    // overflow) beside the staged `numeric::increment` row.
+    Fingerprint {
+        name: "increment",
+        home: &["quench-runtime/src/staged/numeric.rs"],
+        groups: &[
+            &["integer.checked_add(1)"],
+            &["integer.checked_sub(1)"],
+            &["fn increment_delta("],
+            &["fn number_increment("],
+        ],
+        also: &[],
+    },
+    // SSOT 3: `Math.sqrt` of a Number word computed in place beside `FloatUnary::Sqrt`
+    // (`math::float_primitive`).
+    Fingerprint {
+        name: "sqrt",
+        home: &["quench-runtime/src/staged/math.rs"],
+        groups: &[
+            &[".sqrt().to_bits()"],
+            &["f64::sqrt("],
+        ],
+        also: &[],
+    },
+    // SSOT 3: ToInt32 of an integral Number by the 1.5 * 2^52 (2^52 + 2^51) rounding constant, beside
+    // the staged `value::exact_int32`.
+    Fingerprint {
+        name: "exact_int32",
+        home: &["quench-runtime/src/staged/value.rs"],
+        groups: &[
+            &["6755399441055744"],
+            &["6_755_399_441_055_744"],
+            &["fn exact_int32("],
+        ],
+        also: &[],
+    },
+    // SSOT 3: `charCodeAt` by hand (its own ToIntegerOrInfinity of the index, bounds test or unit read)
+    // beside the staged `StringNative::CharCodeAt` row (`strings::concrete_char_code_at`, `builtins`).
+    Fingerprint {
+        name: "char_code_at",
+        home: &["quench-runtime/src/staged/strings.rs", "quench-runtime/src/staged/builtins.rs"],
+        groups: &[
+            &["fn string_unit_index("],
+            &["Value::number(f64::NAN)", "Value::number(unit"],
+            &["index as u64 >= string.length"],
+        ],
+        also: &[],
+    },
+    // SSOT 3: NaN-box tag tests and int boxing written on the word (`x - FIRST_TAG >= TAG_SPAN`,
+    // `v as u32 | INT_TAG`) beside the staged `value::is_double` and `value::int_word`.
+    Fingerprint {
+        name: "nan_box_tag",
+        home: &["quench-runtime/src/staged/value.rs", "quench-runtime/src/staged/value_encoding.rs"],
+        groups: &[
+            &["wrapping_sub(FIRST_TAG)"],
+            &["wrapping_sub(words::FIRST_TAG"],
+            &["as u32) | INT_TAG"],
+            &["fn is_double("],
+            &["fn int_word("],
+        ],
+        also: &[],
+    },
+    // SSOT 3: ToUint8Clamp by another formula (clamp to `[0, u8::MAX]`, then round) beside the staged
+    // `math::clamp_u8` that Concrete and the stencils run.
+    Fingerprint {
+        name: "clamp_u8",
+        home: &["quench-runtime/src/staged/math.rs"],
+        groups: &[
+            &["f64::from(u8::MAX)"],
+            &["u8::MAX as f64"],
+            &["clamp(0.0, 255.0)"],
+        ],
+        also: &[],
+    },
+    // SSOT 3: int32 `+`/`-` of a Number operator wrapped by hand (a loop's closed forms) beside the
+    // staged int32 arithmetic.
+    Fingerprint {
+        name: "int32_wrapping_arith",
+        home: &["quench-runtime/src/staged/int_math.rs", "quench-runtime/src/staged/numeric.rs"],
+        groups: &[
+            &["NumberArithmetic::", "wrapping_add"],
+            &["NumberArithmetic::", "wrapping_sub"],
+        ],
+        also: &[],
+    },
+    // SSOT 3: operator algebra (the bitwise family, commutation, the neutral operand, the float form)
+    // written per tier instead of read from the rows. The b-jit's code table (`stencils/codes.rs`) is
+    // the one copy kept until a staged home exists.
+    Fingerprint {
+        name: "op_algebra",
+        home: &["quench-runtime/src/staged/", "quench-bjit/stencils/codes.rs"],
+        groups: &[
+            &["fn is_bitwise("],
+            &["fn commutes("],
+            &["fn neutral("],
+            &["fn has_float_form("],
+        ],
+        also: &[],
+    },
+    // SSOT 15 (TOD-2244): ECMAScript WhiteSpace taken as Rust's `char::is_whitespace` plus U+FEFF, which
+    // admits U+0085 and other spaces JS does not, beside the runtime's `is_ecma_whitespace_character`.
+    // Scanned in the host crate too, whose `parseInt` trims this way.
+    Fingerprint {
+        name: "ecma_whitespace",
+        home: &["quench-runtime/src/vm/primitives/whitespace.rs"],
+        groups: &[
+            &[".is_whitespace()", "'\\u{feff}'"],
+            &[".is_whitespace()", "'\\u{FEFF}'"],
+        ],
+        also: &["quench/src"],
     },
 ];
 
+
 /// The directories scanned, relative to `crates/`: the interpreter under `vm/`, the engine crate that
-/// holds the lane and compiled tiers, and the b-jit stencils.
-const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-runtime-engine/src", "quench-bjit/stencils"];
+/// holds the lane and compiled tiers, and the b-jit (its planner under `src/` and its stencils).
+const TIER_DIRECTORIES: &[&str] = &["quench-runtime/src/vm", "quench-runtime-engine/src", "quench-bjit/src", "quench-bjit/stencils"];
 
 /// The allowances: one `fingerprint path:text` line per hit that is allowed to stand.
 const DEBT_FILE: &str = include_str!("../../src/staged/semantics_debt.txt");
@@ -103,10 +238,15 @@ fn is_test_file(relative: &str) -> bool {
     relative.split('/').map(|part| part.strip_suffix(".rs").unwrap_or(part)).any(|part| part == "tests" || part.ends_with("_tests"))
 }
 
-/// The `.rs` files of the scanned directories that are not test code, sorted by path.
-/// Each is returned with its path relative to `crates/`, so a home or allowance names it the same way.
+/// The `.rs` files of the scanned directories (`TIER_DIRECTORIES` and every fingerprint's `also`) that
+/// are not test code, sorted by path. Each is returned with its path relative to `crates/`, so a home
+/// or allowance names it the same way.
 fn source_files(crates: &Path) -> Vec<(String, PathBuf)> {
-    let mut pending: Vec<PathBuf> = TIER_DIRECTORIES.iter().map(|directory| crates.join(directory)).collect();
+    let mut directories: Vec<&str> = TIER_DIRECTORIES.to_vec();
+    directories.extend(FINGERPRINTS.iter().flat_map(|fingerprint| fingerprint.also.iter().copied()));
+    directories.sort_unstable();
+    directories.dedup();
+    let mut pending: Vec<PathBuf> = directories.iter().map(|directory| crates.join(directory)).collect();
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
         let entries = std::fs::read_dir(&directory)
@@ -128,23 +268,70 @@ fn matches(fingerprint: &Fingerprint, text: &str) -> bool {
     fingerprint.groups.iter().any(|group| group.iter().all(|literal| text.contains(literal)))
 }
 
+/// Whether `fingerprint` scans `relative`: a file of `TIER_DIRECTORIES`, or of one of its own `also` directories.
+fn in_scope(fingerprint: &Fingerprint, relative: &str) -> bool {
+    let under = |directory: &&str| relative.starts_with(&format!("{directory}/"));
+    TIER_DIRECTORIES.iter().any(under) || fingerprint.also.iter().any(under)
+}
+
 /// Whether `relative` is the home `home`, or lies in it when `home` names a directory.
 fn in_home(home: &str, relative: &str) -> bool {
     if home.ends_with('/') { relative.starts_with(home) } else { relative == home }
 }
 
+/// `source` with each inline test module (`#[cfg(test)]` over `mod name {`) blanked to its line breaks, so
+/// the production code after a test module in mid-file is still scanned and every line keeps its number.
+pub(crate) fn without_test_modules(source: &str) -> String {
+    const TEST: &str = "#[cfg(test)]\nmod ";
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = rest.find(TEST) {
+        out.push_str(&rest[..at]);
+        let module = &rest[at..];
+        // A `mod name;` declaration has no body here: keep it and go on.
+        let Some(open) = module.find(['{', ';']).filter(|&open| module.as_bytes()[open] == b'{') else {
+            out.push_str(TEST);
+            rest = &module[TEST.len()..];
+            continue;
+        };
+        let mut depth = 0usize;
+        let end = module[open..].char_indices().find_map(|(offset, c)| {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 { return Some(open + offset + 1); }
+                }
+                _ => {}
+            }
+            None
+        }).unwrap_or(module.len());
+        out.extend(module[..end].chars().filter(|&c| c == '\n'));
+        rest = &module[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn test_modules_are_left_out_wherever_they_stand() {
+    let source = "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() { x }\n}\nfn b() {}\n#[cfg(test)]\nmod more;\nfn c() {}\n";
+    let code = without_test_modules(source);
+    assert_eq!(code.lines().count(), source.lines().count());
+    assert!(code.contains("fn b()") && code.contains("fn c()") && !code.contains("fn t()"));
+}
+
 /// Appends to `hits` every line of `source` (the file `relative`) that matches a fingerprint outside its
-/// home. Inline test modules close the production code, as in `coverage_tests`. A signature split over two
-/// lines counts once, at its first line; a comment line is never a hit.
+/// home. Inline test modules are left out wherever they stand (`without_test_modules`). A signature split
+/// over two lines counts once, at its first line; a comment line is never a hit.
 fn scan(relative: &str, source: &str, hits: &mut Vec<Hit>) {
-    let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap_or(source);
-    let code = code.split("#[cfg(test)]\nmod ").next().unwrap_or(code);
+    let code = without_test_modules(source);
     let lines: Vec<&str> = code.lines().map(str::trim).collect();
     for (index, line) in lines.iter().enumerate() {
         if line.is_empty() || line.starts_with("//") { continue; }
         let next = lines.get(index + 1).copied().filter(|next| !next.starts_with("//"));
         for fingerprint in FINGERPRINTS {
-            if fingerprint.home.iter().any(|home| in_home(home, relative)) { continue; }
+            if !in_scope(fingerprint, relative) || fingerprint.home.iter().any(|home| in_home(home, relative)) { continue; }
             let spans = next.is_some_and(|next| !matches(fingerprint, next) && matches(fingerprint, &format!("{line} {next}")));
             if matches(fingerprint, line) || spans {
                 hits.push(Hit { fingerprint: fingerprint.name, path: relative.to_owned(), line: index + 1, text: (*line).to_owned() });

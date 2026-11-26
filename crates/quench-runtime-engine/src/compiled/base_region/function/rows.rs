@@ -30,8 +30,8 @@ pub(crate) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
     }
     match () {
         _ if crate::compiled::meaning_compiled::is_return(instruction) && plain && instruction.register_a() < sites.registers => returned(instruction.register_a()),
-        _ => locals::fast_row(sites.function, sites.id, instruction, sites.ending)
-            .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)),
+        _ => Decoded { own_step: own_step(instruction), ..locals::fast_row(sites.function, sites.id, instruction, sites.ending)
+            .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)) },
     }
 }
 
@@ -40,6 +40,14 @@ pub(crate) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
 #[cfg(test)]
 pub(crate) fn is_fast(row: &Decoded) -> bool {
     matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some() || row.lexical.is_some()
+}
+
+/// The typed helper that makes `instruction`'s step, where one does (`Decoded::own_step`).
+fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper> {
+    use crate::compiled::LaneHelper;
+    let plain = instruction.without_return();
+    if plain.op().steps_on_owner() { return Some(LaneHelper::OwnerStep); }
+    (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls

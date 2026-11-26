@@ -150,6 +150,12 @@ inherits = "release"
 debug = true
 strip = "none"
 
+# Dependencies only need line tables (callgrind/perf map addresses to lines); full DWARF stays on
+# the workspace crates being profiled. The dev-loop profiles (dev, experiment, test-cycle, smoke)
+# are debug = 0 already, so `package."*" debug = "line-tables-only"` there would add debug info.
+[profile.profiling.package."*"]
+debug = "line-tables-only"
+
 [patch.crates-io]
 iana-time-zone = { path = "vendor/iana-time-zone" }
 oxc_parser = { path = "vendor/oxc-parser" }

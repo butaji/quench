@@ -37,7 +37,7 @@ pub enum ViewKind<W> {
 /// A kind whose elements native code reads and writes in place, with what its element is.
 #[derive(Clone, Copy)]
 pub struct NativeKind {
-    pub(crate) kind: TypedArrayKind,
+    pub kind: TypedArrayKind,
     element: Element,
 }
 
@@ -56,8 +56,8 @@ impl NativeKind {
         }
     }
 
-    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one).
-    pub fn is_int32(self) -> bool { self.element_type().is_int32() }
+    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one): every integer kind but Uint32.
+    #[inline] pub const fn is_int32(self) -> bool { matches!(self.element, Element::Integer(integer) if !matches!(integer, Integer::Unsigned32)) }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.
@@ -326,7 +326,7 @@ fn element_of(kind: TypedArrayKind) -> Option<Element> {
 /// they fill: `field` reversed where `little_endian` is not the host's order (the byte swap a
 /// DataView field needs; the Stage rows have no swap).
 #[inline(always)]
-fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
+pub fn native_word(field: &[u8], little_endian: bool) -> [u8; 8] {
     let mut word = [0; 8];
     let width = field.len();
     if little_endian == NATIVE_LITTLE_ENDIAN {

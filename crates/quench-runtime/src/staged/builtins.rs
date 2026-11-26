@@ -194,6 +194,24 @@ pub fn step_array_native_of<S: Stage>(stage: &mut S, native: ArrayNative<S::Word
     }
 }
 
+/// `Array.isArray` of an ordinary array: `true` where `value` is a direct array among the array records at
+/// `record_base` whose record holds no extras (an arguments object always holds extras, its brand being one).
+/// Any other value leaves at `miss`, before anything is written, where the native's own steps answer it
+/// (`Vm::steady_is_array`: a plain object, a proxy). The b-jit's builtin row and the u-jit's lowering run this one step.
+#[inline(always)]
+pub fn is_plain_array<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let direct = super::value::is_direct_array(stage, value);
+    stage.guard(direct, miss)?;
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let record = super::elements::array_record(stage, record_base, value);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let plain = super::object::plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    Some(stage.constant(Value::boolean(true).to_bits()))
+}
+
 /// Whether the Number word `number` of `domain` is a finite integral value
 /// (`Number.isInteger` of a Number): an int32 always, a double when truncation leaves it and
 /// it differs from itself by something other than NaN, which only infinities do.
