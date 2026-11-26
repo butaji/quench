@@ -16749,12 +16749,15 @@ pub(crate) fn derive_lane_view<'live>(
                 let flagged = admits_row(op)
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
-                // A row reads `a` as a register, so it cannot carry flags: every such record steps,
-                // whichever row its opcode and accumulator chose (a specialised one included), but
-                // a Number row whose only flag is a numeric local target moves its result to the slot itself.
+                // A row reads `a` as a register, so it cannot carry a numeric local target's flags:
+                // such a record steps, whichever row its opcode and accumulator chose (a specialised
+                // one included), but a Number row whose only flag is a numeric local target moves its
+                // result to the slot itself. A return alone is no such flag: the handlers chosen for
+                // it (`returning_kind`, the call rows, a returning field site) read it, and a plain
+                // row's record with it steps (`generic`), so a call or `return x | 0` stays in the lane.
                 let property = (quench_runtime::staged::reads_named_field(op) || admits_row(op))
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
-                    && instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0;
+                    && instruction.a() & !(quench_runtime::bytecode::REGISTER_MASK | quench_runtime::bytecode::RETURN_REGISTER) != 0;
                 let generic = flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ());
                 if let Some(handler) = generic.then(|| local_result_row(instruction, acc)).flatten() {
                     LaneHandler { handler, ..chosen }
