@@ -9,12 +9,13 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
-use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_BUFFER_RELOCATIONS, JS_STEP_TYPED_VIEW_DIRECTORY, JS_STEP_TYPED_VIEW_PAGES, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
+use crate::layout::{JS_STEP_ARRAY_MARK_BLOCKS, JS_STEP_ARRAY_MARK_BLOCK_COUNT, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_BUFFER_RELOCATIONS, JS_STEP_TYPED_VIEW_DIRECTORY, JS_STEP_TYPED_VIEW_PAGES, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
 use crate::numeric::{HOLE_A, HOLE_B};
 use crate::places::on_place;
 use crate::typed_ir::Representation;
 use crate::places::{LEFT, RIGHT, Places, index_of};
 use crate::staged::{Concrete, ElementFrame, Frame, elements, entry, value};
+use crate::staged::barrier::{counted_store_unlogged, MarkList};
 use crate::staged::element_rows::ElementView;
 use crate::staged::typed_view::{TypedRecords, ViewAccess, prove_typed_view};
 use crate::words::{int_word, is_double, is_int};
@@ -42,13 +43,15 @@ impl ElementFrame<Concrete> for Places {
         Some(u64::from(index as u32))
     }
 
-    /// A store's value needs no barrier log where it is a Number: an int word or a double, while
-    /// old records keep no counts (`Stage::immediate_store_open`, read from the payload's gate word).
-    /// Any other value (a heap value, which the barrier logs) is the VM's store.
+    /// The direct array's write barrier admits `value` unlogged (`barrier::counted_store_unlogged`
+    /// over the array records' mark list): the rule of the interpreter's `Heap::array_store_unlogged`
+    /// and the u-jit's `store_gate`. Any other store is the VM's.
     #[inline(always)]
-    fn array_store_gate(&mut self, _stage: &mut Concrete, _base: u64, value: u64, _miss: ()) -> Option<()> {
-        let uncounted = word_at(payload(&self.s), JS_STEP_STORE_WATCH) & STORE_WATCH_COUNTS == 0;
-        (uncounted && (is_int(value) || is_double(value))).then_some(())
+    fn array_store_gate(&mut self, stage: &mut Concrete, base: u64, value: u64, miss: ()) -> Option<()> {
+        value::is_direct_array(stage, base).then_some(())?;
+        let list = MarkList { blocks: JS_STEP_ARRAY_MARK_BLOCKS, count: JS_STEP_ARRAY_MARK_BLOCK_COUNT };
+        counted_store_unlogged(stage, payload(&self.s) as u64, (JS_STEP_STORE_WATCH, STORE_WATCH_COUNTS), list,
+            base & u64::from(u32::MAX), value, miss)
     }
 
     /// A typed array's element reads deliver the element's Value word (`typed_read_value`), as the rows' places hold.
