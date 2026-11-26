@@ -3095,6 +3095,11 @@ script_handler! {
             (!left.as_number().is_some_and(f64::is_nan)).then_some(true)
         } else if left.as_int().is_some() && right.as_int().is_some() {
             Some(false)
+        } else if !left.is_heap() && !right.is_heap() && !left.is_internal_marker() && !right.is_internal_marker() {
+            // Two unequal words outside the heap (`v === undefined` of a Number, `x === null` of a
+            // Boolean): only two Numbers may still be equal (an int32 and its double, `0` and `-0`);
+            // any other pair differs in type or value, so no heap cell need decide it.
+            Some(left.as_number().zip(right.as_number()).is_some_and(|(left, right)| left == right))
         } else {
             None
         };
