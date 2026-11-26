@@ -25,7 +25,9 @@ pub(crate) fn buffer_relocations() -> u64 {
     BUFFER_RELOCATIONS.load(Ordering::Relaxed)
 }
 
-/// Where native code reads `BUFFER_RELOCATIONS`.
+/// Where native code reads `BUFFER_RELOCATIONS`: inlined, so a typed element row reads the
+/// static's address as a constant, not by a call.
+#[inline(always)]
 pub fn buffer_relocations_address() -> *const u64 {
     BUFFER_RELOCATIONS.as_ptr().cast_const()
 }
