@@ -728,6 +728,21 @@ impl ArrayElements {
                 return false;
             };
             assert!(index < self.len(), "array store index out of bounds");
+            // Holes alone (`double_holes`, `new Array(n)` not yet written) taking an int32 become
+            // the wide holes they were before the double kind: a hole's word is the same in both
+            // kinds and `others` counts each hole in both, so only the flag changes. An int32-only
+            // array then reads its elements as `Value`s, as every native element read does, rather
+            // than boxing a double per read; its first other Number still turns it double once it
+            // holds no hole (`replace_in_place`). The running lane's proofs read the flag, so they
+            // retire first.
+            if other(value) == 0 && self.header().others as usize == self.len() {
+                super::array_proofs::retire_array_storage_proofs();
+                // SAFETY: a backing this array alone owns, every one of its `len` words a hole.
+                unsafe { (*self.header.as_ptr()).head.len &= !DOUBLE_LEN };
+                // SAFETY: `UniqueElements` is a transparent wrapper; the backing is now this array's own and wide.
+                unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }.set(index, value);
+                return true;
+            }
             // SAFETY: a double backing this array alone owns holds `len` words.
             unsafe {
                 let word = self.double_words().add(index);
