@@ -175,7 +175,7 @@ impl LaneView {
         let history = self.tier().history.get();
         if !history.base_first || history.base_fallback { return false; }
         let length = self.records.len() as u64;
-        let ir = usize::try_from(length.saturating_mul(self.tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
+        let ir = crate::compiled::lane_facts::unplanned_ir(&self.tiers.loops, length);
         if !crate::compiled::lane_facts::promotes_base_body(self.tiers, self, length, completions, ir) { return false; }
         self.tier().history.set(LaneBodyHistory { base_first: false, promoted: true, ..history });
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.

@@ -164,6 +164,8 @@ fn serve(jobs: &Receiver<Work>) {
 /// Returns the code generator's idle pages to the system, and the code zone's batched writer-view retirements.
 fn release_compile_scratch() {
     quench_alloc::release_empty_pages();
-    quench_alloc::release_scratch();
+    // Every free block of a page or more, not only those of 64 KiB: the small classes a kept code vector pins held
+    // ~38 MB between compiles on the data-structure suite (TOD-2292); this runs once per idle period.
+    quench_alloc::release_scratch_phase();
     crate::vm::engine_calls::flush_retired_writers();
 }

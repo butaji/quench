@@ -157,7 +157,7 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     // A body its iterations have not paid for waits until they would at its planned size.
     if matches!(outcome, LaneBodyOutcome::Unpaid) {
         let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header)))
-            .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(vm.programs.tiers().loops.ir_per_bytecode)).unwrap_or(usize::MAX));
+            .unwrap_or_else(|| crate::compiled::lane_facts::unplanned_ir(&vm.programs.tiers().loops, site.span()));
         let due = crate::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true);
         site.body_wait.set(due.saturating_sub(site.body_iterations()));
     }

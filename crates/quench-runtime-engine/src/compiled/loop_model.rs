@@ -67,15 +67,15 @@ pub(crate) fn repaid_entries(tiers: &Tiers, span: u64, entries: u64, iterations:
 /// The iterations after which a loop body whose iterations work through `work` bytecodes pays
 /// its `outlay` (`Vm::start_lane_method`): its plan, still to make where `unplanned`, takes the
 /// program's own time. The iterations to come are `taken / remaining_divisor` as for a region.
-fn body_required_taken(priors: &Priors, work: u64, outlay: u64) -> u64 {
-    outlay.checked_div(saved_per_iteration(priors, work)).map_or(u64::MAX, |paid| paid + 1).saturating_mul(priors.remaining_divisor)
+fn body_required_taken(priors: &Priors, saved: u64, outlay: u64) -> u64 {
+    outlay.checked_div(saved).map_or(u64::MAX, |paid| paid + 1).saturating_mul(priors.remaining_divisor)
 }
 
 /// The bytecodes one iteration of a loop body of `ir` instructions works through: the body
 /// inlines the loop's calls, so an iteration does the work of its instructions
 /// (`ir_per_bytecode` each), and of the loop's span at least.
 fn body_work(loops: &Loops, span: u64, ir: usize) -> u64 {
-    span.max(ir as u64 / loops.ir_per_bytecode)
+    span.max(ir as u64 / super::lane_facts::measured_ir_per_bytecode(loops, super::lane_facts::Lowers::Body))
 }
 
 /// `body_required_taken` at the costs of `tiers`; under `tier-stress` none.
@@ -83,8 +83,12 @@ pub(crate) fn body_taken(tiers: &Tiers, span: u64, ir: usize, unplanned: bool) -
     if tiers.admits_all { return 0; }
     let priors = &tiers.priors;
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
-    let outlay = priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, priors.compile_ns_per_ir, compile_wall_permille(priors));
-    body_required_taken(priors, body_work(&tiers.loops, span, ir), outlay)
+    // The compile charged whole, as `promotion_taken`'s, against what an iteration saves over the tier below: the
+    // b-jit region where the default mode runs one, the interpreter otherwise (TOD-2194).
+    let outlay = priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, priors.compile_ns_per_ir, PER_MILLE);
+    let work = body_work(&tiers.loops, span, ir);
+    let below = if crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) { base_saved_per_iteration(priors, work) } else { 0 };
+    body_required_taken(priors, saved_per_iteration(priors, work).saturating_sub(below), outlay)
 }
 
 /// What one iteration of a loop `span` bytecodes long saves, in ns, in stencil code (b-jit).
@@ -121,7 +125,10 @@ pub(crate) fn base_region(tiers: &Tiers, span: u64, native: u64) -> bool {
 pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
     let priors = &tiers.priors;
     let gain = saved_per_iteration(priors, span).checked_sub(base_saved_per_iteration(priors, span)).filter(|gain| *gain > 0)?;
-    let outlay = outlay_ns(priors, &tiers.loops, span, priors.compile_ns_per_ir, compile_wall_permille(priors)).saturating_sub(priors.region_entry_ns);
+    // The b-jit region already runs, so the u-jit compile is all extra work, charged whole whichever thread runs it
+    // (TOD-2194: savings over the remaining runs against the whole compile), not at the second core's wall share.
+    // Its IR is the region compiles' measured ratio over the span (`lane_facts::measured_ir_per_bytecode`).
+    let outlay = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
     Some((outlay / gain + 1).saturating_mul(priors.remaining_divisor))
 }
 
@@ -159,7 +166,7 @@ mod tests {
     fn promotion_is_where_u_jit_gets_ahead() {
         let tiers = quench_runtime::vm::tier_policy::STATIC_ROWS;
         let at = promotion_taken(tiers, 10).expect("u-jit saves more per iteration");
-        let ahead = |taken| ultra_ahead_of_base(&tiers.priors, &tiers.loops, 10, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors));
+        let ahead = |taken| ultra_ahead_of_base(&tiers.priors, &tiers.loops, 10, taken, tiers.priors.compile_ns_per_ir, PER_MILLE);
         assert!(ahead(at));
     }
 
@@ -206,7 +213,7 @@ mod tests {
         // 8,000 instructions planned (12 ms) and compiled (24 ms at full wall) work through 1,000
         // bytecodes an iteration, 7 us saved: some 20,000 iterations, though the span is 10.
         let outlay = crate::compiled::tier_model::outlay_ns(8_000, PRIORS.plan_ns_per_ir, COST, PER_MILLE);
-        let taken = body_required_taken(&PRIORS, body_work(&LOOPS, 10, 8_000), outlay);
+        let taken = body_required_taken(&PRIORS, saved_per_iteration(&PRIORS, body_work(&LOOPS, 10, 8_000)), outlay);
         assert!(taken > 19_000 && taken < 22_000, "{taken}");
         assert_eq!(body_work(&LOOPS, 10, 40), 10);
     }

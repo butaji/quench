@@ -258,6 +258,7 @@ impl Lowered {
         let Some(mut lowered) = job.run().filter(|lowered| lowered.region.native != 0) else { return Self::Nothing };
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         let ir = native.dfg.num_insts();
+        super::lane_facts::note_lane_compile(super::lane_facts::Lowers::Body, job.unit.instructions.len(), ir);
         if replans && ir * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES {
             return Self::Oversized;
         }
@@ -529,7 +530,7 @@ impl Vm {
         let tiers = self.programs.tiers();
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
-        let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
+        let own_ir = |bytecodes: u64| super::lane_facts::unplanned_ir(&tiers.loops, bytecodes);
         let planned = self.programs.planned_lane_ir(&site);
         let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
         // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).

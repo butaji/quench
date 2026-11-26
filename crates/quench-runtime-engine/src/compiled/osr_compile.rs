@@ -175,6 +175,8 @@ impl LoopJob {
                 .map(|lowered| (index, lowered))
         })?;
         let header = self.plans[index].span.0 as u32;
+        let (first, last) = self.plans[index].span;
+        super::lane_facts::note_lane_compile(super::lane_facts::Lowers::Region, (last as usize).saturating_sub(first as usize) + 1, lowered.function.dfg.num_insts());
         super::residuals::report_clif(header, &lowered.function);
         let clif = native_dump_directory().map(|_| lowered.function.display().to_string());
         let code = compile_native_function(lowered.function, &*self.isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));

@@ -121,7 +121,7 @@ pub(crate) fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, pr
 
 /// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the
 /// site names (`None` where the program holds no such site).
-fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction) -> Option<u16> {
+pub(crate) fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, instruction: WideInstruction) -> Option<u16> {
     if instruction.op() as u16 == quench_runtime::staged::METHOD_CALL_ROW {
         quench_runtime::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count)
     } else {
