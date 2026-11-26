@@ -1190,6 +1190,7 @@ lane_helper_inventory! {
     ClosureStep => base_body::closure_step,
     AllocationStep => base_body::allocation_step,
     ThrowStep => base_body::throw_step,
+    DefineElementStep => base_body::define_element_step,
 }
 
 thread_local! {

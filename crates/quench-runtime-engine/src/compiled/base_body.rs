@@ -102,6 +102,26 @@ pub(super) unsafe extern "C" fn throw_step(_vm: u64, _residual: u64, context: u6
     })
 }
 
+/// The element define of an array literal at `call_pc` of the running body (`LaneHelper::DefineElementStep`): the value
+/// into the fresh dense array at its index (`Vm::define_literal_element`), which runs no guest code; where the array is
+/// no such array, the general step.
+pub(super) unsafe extern "C" fn define_element_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    use quench_runtime::vm::engine_types::LaneContext;
+    let cx = context as usize as *mut LaneContext;
+    let defined = crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records are the running activation's (`in_innermost_frame`).
+        let body = unsafe { &*(*cx).code }.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let Some(quench_runtime::staged::Operation::DefineElement { array, index, value }) = quench_runtime::staged::Operation::<(), ()>::decode_literal(body.widened(body.code[call_pc as usize]).without_return(), ())
+            else { return super::LANE_CALL_MISSED };
+        // SAFETY: the running lane's context.
+        let (r, vm) = unsafe { ((*cx).registers, &mut *(*cx).vm) };
+        if vm.define_literal_element(r.get(array), index as usize, r.get(value)) { super::LANE_CALL_COMPLETED } else { super::LANE_CALL_MISSED }
+    });
+    if defined == super::LANE_CALL_COMPLETED { return defined; }
+    // SAFETY: the caller's contract, which the general step shares.
+    unsafe { crate::dispatch_fast::body_general_step(vm, residual, context, call_pc) }
+}
+
 /// The value the allocating record at `call_pc` of the running body defines (`LaneHelper::AllocationStep`: an array,
 /// constant array, template or string concatenation, `staged::Allocation`), made by the lane's allocator into its
 /// destination (`dispatch_fast::lane_allocate_step`); where the allocator declines before any effect, the general step.
