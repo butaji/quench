@@ -1886,22 +1886,16 @@ impl Vm {
         if self.heap.array(value).is_some() {
             return "Array";
         }
+        if self.heap.is_map(value) {
+            return "Map";
+        }
+        if self.heap.is_set(value) {
+            return "Set";
+        }
         match self.heap.get(value) {
-            Some(Cell::TypedArray { object, buffer, .. }) => {
-                if self.array_buffer_resizable(*buffer) {
-                    return "Object";
-                }
-                object.native.kind().name()
-            }
-            Some(Cell::DataView { .. }) => "DataView",
-            Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
-            Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
-            Some(Cell::Date { .. }) => "Date",
-            Some(Cell::RegExp { .. }) => "RegExp",
-            _ if self.heap.is_map(value) => "Map",
-            _ if self.heap.is_set(value) => "Set",
-            Some(Cell::WeakMap { .. }) => "WeakMap",
-            Some(Cell::WeakSet { .. }) => "WeakSet",
+            // A typed array on a resizable buffer has no per-type name.
+            Some(Cell::TypedArray { buffer, .. }) if self.array_buffer_resizable(*buffer) => "Object",
+            Some(cell) if let Some(name) = cell.class_name() => name,
             _ if self.is_function(value) => "Function",
             _ => "Object",
         }
