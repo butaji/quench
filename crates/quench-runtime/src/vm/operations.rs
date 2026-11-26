@@ -730,7 +730,7 @@ impl Vm {
             NativeFamily::Finalization => self.call_finalization_registry_native(p, native, this, args),
             NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
             NativeFamily::Collection => self.call_collection_native(p, native, this, args),
-            NativeFamily::WasmJs => self.call_wasm_js_native(p, native, this, args),
+            NativeFamily::WasmJs => self.call_wasm_js_routed(p, native, this, args),
             NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
             NativeFamily::ShadowRealmCalled => {
                 Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()))
@@ -789,7 +789,7 @@ impl Vm {
         match native {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
-            Native::WebAssemblyInitialize => self.install_webassembly(p).map(|()| Value::UNDEFINED),
+            Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
             Native::IntlInitialize => {
                 let (global, object_prototype) = (self.realm.globals, self.object_proto);
                 layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)

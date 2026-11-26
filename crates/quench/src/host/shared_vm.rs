@@ -179,6 +179,7 @@ static WASM_ROUTES: std::sync::OnceLock<HostWasmRoutes> = std::sync::OnceLock::n
 /// (`RUNS_WASM`). Without it, `WebAssembly` compiles nothing, as in a host without a frontend.
 pub fn enable_wasm() {
     WASM_ROUTES.get_or_init(|| HostWasmRoutes { validate: quench_wasm::validate_binary, compile: compile_wasm_module });
+    quench_runtime::enable_wasm_js();
 }
 
 fn compile_wasm_module(bytes: &[u8], mode: quench_runtime::ExecutionMode) -> Result<quench_runtime::WasmModule, String> {

@@ -1411,7 +1411,7 @@ impl Vm {
             }
             Native::ShadowRealm => self.construct_shadow_realm(p, new_target),
             native if super::wasm_js::is_wasm_js_constructor(native) => {
-                self.construct_wasm_js_native(p, native, args)
+                self.construct_wasm_js_routed(p, native, args)
             }
             Native::WeakMap | Native::WeakSet => {
                 self.construct_weak_collection_native(p, native, args, new_target)

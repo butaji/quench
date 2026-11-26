@@ -20,6 +20,7 @@ impl Vm {
     ) -> Self {
         super::layer_hooks::enable_jit();
         super::layer_hooks::install_intl();
+        super::wasm_js::enable_wasm_js();
         crate::compile::source_routes::enable();
         Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
     }
