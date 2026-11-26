@@ -48,9 +48,8 @@ struct Targets<'a> {
 }
 
 /// The object of `image`, its symbols named under `namespace`.
-pub(crate) fn emit(image: &AotImage, namespace: &str) -> Result<NativeJsModule, String> {
-    let isa = quench_runtime::vm::jit_backend::target_isa_for("speed", quench_runtime::vm::jit_backend::CodePublication::RelocatableObject)
-        .ok_or("native target unavailable")?;
+pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarget) -> Result<NativeJsModule, String> {
+    let isa = quench_runtime::vm::jit_backend::relocatable_isa(target)?;
     let isa = &*isa;
     let mut functions = vec![NativeFunction::Import {
         name: quench_runtime::NATIVE_JS_ABI_SYMBOL.into(),

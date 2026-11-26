@@ -12,12 +12,13 @@ use crate::aot_image::{self, ImageTarget};
 impl AheadImages {
 
 
-    /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
+    /// The image of `program`, lowered under its closed-world facts for this process's CPU, which
+    /// runs it (`NativeTarget::host`).
     #[cfg(feature = "jit")]
     #[inline]
     pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
         let facts = quench_runtime::compile::aot_facts::analyze(program);
-        let image = aot_image::lower(program, &facts, &ImageTarget::default())?;
+        let image = aot_image::lower(program, &facts, &ImageTarget::host())?;
         Ok(Self { facts: std::cell::OnceCell::from(facts), ..Self::of(image) })
     }
 

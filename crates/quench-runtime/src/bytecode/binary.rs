@@ -239,9 +239,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     write_module_requests(&mut out, &program.module_requests);
     out.u32(program.module_imports.len() as u32);
     for import in &program.module_imports {
-        out.string(&import.source);
-        out.u8(import.phase.binary_tag());
-        write_optional_string(&mut out, import.module_type.as_deref());
+        write_request_header(&mut out, &import.source, import.phase, import.module_type.as_deref());
         match &import.imported {
             ModuleImportName::Namespace => out.u8(import.imported.binary_tag()),
             ModuleImportName::Named(name) => {
@@ -622,10 +620,7 @@ fn decode_program(
     };
     let module_requests = read_module_requests(&mut input)?;
     let module_imports = input.list(|input| {
-        let source = input.string()?;
-        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
-            .ok_or_else(|| "invalid residual module import phase".to_string())?;
-        let module_type = read_optional_string(input)?;
+        let ModuleRequest { source, phase, module_type } = read_module_request(input)?;
         let imported = match ModuleImportNameKind::from_binary_tag(input.u8()?)
             .ok_or_else(|| "invalid residual module import name".to_string())?
         {
@@ -1909,20 +1904,28 @@ fn read_optional_string(input: &mut BinaryReader<'_>) -> Result<Option<String>, 
 fn write_module_requests(out: &mut BinaryWriter, requests: &[ModuleRequest]) {
     out.u32(requests.len() as u32);
     for request in requests {
-        out.string(&request.source);
-        out.u8(request.phase.binary_tag());
-        write_optional_string(out, request.module_type.as_deref());
+        write_request_header(out, &request.source, request.phase, request.module_type.as_deref());
     }
 }
 
+/// A module request's header: its source, phase and module type, as a request and an import
+/// binding both begin (`read_module_request` reads it back).
+fn write_request_header(out: &mut BinaryWriter, source: &str, phase: ModuleRequestPhase, module_type: Option<&str>) {
+    out.string(source);
+    out.u8(phase.binary_tag());
+    write_optional_string(out, module_type);
+}
+
+fn read_module_request(input: &mut BinaryReader<'_>) -> Result<ModuleRequest, String> {
+    let source = input.string()?;
+    let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
+        .ok_or_else(|| "invalid residual module request phase".to_string())?;
+    let module_type = read_optional_string(input)?;
+    Ok(ModuleRequest { source, phase, module_type })
+}
+
 fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleRequest>, String> {
-    input.list(|input| {
-        let source = input.string()?;
-        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
-            .ok_or_else(|| "invalid residual module request phase".to_string())?;
-        let module_type = read_optional_string(input)?;
-        Ok(ModuleRequest { source, phase, module_type })
-    })
+    input.list(read_module_request)
 }
 
 /// The declared environment: none (0), or its declarations, enum constants, class fields, signatures,

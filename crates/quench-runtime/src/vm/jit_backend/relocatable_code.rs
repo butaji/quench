@@ -3,7 +3,8 @@
 //! (`compiled::lane_region::relocs`) both link through `apply_relocation`.
 use cranelift_codegen::{CompiledCode, RelocTarget, binemit::Reloc, ir};
 
-/// AArch64 `b imm26`: the 26-bit word offset a branch patch fills.
+/// AArch64 `b imm26`: the 26-bit word offset of a branch, which `arm64_call_reaches` checks
+/// (the patch itself is `quench_bjit::patch::patch_branch`).
 pub(in crate::vm) const ARM64_BRANCH_IMMEDIATE_BITS: u32 = 26;
 pub(in crate::vm) const ARM64_INSTRUCTION_BYTES: usize = 4;
 const ARM64_INSTRUCTION_ALIGNMENT_BITS: u32 = 2;
@@ -143,16 +144,11 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
             bytes.get_mut(..displacement.len()).ok_or("relocation is outside its code")?.copy_from_slice(&displacement);
         }
         Reloc::Arm64Call => {
-            let delta = relative()?;
-            let words = delta >> ARM64_INSTRUCTION_ALIGNMENT_BITS;
-            let limit = 1_i64 << (ARM64_BRANCH_IMMEDIATE_BITS - 1);
-            if delta & ((1 << ARM64_INSTRUCTION_ALIGNMENT_BITS) - 1) != 0 || !(-limit..limit).contains(&words) {
-                return Err("relocation is out of branch range".into());
-            }
-            let field = bytes.get_mut(..ARM64_INSTRUCTION_BYTES).ok_or("relocation is outside its code")?;
-            let mask = (1_u32 << ARM64_BRANCH_IMMEDIATE_BITS) - 1;
+            // A `bl imm26`, patched as the stencils' branches are (`quench_bjit::patch_branch`).
+            let field = bytes.get_mut(..quench_bjit::patch::INSN_BYTES).ok_or("relocation is outside its code")?;
             let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
-            field.copy_from_slice(&((word & !mask) | (words as u32 & mask)).to_le_bytes());
+            let patched = quench_bjit::patch::patch_branch(word, quench_bjit::BRANCH26, relative()?).map_err(|_| "relocation is out of branch range")?;
+            field.copy_from_slice(&patched.to_le_bytes());
         }
         Reloc::Arm64Page21 => {
             let target = value.wrapping_add(addend as u64);

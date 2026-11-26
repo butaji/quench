@@ -106,9 +106,21 @@ impl Default for NativeTarget {
 }
 
 impl NativeTarget {
-    /// The host's CPU on the host triple: what the live JIT compiles for.
-    pub(super) fn host() -> Self {
+    /// The host's CPU on the host triple: what the live JIT compiles for, and an image this
+    /// process lowers for itself (an in-process `.qimg`).
+    pub fn host() -> Self {
         Self { baseline: IsaBaseline::Native, triple: Triple::host() }
+    }
+
+    /// Whether this target's base bodies take their stencils from the x86-64-v3 library
+    /// (`quench_bjit::rustc::with_library`): an x86-64-v3 baseline, or the host's CPU where it
+    /// runs that level; every other baseline takes the baseline library.
+    pub fn x86_64_v3_stencils(&self) -> bool {
+        match self.baseline {
+            IsaBaseline::X86V3 => true,
+            IsaBaseline::Native => quench_bjit::runs_x86_64_v3(),
+            IsaBaseline::X86V2 | IsaBaseline::Armv8 | IsaBaseline::Armv82 => false,
+        }
     }
 
     /// The target the CLI names. An absent triple is the host's; an absent CPU is the triple's default.

@@ -1,11 +1,14 @@
-//! Support variants: the program's demands pick the support archive an image
-//! links against, and a demand the chosen variant cannot serve is refused.
+//! Support variants: the program's demands pick the support archive an image links against
+//! (`NativeImageSupport`: the full archive keeps the interpreter and JIT for dynamic source,
+//! the static one drops them; both keep the Wasm frontend and the Node host), and a demand the
+//! chosen support cannot serve is refused. A strict compile (`aot::strict`) links none when the
+//! program folds, and one of these when it reads a dynamic input.
 
 use super::{DependencyGraph, GraphRequirement};
 use quench_runtime::{NativeImageSupport, SourceKind};
 
-/// Support tiers, from most capable to least. A strict compile (`aot::strict`) links none
-/// when the program folds, and one of these when it reads a dynamic input.
+/// Support tiers, from most capable to least: `Full` and `Static` link the matching
+/// `NativeImageSupport` archive; `Core` executes with static support on the runtime's own host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {
     /// Interpreter and JIT for dynamic source, the Wasm frontend and the Node host.
@@ -83,10 +86,10 @@ fn single_entry(graph: &DependencyGraph) -> bool {
             .all(|file| matches!(file.kind, SourceKind::Script | SourceKind::Module))
 }
 
-/// Whether a requirement blocks a compile with this variant. Full support loads
+/// Whether a requirement blocks a compile with this support. Dynamic source support loads
 /// dynamic requires and imports; every other unresolved requirement still blocks.
-pub fn blocks(variant: Variant, requirement: &GraphRequirement) -> bool {
-    !(variant == Variant::Full && requirement.is_dynamic_load())
+pub fn blocks(support: NativeImageSupport, requirement: &GraphRequirement) -> bool {
+    !(support.allows_dynamic_source() && requirement.is_dynamic_load())
 }
 
 #[cfg(test)]
