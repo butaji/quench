@@ -57,7 +57,7 @@ pub(crate) fn supported_table(table: &TableType, types: &super::WasmTypes) -> bo
 impl Lowering<'_> {
     pub(super) fn table_binding(&mut self, index: u32) -> Result<Register, Diagnostic> {
         self.table_type(index)?;
-        self.instance_binding(self.layout().slot(super::WasmBinding::Table(index as usize)))
+        self.instance_binding(self.layout.slot(super::WasmBinding::Table(index as usize)))
     }
 
     pub(super) fn table_type(&self, index: u32) -> Result<RefType, Diagnostic> {

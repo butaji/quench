@@ -1322,15 +1322,14 @@ pub(crate) fn leaders(instructions: &[WideInstruction]) -> BitSet {
     let mut leaders = BitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
-        if instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable {
-            // Every entry of a branch table is a leader: its `Jump` rows start blocks.
-            for target in successors(pc, *instruction).into_iter().filter(|t| *t < instructions.len()) { leaders.insert(target); }
-        }
-        if instruction.op().control_flow_layout().jumps() {
-            if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < instructions.len()) {
+        let layout = instruction.op().control_flow_layout();
+        if layout == ControlFlowLayout::BranchTable || layout.jumps() {
+            // Every successor of a branch (a branch table's `Jump` rows included) starts a block,
+            // and so does the instruction after a jump.
+            let jump = layout.jumps().then_some(pc + 1);
+            for target in successors(pc, *instruction).into_iter().chain(jump).filter(|t| *t < instructions.len()) {
                 leaders.insert(target);
             }
-            if pc + 1 < instructions.len() { leaders.insert(pc + 1); }
         }
     }
     leaders
@@ -1422,13 +1421,12 @@ fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic:
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[quench_runtime::bytecode::Constant], start: usize,
     intrinsics: &native_calls::Intrinsics, global_reads: &quench_runtime::vm::global_facts::GlobalReads) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
-    let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
-    let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
+    let target = |instruction: &WideInstruction| quench_runtime::bytecode::jump_edge(*instruction);
     let mut loops = Vec::new();
     for (back, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
         let entry_header = start == header;
         let body = &instructions[header..=back];
-        let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
+        let entries = usize::from(header > 0 && quench_runtime::bytecode::falls_into_next(header - 1, instructions[header - 1]))
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
@@ -1576,12 +1574,9 @@ struct LoopField {
 
 /// The successors of `instruction` at `pc`: a branch table's entries, else its fall-through and jump target.
 fn successors(pc: usize, instruction: WideInstruction) -> smallvec::SmallVec<[usize; 2]> {
-    let layout = instruction.op().control_flow_layout();
-    if layout == ControlFlowLayout::BranchTable {
-        return quench_runtime::bytecode::branch_table_entries(pc, instruction).collect();
-    }
-    [layout.falls_through().then_some(pc + 1), layout.jumps().then(|| instruction.jump_target() as usize)]
-        .into_iter().flatten().collect()
+    let mut targets = smallvec::SmallVec::new();
+    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| targets.push(target));
+    targets
 }
 
 /// Forward must-alias analysis through inline argument copies and branch joins.
@@ -3478,19 +3473,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc);
         let number = self.operand_number(state, number, exit)?;
         let bits = self.operand_tagged(state, other)?;
-        let [decode, join] = std::array::from_fn(|_| self.builder.create_block());
-        let equal = self.builder.append_block_param(join, types::I8);
-        let double = quench_runtime::staged::value::is_double(&mut emit(&mut self.builder), bits);
-        let int = is_int_tagged(&mut self.builder, bits);
-        let is_number = self.raw_binary(Binary::Or, double, int);
-        let unequal = self.raw_const(Lane::I8, 0);
-        self.branch_if(is_number, (decode, &[]), (join, &[unequal]));
-        self.builder.switch_to_block(decode);
-        let value = emit_known_number(&mut self.builder, bits);
-        let same = self.raw_compare(Relation::FloatEqual, number, value);
-        self.goto(join, &[same]);
-        self.builder.switch_to_block(join);
-        Some(equal)
+        Some(quench_runtime::staged::number_strict_equal(&mut emit(&mut self.builder), number, bits))
     }
 
     /// `===` or `==` of two operands: a strict pair of strings the loop holds compares their held

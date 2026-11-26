@@ -302,6 +302,38 @@ pub fn absolute_symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> b
     fields.iter().all(|field| field.class == ABS64).then_some(fields)
 }
 
+/// Declares the x86-64-v3 level once: the list `X86_64_V3_FEATURES` and the host probe
+/// `runs_x86_64_v3`, each feature named as `is_x86_feature_detected!` takes it.
+macro_rules! x86_64_v3 {
+    ($($feature:tt => $flag:expr),* $(,)?) => {
+        /// The x86-64-v3 psABI level beyond x86-64-v2, by CPUID feature, each with the Cranelift ISA flag
+        /// that enables it where Cranelift has one (it has none for F16C or MOVBE, which its code never
+        /// emits). One list for the level: the stencil library's choice of table (`rustc::library`), the AOT
+        /// baseline's ISA flags (`IsaBaseline::X86V3`), and the level rustc builds the V3 stencils for
+        /// (`-C target-cpu=x86-64-v3`, `build.rs`), whose features this lists.
+        pub const X86_64_V3_FEATURES: &[(&str, Option<&str>)] = &[$(($feature, $flag)),*];
+
+        /// Whether this CPU has every x86-64-v3 feature (`X86_64_V3_FEATURES`).
+        pub fn runs_x86_64_v3() -> bool {
+            #[cfg(target_arch = "x86_64")]
+            { true $(&& std::arch::is_x86_feature_detected!($feature))* }
+            #[cfg(not(target_arch = "x86_64"))]
+            { false }
+        }
+    };
+}
+
+x86_64_v3! {
+    "avx" => Some("has_avx"),
+    "avx2" => Some("has_avx2"),
+    "bmi1" => Some("has_bmi1"),
+    "bmi2" => Some("has_bmi2"),
+    "f16c" => None,
+    "fma" => Some("has_fma"),
+    "lzcnt" => Some("has_lzcnt"),
+    "movbe" => None,
+}
+
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
 // The library tests read the stencil tables, which `quench-stencils` defines.
 #[cfg(test)]
@@ -337,24 +369,10 @@ pub mod rustc {
         safe static QUENCH_STENCILS_V3: &'static RawLibrary;
     }
 
-    /// Whether this CPU runs the x86-64-v3 build: its AVX2 and BMI2 baseline with the rest of the
-    /// level (AVX, BMI1, F16C, FMA, LZCNT, MOVBE). Other targets have only the baseline table.
-    fn runs_v3() -> bool {
-        #[cfg(target_arch = "x86_64")]
-        {
-            use std::arch::is_x86_feature_detected as has;
-            has!("avx") && has!("avx2") && has!("bmi1") && has!("bmi2") && has!("f16c") && has!("fma") && has!("lzcnt") && has!("movbe")
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            false
-        }
-    }
-
     /// The library this process's stencils come from, chosen once at first use.
     fn library() -> &'static RawLibrary {
         static CHOSEN: std::sync::OnceLock<&'static RawLibrary> = std::sync::OnceLock::new();
-        CHOSEN.get_or_init(|| if runs_v3() { QUENCH_STENCILS_V3 } else { QUENCH_STENCILS_BASELINE })
+        CHOSEN.get_or_init(|| if super::runs_x86_64_v3() { QUENCH_STENCILS_V3 } else { QUENCH_STENCILS_BASELINE })
     }
 
     /// Rows of the chosen library that keep a stack frame.

@@ -39,9 +39,18 @@ pub struct AotFacts {
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
     /// Function id → register → the Number representation it always holds.
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
+    /// Per function, the names its `prototype` is given, in code order (`prototype_fields`).
+    pub(crate) prototype_fields: BTreeMap<u32, Vec<u32>>,
 }
 
 impl AotFacts {
+    /// The names stored into `function`'s `prototype`, each once, in the order the program's code
+    /// first stores them (`AotFacts::prototype_fields`): a guess of its prototype's layout after
+    /// `constructor`, which a loader checks against the object it finds (`aot_image::symbols`).
+    pub fn prototype_fields(&self, function: u32) -> &[u32] {
+        self.prototype_fields.get(&function).map_or(&[], |fields| fields.as_slice())
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.call_targets.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
     }
@@ -127,6 +136,11 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             } else {
                 facts.call_targets.insert((id, call.pc), target);
             }
+        }
+        for &(base, atom) in &flow.prototype_writes {
+            let Some(owner) = census.prototype_owner(base) else { continue };
+            let fields = facts.prototype_fields.entry(owner).or_default();
+            if !fields.contains(&atom) { fields.push(atom); }
         }
         if flow.numbers.iter().any(Option::is_some) {
             facts.numbers.insert(id, flow.numbers.clone());

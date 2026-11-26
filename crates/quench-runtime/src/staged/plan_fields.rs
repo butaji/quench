@@ -2,16 +2,12 @@
 //! field's argument, a defaulted field's argument or its fallback where that is falsy. The
 //! interpreter reads each field's class from the plan at run time (`Concrete`); a specializer
 //! holds the plan constant, so the class folds and a field costs its own arm alone. A computed
-//! field is a Number operator over the argument and its constant (`number_binary_word`); an
+//! field is a Number operator over the argument and its constant (`numeric::binary64_value`); an
 //! argument that is no Number leaves at `miss`.
 
 // Read by the lane construct plan (`vm/dispatch_fast/construct_plan.rs`) and the u-jit and b-jit construct lowering.
 
 use super::{Float64, NumericStage};
-#[cfg(not(stencil_build))]
-use super::{Int32, NumberOf};
-#[cfg(not(stencil_build))]
-use crate::vm::operations::{NumberArithmetic, NumberBitwise};
 use super::value::tagged_truthiness;
 
 /// How a plan stores one field.
@@ -50,36 +46,11 @@ pub fn field_value<S: NumericStage>(stage: &mut S, class: FieldClass, fallback: 
             let constant = fallback_word(stage);
             let constant = Float64::guard(stage, constant, miss)?;
             #[cfg(not(stencil_build))]
-            return number_binary_word(stage, operator as u32, passed, constant, miss);
+            return super::numeric::binary64_value(stage, operator as u32, passed, constant, miss);
             #[cfg(stencil_build)]
             { let _ = (operator, passed, constant); None }
         }
     }
-}
-
-/// `operator` (a `Binary`'s Number operator, by `binary_operation`'s tables: an arithmetic, the remainder or a
-/// bitwise) of two proved binary64s, boxed as `Value::number` boxes it: the Number a computed initializer field
-/// stores (`field_value`). An operator with no arm here (`**`) leaves at `miss`.
-#[cfg(not(stencil_build))]
-#[inline(always)]
-fn number_binary_word<S: NumericStage>(stage: &mut S, operator: u32, left: NumberOf<S>, right: NumberOf<S>,
-    miss: S::Miss) -> Option<S::Word> {
-    let number = if let Some(operation) = NumberArithmetic::from_operator(operator) {
-        stage.float_arithmetic(operation, left.word(), right.word())
-    } else if operator == crate::vm::operations::binary_operator::Remainder {
-        stage.float_remainder(left.word(), right.word())
-    } else if let Some(operation) = NumberBitwise::from_operator(operator) {
-        let (left, right) = (Int32::truncating(stage, left, miss)?, Int32::truncating(stage, right, miss)?);
-        let bits = stage.int_bitwise(operation, left.word(), right.word());
-        // A zero-fill shift's result is a uint32; every other bitwise result an int32.
-        if operation == NumberBitwise::ShiftRightUnsigned { stage.u32_to_f64(bits) } else { stage.i32_to_f64(bits) }
-    } else {
-        let zero = stage.constant(0);
-        let never = stage.ne_imm(zero, 0u64);
-        stage.guard(never, miss)?;
-        return None;
-    };
-    Some(stage.box_number(Float64::of_row(number)))
 }
 
 #[cfg(test)]

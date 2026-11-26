@@ -32,7 +32,9 @@ impl Vm {
     /// IsLooselyEqual of two primitives: `null` and `undefined` equal only each other, a Symbol
     /// only itself, two strings by their text, and any other pair by ToNumber of each (a Boolean
     /// is its Number, a string its parse). `None` for an object or a BigInt.
-    fn primitive_loose_equality(&self, left: Value, right: Value) -> Option<bool> {
+    /// The one primitive table of `==`: `Vm::equal` (the general operation) reads it first too.
+    #[inline(always)]
+    pub(in crate::vm) fn primitive_loose_equality(&self, left: Value, right: Value) -> Option<bool> {
         if self.is_object_like(left) || self.is_object_like(right) {
             return None;
         }

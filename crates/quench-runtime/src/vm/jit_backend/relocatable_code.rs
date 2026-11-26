@@ -24,18 +24,16 @@ const ARM64_ADD_IMM12_MASK: u32 = 0xFFF << ARM64_ADD_IMM12_SHIFT;
 const ARM64_ADD_OPCODE_MASK: u32 = 0x7F00_0000;
 const ARM64_ADD_OPCODE: u32 = 0x1100_0000;
 
+/// The relocation kinds `apply_relocation` fills, in the order an image file numbers them
+/// (`aot_image::file` writes a kind as its index here), so a new kind is appended.
+pub const PATCHABLE: [Reloc; 7] = [
+    Reloc::Abs8, Reloc::X86PCRel4, Reloc::X86CallPCRel4, Reloc::X86CallPLTRel4, Reloc::Arm64Call,
+    Reloc::Arm64Page21, Reloc::Arm64PageOff12,
+];
+
 /// Whether `apply_relocation` fills relocations of `kind`.
 pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
-    matches!(
-        kind,
-        Reloc::Abs8
-            | Reloc::X86PCRel4
-            | Reloc::X86CallPCRel4
-            | Reloc::X86CallPLTRel4
-            | Reloc::Arm64Call
-            | Reloc::Arm64Page21
-            | Reloc::Arm64PageOff12
-    )
+    PATCHABLE.contains(&kind)
 }
 
 /// One relocation of compiled code: the field at `offset` takes the address of symbol

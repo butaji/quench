@@ -2,7 +2,7 @@
 //! names.
 
 use super::flow::FunctionFlow;
-use super::value::{Fact, Key, Origin};
+use super::value::{Fact, Key, Origin, PrototypeBase};
 use std::collections::BTreeMap;
 
 /// Every binding write of the program, counted.
@@ -99,6 +99,14 @@ impl Census {
             Origin::Member(atom) => self.members.get(&atom).copied().flatten(),
             Origin::MemberOn { class, instance, atom } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
             _ => None,
+        }
+    }
+
+    /// The function whose `prototype` a `prototype` read off `base` takes.
+    pub(super) fn prototype_owner(&self, base: PrototypeBase) -> Option<u32> {
+        match base {
+            PrototypeBase::Closure(function) => Some(function),
+            PrototypeBase::Binding(key) => self.single(key),
         }
     }
 }

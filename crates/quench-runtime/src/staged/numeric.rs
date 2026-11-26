@@ -637,6 +637,33 @@ pub fn binary_operation(operator: u32, destination: Register, left: Operand, rig
         NumberOperation::RelationValue { destination, left, right, relation, domain: Domain::Float64 })
 }
 
+/// The Number `operator`'s `binary_operation` row (an arithmetic, the remainder or a bitwise) computes of two
+/// proved binary64s, boxed as `Value::number` boxes it: a construct plan's computed field (`plan_fields`) takes
+/// the operator from the Number step's own decode, not a table of its own. A relation, or an operator with no
+/// Number row (`**`), leaves at `miss`.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn binary64_value<S: NumericStage>(stage: &mut S, operator: u32, left: super::NumberOf<S>, right: super::NumberOf<S>,
+    miss: S::Miss) -> Option<S::Word> {
+    let number = match binary_operation(operator, 0, Operand::register(0), Operand::register(1)) {
+        Some(NumberOperation::Arithmetic { operation, .. }) => stage.float_arithmetic(operation, left.word(), right.word()),
+        Some(NumberOperation::Remainder { .. }) => stage.float_remainder(left.word(), right.word()),
+        Some(NumberOperation::Bitwise { operation, .. }) => {
+            let (left, right) = (super::Int32::truncating(stage, left, miss)?, super::Int32::truncating(stage, right, miss)?);
+            let bits = stage.int_bitwise(operation, left.word(), right.word());
+            // A zero-fill shift's result is a uint32; every other bitwise result an int32.
+            if operation == NumberBitwise::ShiftRightUnsigned { stage.u32_to_f64(bits) } else { stage.i32_to_f64(bits) }
+        }
+        _ => {
+            let zero = stage.constant(0);
+            let never = stage.ne_imm(zero, 0u64);
+            stage.guard(never, miss)?;
+            return None;
+        }
+    };
+    Some(stage.box_number(super::Float64::of_row(number)))
+}
+
 /// `binary_operation` for two operands an int32 constant decides: add, subtract and multiply in
 /// `Int32`, leaving at an overflow and at a negative zero, and the remainder in `Int32`, leaving at a
 /// zero divisor and a negative zero. A division has no int32 result, and the other operators are

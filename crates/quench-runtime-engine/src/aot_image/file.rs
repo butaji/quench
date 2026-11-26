@@ -10,10 +10,10 @@ use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
+use quench_runtime::vm::jit_backend::relocatable_code::{PATCHABLE, RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x08";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x09";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
@@ -23,13 +23,6 @@ const RECIPE_GLOBAL: u8 = 1;
 const RECIPE_STRING: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
 const RECIPE_CLOSURE_OF: u8 = 4;
-const RELOC_ABS8: u8 = 0;
-const RELOC_X86_PC_REL4: u8 = 1;
-const RELOC_X86_CALL_PC_REL4: u8 = 2;
-const RELOC_X86_CALL_PLT_REL4: u8 = 3;
-const RELOC_ARM64_CALL: u8 = 4;
-const RELOC_ARM64_PAGE21: u8 = 5;
-const RELOC_ARM64_PAGEOFF12: u8 = 6;
 /// A relocation kind `RelocatableCode` never holds; the reader rejects it.
 const RELOC_UNPATCHABLE: u8 = u8::MAX;
 
@@ -227,30 +220,13 @@ fn put_code(out: &mut Vec<u8>, code: &RelocatableCode) {
     }
 }
 
+/// A relocation kind's tag: its index among the kinds the linker fills (`PATCHABLE`).
 fn reloc_tag(kind: Reloc) -> u8 {
-    match kind {
-        Reloc::Abs8 => RELOC_ABS8,
-        Reloc::X86PCRel4 => RELOC_X86_PC_REL4,
-        Reloc::X86CallPCRel4 => RELOC_X86_CALL_PC_REL4,
-        Reloc::X86CallPLTRel4 => RELOC_X86_CALL_PLT_REL4,
-        Reloc::Arm64Call => RELOC_ARM64_CALL,
-        Reloc::Arm64Page21 => RELOC_ARM64_PAGE21,
-        Reloc::Arm64PageOff12 => RELOC_ARM64_PAGEOFF12,
-        _ => RELOC_UNPATCHABLE,
-    }
+    PATCHABLE.iter().position(|patchable| *patchable == kind).map_or(RELOC_UNPATCHABLE, |index| index as u8)
 }
 
 fn reloc_of(tag: u8) -> Result<Reloc, String> {
-    Ok(match tag {
-        RELOC_ABS8 => Reloc::Abs8,
-        RELOC_X86_PC_REL4 => Reloc::X86PCRel4,
-        RELOC_X86_CALL_PC_REL4 => Reloc::X86CallPCRel4,
-        RELOC_X86_CALL_PLT_REL4 => Reloc::X86CallPLTRel4,
-        RELOC_ARM64_CALL => Reloc::Arm64Call,
-        RELOC_ARM64_PAGE21 => Reloc::Arm64Page21,
-        RELOC_ARM64_PAGEOFF12 => Reloc::Arm64PageOff12,
-        _ => return Err("an AOT image relocation has an unknown kind".into()),
-    })
+    PATCHABLE.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
 }
 
 type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>);

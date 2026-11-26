@@ -4010,6 +4010,22 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
+    /// The shape object `holder` has now and the slot of its plain data field `atom`, as a
+    /// prototype read of it guards and reads them (`immediate_prototype_data_field`): `None` where
+    /// `holder` is no object record, holds no such field, holds it as an accessor, is a module
+    /// namespace, or keeps its properties as a dictionary. An ahead
+    /// image's guessed prototype read resolves its holder guard by it (`aot_image::symbols`).
+    pub fn holder_data_field(&self, holder: Value, atom: Atom) -> Option<(u32, usize)> {
+        self.heap.object_record(holder)?;
+        let record = self.shape_property_lookup(holder, atom)?;
+        if record.is_module_namespace() { return None; }
+        let shape = record.shape();
+        // A dictionary's slots move as it changes: its shape word names no layout to read by.
+        if shape & crate::value_vec::DICTIONARY_STORAGE != 0 { return None; }
+        let slot = self.shape_slot(shape, atom)?;
+        (!self.slot_holds_accessor(record, slot)).then_some((shape, slot))
+    }
+
     fn immediate_prototype_data_field(
         &self,
         receiver_value: Value,
