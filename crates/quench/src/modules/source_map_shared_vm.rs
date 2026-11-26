@@ -123,7 +123,7 @@ pub(crate) fn install(c: &mut Context<'_>, target: RootId, with_class: bool) -> 
         // The class is built on its first read: `module` holds it, and nearly no run reads it, while building it
         // was about 207K instructions of every start-up's 11.6M (hello.js, x86_64, 2026-11-26).
         let data = c.record_rooted(false, &["target"], &[target])?;
-        let initializer = c.host_function_named_with_data(operation("sourceMapClassExport"), "", data)?;
+        let initializer = c.host_function_named_with_data(marked_operation!("sourceMapClassExport").id(), "", data)?;
         c.define_lazy_data_properties_rooted(target, &["SourceMap"], true, initializer)?;
     }
     Ok(())
