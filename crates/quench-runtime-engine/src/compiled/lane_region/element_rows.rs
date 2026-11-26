@@ -252,12 +252,24 @@ impl Lowering<'_, '_> {
             && matches!(crate::compiled::performed(*instruction), Some(Operation::ElementWrite { .. })))
     }
 
-    /// An element read at `pc` of a base no loop array holds, whose record observed one int32 typed array kind
-    /// (`typed_only_at`): the element's int32 word into `destination` (`typed_read_integer`), with no Number made of it
-    /// and tested again, over the kept view (`typed_view_kept`). `false` where the read is not one, with nothing emitted.
+    /// An element read at `pc` of a base no loop array holds, whose record observed one native typed array kind
+    /// (`typed_only_at`), over the kept view (`typed_view_kept`): an int32 kind's element as its int32 word
+    /// (`typed_read_integer`), any other's as its Number in a float register, with no Number word made and tested
+    /// again. `false` where the read is not one, with nothing emitted.
     fn typed_int_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, quench_runtime::bytecode::Operand), exit: ir::Block) -> bool {
-        let Some(native) = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new).filter(|native| native.is_int32()) else { return false };
+        let Some(native) = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new) else { return false };
         let bits = self.tagged(state, base);
+        if !native.is_int32() {
+            // Any other native kind's element is read as the Number it is, into a float register (`typed_read`):
+            // no Number word is boxed and tested again.
+            let view = self.typed_view_kept(state, (base, bits, native), false, exit);
+            let held = self.held_view.replace(frame_elements::Held::Typed(view));
+            let read = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination });
+            self.held_view = held;
+            let Step::Value(number) = read else { unreachable!("an element read yields a value or leaves at its miss edge") };
+            self.set_number(state, destination, number);
+            return true;
+        }
         let Some(index) = self.operand_index(state, key, exit) else { return false };
         let view = self.typed_view_kept(state, (base, bits, native), false, exit);
         let word = {

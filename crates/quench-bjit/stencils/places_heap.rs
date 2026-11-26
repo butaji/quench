@@ -85,6 +85,22 @@ impl ElementFrame<Concrete> for Places {
 }
 
 impl Places {
+    /// The typed view of the array in `register`, proved for the kind `native` the interpreter's record
+    /// observed (`prove_typed_view` with the kind fixed): a value of another kind, or no typed array,
+    /// leaves (`None`). An element row then reads or stores in place with no dispatch on the kind.
+    #[inline(always)]
+    pub(crate) fn proved_typed_view(&mut self, register: Register, native: crate::staged::typed_elements::NativeKind, writable: bool) -> Option<ElementView<u64>> {
+        let mut stage = Concrete::from_hole(0);
+        let base = Frame::tagged(self, &mut stage, register);
+        let payload = payload(&self.s);
+        let records = TypedRecords { directory: word_at(payload, JS_STEP_TYPED_VIEW_DIRECTORY), pages: word_at(payload, JS_STEP_TYPED_VIEW_PAGES),
+            relocations: word_at(payload, JS_STEP_BUFFER_RELOCATIONS) };
+        (records.directory != 0).then_some(())?;
+        prove_typed_view(&mut stage, records, base, ViewAccess { kind: Some(native), writable }, ()).map(ElementView::Typed)
+    }
+}
+
+impl Places {
     /// `Frame::direct_array`: whether the register `source` holds a direct array.
     #[inline(always)]
     pub(crate) fn heap_direct_array(&mut self, stage: &mut Concrete, source: Register) -> Option<()> {
