@@ -66,7 +66,12 @@ impl FunctionCompiler<'_, '_> {
                     .next()
                     .expect("assignment operator"),
             );
-            let reference = self.prepare_assignment_reference(target);
+            // A compound assignment reads the name at once; a plain one is settled where its right
+            // side reads the name before any guest code runs, or runs none.
+            let settled = value.operator != AssignmentOperator::Assign
+                || matches!(target, SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier)
+                    if self.strict_global_name_settled(&value.right, identifier.name.as_str()));
+            let reference = self.prepare_assignment_reference_settled(target, settled);
             if let AssignmentReference::Abrupt(result) = reference {
                 return result;
             }
@@ -426,13 +431,26 @@ impl FunctionCompiler<'_, '_> {
         &mut self,
         target: &SimpleAssignmentTarget<'_>,
     ) -> AssignmentReference {
+        self.prepare_assignment_reference_settled(target, false)
+    }
+
+    /// `prepare_assignment_reference` where `settled` holds when no guest code can run between the
+    /// reference's resolution and a read of the name that throws where it is unresolvable
+    /// (`strict_global_name_settled`): a compound or update assignment, which reads the name at once,
+    /// or a plain one whose right side reads it first or runs no guest code. A strict store to a global
+    /// name then needs no captured reference: the name resolves the same at the store as it did there.
+    pub(super) fn prepare_assignment_reference_settled(
+        &mut self,
+        target: &SimpleAssignmentTarget<'_>,
+        settled: bool,
+    ) -> AssignmentReference {
         if let Some(call) = crate::compile::annex_b_targets::call_target(target) {
             return AssignmentReference::Abrupt(self.throw_invalid_call_assignment(call));
         }
         match target {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
-                self.prepare_assignment_name(atom)
+                self.prepare_assignment_name_settled(atom, settled)
             }
             SimpleAssignmentTarget::StaticMemberExpression(member) => {
                 let atom = self.owner.atom(member.property.name.as_str());
@@ -791,7 +809,11 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn prepare_assignment_name(&mut self, atom: Atom) -> AssignmentReference {
-        let capture_global_reference = self.needs_strict_global_reference_capture(atom);
+        self.prepare_assignment_name_settled(atom, false)
+    }
+
+    fn prepare_assignment_name_settled(&mut self, atom: Atom, settled: bool) -> AssignmentReference {
+        let capture_global_reference = !settled && self.needs_strict_global_reference_capture(atom);
         // RHS eval can introduce a nearer binding, but PutValue must retain
         // the environment selected by the LHS. Own local slots are stable.
         let capture_eval_reference = self.dynamic_eval
