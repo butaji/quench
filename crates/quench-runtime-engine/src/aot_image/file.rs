@@ -13,7 +13,7 @@ use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, Ex
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x07";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x08";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.

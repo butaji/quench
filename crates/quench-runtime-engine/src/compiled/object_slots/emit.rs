@@ -199,6 +199,28 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         open
     }
+    /// Whether a store of a value the slot's type holds needs no barrier log
+    /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
+    /// the gate word is not asked; old records keep no counts (`counts_clear`), and a heap value's
+    /// owner is unmarked (`barrier::value_unlogged`). A stage with no payload answers no, and the
+    /// store leaves at its miss.
+    fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
+        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(logged);
+        let open = self.builder.append_block_param(join, types::I8);
+        let clear = self.counts_clear(payload);
+        emit_js_guard(self.builder, clear, logged);
+        quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged)
+            .expect("an Emit guard always continues");
+        let yes = self.raw_const(Lane::I8, 1);
+        self.goto(join, &[yes]);
+        self.builder.switch_to_block(logged);
+        let no = self.raw_const(Lane::I8, 0);
+        self.goto(join, &[no]);
+        self.builder.switch_to_block(join);
+        open
+    }
     /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
     /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
     /// without counts, else closed, and the store leaves at its miss.

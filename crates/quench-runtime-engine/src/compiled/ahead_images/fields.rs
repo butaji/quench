@@ -6,15 +6,17 @@
 //! symbol (`Symbol::GuardShape`), which the loader resolves to the shape's id, or to an id no
 //! record has where the VM builds none or the slot's words are not tagged values. A guess is
 //! never an observation: a miss asks the VM's caches (`NativeFieldLoad::probes_misses`), so a wrong
-//! guess costs a compare, never a leave. A store of the name guesses the same shapes and stores an
-//! int32 in place (`StoreArm::of` of a slot typed int32): its guard resolves only where the slot's
-//! type holds every int32, so the store needs no join, and any other store, or a miss, takes the
-//! VM's store as it did before.
+//! guess costs a compare, never a leave. A store of the name guesses the same shapes, for each class
+//! of value it stores in place (`GuardAccess`): an int32, or a direct object or `null` (`StoreArm::of`
+//! of a slot typed as the class), the class the construction's own store of the field names
+//! (`stored_classes`), both where it names neither. Each guard resolves only where the slot's type
+//! holds every value of its class, so the store needs no join, and any other store, or a miss, takes
+//! the VM's store as it did before.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::FieldLookup;
-use crate::aot_image::symbols::{HeapValueRecipe, ShapeRecipe};
+use crate::aot_image::symbols::{GuardAccess, HeapValueRecipe, ShapeRecipe};
 use super::constructions::ADDED_FIELD;
 
 /// The guessed loads of `unit`'s named field reads, by field-cache site (`lane_region::FieldSites`).
@@ -24,7 +26,10 @@ pub(crate) fn guessed_fields(program: &ResidualProgram, unit: &lane_unit::Unit, 
     if owners.is_empty() { return Vec::new(); }
     let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().filter_map(|instruction| {
             let (atom, site, store) = accessed(*instruction)?;
-            let loads = owners.get(&atom)?.iter().map(|&(function, slot)| guessed_load(program, (function, slot), store, symbols)).collect::<Option<Vec<_>>>()?;
+            let loads = owners.get(&atom)?.iter()
+                .flat_map(|&owner| if store { stored_classes(program, owner.0, atom) } else { vec![GuardAccess::Read] }.into_iter().map(move |access| (owner, access)))
+                .map(|(owner, access)| guessed_load(program, owner, access, symbols)).collect::<Option<Vec<_>>>()?;
+            if loads.is_empty() { return None; }
             Some((usize::from(site), loads))
         }).collect();
     if quench_runtime::trace::Channel::AotLanes.on() {
@@ -75,16 +80,54 @@ fn this_fields(program: &ResidualProgram, function: u32) -> Vec<u32> {
     fields
 }
 
+/// The classes of value a store of field `atom` into an object `function` constructs stores in place
+/// (`GuardAccess`): the class of the constant each of the construction's own stores of the field
+/// writes (the staged row of a load of a constant into the stored register just before it: an
+/// int32 Number, or `null`),
+/// both classes where a store writes anything else (a parameter, a computed value), which the
+/// construction's stores do not tell; a constant of neither class, which a later store may still
+/// widen, adds none.
+fn stored_classes(program: &ResidualProgram, function: u32, atom: u32) -> Vec<GuardAccess> {
+    use quench_runtime::bytecode::Constant;
+    use quench_runtime::staged::{DecodeContext, Operation};
+    use quench_runtime::typed_ir::Type;
+    const BOTH: [GuardAccess; 2] = [GuardAccess::StoreInt32, GuardAccess::StoreReference];
+    let Some(body) = program.function_get(function as usize) else { return BOTH.to_vec() };
+    // The program's primitive constants as values, the table the staged row decodes a `LoadConst` from.
+    let table = |index: usize| match program.constants.get(index)? {
+        Constant::Number(number) => Some(quench_runtime::Value::number(*number)),
+        Constant::Null => Some(quench_runtime::Value::NULL),
+        _ => None,
+    }.map(quench_runtime::staged::Constant::untyped);
+    let context = DecodeContext { constant_at: Some(&table), ..DecodeContext::EMPTY };
+    let instructions: Vec<WideInstruction> = body.instructions().collect();
+    let mut classes = Vec::new();
+    for (pc, store) in instructions.iter().enumerate().filter(|(_, instruction)| instruction.stores_to_this() && instruction.imm() == atom) {
+        let loaded = pc.checked_sub(1).and_then(|before| match Operation::<(), ()>::decode(instructions[before], context) {
+            Some(Operation::LoadConst { destination, constant }) if destination == store.register_a() => Some(Type::immediate(constant.value)),
+            _ => None,
+        });
+        let class = match loaded {
+            Some(ty) if ty.is_subtype(Type::INT32) => &[GuardAccess::StoreInt32][..],
+            Some(ty) if ty.is_subtype(Type::language(quench_runtime::ValueType::Null)) => &[GuardAccess::StoreReference][..],
+            Some(_) => &[][..],
+            None => &BOTH[..],
+        };
+        for access in class { if !classes.contains(access) { classes.push(*access); } }
+    }
+    classes
+}
+
 /// The load of `slot` of the shape a construction of `function` makes, its guard named by symbol:
-/// a read's of any value, a store's of an int32 (`store`).
-fn guessed_load(program: &ResidualProgram, (function, slot): (u32, u16), store: bool, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
+/// a read's of any value, a store's of the class of values `access` stores (`GuardAccess::stored`).
+fn guessed_load(program: &ResidualProgram, (function, slot): (u32, u16), access: GuardAccess, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
     let fields = this_fields(program, function);
     let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(function)) else { return None };
     let Symbol::HeapValue(constructor) = symbols.heap_value(HeapValueRecipe::ClosureOf(function)) else { return None };
     let recipe = ShapeRecipe { prototype: Some(prototype), constructor: Some(constructor), fields: fields.iter().map(|atom| (*atom, ADDED_FIELD)).collect() };
-    let key = symbols.guard_shape(recipe, slot, store)?;
+    let key = symbols.guard_shape(recipe, slot, access)?;
     (key < quench_runtime::staged::ic::SYMBOLIC_SHAPE).then_some(NativeFieldLoad {
         shape: quench_runtime::staged::ic::SYMBOLIC_SHAPE | key, holder: None, slot, storage_len: fields.len(), storage: None,
-        ty: if store { quench_runtime::typed_ir::Type::INT32 } else { quench_runtime::typed_ir::Type::ANY }, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+        ty: access.stored().unwrap_or(quench_runtime::typed_ir::Type::ANY), inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
     })
 }
