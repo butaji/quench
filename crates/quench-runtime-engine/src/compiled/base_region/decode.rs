@@ -510,7 +510,7 @@ fn names(known: Known, row: Decoded) -> Decoded {
 /// Bits in a word's high half.
 pub(crate) const HALF: u32 = 32;
 /// The high 32 bits of an int word.
-pub(crate) const INT_HIGH: u64 = quench_runtime::value::ValueLayout::INT_TAG >> HALF;
+pub(crate) const INT_HIGH: u64 = quench_runtime::value::INT_TAG_HIGH as u64;
 
 pub(crate) fn register_of(source: Source) -> Option<Register> {
     match source {

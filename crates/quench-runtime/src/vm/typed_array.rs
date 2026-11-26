@@ -143,10 +143,10 @@ impl Vm {
     pub(super) fn install_typed_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let uint8_array = self.native_value(Native::Uint8Array);
         let typed_array = self.native_value(Native::TypedArray);
-        self.uint8_array_proto = self.object();
+        self.typed_array_protos[TypedArrayKind::Uint8 as usize] = self.object();
         self.typed_array_proto = self.object();
         let (typed_array_proto, function_proto) = (self.typed_array_proto, self.function_proto);
-        self.object_data_mut(self.uint8_array_proto)
+        self.object_data_mut(self.typed_array_protos[TypedArrayKind::Uint8 as usize])
             .expect("Uint8Array prototype")
             .set_proto(typed_array_proto);
         self.object_data_mut(typed_array)
@@ -174,7 +174,7 @@ impl Vm {
         self.object_data_mut(uint8_array)
             .expect("Uint8Array constructor")
             .set_proto(typed_array);
-        self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
+        self.set_named(program, uint8_array, "prototype", self.typed_array_protos[TypedArrayKind::Uint8 as usize])?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             uint8_array,
@@ -188,7 +188,7 @@ impl Vm {
                 setter: None,
             },
         );
-        self.set_builtin_value_named(self.uint8_array_proto, "constructor", uint8_array)?;
+        self.set_builtin_value_named(self.typed_array_protos[TypedArrayKind::Uint8 as usize], "constructor", uint8_array)?;
         self.set_builtin_function_name(uint8_array, "Uint8Array")?;
         self.set_named_constant(
             program,
@@ -198,12 +198,12 @@ impl Vm {
         )?;
         self.set_named_constant(
             program,
-            self.uint8_array_proto,
+            self.typed_array_protos[TypedArrayKind::Uint8 as usize],
             "BYTES_PER_ELEMENT",
             Value::number(1.0),
         )?;
         self.install_native_rows(program, self.typed_array_proto, super::native_rows::Holder::TypedArrayPrototype)?;
-        self.install_native_rows(program, self.uint8_array_proto, super::native_rows::Holder::Uint8ArrayPrototype)?;
+        self.install_native_rows(program, self.typed_array_protos[TypedArrayKind::Uint8 as usize], super::native_rows::Holder::Uint8ArrayPrototype)?;
         for (name, native) in [
             ("buffer", Native::TypedArrayBufferGetter),
             ("byteLength", Native::TypedArrayByteLengthGetter),
@@ -231,7 +231,7 @@ impl Vm {
         self.install_native_rows(program, uint8_array, super::native_rows::Holder::Uint8ArrayConstructor)?;
         self.realm.intrinsics.builtin_prototypes.insert(
             (self.realm.globals, Native::Uint8Array),
-            self.uint8_array_proto,
+            self.typed_array_protos[TypedArrayKind::Uint8 as usize],
         );
         for &crate::heap::TypedArrayRow { kind, native, name, .. } in &crate::heap::TYPED_ARRAYS {
             if kind != TypedArrayKind::Uint8 {
@@ -1072,8 +1072,8 @@ impl Vm {
         value: Option<&Value>,
         length: usize,
     ) -> Result<usize, JsError> {
-        let Some(value) = value else { return Ok(0) };
-        Ok(crate::units::relative_index(self.to_number(p, *value)?, length))
+        // An absent argument reads as undefined, whose ToNumber (NaN) resolves to 0.
+        value.map_or(Ok(0), |value| self.to_relative_index(p, *value, length))
     }
 
     pub(super) fn uint32_from_value(number: f64) -> u32 {

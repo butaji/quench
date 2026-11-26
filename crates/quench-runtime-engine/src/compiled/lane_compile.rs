@@ -104,9 +104,8 @@ impl FactTables {
         use quench_runtime::vm::global_facts::GlobalRead;
         let mut tables = Self::default();
         let read_values = (0..unit.instructions.len()).filter_map(|pc| match global_reads.get(&pc)? {
-            GlobalRead::Constant(value) | GlobalRead::Stable { value, .. } | GlobalRead::Frozen { value, .. }
-                | GlobalRead::NativeMember { value, .. } => Some(*value),
-            _ => None,
+            GlobalRead::NativeMember { value, .. } => Some(*value),
+            read => read.folded_value(),
         });
         let frame_values = unit.frames.iter().filter_map(|frame| frame.target.identity());
         for value in read_values.chain(frame_values) {
@@ -846,7 +845,7 @@ impl LanePlan {
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,
             scratch_width, caller_registers, frame_reach: 0,
-            amortizes, direct: self.direct, closed: self.closed,
+            amortizes, direct: self.direct, proven_calls: false, closed: self.closed,
             framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
             summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
         })
