@@ -241,7 +241,7 @@ fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>
     value: Stored<S::Word>, miss: S::Miss) -> Option<()> {
     let (arm, rest) = arms.split_first()?;
     let exact = ic::shape_word(stage, at);
-    let same = { let shape = stage.site(u64::from(arm.shape)); stage.eq_imm(exact, shape) };
+    let same = { let shape = stage.shape_site(arm.shape); stage.eq_imm(exact, shape) };
     if rest.is_empty() {
         stage.guard(same, miss)?;
         return arm_store(stage, (at.record, object), *arm, value, miss);
