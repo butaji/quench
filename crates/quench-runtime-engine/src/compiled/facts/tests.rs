@@ -191,7 +191,7 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
     let leaders = super::super::lane_region::leaders(&instructions);
     let byte = quench_runtime::staged::typed_elements::NativeKind::new(Kind::Uint8).unwrap().element_type();
     let reads: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
-        .map(|(pc, _)| ObservedRead { pc, ty: byte }).collect();
+        .map(|(pc, _)| ObservedRead { pc, ty: byte, kind: None }).collect();
     assert!(!reads.is_empty());
     let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
@@ -276,6 +276,6 @@ fn a_direct_call_result_takes_the_type_its_callee_summary_observed() {
         after
     };
     assert_eq!(typed_after(&[]), Some(Type::ANY), "an untyped call's result is ANY");
-    let reads = [ObservedRead { pc: call_pc, ty: Type::NUMBER }];
+    let reads = [ObservedRead { pc: call_pc, ty: Type::NUMBER, kind: None }];
     assert_eq!(typed_after(&reads), Some(Type::NUMBER), "the summary's result types the call's result after it");
 }
