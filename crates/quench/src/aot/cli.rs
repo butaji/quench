@@ -422,12 +422,16 @@ fn compile(options: Options) -> Result<(), String> {
         let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned))
             .chain(compresses.then(|| "zlib".to_owned()));
         let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
+        // A group is read where the program names one of its globals, or where host code reads
+        // one by name as it runs (`shared_vm::HOST_READ_GLOBALS`).
+        let kept = |names: &Vec<String>| names_any || names.iter().any(|name| {
+            graph.global_names.contains(name) || crate::host::shared_vm::HOST_READ_GLOBALS.contains(&name.as_str())
+        });
         report["unnamed_globals"] = json!(heaps.iter().flat_map(|heap| &heap.1).map(|(names, operations)| json!({
-            "names": names, "operations": operations.len(),
-            "kept": names_any || names.iter().any(|name| graph.global_names.contains(name)),
+            "names": names, "operations": operations.len(), "kept": kept(names),
         })).collect::<Vec<_>>());
         let lazy = heaps.iter().flat_map(|heap| &heap.1)
-            .filter(|(names, _)| names_any || names.iter().any(|name| graph.global_names.contains(name)))
+            .filter(|(names, _)| kept(names))
             .flat_map(|(_, operations)| operations.iter().copied());
         // The internal bindings it may load as it runs: those it names, or every one where it
         // reads a binding loader otherwise.

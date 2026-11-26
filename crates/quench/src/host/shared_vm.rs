@@ -25,6 +25,11 @@ macro_rules! host_row {
     ($kind:ident($($argument:expr),*)) => { Some(operation_index::host_rows::$kind($($argument),*)) };
 }
 
+/// The globals host code reads by name as it runs (`get_property_rooted(global, ..)`), whose
+/// pending lazy initializers an image keeps whatever names its program uses
+/// (`aot::cli`): `structuredClone` reads `process`, a stream reads `Buffer`, and so on.
+pub(crate) const HOST_READ_GLOBALS: &[&str] = &["process", "Buffer", "console", "TextDecoder", "TextEncoder", "URL", "AbortController", "DOMException"];
+
 /// Pushes a `global` operation's identity, by its mark; a `method` names no global.
 macro_rules! global_operation {
     (global $name:literal, $globals:ident) => { $globals.push(marked_operation!($name).id()) };
