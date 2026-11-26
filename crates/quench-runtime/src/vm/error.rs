@@ -1592,6 +1592,10 @@ impl Vm {
             return Ok(primitive);
         }
         if let Some(number) = primitive.as_number() {
+            // A safe integer is one digit (`-0` is `0n`), made in place with no `num_bigint` value.
+            if let Some(integer) = crate::vm::operations::safe_integer(number) {
+                return Ok(self.heap.alloc_bigint(crate::bigint::JsBigInt::from_digits(integer < 0, &[integer.unsigned_abs()])));
+            }
             let Some(integer) = crate::bigint::number_as_bigint(number) else {
                 let detail = self.detail_string(primitive);
                 return Err(self.range_error(

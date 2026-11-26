@@ -1,7 +1,7 @@
 //! BigInt small-magnitude arithmetic and comparison: one body.
 //!
 //! `small_operation` is a guard in front of `JsBigInt`'s digit paths: when both operands are
-//! `i64`s and the result is one too, it computes in `i64`; otherwise it returns `None` and
+//! two-digit integers and the result is one too, it computes in `i128`; otherwise it returns `None` and
 //! the general path computes the same result. `wrap_bits` is BigInt.asIntN and
 //! BigInt.asUintN, and `number_ordering` orders a BigInt against a Number exactly.
 
@@ -18,15 +18,23 @@ fn is_negative(value: &JsBigInt) -> bool {
     value.cmp(&JsBigInt::ZERO) == Ordering::Less
 }
 
-/// The value as an `i64`, when its magnitude is at most `i64::MAX`.
+/// The value as an `i128`, when its magnitude is two digits at most and below 2^127.
 #[inline(always)]
-fn as_i64(value: &JsBigInt) -> Option<i64> {
+fn as_i128(value: &JsBigInt) -> Option<i128> {
     let magnitude = match value.digits() {
         [] => 0,
-        [digit] => i64::try_from(*digit).ok()?,
+        [low] => i128::from(*low),
+        [low, high] => i128::try_from((u128::from(*high) << u64::BITS) | u128::from(*low)).ok()?,
         _ => return None,
     };
     Some(if is_negative(value) { -magnitude } else { magnitude })
+}
+
+/// The BigInt of `value`: two digits at most.
+#[inline(always)]
+fn from_i128(value: i128) -> JsBigInt {
+    let magnitude = value.unsigned_abs();
+    JsBigInt::from_digits(value < 0, &[magnitude as u64, (magnitude >> u64::BITS) as u64])
 }
 
 /// The BigInt of `value`, whose magnitude is one digit at most.
@@ -52,24 +60,24 @@ fn shift(a: i64, count: i64, left: bool) -> Option<i64> {
     (shifted >> distance as u32 == a).then_some(shifted)
 }
 
-/// `left op right` for a BigInt operator when both operands are `i64`s and the result is
-/// one too; `None` otherwise, and the general path computes it. Only addition, subtraction,
-/// multiplication and the shifts have small forms.
+/// `left op right` for a BigInt operator when both operands are two-digit integers (`as_i128`)
+/// and the result is one too; `None` otherwise, and the general path computes it. Only addition,
+/// subtraction, multiplication and the shifts have small forms; a shift keeps to one word.
 #[inline(always)]
 pub(crate) fn small_operation(operator: BinaryOperator, left: &JsBigInt, right: &JsBigInt) -> Option<JsBigInt> {
     use BinaryOperator::{Addition, Multiplication, ShiftLeft, ShiftRight, Subtraction};
-    if !matches!(operator, Addition | Subtraction | Multiplication | ShiftLeft | ShiftRight) {
-        return None;
-    }
-    let (a, b) = (as_i64(left)?, as_i64(right)?);
+    let (a, b) = (as_i128(left)?, as_i128(right)?);
     let value = match operator {
         Addition => a.checked_add(b)?,
         Subtraction => a.checked_sub(b)?,
         Multiplication => a.checked_mul(b)?,
-        ShiftLeft => shift(a, b, true)?,
-        _ => shift(a, b, false)?,
+        ShiftLeft | ShiftRight => {
+            let (a, b) = (i64::try_from(a).ok()?, i64::try_from(b).ok()?);
+            i128::from(shift(a, b, operator == ShiftLeft)?)
+        }
+        _ => return None,
     };
-    Some(from_i64(value))
+    Some(from_i128(value))
 }
 
 /// BigInt.asUintN (`signed` false) or BigInt.asIntN of `value` at `width` bits: the value
@@ -90,6 +98,19 @@ pub(crate) fn wrap_bits(value: &JsBigInt, width: usize, signed: bool) -> Result<
     };
     if unchanged {
         return Ok(value.clone());
+    }
+    if width <= u64::BITS as usize {
+        // Modulo 2^width the value is its two's-complement low word: the magnitude's low digit,
+        // negated for a negative value (the higher digits are multiples of 2^64). Masked to the
+        // width, and for asIntN sign-extended from its top bit: one digit, no division.
+        let low = digits.first().copied().unwrap_or(0);
+        let word = if is_negative(value) { low.wrapping_neg() } else { low };
+        let unused = u64::BITS as usize - width;
+        return Ok(if signed {
+            from_i64(((word << unused) as i64) >> unused)
+        } else {
+            JsBigInt::from_digits(false, &[(word << unused) >> unused])
+        });
     }
     let modulus = JsBigInt::from(1_u8).shift(&JsBigInt::from_digits(false, &[width as u64]), true)?;
     let remainder = value.div_rem(&modulus, false)?;

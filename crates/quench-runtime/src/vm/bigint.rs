@@ -161,9 +161,16 @@ impl Vm {
         signed: bool,
     ) -> Result<Value, JsError> {
         let width = self.bigint_width(p, args.first().copied())?;
-        let value = self.to_bigint(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let value = crate::bigint::JsBigInt::from(&value);
-        match crate::staged::bigint_small::wrap_bits(&value, width, signed) {
+        let operand = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        // A BigInt operand is wrapped from its own cell; any other value converts first.
+        let wrapped = match self.heap.get(operand) {
+            Some(Cell::BigInt(value)) => crate::staged::bigint_small::wrap_bits(value, width, signed),
+            _ => {
+                let value = self.to_bigint(p, operand)?;
+                crate::staged::bigint_small::wrap_bits(&crate::bigint::JsBigInt::from(&value), width, signed)
+            }
+        };
+        match wrapped {
             Ok(wrapped) => Ok(self.heap.alloc_bigint(wrapped)),
             Err(_) => Err(self.range_error(p, "Maximum BigInt size exceeded".into())),
         }
