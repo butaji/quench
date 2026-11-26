@@ -14,7 +14,6 @@ equality quench-runtime-engine/src/compiled/lane_region.rs:fn number_strict_equa
 equality quench-runtime-engine/src/compiled/lane_region.rs:fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
 exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
 exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:pub(crate) fn exact_int32(x: f64) -> Option<i32> {
-exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
 imul quench-runtime-engine/src/compiled/lane_region/known_branches.rs:Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
 imul quench-runtime-engine/src/compiled/object_slots/emit.rs:fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
 imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),

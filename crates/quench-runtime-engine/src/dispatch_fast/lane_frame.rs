@@ -3044,6 +3044,36 @@ const FORMED_COMPARISONS: [u32; 6] = {
 const FLAG_COMPARE_FORMED: u8 = FLAG_COMPARE + COMPARE_OPERATORS;
 const _: () = assert!(FLAG_COMPARE_FORMED as usize + 2 * FORMED_COMPARISONS.len() <= 256);
 
+/// The nullish tests a comparison jump's instance fixes (`FLAG_COMPARE_NULLISH + entry`): an equality of a
+/// register and a constant `null` or `undefined` (`x == null`, `v === undefined`, `??`'s two tests), as
+/// `(strict, negated, null)`. Loose equality holds for either constant alike, so its entries name `null`.
+const NULLISH_TESTS: [(bool, bool, bool); 6] =
+    [(false, false, true), (false, true, true), (true, false, false), (true, true, false), (true, false, true), (true, true, true)];
+/// The first `FLAG` of a nullish test's instance: past the formed instances.
+const FLAG_COMPARE_NULLISH: u8 = FLAG_COMPARE_FORMED + 2 * FORMED_COMPARISONS.len() as u8;
+const _: () = assert!(FLAG_COMPARE_NULLISH as usize + NULLISH_TESTS.len() <= 256);
+
+/// The nullish test `(strict, negated, null)` a comparison jump's `flag` fixes, `None` for any other flag.
+const fn nullish_flag(flag: u8) -> Option<(bool, bool, bool)> {
+    if flag >= FLAG_COMPARE_NULLISH && ((flag - FLAG_COMPARE_NULLISH) as usize) < NULLISH_TESTS.len() {
+        Some(NULLISH_TESTS[(flag - FLAG_COMPARE_NULLISH) as usize])
+    } else {
+        None
+    }
+}
+
+/// The nullish test instance of a comparison jump of `operator` whose right operand is the constant
+/// `constant`, its left a register: `None` for any other operator or constant.
+fn nullish_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Option<Handler> {
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
+    macro_rules! tests { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_NULLISH + $n)),+] } }
+    let (strict, negated) = quench_runtime::vm::operations::equality_operator(operator)?;
+    let null = if constant.is_null() { true } else if constant.is_undefined() { false } else { return None };
+    let entry = NULLISH_TESTS.iter().position(|&test| test == (strict, negated, null || !strict))?;
+    let table: [Handler; NULLISH_TESTS.len()] = tests!(0 1 2 3 4 5);
+    Some(table[entry])
+}
+
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
     if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
@@ -3097,12 +3127,12 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
 /// (`compare_jump_row`, either direction); `None` for any other handler. A record moved back to its plain row
 /// takes its instance again at its next run, so the move undoes only what the run learned.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
-    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len()] {
+    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33)
+        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39)
     }
-    const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() == 34);
+    const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() == 40);
     if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
     if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
     None
@@ -3145,6 +3175,12 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
             let constant = (right.kind() == Some(quench_runtime::bytecode::OperandKind::Constant))
                 .then(|| unsafe { &*(*cx).constants }.get(usize::from(right.payload())).copied()).flatten();
             let formable = right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) || constant.is_some();
+            // A register tested against a constant `null` or `undefined`: its tag decides it (`Comparison::Nullish`).
+            if decodes_so && Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
+                && let Some(handler) = constant.and_then(|constant| nullish_jump_row::<BACKWARD>(operator, constant)) {
+                requicken(ip, handler);
+                sibling!(handler, r, ip, view)
+            }
             if decodes_so && formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
                 if let (Some(constant), Some(true)) = (constant, compare_operands_of::<BACKWARD>(handler)) {
                     // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
@@ -3163,7 +3199,19 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
         }
         let fields = LaneFields::<OP>(i);
         // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
-        let decoded = if const { compare_flag(FLAG).is_some() } {
+        let decoded = if let Some((strict, negated, null)) = const { nullish_flag(FLAG) } {
+            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
+                Some(Operation::CompareJump { left, right, negate, .. }) => {
+                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
+                    let expected = if null { quench_runtime::ValueType::Null } else { quench_runtime::ValueType::Undefined };
+                    Some(Operation::CompareJump {
+                        comparison: quench_runtime::staged::Comparison::Nullish { expected, strict, negated },
+                        left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
+                    })
+                }
+                other => other,
+            }
+        } else if const { compare_flag(FLAG).is_some() } {
             match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
                 Some(Operation::CompareJump { left, right, negate, .. }) => {
                     // The instance's operand form: the tags it fixes, so the operand reads test none.

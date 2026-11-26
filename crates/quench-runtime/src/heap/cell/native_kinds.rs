@@ -281,6 +281,8 @@ impl Native {
     /// iteration from a frameless activation). A keyed collection's or array's iterator
     /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
+    /// `BigInt.asIntN` / `asUintN` coerce only (the data-structure suite's hash map calls them
+    /// eight times per lookup).
     pub fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
@@ -355,6 +357,8 @@ impl Native {
                 | Self::PromiseResolve
                 | Self::PromiseWithResolvers
                 | Self::WasmExportedFunction
+                | Self::BigIntAsIntN
+                | Self::BigIntAsUintN
         )
     }
 
