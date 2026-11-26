@@ -3600,6 +3600,9 @@ lane_handler! {
             && i.c <= quench_runtime::bytecode::REGISTER_MASK;
         let Some(value) = vm
             .dense_array_element(base, key)
+            // An array's hole (`new Array(n)` read where nothing was written): the typed and string
+            // probes below only decline an array, so it is asked before them.
+            .or_else(|| vm.array_hole_element(base, key))
             // A BigInt kind's element has no typed row, so its record misses here each read: asked first.
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
             .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
@@ -10883,6 +10886,9 @@ impl Vm {
                 self.fast_declined(native, text)
             }
             Native::DateNow => Some(self.date_now()),
+            Native::BigIntAsIntN | Native::BigIntAsUintN =>
+                self.bigint_as_n_steady(first?, args.get(1).copied()?, native == Native::BigIntAsIntN),
+            Native::BigInt => self.bigint_of_safe_integer(first?),
             _ => None,
         }
     }

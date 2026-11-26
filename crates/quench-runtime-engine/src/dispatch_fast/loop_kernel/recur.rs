@@ -822,7 +822,7 @@ impl Chain {
         }
         let column = &scratch[link.operand as usize..][..len];
         let mut exact = true;
-        // Only an int32 column is bounded by 2^31 (`exact_int32` wraps any integer below 2^51).
+        // Only an int32 column is bounded by 2^31 (`exact_int32` wraps any safe integer).
         for (o, &value) in x.iter_mut().zip(column) {
             let word = super::run::exact_int32(value).unwrap_or(0);
             exact &= f64::from(word) == value;
@@ -1373,7 +1373,7 @@ fn lane<'a>(source: Source, exact: bool, scalars: &[f64], scratch: &[f64], earli
         }
         Source::Scalar(slot) => {
             let x = scalars[usize::from(slot)];
-            // `exact_int32` wraps any integer below 2^51: only one equal to its word is exact.
+            // `exact_int32` wraps any safe integer: only one equal to its word is exact.
             match super::run::exact_int32(x) {
                 Some(word) if f64::from(word) == x && !(x == 0.0 && x.is_sign_negative()) => Some(((i64::from(word), i64::from(word)), Lane::Const(word))),
                 _ if exact => None,

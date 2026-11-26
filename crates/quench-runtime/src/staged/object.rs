@@ -209,12 +209,27 @@ pub fn walk_prototypes<S: Stage>(stage: &mut S, records: S::Word, object: S::Wor
 #[inline(always)]
 fn walk_from<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, target: S::Word, links: u32) -> S::Word {
     let link = proto_link(stage, record);
-    let gap = stage.sub(link, target);
-    let reached = stage.eq_imm(gap, 0u64);
+    let (reached, null) = link_decision(stage, link, target);
     stage.choose(reached, #[inline(always)] |stage| stage.constant(WALK_HOLDS), #[inline(always)] |stage| {
-        let null = stage.eq_imm(link, u64::from(NULL_LINK));
         stage.choose(null, #[inline(always)] |stage| stage.constant(WALK_FAILS), #[inline(always)] |stage| walk_on(stage, records, link, target, links))
     })
+}
+
+/// The one decision a walk makes at each link, both forms' (`walk_from`, `walk_prototypes_loop`): whether
+/// `link` is the target (the walk holds) and whether it is `null` (it fails); a link that is neither goes
+/// on into the record it names where it names one (`next_record`), else the walk is undecided.
+#[inline(always)]
+fn link_decision<S: Stage>(stage: &mut S, link: S::Word, target: S::Word) -> (S::Cond, S::Cond) {
+    let gap = stage.sub(link, target);
+    let reached = stage.eq_imm(gap, 0u64);
+    (reached, stage.eq_imm(link, u64::from(NULL_LINK)))
+}
+
+/// The object record the walk goes on into past `link`, which names one (`proto_names_record`).
+#[inline(always)]
+fn next_record<S: Stage>(stage: &mut S, records: S::Word, link: S::Word) -> S::Word {
+    let id = proto_record_id(stage, link);
+    object_record_at(stage, records, id)
 }
 
 /// The walk past `link`, which is neither the target nor `null`: into the object record it names.
@@ -223,8 +238,7 @@ fn walk_on<S: Stage>(stage: &mut S, records: S::Word, link: S::Word, target: S::
     let Some(rest) = links.checked_sub(1) else { return stage.constant(WALK_UNDECIDED) };
     let names = proto_names_record(stage, link);
     stage.choose(names, #[inline(always)] |stage| {
-        let id = proto_record_id(stage, link);
-        let next = object_record_at(stage, records, id);
+        let next = next_record(stage, records, link);
         walk_from(stage, records, next, target, rest)
     }, #[inline(always)] |stage| stage.constant(WALK_UNDECIDED))
 }
@@ -237,11 +251,11 @@ pub(crate) fn walk_prototypes_loop<S: Stage<Word = u64, Cond = bool>>(stage: &mu
     let mut record = object;
     for _ in 0..=links {
         let link = proto_link(stage, record);
-        if link == target { return (true, true); }
-        if link == u64::from(NULL_LINK) { return (true, false); }
+        let (reached, null) = link_decision(stage, link, target);
+        if reached { return (true, true); }
+        if null { return (true, false); }
         if !proto_names_record(stage, link) { break; }
-        let id = proto_record_id(stage, link);
-        record = object_record_at(stage, records, id);
+        record = next_record(stage, records, link);
     }
     (false, false)
 }
