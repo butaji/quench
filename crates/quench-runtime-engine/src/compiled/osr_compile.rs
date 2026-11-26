@@ -177,6 +177,8 @@ impl LoopJob {
                 .map(|lowered| (index, lowered))
         })?;
         let header = self.plans[index].span.0 as u32;
+        let (first, last) = self.plans[index].span;
+        super::lane_facts::note_lane_compile(super::lane_facts::Lowers::Region, (last as usize).saturating_sub(first as usize) + 1, lowered.function.dfg.num_insts());
         super::residuals::report_clif(header, &lowered.function);
         let clif = native_dump_directory().map(|_| lowered.function.display().to_string());
         let code = compile_native_function(lowered.function, &*self.isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));
@@ -343,15 +345,15 @@ pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
 fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
     (function, calls, invalidation): (u32, RegionCalls, Invalidation), base: bool) -> Option<Option<PendingOsrRegion>> {
     let base_only = crate::compiled::admission::stencil_only();
-    // A b-jit region the default mode picked that BaseJIT declines falls to Cranelift.
-    if !base || region.inlining.is_some() {
-        return base_only.then_some(None);
-    }
+    // A u-jit region lowers in Cranelift. A b-jit region BaseJIT declines is declined here, in every mode: the default
+    // mode compiles the site again as a u-jit region, from the u-jit region's own inputs (`loop_compile_in_lane`).
+    if !base { return base_only.then_some(None); }
+    if region.inlining.is_some() { return Some(None); }
     let registers = known.program.function(function as usize).registers;
     let spec = BodySpec { function, registers, known, realm: Some(calls.realm), widened, seen: observation.entry_types, kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
-    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
+    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return Some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }
@@ -515,7 +517,11 @@ pub(crate) fn start_osr_region_compiled(
         held: stores.map(|names| (names.clone(), invalidation.address())),
         online: online.map(|online| (online.atoms, online.constants, invalidation.address())) };
     // The job reads the plans' direct callees by pointer (`directs`), which the pending region keeps: guarded.
-    let code = quench_runtime::vm::jit_backend::OffThread::guarded(job, |job: LoopJob| job.run());
+    let code = quench_runtime::vm::jit_backend::OffThread::guarded(job, |job: LoopJob| {
+        let header = job.plans.first().map_or(0, |plan| plan.span.0 as u32);
+        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "region", job.function_id, header, || job.plans.iter().map(|plan| plan.span.1 + 1 - plan.span.0).sum());
+        job.run()
+    });
     let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
     let call_frame = (program.function(function_id as usize).registers, invalidation);
     Some(PendingOsrRegion { code, watch, header: region.header, facts: OsrFacts::observed(observation), crossing: super::Crossing::General,

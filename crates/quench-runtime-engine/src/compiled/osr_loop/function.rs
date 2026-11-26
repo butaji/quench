@@ -51,6 +51,7 @@ impl LoopRegion {
         let backedge = header.checked_add(u32::try_from(instructions.len().checked_sub(1)?).ok()?)?;
         let live = live?.clone();
         Some(Self {
+            stencil_only: false,
             header,
             backedge,
             numbers: Vec::<Register>::new(),

@@ -244,10 +244,7 @@ impl Callees {
     /// The call `shape` planned as its callee's rows (`targets`: what each site recorded), in
     /// `context`, which it spends from; none where the callee stays a call.
     pub(crate) fn inlined_call(&self, targets: &[Vec<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
-        // A method call's callee is read into a scratch register, not the callee register an inlined site proves.
-        if shape.method.is_some() {
-            return None;
-        }
+        // A method call's callee is the scratch register its site read writes first (`calls::method_call_inlined`).
         let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));

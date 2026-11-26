@@ -204,13 +204,63 @@ setting! {
         /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
         /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
         IrMark = "ir-mark",
-        /// Emitted direct calls take the helper row instead of pushing native headers
-        /// (one-frame-one-call.md F5), which is the default: to compare against the old path.
-        NoNativeFrames = "no-native-frames",
         /// Every expensive fallback (a refused compile, a helper call, a deopt, an opaque native
         /// in compiled code) stops the process naming its operation and source location;
         /// `=report` lists them all at exit instead, `=deopt+helper-call` stops at those kinds
         /// only (`crate::fallback`). Not an experiment: the development check that keeps them out.
         StrictFallback = "strict-fallback",
     }
+}
+
+/// Profiling boundary around each compile (`QUENCH_DEV=ir-mark`): it does nothing, and callgrind
+/// started with `--dump-before=quench_compile_mark` (with `--separate-threads=yes` for the code
+/// generator's thread) writes the counts since the previous mark. A compile's begin and end both
+/// call it, so the dump between a pair is that compile's cost; each call prints its tag first
+/// (`QUENCH_COMPILE_MARK`, in dump order per thread), naming the tier, the unit's kind and site.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn quench_compile_mark() {
+    std::hint::black_box(());
+}
+
+/// One compile bracketed by `quench_compile_mark` (`QUENCH_DEV=ir-mark`): begins where it is made,
+/// ends where it drops. Without the setting it holds nothing and marks nothing.
+#[must_use = "the mark ends where it drops"]
+pub struct CompileMark(Option<(&'static str, &'static str, u32, u32, usize)>);
+
+/// The compiles begun in the process (`CompileMark::begin`): a timed run across which it moved shared the machine
+/// with a compile, and measures the compile as much as its code (`LoopTier::weigh_time`).
+static COMPILES_BEGUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The compiles begun so far (`COMPILES_BEGUN`).
+pub fn compiles_begun() -> u64 {
+    COMPILES_BEGUN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl CompileMark {
+    /// Begins the mark of a `tier` (`b-jit`, `u-jit`) compile of a `kind` (`region`, `body`,
+    /// `plan`) unit of `function` at `pc` (a loop header, or 0 for a whole body), `bytecodes` long
+    /// (asked only under the setting), so a compile's cost fits against its size.
+    pub fn begin(tier: &'static str, kind: &'static str, function: u32, pc: u32, bytecodes: impl FnOnce() -> usize) -> Self {
+        COMPILES_BEGUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !Dev::IrMark.on() { return Self(None); }
+        let tag = (tier, kind, function, pc, bytecodes());
+        print_compile_mark("begin", tag);
+        quench_compile_mark();
+        Self(Some(tag))
+    }
+}
+
+impl Drop for CompileMark {
+    fn drop(&mut self) {
+        if let Some(tag) = self.0 {
+            quench_compile_mark();
+            print_compile_mark("end", tag);
+        }
+    }
+}
+
+fn print_compile_mark(edge: &str, (tier, kind, function, pc, bytecodes): (&str, &str, u32, u32, usize)) {
+    eprintln!("QUENCH_COMPILE_MARK {{\"edge\":\"{edge}\",\"tier\":\"{tier}\",\"kind\":\"{kind}\",\"function\":{function},\"pc\":{pc},\"bytecodes\":{bytecodes},\"thread\":\"{:?}\"}}",
+        std::thread::current().id());
 }

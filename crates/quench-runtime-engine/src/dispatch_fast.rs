@@ -643,12 +643,6 @@ impl LaneView {
         }
     }
 
-    /// Whether the view's body is retired to `Declined` (`LaneBody::Declined`): a call of the view has no body to enter.
-    fn declined_in_lane(&self) -> bool {
-        // SAFETY: as `body_view_in_lane`; read only.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Declined)
-    }
-
     /// The published closed body a direct caller pins (`compiled::DirectCallee::method`, `body`), which a
     /// caller of the function itself, or of one with none, leaves to the entry cell it calls through
     /// (the stub enters nothing).
@@ -1572,15 +1566,6 @@ pub(crate) struct LaneStackWords {
     pub(crate) native_table: usize,
 }
 
-/// Whether emitted code may push native headers (one-frame-one-call.md F5): on by default, so a
-/// u-jit direct call's `admit_stacks` finds room under `plain_depth_limit` instead of always
-/// missing to the helper row. `QUENCH_DEV=no-native-frames` keeps the bound 0 (every call takes
-/// the helper row) to compare against the old path.
-fn native_frames_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| !quench_runtime::trace::Dev::NoNativeFrames.on())
-}
-
 #[quench_macros::ext(LaneStackOps1)]
 impl LaneStack {
     /// The activation records, every frame among them (call protocol v2 stage C,
@@ -1994,10 +1979,10 @@ impl LaneStack {
     /// Whether the lane admits activating a script callee of `program` with no link to prove
     /// it (a getter, a native's callback, a body's call): script calls allowed, no construction
     /// pending and `program` the active one, in one compare of the admission word, the same
-    /// word every link's admission is compared with.
+    /// word every link's admission is compared with; the diagnostics bit (`Admission::DIAGNOSED`) refuses only proved links.
     #[inline(always)]
     pub(crate) fn admits_program(&self, program: ProgramId) -> bool {
-        self.admission.0 >> Admission::PROGRAM_SHIFT == program.raw() as u64
+        (self.admission.0 & !Admission::DIAGNOSED) >> Admission::PROGRAM_SHIFT == program.raw() as u64
     }
 
     /// Whether any condition refuses every unlinked activation (`Admission::CONDITIONS`).
@@ -6611,7 +6596,7 @@ script_handler! {
         }
         // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
         // such loop takes the region (`install_loop_sites`), and this one neither warms up nor enters its own.
-        if site.inside_admitted_loop() {
+        if site.inside_admitted_loop() && loop_tier::defers_to_enclosing(site) {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
         if site.interprets() {
@@ -6947,13 +6932,22 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
     // A start under the lane body tier waits for callees still compiling (`body_tier_in_lane::callees_compiling`).
-    let callees_compiling = starting && !base_only && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only, callees_compiling }) {
+    // The default mode starts each body on the tier below u-jit: its b-jit body's completions then weigh the
+    // u-jit compile over it (`LaneView::promote_base_body`), so the default is never costlier than b-jit.
+    let history = own.tier().history.get();
+    let base_first = starting && !history.promoted && !vm.programs.tiers().admits_all && crate::compiled::admission::stencil_below();
+    if base_first && !history.base_first { own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: true, ..history }); }
+    let callees_compiling = starting && !base_only && !base_first && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only: base_only || base_first, callees_compiling }) {
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
-            let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
-            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
-            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
+            let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
+            match vm.base_unit_or_outcome(code, function, parameters, own) {
+                Ok(unit) => return vm.base_body_work(unit, code, function, generic, parameters, own, &direct),
+                // A body the stencil tier refuses in default starts on the tier above it, never stays in the lane.
+                Err(_) if base_first => own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: false, promoted: true, ..own.tier().history.get() }),
+                Err(outcome) => return outcome,
+            }
         }
         crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
@@ -6962,8 +6956,10 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let started: Option<Vec<crate::compiled::LaneExit>> = match &work { crate::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
     // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
-    // b-jit, so a function it would not beat takes the stencil body, stitched at once.
-    if let (crate::compiled::LaneBodyOutcome::Base, Some(generic)) = (&outcome, &started) {
+    // b-jit, so a function it would not beat takes the stencil body, stitched at once. A body
+    // promoted from b-jit whose u-jit compile is refused goes back to b-jit, never down to the lane.
+    let back_to_base = matches!(outcome, crate::compiled::LaneBodyOutcome::Unpaid | crate::compiled::LaneBodyOutcome::Short | crate::compiled::LaneBodyOutcome::Declined) && own.tier().history.get().promoted && crate::compiled::admission::stencil_below();
+    if let Some(generic) = &started && (matches!(outcome, crate::compiled::LaneBodyOutcome::Base) || back_to_base) {
         let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
         return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
     }
@@ -7149,8 +7145,8 @@ fn loop_run_in_lane(
             std::ptr::addr_of!((*context.vm).execution_interrupt),
         )
     };
-    // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
-    // callback executes no guest code, allocates nothing, and retains no VM references.
+    // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the callback executes no guest code.
+    let started = site.tier.borrow().times_run().then(loop_tier::Timing::start);
     let run = match unsafe { region_run_in_lane(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) } {
         Ok(run) => run,
         // The lane admitted no run, so the region's code entered nothing and the interpreter takes the jump.
@@ -7167,8 +7163,9 @@ fn loop_run_in_lane(
     }
     if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
     crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
+    unsafe { vm(cx) }.refresh_body_bases(); // the region reloaded only its own payload's bases, not a body frame's below it
     // A run pays for its entry with the iterations it completed, wherever it leaves.
-    site.note_run(entry.backedge_count());
+    site.note_run(entry.backedge_count(), region.holds_exit(exit) || matches!(exit, LaneExit::Inlined { .. }), started.and_then(loop_tier::Timing::ns));
     if nested {
         return region_left_in_lane(cx, r, site.function, exit);
     }
@@ -8742,18 +8739,17 @@ impl Vm {
         };
         // The bound is set last: `plain_frames_word` above voids it.
         stack.frames_below.set(stack.frames_below_plain());
-        // Once native headers are enabled, emitted pushes keep body_top at the total count between
-        // bindings. A record the general loop stepped may push an ordinary frame, which the lane's
-        // counter does not see (an image body steps records it cannot run), so the counter may trail
-        // the total; it never runs ahead of it.
-        debug_assert!(!native_frames_enabled() || stack.body_top.get() <= stack.activation_count(), "body_top names at most the total frame count at binding");
+        // Emitted pushes keep body_top at the total count between bindings. A record the general
+        // loop stepped may push an ordinary frame, which the lane's counter does not see (an image
+        // body steps records it cannot run), so the counter may trail the total; it never runs ahead of it.
+        debug_assert!(stack.body_top.get() <= stack.activation_count(), "body_top names at most the total frame count at binding");
         stack.body_top.set(stack.activation_count());
         // A binding that admits no direct-call frames admits no native headers either: a run with a
         // pending activation (a cell body entered as the context's leaf, `enter_cell_body_in_lane`)
         // has its caller still unmaterialized, and a header pushed over it would end above the
         // activation the leaf becomes, with a stale caller (earley-boyer under --u-jit). Its calls
         // take the helper row, which materializes the leaf first (`native_frames::in_innermost_frame`).
-        stack.plain_depth_limit.set(if native_frames_enabled() && frames != 0 { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
+        stack.plain_depth_limit.set(if frames != 0 { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
         words
     }
 
@@ -13125,7 +13121,7 @@ fn frames_resumed_in_lane(
     let (r, own, method) = resumed_activation_in_lane(cx, r, (own, root), callee);
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    match exit.resumed() {
+    own.resumed_leave(cx, (root, method), exit, match exit.resumed() {
         // SAFETY: the record that raised is one of the activation's function.
         crate::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         crate::compiled::LaneExit::Terminated | crate::compiled::LaneExit::Entry | crate::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
@@ -13147,7 +13143,7 @@ fn frames_resumed_in_lane(
         }
         // SAFETY: the record that completes the activation is one of its function's.
         crate::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
-    }
+    })
 }
 
 /// Reloads the heap bases the running body's rows read through the payload (`Vm::refresh_body_bases`), as

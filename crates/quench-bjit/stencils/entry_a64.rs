@@ -20,7 +20,7 @@
 //! Holes in assembly: ELF patches four `movz`/`movk` groups (`R_AARCH64_MOVW_UABS_G*`), Mach-O a
 //! literal word the code loads and branches over (`words.rs` `hole_word!`, the same two forms).
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CONTEXT_BODY, JS_STEP_RETURNED_PC};
 use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::staged::frame;
 use crate::words::HOLE_V0;
@@ -114,13 +114,13 @@ pub unsafe extern "C" fn entry_resume() {
     body_thunk!(["mov x16, x2"], "blr x16", [])
 }
 
-/// The body entry (the lane body ABI): calls the first row. The receiver and captures words it is
-/// entered with are in the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by the
-/// caller, so nothing is saved or restored here.
+/// The body entry (the lane body ABI): calls the first row. The receiver is in the window's header
+/// already (`CONTEXT_THIS`); the captures word it is passed (x2) is written to the header (`CONTEXT_BODY`)
+/// here, as `entry.rs` does.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    body_thunk!([], "bl {first}", [], first = sym HOLE_NEXT)
+    body_thunk!(["stur x2, [x3, #-{body}]"], "bl {first}", [], first = sym HOLE_NEXT, body = const CONTEXT_BODY * 8)
 }
 
 /// The body's row entry (`EntryCell::rows`): a b-jit direct call row (`rust-preserve-none`: window x20,

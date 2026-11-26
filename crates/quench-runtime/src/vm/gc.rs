@@ -313,6 +313,7 @@ impl Vm {
     #[quench_macros::test_visible]
     pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
         self.heap.set_memory_policy(policy);
+        self.lane_tiers_run = None;
     }
 
     pub fn memory_policy(&self) -> crate::MemoryPolicy {

@@ -123,6 +123,7 @@ impl Vm {
             lane_roots: Vec::new(),
             spare_lane_stacks: Vec::new(),
             execution_mode: ExecutionMode::default(),
+            lane_tiers_run: None,
             native_execution_rejections: 0,
             js_tier_pending: FxHashMap::default(),
             #[cfg(feature = "native-execution")]

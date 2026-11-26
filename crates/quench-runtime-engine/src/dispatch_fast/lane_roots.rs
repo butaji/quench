@@ -150,6 +150,7 @@ impl Vm {
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
+        let tiers_run = self.tiers_run_in_lanes();
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
@@ -167,7 +168,7 @@ impl Vm {
             inline_calls: inline_calls && code.kind == quench_runtime::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
-            tiers_run: self.tier_may_run(crate::compiled::admission::Tier::ANY),
+            tiers_run,
             // `script_calls` starts on only where `inline_calls` is.
             returns_script_frame: false,
             instance: Value::DELETED,

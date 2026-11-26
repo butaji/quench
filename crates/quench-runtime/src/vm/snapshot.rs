@@ -89,6 +89,7 @@ impl Vm {
             lane_roots: _,
             spare_lane_stacks: _,
             execution_mode: _,
+            lane_tiers_run: _,
             native_execution_rejections: _,
             js_tier_pending: _,
             #[cfg(feature = "native-execution")]

@@ -40,9 +40,10 @@ impl LaneView {
                 }
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
                 if !self.attempts_at(entries.saturating_add(1)) { crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyRecurrent); }
-                // A predecessor's few leaves are the specialization's feedback (`stuck`).
+                // A predecessor's few leaves are the specialization's feedback (`stuck`). Every attempt is priced on its entries
+                // and loop work, a recurrent or looping one too: unpriced, setup functions compiled 8k-30k IR for nothing (TOD-2194).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: Some(entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();

@@ -45,7 +45,7 @@ impl EntryCell {
     pub(crate) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
 
     pub(crate) fn new() -> Self {
-        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: Default::default(),
+        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: std::cell::Cell::new(1),
             proven_entry: Default::default(), proven_body: Default::default() };
         cell.unpublish();
         cell

@@ -394,6 +394,11 @@ pub(crate) use quench_runtime::jit_mode::Tier;
 #[inline]
 pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
 
+/// Whether the stencil tier runs beneath the u-jit (the default mode): a body the u-jit gives up on
+/// falls back to it (`LaneBodyHistory::base_fallback`).
+#[inline]
+pub(crate) fn stencil_below() -> bool { tier_runs(&[Tier::Base]) && tier_runs(&[Tier::Ultra]) }
+
 /// Whether the stencil tier is the only tier (`--b-jit`).
 #[inline]
 pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }

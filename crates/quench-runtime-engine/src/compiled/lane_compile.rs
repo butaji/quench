@@ -258,6 +258,7 @@ impl Lowered {
         let Some(mut lowered) = job.run().filter(|lowered| lowered.region.native != 0) else { return Self::Nothing };
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         let ir = native.dfg.num_insts();
+        super::lane_facts::note_lane_compile(super::lane_facts::Lowers::Body, job.unit.instructions.len(), ir);
         if replans && ir * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES {
             return Self::Oversized;
         }
@@ -552,7 +553,7 @@ impl Vm {
         let tiers = self.programs.tiers();
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
-        let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
+        let own_ir = |bytecodes: u64| super::lane_facts::unplanned_ir(&tiers.loops, bytecodes);
         let planned = self.programs.planned_lane_ir(&site);
         let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
         // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
@@ -560,7 +561,9 @@ impl Vm {
         // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
-        if let Some(entries) = observed && !optimize {
+        // A function the u-jit gave up on takes the tier below's body (`LaneBodyHistory::base_fallback`).
+        if caller.tier().history.get().base_fallback { pick = Some(super::tier_model::Pick::Base); }
+        if let Some(entries) = observed && !optimize && pick.is_none() {
             let ir = estimated;
             pick = Some(pays_compile(tiers, program, function, entries, ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {
@@ -583,6 +586,7 @@ impl Vm {
         if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
+        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
         // A function that calls itself back through other functions runs a call tree per entry,
@@ -656,7 +660,10 @@ impl Vm {
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
-        let code = super::jit_backend::OffThread::guarded((job, census, replans, level), |(job, census, replans, level)| Lowered::of(&job, census, replans, level));
+        let code = super::jit_backend::OffThread::guarded((job, census, replans, level, (function, entry.unwrap_or(0), plan.unit.instructions.len())), |(job, census, replans, level, (function, pc, bytecodes))| {
+            let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "body", function, pc, || bytecodes);
+            Lowered::of(&job, census, replans, level)
+        });
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key, site, taken: Box::new(taken) })
     }

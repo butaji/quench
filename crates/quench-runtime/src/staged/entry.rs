@@ -7,7 +7,7 @@
 use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
 use crate::typed_ir::Representation;
 use super::slot_store::store_slot;
-use super::{StagedRecordSpace, Stage};
+use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
@@ -104,7 +104,7 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
 /// (`Vm::record_field_cache`), so an ungated store also guards that the record is of the `proven`
 /// shape: a slot of another shape may not admit the value, and an ungated write there would leave
 /// its slot type unjoined (`ValueArena::join_slot_owner`) under code that trusts it. A gated store
-/// passes `None`: the gate itself refuses every store while slot types are tracked.
+/// passes `None`: the gate itself refuses every store that may widen a tracked slot type (`slot_store::int_over_int_gate`).
 #[inline(always)]
 pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm,
     (value, gated, proven): (S::Word, bool, Option<S::Imm>), miss: S::Miss) -> Option<()> {
@@ -118,9 +118,12 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
         let same = stage.eq_imm(exact, shape);
         stage.guard(same, miss)?;
     }
-    let open = if gated { stage.store_gate(StagedRecordSpace::Object, id, value) } else { stage.immediate_store_open() };
-    stage.guard(open, miss)?;
     let slot = entry_slot(stage, entry);
+    let open = if gated {
+        let old = plain_value(stage, record, slot, miss)?;
+        super::slot_store::int_over_int_gate(stage, (id, old), value)
+    } else { stage.immediate_store_open() };
+    stage.guard(open, miss)?;
     plain_store(stage, record, slot, value, miss)
 }
 

@@ -69,6 +69,17 @@ pub(crate) fn dense_capture_store<S: Stage>(stage: &mut S, (values, len, admitte
     Some(())
 }
 
+/// `dense_capture_store` of a `value` that is no heap reference, which no barrier records whatever
+/// the environment's generation: a heap reference leaves at `miss`, nothing written.
+#[inline(always)]
+pub fn dense_immediate_capture_store<S: Stage>(stage: &mut S, slots: (S::Word, S::Word, S::Word), slot: u16,
+    value: S::Word, miss: S::Miss) -> Option<()> {
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let immediate = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
+    stage.guard(immediate, miss)?;
+    dense_capture_store(stage, slots, slot, value, miss)
+}
+
 #[cfg(test)]
 /// The interpreter's `environment_slot_open` over the storage at `storage`: whether it wrote.
 ///

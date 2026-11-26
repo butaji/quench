@@ -86,7 +86,7 @@ pub struct LaneStack {
     /// The headers the segments hold, which `activation_count` counts.
     pub sealed: std::cell::Cell<usize>,
     /// The admission bound emitted code checks native headers against (`JsStepDispatch::plain_depth_limit`):
-    /// the activation limit while the frames are bound (`native_frames_enabled`), else 0. Rust's frame
+    /// the activation limit while the frames are bound, else 0. Rust's frame
     /// changes void it (`frames_changed`), so emitted calls take the helper row until the next binding.
     pub plain_depth_limit: Box<std::cell::Cell<usize>>,
     /// The frames below the plain headers, records and sealed alike (`frames_below_plain`), as of the last
@@ -1433,6 +1433,9 @@ pub struct LoopRegion {
     pub live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub inlining: Option<Box<Inlining>>,
+    /// Whether its iterations leave natively (at a call no row completes, a throw), so only the stencil tier
+    /// takes it, which lowers each instruction: Cranelift never compiles it (`osr_loop::admit_region`).
+    pub stencil_only: bool,
 }
 
 /// Storage and guest-call allowance proved before an inlined body runs.
@@ -1681,6 +1684,15 @@ pub struct LaneBodyHistory {
     /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
     /// (Lindy: a function that ran this long runs on), rather than starting again from none.
     pub runs: u32,
+    /// Whether a u-jit body of it gave up (no run completed, or its leaves outweighed its runs) where
+    /// the stencil tier also runs: the tier below serves it from then on (`tier_model::Pick::Base`), so
+    /// the default mode never runs it costlier than `--b-jit` would.
+    pub base_fallback: bool,
+    /// Whether its current body is the b-jit body the default mode starts every function with (the tier
+    /// below u-jit, by construction): its completions weigh the u-jit compile (`tier_model::promotes`).
+    pub base_first: bool,
+    /// Whether its b-jit body's completions repaid the u-jit compile over it: the next compile is u-jit.
+    pub promoted: bool,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps
@@ -1763,6 +1775,9 @@ pub struct LoopTier {
     /// bound misses every versioned entry.
     pub entry_misses: u16,
     pub unbounded: bool,
+    /// Runs in a row that left inside the loop before its first backward edge (`LoopTier::weigh_run`): code that
+    /// pays its entry for no iteration, whose site gives up its native code past `widen_after_leaves` of them.
+    pub fruitless: u16,
     /// Whether the current code (or the compile under way) is a b-jit region the default mode
     /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
     /// compile (`promote`).
@@ -1776,6 +1791,87 @@ pub struct LoopTier {
     /// The entries up to which the site is known to repay its native code (`LoopSite::settle`):
     /// the iterations only add, so until the entries pass this count the check is not due.
     pub settle_at: u64,
+    /// The current code's native runs and those that left inside the loop: what the u-jit region a
+    /// promotion publishes is measured against (`LoopTier::weigh_run`).
+    pub tier_runs: u32,
+    pub tier_left: u32,
+    /// The b-jit region's share of runs that left, per mille, measured when the u-jit region took its
+    /// place; none before a promotion publishes.
+    pub base_left_permille: Option<u32>,
+    /// Whether the u-jit region left more often than the b-jit region it replaced: the site keeps the
+    /// b-jit region from then on (`loop_model::base_region` is not asked again).
+    pub demoted: bool,
+    /// Whether BaseJIT declined the site's b-jit region in the default mode: the site compiles u-jit regions only.
+    pub stencil_declined: bool,
+    /// The current code's timed runs, and the b-jit region's when a promotion replaced it (TOD-2295,
+    /// `LoopTier::weigh_time`).
+    pub native: RunStats,
+    pub base_runs: Option<RunStats>,
+}
+
+/// Timed runs of one tier's code at a loop site: their count, and the sum and sum of squares of each run's log ns per
+/// iteration (entry and exit included). Timing noise multiplies (caches, frequency, a collection), so the logs are
+/// near normal where the raw times are heavy-tailed; the tier's cost and its uncertainty are estimated on them.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RunStats {
+    pub runs: u32,
+    pub sum: f64,
+    pub squares: f64,
+    /// The sums of 1, iterations, ns, their product and the iterations squared: the least-squares line
+    /// ns = entry + iterations x cost of this site's code (`intercept`).
+    pub line: [f64; 5],
+}
+
+/// The fewest runs a sample variance is taken over.
+const MIN_VARIANCE_RUNS: u32 = 2;
+
+impl RunStats {
+    /// Adds a run of `iterations` that took `ns`.
+    pub fn add(&mut self, ns: u64, iterations: u64) {
+        let rate = (ns.max(1) as f64 / iterations.max(1) as f64).ln();
+        self.runs = self.runs.saturating_add(1);
+        self.sum += rate;
+        self.squares += rate * rate;
+        let (x, y) = (iterations as f64, ns as f64);
+        for (sum, add) in self.line.iter_mut().zip([1.0, x, y, x * y, x * x]) { *sum += add; }
+    }
+
+    /// What entering and leaving this site's code costs, in its own iterations, and the ns one iteration takes: the
+    /// intercept of its runs' line over its slope, and the slope, where their iterations vary enough to fit one. One
+    /// line per site, as every site's cost per iteration differs (pooled over sites, the slopes' spread lands in the
+    /// intercept); and a ratio of two times, so a slower clock (a profiler, a loaded machine) scales both alike.
+    pub fn entry_iterations(&self) -> Option<(f64, f64)> {
+        let [n, x, y, xy, xx] = self.line;
+        let spread = n * xx - x * x;
+        if spread <= n * n { return None; }
+        let slope = (n * xy - x * y) / spread;
+        (slope > 0.0).then(|| ((y * xx - x * xy) / spread / slope, slope))
+    }
+
+    /// The mean log ns per iteration.
+    fn mean(&self) -> f64 {
+        self.sum / f64::from(self.runs.max(1))
+    }
+
+    /// The typical ns per iteration (the geometric mean).
+    pub fn ns_per_iteration(&self) -> f64 {
+        self.mean().exp()
+    }
+
+    /// The variance of the mean log (the sample variance over the runs, divided by the runs).
+    pub fn mean_variance(&self) -> f64 {
+        let runs = self.runs.max(MIN_VARIANCE_RUNS);
+        let n = f64::from(runs);
+        ((self.squares - self.sum * self.sum / n) / f64::from(runs - 1)).max(0.0) / n
+    }
+
+    /// Welch's statistic for `self` being slower than `other`: the difference of the mean logs over its standard
+    /// error; past about 2 the difference is real at the 97.5% level.
+    pub fn slower_by(&self, other: &RunStats) -> f64 {
+        let error = (self.mean_variance() + other.mean_variance()).sqrt();
+        if error == 0.0 { return if self.mean() > other.mean() { f64::INFINITY } else { 0.0 }; }
+        (self.mean() - other.mean()) / error
+    }
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
@@ -5984,6 +6080,8 @@ impl EntryCell {
         self.proven_body.set(0);
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);
+        // The stub's entry reads the receiver from the header as any body without row entries does (`publish`).
+        self.uses_this.set(1);
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -5998,7 +6096,9 @@ impl EntryCell {
         self.rows.set(0);
         self.proven.set(0);
         self.numbers.set(0);
-        self.uses_this.set(0);
+        // A body without row entries (a u-jit body) takes the receiver its caller writes, so a b-jit call row
+        // writes it always: a b-jit caller of a body promoted to u-jit read a stale receiver otherwise.
+        self.uses_this.set(1);
         if let Some(entries) = body.row_entries() {
             self.rows.set(entries.rows);
             method.on_retire(&self.rows, entries.rows, 0);
