@@ -50,7 +50,7 @@ impl LaneValues {
     pub fn top(&self) -> *mut Value { self.top }
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
-    pub fn top_word(&mut self) -> *mut *mut Value { &raw mut self.top }
+    pub fn top_word(&self) -> *mut *mut Value { (&raw const self.top).cast_mut() }
     /// The values that fit above the top.
     #[inline(always)]
     pub fn room(&self) -> usize { self.end.addr().wrapping_sub(self.top.addr()) / std::mem::size_of::<Value>() }

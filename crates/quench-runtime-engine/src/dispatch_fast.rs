@@ -1549,21 +1549,39 @@ const _: () = {
     assert!(std::mem::offset_of!(PlainFrames, program) == frame::PLAIN_PROGRAM_AT);
 };
 
-/// The addresses a lane run's direct calls push onto (`Vm::stack_words_in_lane`).
+/// The words of a lane run's direct calls that change per entry (`Vm::stack_entry_in_lane`): the end of
+/// the frames the run may nest above the activations' top, and the end of the values' capacity, which
+/// a reallocation of the values moves (`LaneStack::reserve_values`) during a run.
 #[derive(Clone, Copy)]
-pub(crate) struct LaneStackWords {
-    pub(crate) values_top: usize,
-    pub(crate) values_end: usize,
-    pub(crate) activations_top: usize,
+pub(crate) struct LaneStackEntry {
     pub(crate) frames_end: usize,
-    /// The plain frames' words (`plain_frames_word`), and the cells of the native header bound, the frames
-    /// below the plain headers, and the body top (`LaneStack::plain_depth_limit` and the rest).
+    pub(crate) values_end: usize,
+}
+
+/// The addresses a lane run's direct calls push through (`Vm::lane_stack_storage`), bound once per run
+/// (`BodyRunContext::bind_run`). Each names a field of the `LaneStack` the `Vm` owns, or a table mapped
+/// once for the stack, so none moves while the run's `LaneStack` stands: a reallocation changes the
+/// values' or the records' buffer, never their top words.
+#[derive(Clone, Copy)]
+pub(crate) struct LaneStackStorage {
+    pub(crate) values_top: usize,
+    pub(crate) activations_top: usize,
+    /// The plain frames' words (`PlainFrames`), and the cells of the native header bound, the frames
+    /// below the plain headers, and the body top (`LaneStack::plain_depth_limit` and the rest). Their
+    /// values change per entry; these addresses do not.
     pub(crate) plain_depth: usize,
     pub(crate) plain_depth_limit: usize,
     pub(crate) activation_count: usize,
     pub(crate) body_table: usize,
     pub(crate) body_top: usize,
     pub(crate) native_table: usize,
+}
+
+/// The words a lane run's direct calls push onto, bound together (`Vm::stack_words_in_lane`).
+#[derive(Clone, Copy)]
+pub(crate) struct LaneStackWords {
+    pub(crate) entry: LaneStackEntry,
+    pub(crate) storage: LaneStackStorage,
 }
 
 #[quench_macros::ext(LaneStackOps1)]
@@ -7104,7 +7122,7 @@ fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
             // SAFETY: the record is the running view's, on this thread; its handler is requickened next.
             unsafe { (*update.cast_mut()).mode = mode };
-            requicken(update, fused);
+            requicken(update, int_steps::retired_step(cx, site, update, unsafe { &*header }, fused));
         }
     }
 }
@@ -7233,7 +7251,7 @@ fn loop_run_in_lane(
         return crate::compiled::fallback_sites::entry_refused(cx, site, if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
     if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
-    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, || int_steps::native_handed_doubles(cx, site, exit, |register| r.get(register).as_int().is_some()));
     unsafe { vm(cx) }.refresh_body_bases(); // the region reloaded only its own payload's bases, not a body frame's below it
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count(), region.holds_exit(exit) || matches!(exit, LaneExit::Inlined { .. }), started.and_then(loop_tier::Timing::ns));
@@ -8777,12 +8795,18 @@ impl Vm {
         self.may_run_in_lane(id, code) && self.specialized_operations_enabled(code)
     }
 
-    /// The words a lane run's direct calls push onto (`compiled::DirectCallee`): the addresses
-    /// of the values' and the activations' tops, each owned here and bumped through its
-    /// address by emitted code; the end of the values' capacity; and the end of the `frames`
-    /// activations the run may nest above the activations' top, bounded by what the lane may
-    /// still make of them.
+    /// The words a lane run's direct calls push onto (`compiled::DirectCallee`), bound together: the
+    /// per-entry words (`stack_entry_in_lane`) and the storage's addresses (`lane_stack_storage`).
     pub(crate) fn stack_words_in_lane(&mut self, frames: usize) -> LaneStackWords {
+        let entry = self.stack_entry_in_lane(frames);
+        LaneStackWords { entry, storage: self.lane_stack_storage() }
+    }
+
+    /// The per-entry words a lane run's direct calls push onto (`stack_words_in_lane`): the end of the
+    /// `frames` activations the run may nest above the activations' top, bounded by what the lane may
+    /// still make of them, and the end of the values' capacity. It also binds the frame counts the
+    /// run's emitted pushes check, which change at every entry.
+    pub(crate) fn stack_entry_in_lane(&mut self, frames: usize) -> LaneStackEntry {
         let stack = &mut self.lane_stack;
         let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
         // The one spill left for emitted code (one-frame-one-call.md F5): its direct calls push
@@ -8795,33 +8819,37 @@ impl Vm {
         let frames_end = records.top_ptr().wrapping_add(frames).addr();
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
-        let activations_top = records.top_word().addr();
-        let words = LaneStackWords {
-            values_top: stack.values.top_word().addr(),
-            values_end,
-            activations_top,
-            frames_end,
-            plain_depth: stack.plain_frames_word(),
-            plain_depth_limit: stack.plain_depth_limit.as_ptr().addr(),
-            activation_count: stack.frames_below.as_ptr().addr(),
-            body_table: stack.body_table.as_ptr().addr(),
-            body_top: stack.body_top.as_ptr().addr(),
-            native_table: stack.native_table.as_ptr().addr(),
-        };
-        // The bound is set last: `plain_frames_word` above voids it.
-        stack.frames_below.set(stack.frames_below_plain());
         // Emitted pushes keep body_top at the total count between bindings. A record the general
         // loop stepped may push an ordinary frame, which the lane's counter does not see (an image
         // body steps records it cannot run), so the counter may trail the total; it never runs ahead of it.
         debug_assert!(stack.body_top.get() <= stack.activation_count(), "body_top names at most the total frame count at binding");
         stack.body_top.set(stack.activation_count());
+        stack.frames_below.set(stack.frames_below_plain());
         // A binding that admits no direct-call frames admits no native headers either: a run with a
         // pending activation (a cell body entered as the context's leaf, `enter_cell_body_in_lane`)
         // has its caller still unmaterialized, and a header pushed over it would end above the
         // activation the leaf becomes, with a stale caller (earley-boyer under --u-jit). Its calls
         // take the helper row, which materializes the leaf first (`native_frames::in_innermost_frame`).
         stack.plain_depth_limit.set(if frames != 0 { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
-        words
+        LaneStackEntry { frames_end, values_end }
+    }
+
+    /// The addresses of the lane stack's storage a lane run's direct calls push through
+    /// (`LaneStackStorage`). Unlike `stack_entry_in_lane`, this changes nothing.
+    pub(crate) fn lane_stack_storage(&self) -> LaneStackStorage {
+        let stack = &self.lane_stack;
+        // SAFETY: reads the records' top word's address alone; no reference into them is made.
+        let records = unsafe { &*stack.activation_records.get() };
+        LaneStackStorage {
+            values_top: stack.values.top_word().addr(),
+            activations_top: records.top_word().addr(),
+            plain_depth: (&raw const stack.plain).expose_provenance(),
+            plain_depth_limit: stack.plain_depth_limit.as_ptr().addr(),
+            activation_count: stack.frames_below.as_ptr().addr(),
+            body_table: stack.body_table.as_ptr().addr(),
+            body_top: stack.body_top.as_ptr().addr(),
+            native_table: stack.native_table.as_ptr().addr(),
+        }
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -13153,7 +13181,7 @@ fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
-    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, exit, || native_frames::left_native_frames(cx));
+    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, || !matches!(exit, crate::compiled::LaneExit::Returned { .. }) || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }
@@ -17006,9 +17034,7 @@ pub(crate) fn derive_lane_view<'live>(
         }
     }
     let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
-    if let Some(kinds) = int_kinds.as_ref() {
-        prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating);
-    }
+    let proven_counters = int_kinds.as_ref().map(|kinds| int_steps::prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating)).unwrap_or_default();
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -17126,6 +17152,8 @@ pub(crate) fn derive_lane_view<'live>(
         field_records,
         name_records,
         int_speculating: int_speculating.into_boxed_slice(),
+        proven_counters: proven_counters.into_boxed_slice(),
+        speculative_registers: int_kinds.as_ref().map(|kinds| kinds.speculative().collect()).unwrap_or_default(),
     }
 }
 
@@ -17438,7 +17466,7 @@ fn specialize_constant_returns(records: &mut [LaneInstruction]) {
 }
 
 pub(crate) mod loop_kernel;
-pub(crate) mod int_kinds;
+pub(crate) mod int_kinds; pub(crate) mod int_steps;
 
 /// The proved row of the element record running `handler` (`specialize_proved_arrays`): the row of
 /// the same opcode with `FLAG_SET`, which reads or replaces its base's element through the proof of
@@ -17581,52 +17609,16 @@ const fn inc_dec_test_row<const CMP: u8>() -> Handler {
         { quench_runtime::staged::COMPARE_JUMP_ROW }, { quench_runtime::staged::NO_LINK }, CMP) as Handler
 }
 
-/// The `(IncDec, Jump)` back edges whose step and test the registers' int32 kinds prove
-/// (`int_kinds`): `i++` in place of a register of an int32 kind, then a fixed register-register
-/// comparison whose left operand is that register. Each takes its `PROVEN_STEP` form, which reads
-/// the counter with no tag test and gives the test its new value as held; one over a speculative
-/// counter is listed in `speculating` with its checked form (`LaneView::retire_int_speculation`).
-fn prove_loop_steps(decoded: &[WideInstruction], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
-    speculating: &mut Vec<(u32, *const (), *const ())>) {
-    macro_rules! proven_row {
-        ($($code:literal),*) => {
-            |code: u8| -> Option<(Handler, Handler)> {
-                match code {
-                    $($code => Some((inc_dec_test_row::<$code>(), inc_dec_test_row::<{ $code | lane_frame::PROVEN_STEP }>())),)*
-                    _ => None,
-                }
-            }
-        };
-    }
-    // The register-register comparisons' codes (`target_comparison`: odd codes; even ones name a constant).
-    let row_of = proven_row!(1, 3, 5, 7, 9, 11);
-    let record = std::mem::size_of::<LaneInstruction>() as isize;
-    for head in 0..records.len().saturating_sub(1) {
-        let Some(code) = (1..=12u8).step_by(2).find(|&code| row_of(code).is_some_and(|(checked, _)| records[head].handler == checked as *const ())) else {
-            continue;
-        };
-        let Some((checked, proven)) = row_of(code) else { continue };
-        let step = decoded[head];
-        if !quench_runtime::staged::meaning::means(step, quench_runtime::staged::meaning::Meaning::IncDec) || step.numeric_local_target().is_some() || step.boolean_flag() != Some(false)
-            || step.result_flags() != 0 || step.result_register() != step.register_b() {
-            continue;
-        }
-        let counter = step.register_b();
-        let kind = kinds.of(counter);
-        if kind == int_kinds::Kind::Tagged {
-            continue;
-        }
-        let jump = head + 1;
-        let Ok(target) = usize::try_from(jump as isize + records[jump].jump() / record) else { continue };
-        let Some(&test) = decoded.get(target) else { continue };
-        if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::CompareJump) || Operand(records[target].b).register_index() != Some(counter) {
-            continue;
-        }
-        if kind == int_kinds::Kind::Speculative {
-            speculating.push((head as u32, proven as *const (), checked as *const ()));
-        }
-        records[head].handler = proven as *const ();
-    }
+/// The (checked, proven) handler pairs of the back edge over a register-register comparison (`target_comparison`:
+/// odd codes; even ones name a constant).
+pub(super) fn proven_step_forms() -> [(Handler, Handler); 6] {
+    macro_rules! forms { ($($code:literal),*) => { [$((inc_dec_test_row::<$code>(), inc_dec_test_row::<{ $code | lane_frame::PROVEN_STEP }>())),*] }; }
+    forms!(1, 3, 5, 7, 9, 11)
+}
+
+/// The (checked, proven) pair whose checked form is `handler`.
+pub(super) fn checked_step(handler: *const ()) -> Option<(Handler, Handler)> {
+    proven_step_forms().into_iter().find(|(checked, _)| *checked as *const () == handler)
 }
 
 /// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the

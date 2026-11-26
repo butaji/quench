@@ -424,14 +424,13 @@ pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
     RecordPlan { loop_sites: tiers_run, speculates: crate::dispatch_fast::int_kinds::speculation_allowed() }
 }
 
-/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code ran an activation
-/// the lane goes on in (`exit` names a record of it or a callee it made, or `frames_left` native frames
-/// it left): a native tier steps a register as a double without the interpreter's retirement (a widened
-/// stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
-/// A run that completed its activation and left no native frame hands back nothing.
+/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code handed the lane what it may have
+/// stepped as doubles (`handed`: frames it left, or an activation it ran on with a speculative register no longer an
+/// int32, `int_steps::native_handed_doubles`): a native tier steps a register as a double without the interpreter's
+/// retirement (a widened stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
 #[inline(always)]
-pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, exit: crate::compiled::LaneExit, frames_left: impl FnOnce() -> bool) {
-    if crate::dispatch_fast::int_kinds::speculation_allowed() && (!matches!(exit, crate::compiled::LaneExit::Returned { .. }) || frames_left()) {
+pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, handed: impl FnOnce() -> bool) {
+    if crate::dispatch_fast::int_kinds::speculation_allowed() && handed() {
         vm.retire_int_speculation();
     }
 }

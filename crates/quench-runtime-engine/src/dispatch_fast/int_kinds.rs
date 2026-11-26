@@ -39,6 +39,11 @@ impl IntKinds {
         self.kinds.get(usize::from(register)).copied().unwrap_or(Kind::Tagged)
     }
 
+    /// The registers of a `Speculative` kind: an int32 until an update of one overflows.
+    pub(crate) fn speculative(&self) -> impl Iterator<Item = u16> + '_ {
+        self.kinds.iter().enumerate().filter(|(_, kind)| **kind == Kind::Speculative).map(|(register, _)| register as u16)
+    }
+
     /// Whether `register` holds an int32 at every read while speculation stands.
     pub(crate) fn proven(&self, register: u16) -> bool {
         self.of(register) != Kind::Tagged
