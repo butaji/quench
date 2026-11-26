@@ -25,6 +25,11 @@ macro_rules! host_row {
     ($kind:ident($($argument:expr),*)) => { Some(operation_index::host_rows::$kind($($argument),*)) };
 }
 
+/// The globals host code reads by name as it runs (`get_property_rooted(global, ..)`), whose
+/// pending lazy initializers an image keeps whatever names its program uses
+/// (`aot::cli`): `structuredClone` reads `process`, a stream reads `Buffer`, and so on.
+pub(crate) const HOST_READ_GLOBALS: &[&str] = &["process", "Buffer", "console", "TextDecoder", "TextEncoder", "URL", "AbortController", "DOMException"];
+
 /// Pushes a `global` operation's identity, by its mark; a `method` names no global.
 macro_rules! global_operation {
     (global $name:literal, $globals:ident) => { $globals.push(marked_operation!($name).id()) };
@@ -130,6 +135,13 @@ pub(crate) struct HostSourceRoutes {
     pub(crate) failed_wrapper_goal: fn(&RootedError, &std::path::Path, &str) -> quench_runtime::SourceKind,
     /// A module request the image does not embed, resolved on the file system (`NodeHost::resolve_filesystem_import`).
     filesystem_import: fn(&mut NodeHost, &str, &str, bool) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError>,
+    /// The interactive REPL a run with no entry starts (`repl::start_interactive`), which
+    /// evaluates what it reads.
+    pub(crate) interactive: fn(&mut quench_runtime::NativeContext<'_>) -> Result<(), RootedError>,
+    /// The builtin modules an evaluated entry (`-e`, `-p`) sees as globals (`eval_globals_shared_vm::install`).
+    pub(crate) eval_globals: fn(&mut quench_runtime::NativeContext<'_>) -> Result<(), RootedError>,
+    /// An inline entry's module record and globals (`commonjs::install_inline_entry`).
+    pub(crate) inline_entry: fn(&mut quench_runtime::NativeContext<'_>) -> Result<(), RootedError>,
 }
 static SOURCE_ROUTES: std::sync::OnceLock<HostSourceRoutes> = std::sync::OnceLock::new();
 
@@ -147,6 +159,9 @@ pub fn enable_dynamic_source() {
         module_source: NodeHost::module_source_text,
         failed_wrapper_goal: commonjs::failed_wrapper_goal_parsed,
         filesystem_import: NodeHost::resolve_filesystem_import,
+        interactive: crate::modules::repl::start_interactive,
+        eval_globals: crate::modules::eval_globals_shared_vm::install,
+        inline_entry: commonjs::install_inline_entry,
     });
 }
 
@@ -161,6 +176,9 @@ pub fn enable_wasm() {
     // installs no frontend, so it links no decoder.
     #[cfg(feature = "wasm")]
     WASM_ROUTES.get_or_init(|| crate::host::wasm_frontend::FRONTEND);
+    // The WebAssembly JS API links with the frontend (`quench_runtime::enable_wasm_js`).
+    #[cfg(feature = "wasm")]
+    quench_runtime::enable_wasm_js();
 }
 
 node_bindings! {
@@ -2614,6 +2632,17 @@ node_bindings! {
         method "builtin:worker_threads" (0) => commonjs::builders::worker_threads,
         method "builtin:url" (0) => commonjs::builders::url,
         method "builtin:querystring" (0) => commonjs::builders::querystring,
+        method "builtin:assert" (0) => commonjs::builders::assert,
+        method "builtin:assert/strict" (0) => commonjs::builders::assert_strict,
+        method "builtin:path" (0) => commonjs::builders::path,
+        method "builtin:path/posix" (0) => commonjs::builders::path_posix,
+        method "builtin:path/win32" (0) => commonjs::builders::path_win32,
+        method "builtin:async_hooks" (0) => commonjs::builders::async_hooks,
+        method "builtin:internal/async_hooks" (0) => commonjs::builders::internal_async_hooks,
+        method "builtin:diagnostics_channel" (0) => commonjs::builders::diagnostics_channel,
+        method "builtin:internal/dgram" (0) => commonjs::builders::internal_dgram,
+        method "builtin:internal/blocklist" (0) => commonjs::builders::internal_blocklist,
+        method "builtin:internal/socketaddress" (0) => commonjs::builders::internal_socketaddress,
         method "builtin:readline" (0) => commonjs::builders::readline,
         method "builtin:stream/consumers" (0) => commonjs::builders::stream_consumers,
         method "builtin:events" (0) => commonjs::builders::events,

@@ -170,6 +170,15 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
     let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
+    // The host operations the startup heap holds, from which the image's table starts. No
+    // opcodes: the entry's functions lower as they run, to opcodes their bytecode does not name
+    // yet, so an image that runs its entry installs every lane row (`resumes_at_rest`).
+    let (operations, lazy) = runtime.held_host_operations();
+    let held: super::prefix::HeldOperations = (operations, lazy, Vec::new());
+    fs::write(output.with_extension("operations"), serde_json::to_vec(&held).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let (programs, functions, instructions) = runtime.held_code_size();
+    fs::write(output.with_extension("code"), json!({"programs": programs, "functions": functions, "instructions": instructions}).to_string())
+        .map_err(|error| error.to_string())?;
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
@@ -184,7 +193,8 @@ fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport)
     features
 }
 
-fn compile(options: Options) -> Result<(), String> {    let entry = options
+fn compile(options: Options) -> Result<(), String> {
+    let entry = options
         .entry
         .canonicalize()
         .map_err(|error| format!("{}: {error}", options.entry.display()))?;
@@ -298,7 +308,7 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
-    let (inputs, held) = super::image::stage_image(core, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
+    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -331,12 +341,16 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
+    let dumps = super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
         report["symbol_audit_stage"] = json!("before_symbol_removal");
         report["binary_bytes"] = json!(payload.binary_bytes);
         report["payload_reduction"] = json!(payload);
+    }
+    if !dumps.is_empty() {
+        super::image_dump::append(&staged, &dumps)?;
     }
     report["native_dependencies"] = json!(super::image::native_dependencies(&staged)?);
     report["status"] = json!("compiled");

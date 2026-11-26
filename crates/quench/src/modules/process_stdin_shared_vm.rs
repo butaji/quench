@@ -237,11 +237,15 @@ mod platform {
         }
         // One queued read per readiness notification. Callbacks and errors are
         // routed by the same checkpoint authority as timers and network callbacks.
-        let mut bytes = vec![0; READ_CHUNK_BYTES];
+        // Read into spare capacity: zeroing the whole chunk first costs more than a typical read.
+        let mut bytes = Vec::<u8>::with_capacity(READ_CHUNK_BYTES);
         let pending = loop {
-            let length = unsafe { libc::read(STDIN_FD, bytes.as_mut_ptr().cast(), bytes.len()) };
+            // SAFETY: `read` writes at most `READ_CHUNK_BYTES` into the vector's spare capacity.
+            let length = unsafe { libc::read(STDIN_FD, bytes.as_mut_ptr().cast(), READ_CHUNK_BYTES) };
             if length >= 0 {
-                bytes.truncate(length as usize);
+                // SAFETY: `read` initialized the first `length` bytes.
+                unsafe { bytes.set_len(length as usize) };
+                bytes.shrink_to_fit();
                 break Ok(bytes);
             }
             let error = std::io::Error::last_os_error();

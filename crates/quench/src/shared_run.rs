@@ -129,10 +129,15 @@ pub enum SharedCompletion {
 impl SharedCompletion {
     /// Process status shared by source and native executable entry points.
     pub fn exit_code(self) -> ExitCode {
+        ExitCode::from(self.exit_status())
+    }
+
+    /// The process's exit status (`exit_code`).
+    pub fn exit_status(self) -> u8 {
         match self {
-            Self::Completed => ExitCode::SUCCESS,
-            Self::PendingTopLevelAwait => ExitCode::from(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT),
-            Self::GuestExit { code } => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Self::Completed => 0,
+            Self::PendingTopLevelAwait => quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT,
+            Self::GuestExit { code } => u8::try_from(code).unwrap_or(1),
         }
     }
 }
@@ -214,11 +219,11 @@ impl std::ops::DerefMut for EntryRuntime {
 
 impl Drop for EntryRuntime {
     fn drop(&mut self) {
-        // SAFETY: `runtime` is taken once, here, and never used again.
-        let runtime = unsafe { std::mem::ManuallyDrop::take(&mut self.runtime) };
         match self.teardown {
-            Teardown::Free => drop(runtime),
-            Teardown::ProcessExit => runtime.end_for_process_exit(),
+            // SAFETY: `runtime` is dropped once, here, and never used again.
+            Teardown::Free => unsafe { std::mem::ManuallyDrop::drop(&mut self.runtime) },
+            // SAFETY: `runtime` is ended once, here, and never used again.
+            Teardown::ProcessExit => unsafe { quench_runtime::Runtime::end_for_process_exit(&mut self.runtime) },
         }
     }
 }
@@ -247,16 +252,40 @@ pub fn run_node_worker<T: Send + 'static>(
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
             .map_err(|error| format!("runtime worker signal mask: {error}"))?;
+    let work = move || {
+        #[cfg(target_os = "linux")]
+        worker_mask
+            .restore()
+            .map_err(|error| format!("runtime execution signal mask: {error}"))?;
+        execute()
+    };
+    // The worker's stack, and with it every thread-local the runtime keeps, lies at one fixed
+    // address, so a runtime saved from an earlier run that names them maps back valid
+    // (`quench_alloc::run_on_fixed_stack`); where that range is taken, an ordinary thread.
+    #[cfg(unix)]
+    let work = {
+        let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = result.clone();
+        let body: Box<dyn FnOnce() + Send> = Box::new(move || {
+            let outcome = work();
+            *slot.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(outcome);
+        });
+        match quench_alloc::run_on_fixed_stack(c"quench-shared-exec", quench_runtime::WORKER_STACK_SIZE, body) {
+            Ok(_) => {
+                return result.lock().unwrap_or_else(|poison| poison.into_inner()).take()
+                    .unwrap_or_else(|| Err("runtime worker panicked".into()));
+            }
+            Err(body) => move || {
+                body();
+                result.lock().unwrap_or_else(|poison| poison.into_inner()).take()
+                    .unwrap_or_else(|| Err("runtime worker panicked".into()))
+            },
+        }
+    };
     std::thread::Builder::new()
         .name("quench-shared-exec".into())
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
-        .spawn(move || {
-            #[cfg(target_os = "linux")]
-            worker_mask
-                .restore()
-                .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute()
-        })
+        .spawn(work)
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
         .unwrap_or_else(|_| Err("runtime worker panicked".into()))
@@ -414,8 +443,13 @@ fn execute_shared_on_worker(
         // Workers' modules are not hot-replaced: their edits restart nothing.
         if worker.is_none() && crate::host::hmr::requested(&exec_argv) {
             if let Some(entry) = &entry_file {
-                shared_state.borrow_mut().hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+                let mut state = shared_state.borrow_mut();
+                state.hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+                state.poll_on(crate::host::node_host::PollSlot::Hmr, |runtime, program, _| crate::host::hmr::poll(runtime, program));
             }
+        }
+        if worker.is_some() {
+            shared_state.borrow_mut().poll_on(crate::host::node_host::PollSlot::Worker, crate::modules::worker_shared_vm::poll);
         }
         shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();

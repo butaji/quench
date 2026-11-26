@@ -24,14 +24,7 @@ pub(super) enum Reservation {
 unsafe fn map_range(layout: Layout) -> Option<NonNull<u8>> {
     // SAFETY: an anonymous private mapping at an address nothing else names.
     let mapped = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            layout.size(),
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-            -1,
-            0,
-        )
+        quench_alloc::map_anonymous(layout.size(), libc::PROT_READ | libc::PROT_WRITE, libc::MAP_NORESERVE)
     };
     if mapped == libc::MAP_FAILED {
         return None;

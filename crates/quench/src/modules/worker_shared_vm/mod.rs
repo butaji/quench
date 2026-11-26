@@ -148,6 +148,7 @@ fn register(c: &mut Context<'_>, endpoint: Arc<Endpoint>, broadcast: Option<Stri
     let referenced = broadcast.is_some();
     let port = LocalPort { endpoint, object: placeholder, started: referenced, referenced, closing: false, broadcast };
     shared.messaging.ports.insert(id, port);
+    shared.poll_on(crate::host::node_host::PollSlot::Worker, poll);
     Ok(id)
 }
 
@@ -347,7 +348,11 @@ fn start_worker(c: &mut Context<'_>, worker: RootId, start: WorkerStart) -> Resu
     };
     let (thread_id, control) = thread::spawn(launch).map_err(RootedError::host)?;
     let object = c.retain(worker)?;
-    state(c).borrow_mut().messaging.workers.push(LocalWorker { control, object, referenced: true, online_delivered: false });
+    let state = state(c);
+    let mut state = state.borrow_mut();
+    state.messaging.workers.push(LocalWorker { control, object, referenced: true, online_delivered: false });
+    state.poll_on(crate::host::node_host::PollSlot::Worker, poll);
+    drop(state);
     Ok((thread_id, port))
 }
 

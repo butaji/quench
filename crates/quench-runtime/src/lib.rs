@@ -153,6 +153,8 @@ pub use wasm::{
 };
 
 pub use vm::AheadImages;
+pub use vm::layer_hooks::install_intl;
+pub use vm::wasm_js::enable_wasm_js;
 pub use vm::tier_events::{Event as TierEvent, TierEvents};
 pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
@@ -161,6 +163,7 @@ pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use compile::source_routes::enable as enable_dynamic_source;
 pub use compile::{CheckedParameters, ParameterSite};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_read_run, double_stores_present, double_word, double_write_run, memory_mix_has, word_read_run, word_stores_present};
+pub use heap::layouts::fixed_table_range as fixed_layout_table_range;
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,

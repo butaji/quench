@@ -49,14 +49,7 @@ pub(in crate::vm) mod storage {
     pub(in crate::vm) fn map_zeroed(bytes: usize) -> NonNull<u8> {
         // SAFETY: a fresh anonymous private mapping aliases no existing memory.
         let base = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                bytes,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
+            quench_alloc::map_anonymous(bytes, libc::PROT_READ | libc::PROT_WRITE, 0)
         };
         assert!(base != libc::MAP_FAILED, "cache site table mapping failed");
         NonNull::new(base.cast()).expect("mmap returned a mapping")

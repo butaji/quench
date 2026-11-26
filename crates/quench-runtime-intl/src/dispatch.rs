@@ -1,6 +1,6 @@
 //! The layer's entries the VM core calls (`quench_runtime::vm::layer_hooks`).
 use crate::intl_prelude::*;
-use quench_runtime::vm::layer_hooks::signatures;
+use quench_runtime::vm::layer_hooks::intl_signatures as signatures;
 
 #[quench_macros::ext(IntlTemporalDispatch)]
 impl Vm {

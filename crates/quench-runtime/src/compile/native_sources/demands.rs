@@ -6,12 +6,15 @@
 use super::{constructors, NativeSourceKey};
 use crate::Engine;
 use oxc_ast::ast::{
-    AssignmentTargetPropertyProperty, BinaryExpression, BindingProperty, CallExpression, ComputedMemberExpression,
-    Expression, IdentifierReference, NewExpression, Program, StaticMemberExpression,
+    AssignmentExpression, AssignmentTargetPropertyProperty, BinaryExpression, BindingIdentifier,
+    BindingPattern, BindingProperty, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
+    NewExpression, Program, SimpleAssignmentTarget, StaticMemberExpression, UpdateExpression, VariableDeclarator,
+    WithStatement,
 };
 use oxc_ast_visit::{Visit, walk};
-use oxc_semantic::Scoping;
-use oxc_syntax::operator::BinaryOperator;
+use oxc_semantic::{Scoping, SymbolId};
+use oxc_syntax::operator::{AssignmentOperator, BinaryOperator};
+use std::collections::{HashMap, HashSet};
 
 const EVAL: &str = "eval";
 const FUNCTION: &str = "Function";
@@ -36,7 +39,9 @@ const REFLECT: &str = "Reflect";
 ///   `instanceof`; any member or destructured key named `constructor` or
 ///   `Function`; any object-literal computed key whose name is not a literal; and
 ///   a computed member read only where it is called (`o[k]()`), since a read
-///   alone (`a[c]`) is an index, not a name the program proves dynamic.
+///   alone (`a[c]`) is an index, not a name the program proves dynamic. A key
+///   that only ever holds numbers (`NumericBindings`) is an index even where
+///   the read is called.
 ///
 /// Forms outside this list (for example `Object.getOwnPropertyDescriptor` with
 /// a computed name) are not detected: an image linked execution-only keeps the
@@ -69,24 +74,104 @@ fn named(name: &str) -> Option<Hazard> {
     }
 }
 
-/// A member or key expression's hazard: literal names are exact, anything else may be any name.
-fn expression_hazard(key: &Expression<'_>) -> Option<Hazard> {
-    match key.get_inner_expression() {
-        Expression::StringLiteral(text) => named(text.value.as_str()),
-        Expression::NumericLiteral(_) | Expression::BigIntLiteral(_) => None,
-        Expression::TemplateLiteral(template) => template.single_quasi().map_or(Some(Hazard::Reflective), |text| named(text.as_str())),
-        _ => Some(Hazard::Reflective),
+/// Bindings that only ever hold numbers, so a member read keyed by one names an index, never
+/// `constructor`, `eval` or a method. A binding qualifies when it has exactly one declaration, a
+/// variable declarator initialized with a numeric literal, and every write to it keeps a number:
+/// `++`/`--`, an arithmetic or bitwise compound assignment other than `+=`, or `=`/`+=` of a
+/// numeric literal. A program with `with` proves nothing (a name may resolve to an object's member).
+struct NumericBindings<'s> {
+    scoping: &'s Scoping,
+    declarations: HashMap<SymbolId, usize>,
+    numeric_init: HashSet<SymbolId>,
+    numeric_writes: HashMap<SymbolId, usize>,
+    with_statement: bool,
+}
+
+fn numeric_literal(expression: &Expression<'_>) -> bool {
+    matches!(expression.get_inner_expression(), Expression::NumericLiteral(_))
+}
+
+impl NumericBindings<'_> {
+    fn symbols(program: &Program<'_>, scoping: &Scoping) -> HashSet<SymbolId> {
+        let mut bindings = NumericBindings { scoping, declarations: HashMap::new(), numeric_init: HashSet::new(), numeric_writes: HashMap::new(), with_statement: false };
+        bindings.visit_program(program);
+        if bindings.with_statement { return HashSet::new(); }
+        bindings.numeric_init.iter().copied().filter(|symbol| {
+            bindings.declarations.get(symbol) == Some(&1)
+                && scoping.get_resolved_references(*symbol).filter(|reference| reference.is_write()).count()
+                    == bindings.numeric_writes.get(symbol).copied().unwrap_or(0)
+        }).collect()
+    }
+
+    fn numeric_write(&mut self, target: &SimpleAssignmentTarget<'_>, keeps_number: bool) {
+        let SimpleAssignmentTarget::AssignmentTargetIdentifier(name) = target else { return };
+        let symbol = name.reference_id.get().and_then(|id| self.scoping.get_reference(id).symbol_id());
+        if let (Some(symbol), true) = (symbol, keeps_number) { *self.numeric_writes.entry(symbol).or_default() += 1; }
+    }
+}
+
+impl<'a> Visit<'a> for NumericBindings<'_> {
+    fn visit_binding_identifier(&mut self, binding: &BindingIdentifier<'a>) {
+        if let Some(symbol) = binding.symbol_id.get() { *self.declarations.entry(symbol).or_default() += 1; }
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let (BindingPattern::BindingIdentifier(binding), Some(init)) = (&declarator.id, &declarator.init) {
+            if let (Some(symbol), true) = (binding.symbol_id.get(), numeric_literal(init)) { self.numeric_init.insert(symbol); }
+        }
+        walk::walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
+        self.numeric_write(&update.argument, true);
+        walk::walk_update_expression(self, update);
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        let keeps_number = match assignment.operator {
+            AssignmentOperator::Assign | AssignmentOperator::Addition => numeric_literal(&assignment.right),
+            operator => operator.is_arithmetic() || operator.is_bitwise(),
+        };
+        if let Some(target) = assignment.left.as_simple_assignment_target() { self.numeric_write(target, keeps_number); }
+        walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
+        self.with_statement = true;
+        walk::walk_with_statement(self, statement);
     }
 }
 
 struct Hazards<'s> {
     scoping: &'s Scoping,
+    numeric: HashSet<SymbolId>,
     eval: Vec<u32>,
     reflective: Vec<u32>,
     computed: Vec<u32>,
 }
 
 impl Hazards<'_> {
+    /// A member key's hazard where the key names its property: literal names are exact, and a
+    /// numeric literal or a numeric binding names an index. `None` where the key may be any
+    /// name (a computed read, `a[c]`).
+    fn literal_key(&self, key: &Expression<'_>) -> Option<Option<Hazard>> {
+        match key.get_inner_expression() {
+            Expression::StringLiteral(text) => Some(named(text.value.as_str())),
+            Expression::NumericLiteral(_) | Expression::BigIntLiteral(_) => Some(None),
+            Expression::TemplateLiteral(template) => template.single_quasi().map(|text| named(text.as_str())),
+            Expression::Identifier(name) if name.reference_id.get()
+                .and_then(|id| self.scoping.get_reference(id).symbol_id())
+                .is_some_and(|symbol| self.numeric.contains(&symbol)) => Some(None),
+            _ => None,
+        }
+    }
+
+    /// Whether a call or `new` of `callee` calls a computed read (`o[k]()`), which may reach
+    /// any method, `constructor` included.
+    fn calls_computed(&self, callee: &Expression<'_>) -> bool {
+        matches!(callee.get_inner_expression(), Expression::ComputedMemberExpression(member) if self.literal_key(&member.expression).is_none())
+    }
+
     fn note(&mut self, hazard: Option<Hazard>, offset: u32) {
         match hazard {
             Some(Hazard::Eval) => { self.eval.push(offset); },
@@ -127,25 +212,25 @@ impl<'a> Visit<'a> for Hazards<'_> {
     }
 
     fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
-        // A literal key names its property (`o["eval"]`); a numeric key is an index; any other
-        // key is a computed read (`a[c]`), which is no dynamic source unless it is called.
-        match member.expression.get_inner_expression() {
-            Expression::StringLiteral(text) => self.note(named(text.value.as_str()), member.span.start),
-            Expression::NumericLiteral(_) | Expression::BigIntLiteral(_) => {}
-            _ => self.computed.push(member.span.start),
+        // A literal key names its property (`o["eval"]`); a numeric key, or a binding that only
+        // ever holds numbers (`NumericBindings`), is an index; any other key is a computed read
+        // (`a[c]`), which is no dynamic source unless it is called.
+        match self.literal_key(&member.expression) {
+            Some(hazard) => self.note(hazard, member.span.start),
+            None => self.computed.push(member.span.start),
         }
         walk::walk_computed_member_expression(self, member);
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        if matches!(call.callee.get_inner_expression(), Expression::ComputedMemberExpression(_)) {
+        if self.calls_computed(&call.callee) {
             self.note(Some(Hazard::Reflective), call.span.start);
         }
         walk::walk_call_expression(self, call);
     }
 
     fn visit_new_expression(&mut self, call: &NewExpression<'a>) {
-        if matches!(call.callee.get_inner_expression(), Expression::ComputedMemberExpression(_)) {
+        if self.calls_computed(&call.callee) {
             self.note(Some(Hazard::Reflective), call.span.start);
         }
         walk::walk_new_expression(self, call);
@@ -173,7 +258,7 @@ impl Engine {
     /// known at execution (see [`SourceDemands`]), over the caller's authoritative scopes.
     pub fn source_demands(program: &Program<'_>, scoping: &Scoping, specialized: bool) -> SourceDemands {
         let (keys, function) = constructors::analyze(program, scoping, specialized);
-        let mut hazards = Hazards { scoping, eval: Vec::new(), reflective: Vec::new(), computed: Vec::new() };
+        let mut hazards = Hazards { scoping, numeric: NumericBindings::symbols(program, scoping), eval: Vec::new(), reflective: Vec::new(), computed: Vec::new() };
         hazards.visit_program(program);
         for sites in [&mut hazards.eval, &mut hazards.reflective] { sites.sort_unstable(); sites.dedup(); }
         hazards.computed.sort_unstable(); hazards.computed.dedup();
@@ -221,6 +306,9 @@ mod tests {
             "(function () {}).constructor('return 1')", "(async () => {}).constructor(s)", "x.constructor(s)", "x?.constructor",
             "o[k]()", "new o[k]()", "o['constructor']", "const { constructor: C } = f", "const { [k]: v } = o",
             "Reflect.construct(Function, [s])", "Reflect.apply(f, null, [])",
+            "let i = 0; i = 'constructor'; o[i]()", "let i = 0; i += 'x'; o[i]()", "var i = 0; var i = s; o[i]()",
+            "let i = 0; [i] = a; o[i]()", "let i = 0; ({ i } = a); o[i]()", "let i = 0; i ||= s; o[i]()", "let i; o[i]()",
+            "function f(i) { return o[i](); }", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
         ] {
             assert!(requires(source), "{source}");
         }
@@ -235,6 +323,8 @@ mod tests {
         for source in [
             "const o = { a: 1 }; o.a + o['b'] + [1, 2][0] + o[1];", "function f(eval, Function) { return eval(Function); }",
             "x instanceof Function", "'use strict'; const { a, b: c } = o; let g = 'eval';",
+            "for (let i = 1; i < a.length; i++) s += Number(a[i]);", "let i = 0; i += 2; i *= s; i = 3; i <<= 1; o[i]",
+            "const n = 4; o[n](); let j = 0; function f() { j--; return new o[j](); }", "o['f']()",
         ] {
             assert!(!requires(source), "{source}");
         }

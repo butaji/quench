@@ -237,16 +237,39 @@ fn channel_registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 }
 
 /// `new ChannelWrap(timeout, tries, maxTimeout)`.
+/// Its settings are checked here and its channel made at the first call on it (`on_channel`):
+/// a resolver a module makes as it loads (`dns.defaultResolver`) then holds no channel, which
+/// a startup snapshot could not keep.
 pub(crate) fn channel_construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let undefined = c.undefined();
-    let id = channel(c, undefined, args)?;
+    for index in 0..3 {
+        int32(c, args, index)?;
+    }
+    let settings: Vec<RootId> = (0..3).map(|index| argument(args, index, c)).collect();
+    let pending = c.array_rooted(&settings)?;
     let slot = channel_slot(c)?;
-    c.define_data_property_rooted(this, slot, id, false, false, false)?;
+    c.define_data_property_rooted(this, slot, pending, true, false, false)?;
+    Ok(this)
+}
+
+/// The id of the channel `this` wraps, made from its settings at the first call.
+fn channel_of(c: &mut Context<'_>, this: RootId) -> Result<Option<RootId>, RootedError> {
+    let slot = channel_slot(c)?;
+    let held = c.get_property_rooted(this, slot)?;
+    if c.rooted_value(held).and_then(Value::as_number).is_some() {
+        return Ok(Some(held));
+    }
+    if !c.is_array_rooted(held)? {
+        return Ok(None);
+    }
+    let settings = c.array_like_values_rooted(held)?;
+    let undefined = c.undefined();
+    let id = channel(c, undefined, &settings)?;
+    c.define_data_property_rooted(this, slot, id, true, false, false)?;
     let registry = channel_registry(c)?;
     let key = c.string_rooted("register");
     let register = c.get_property_rooted(registry, key)?;
     c.call_rooted(register, registry, &[this, id])?;
-    Ok(this)
+    Ok(Some(id))
 }
 
 /// `operation(channelId, ...args)` for the ChannelWrap receiver.
@@ -257,12 +280,10 @@ fn on_channel(
     args: &[RootId],
     operation: fn(&mut Context<'_>, RootId, &[RootId]) -> Result<RootId, RootedError>,
 ) -> Result<RootId, RootedError> {
-    let slot = channel_slot(c)?;
-    let id = c.get_property_rooted(this, slot)?;
-    if c.rooted_value(id).and_then(Value::as_number).is_none() {
+    let Some(id) = channel_of(c, this)? else {
         let error = c.type_error_rooted("Illegal invocation")?;
         return Err(c.throw(error));
-    }
+    };
     let mut arguments = vec![id];
     arguments.extend_from_slice(prefix);
     arguments.extend_from_slice(args);
@@ -310,6 +331,7 @@ fn register(c: &mut Context<'_>, request: RootId, channel: u64) -> Result<(u64, 
     let mut shared = shared.borrow_mut();
     let id = shared.dns_channels.allocate();
     shared.dns_channels.pending.insert(id, Pending { request, channel });
+    shared.poll_on(crate::host::node_host::PollSlot::Dns, poll);
     Ok((id, shared.dns_channels.completions.clone()))
 }
 

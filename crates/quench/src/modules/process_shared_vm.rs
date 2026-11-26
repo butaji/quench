@@ -8,6 +8,7 @@ use quench_runtime::{
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
+use crate::host::node_host::PollSlot;
 
 pub(crate) fn collect_garbage(
     context: &mut NativeContext<'_>,
@@ -2652,8 +2653,12 @@ fn poll_io(
     settle(runtime, ran)?;
     let ran = crate::modules::pipe_binding::poll(runtime, program)?;
     settle(runtime, ran)?;
+    // A source polls where its host links it (`HostPollers`, which an image's catalog names by
+    // reach) and its module opened it (`SharedNodeState::poll_on`).
     let pollers = runtime.host_mut().capabilities().pollers;
-    for poll in [pollers.child_ipc, pollers.child_process, pollers.carriers].into_iter().flatten() {
+    let opened = |slot: PollSlot| shared_state.borrow().poll_source(slot).is_some();
+    for (slot, poll) in [(PollSlot::ChildIpc, pollers.child_ipc), (PollSlot::Child, pollers.child_process), (PollSlot::Cares, pollers.carriers)] {
+        let Some(poll) = poll.filter(|_| opened(slot)) else { continue };
         let ran = poll(runtime, program)?;
         settle(runtime, ran)?;
     }
@@ -2666,7 +2671,8 @@ fn poll_io(
         runtime.collect_if_due(program).map_err(|error| error.to_string())?;
         settle(runtime, ran)?;
     }
-    for poll in [pollers.napi, pollers.worker, pollers.dns].into_iter().flatten() {
+    for (slot, poll) in [(PollSlot::Napi, pollers.napi), (PollSlot::Worker, pollers.worker), (PollSlot::Dns, pollers.dns)] {
+        let Some(poll) = poll.filter(|_| opened(slot)) else { continue };
         let ran = poll(runtime, program)?;
         settle(runtime, ran)?;
     }
@@ -2678,11 +2684,20 @@ fn poll_io(
         let ran = super::fs_stat_watch_shared_vm::poll(runtime, program)?;
         settle(runtime, ran)?;
     }
-    if shared_state.borrow().hmr.is_some() {
-        let ran = crate::host::hmr::poll(runtime, program)?;
-        settle(runtime, ran)?;
-    }
+    let ran = poll_source(runtime, program, shared_state, PollSlot::Hmr)?;
+    settle(runtime, ran)?;
     Ok(progressed)
+}
+
+/// Polls the source its module set in `slot` (`SharedNodeState::poll_on`); `false` for none.
+fn poll_source(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    slot: PollSlot,
+) -> Result<bool, String> {
+    let source = shared_state.borrow().poll_source(slot);
+    source.map_or(Ok(false), |poll| poll(runtime, program, shared_state))
 }
 
 /// The timers phase: every timer due when it begins, in due order; whether any ran.

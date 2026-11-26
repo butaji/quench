@@ -65,6 +65,15 @@ extern "C" fn map_fixed_table() {
 #[unsafe(link_section = "__DATA,__mod_init_func")]
 static MAP_FIXED_TABLE: extern "C" fn() = map_fixed_table;
 
+/// The layout table's range where it sits at its fixed address, mapped before `main`: a dump of
+/// the process (`quench::aot::image_dump`) carries its written pages.
+pub fn fixed_table_range() -> Option<(usize, usize)> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    return Some((FIXED_TABLE, LAYOUT_CAPACITY * size_of::<u64>()));
+    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    None
+}
+
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 extern "C" fn map_fixed_table() {
     const MAP_FIXED_NOREPLACE: libc::c_int = 0x100000;
