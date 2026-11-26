@@ -96,6 +96,35 @@ pub fn number_bitwise<M: MachineScalar>(machine: &mut M, operation: NumberBitwis
     }
 }
 
+/// The i64 words of two binary64 operands and whether the integral remainder admits them
+/// (`vm::operations::integral_remainder`, the interpreter's): both integers of magnitude at most
+/// `INTEGRAL_REMAINDER_LIMIT` (converted and converted back each is itself, and the saturated
+/// conversion stays inside the limit; NaN fails both) and the divisor nonzero.
+pub fn integral_remainder_operands<M: MachineScalar>(machine: &mut M, left: M::Word, right: M::Word) -> (M::Word, M::Word, M::Word) {
+    let limit = crate::vm::operations::INTEGRAL_REMAINDER_LIMIT;
+    let integral = |machine: &mut M, value: M::Word| {
+        let integer = machine.raw_unary(Unary::ToSignedSaturating(Lane::I64), value);
+        let back = machine.raw_unary(Unary::FromSigned(Lane::F64), integer);
+        let exact = machine.raw_compare(Relation::FloatEqual, back, value);
+        let shifted = machine.raw_binary_imm(Binary::Add, integer, limit);
+        let small = machine.raw_compare_imm(Relation::UnsignedLessEqual, shifted, 2 * limit);
+        (integer, machine.raw_binary(Binary::And, exact, small))
+    };
+    let (dividend, dividend_ok) = integral(machine, left);
+    let (divisor, divisor_ok) = integral(machine, right);
+    let nonzero = machine.raw_compare_imm(Relation::NotEqual, divisor, 0);
+    let both = machine.raw_binary(Binary::And, dividend_ok, divisor_ok);
+    (dividend, divisor, machine.raw_binary(Binary::And, both, nonzero))
+}
+
+/// The integral remainder of operands `integral_remainder_operands` admitted: the i64 remainder (exact, with the
+/// dividend's sign), copied onto the sign of `left` (the dividend's binary64) so a zero one is `-0` for a negative dividend.
+pub fn integral_remainder_value<M: MachineScalar>(machine: &mut M, (dividend, divisor): (M::Word, M::Word), left: M::Word) -> M::Word {
+    let remainder = machine.raw_binary(Binary::RemainderSigned, dividend, divisor);
+    let magnitude = machine.raw_unary(Unary::FromSigned(Lane::F64), remainder);
+    machine.raw_binary(Binary::FloatCopySign, magnitude, left)
+}
+
 /// The parameter lanes of the remainder leaf: its dividend and its divisor.
 const REMAINDER_PARAMETERS: [Lane; 2] = [Lane::F64, Lane::F64];
 

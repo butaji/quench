@@ -458,13 +458,10 @@ impl Vm {
                     return value;
                 }
                 // JS host numbers in the signed i31 range have the canonical immediate representation.
-                if let Some(number) = value.as_number()
-                    && number >= f64::from(crate::wasm::i31::SIGNED_MIN)
-                        && number <= f64::from(crate::wasm::i31::SIGNED_MAX)
-                        && number.fract() == 0.0
-                        && !(number == 0.0 && number.is_sign_negative())
+                if let Some(int) = value.as_number().and_then(crate::value::exact_int32)
+                    && (crate::wasm::i31::SIGNED_MIN..=crate::wasm::i31::SIGNED_MAX).contains(&int)
                     {
-                        return Value::integer((number as i32) & crate::wasm::i31::I31_MASK);
+                        return Value::integer(int & crate::wasm::i31::I31_MASK);
                     }
                 self.heap.alloc(Cell::WasmExtern(value))
             }
