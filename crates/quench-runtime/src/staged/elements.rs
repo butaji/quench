@@ -492,19 +492,22 @@ pub fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word,
 /// Fills the hole at the int32 `key` (a value word) of the direct array `base` among the array
 /// records at `record_base` with `value`, whose store the caller proved passes the write barrier
 /// unlogged: OrdinarySet then defines a plain data element in the hole, one write in place, where
-/// the backing is wide, the array's own, extensible and plain (`resizable_backing`) and its
+/// the backing is wide or double, the array's own, extensible and plain (`resizable_backing`) and its
 /// prototype's link is `chain`, the held index-free chain proof's (`heap::index_free_chain_link_address`,
-/// zero while none is held). The hole counted among the backing's others, so the count is
-/// `replace_element`'s. `None` (leaving at `miss`, before any write) for any other store.
+/// zero while none is held). The hole counted among a wide backing's others, so the count is
+/// `replace_element`'s; a double backing's hole takes a Number as `fill_double_hole` writes it. `None` (leaving at `miss`, before any write) for any other store.
 #[inline(always)]
-pub fn fill_hole<S: Stage>(stage: &mut S, record_base: S::Word, chain: S::Word, (base, key, value): (S::Word, S::Word, S::Word),
+pub fn fill_hole<S: super::NumericStage>(stage: &mut S, record_base: S::Word, chain: S::Word, (base, key, value): (S::Word, S::Word, S::Word),
     miss: S::Miss) -> Option<()> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let index = stage.add_imm(key, crate::value::ValueLayout::INT_TAG.wrapping_neg());
     let over = stage.ugt_imm(index, u64::from(i32::MAX as u32));
     let within_int = stage.not(over);
     stage.guard(within_int, miss)?;
-    let backing = array_backing(stage, record_base, base, miss)?;
+    // A wide or a double backing (`new Array(n)`'s holes start double); a narrow one leaves.
+    let flagged = flagged_backing(stage, record_base, base, miss)?;
+    let (length, double) = wide_or_double(stage, flagged.length, miss)?;
+    let backing = Backing { length, ..flagged };
     resizable_backing(stage, backing, miss)?;
     let held = stage.ne_imm(chain, 0u32);
     stage.guard(held, miss)?;
@@ -517,7 +520,38 @@ pub fn fill_hole<S: Stage>(stage: &mut S, record_base: S::Word, chain: S::Word, 
     let (address, old) = loaded_element(stage, backing.values, index);
     let hole = stage.eq_imm(old, crate::Value::DELETED.to_bits());
     stage.guard(hole, miss)?;
-    replace_element(stage, backing.values, address, old, value);
+    let is_double = stage.ne_imm(double, 0u32);
+    stage.choose_leaving(is_double,
+        #[inline(always)] |stage| fill_double_hole(stage, backing, address, value, miss).map(|()| value),
+        #[inline(always)] |stage| { replace_element(stage, backing.values, address, old, value); Some(value) })?;
+    Some(())
+}
+
+/// `fill_hole`'s write into the hole at `address` of a double backing (`heap::DOUBLE_LEN`), as the
+/// VM's store makes it (`ArrayElements::replace_encoded_in_place`): a Number's binary64 (an int32
+/// converted, any other Number its own word), the backing counting one hole fewer (a double
+/// backing's count is of its holes). Holes alone taking an int32 leave, for the VM to make them
+/// wide holes; so do any other value and a backing whose count is unknown.
+#[inline(always)]
+fn fill_double_hole<S: super::NumericStage>(stage: &mut S, backing: Backing<S::Word>, address: S::Word, value: S::Word,
+    miss: S::Miss) -> Option<()> {
+    let (double, int) = super::value::number_classes(stage, value);
+    let number = stage.either(double, int);
+    stage.guard(number, miss)?;
+    let holes = stage.load_u32(Region::Elements.mutable(), backing.values, crate::heap::OTHERS_FROM_VALUES);
+    let counted = stage.ne_imm(holes, u64::from(crate::heap::OTHERS_UNKNOWN));
+    stage.guard(counted, miss)?;
+    let all_holes = stage.eq(holes, backing.length);
+    let widens = stage.both(int, all_holes);
+    stage.guard_false(widens, miss)?;
+    let fewer = stage.add_imm(holes, u64::from(u32::MAX));
+    let fewer = stage.and_imm(fewer, u64::from(u32::MAX));
+    stage.store_u32(Region::Elements.mutable(), backing.values, crate::heap::OTHERS_FROM_VALUES, fewer);
+    stage.effect_if(int, #[inline(always)] |stage| {
+        let integer = stage.narrow(value);
+        let number = stage.i32_to_f64(integer);
+        stage.store_f64(Region::Elements.mutable(), address, 0, number);
+    }, #[inline(always)] |stage| stage.store_u64(Region::Elements.mutable(), address, 0, value));
     Some(())
 }
 
