@@ -192,12 +192,6 @@ impl Stage for Emit<'_, '_> {
         };
         self.counts_clear(payload)
     }
-    fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
-        // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
-        let zero = self.constant(0);
-        let never = self.ne_imm(zero, 0u32);
-        (zero, never)
-    }
     fn assumption(&mut self, _watch: EmitImm) -> ir::Value {
         // A watched op never reaches emitted code: the specializer holds the watch's subject as a
         // code dependency instead (`StableHold::hold_holder`, `HeldShapes`), the invalidation hook
