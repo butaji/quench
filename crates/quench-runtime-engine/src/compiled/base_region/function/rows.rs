@@ -57,13 +57,18 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
     if operands && instruction.result_flags() == 0 { return Some(LaneHelper::ValueStep); }
     // A closure captures its owner's binding environment, a frame's or an activation's (`base_body::closure_step`).
     if instruction.result_flags() == 0 && quench_runtime::staged::makes_closure(plain.op()) { return Some(LaneHelper::ClosureStep); }
+    // An array literal's element define (`base_body::define_element_step`).
+    if instruction.result_flags() == 0 && matches!(quench_runtime::staged::Operation::<(), ()>::decode_literal(instruction, ()), Some(quench_runtime::staged::Operation::DefineElement { .. })) {
+        return Some(LaneHelper::DefineElementStep);
+    }
     // An allocation the lane's allocator makes (`base_body::allocation_step`).
     if instruction.result_flags() == 0 && quench_runtime::staged::Allocation::decode(instruction, &[]).is_some() { return Some(LaneHelper::AllocationStep); }
-    // Any other step the staged row makes as a call-out (`staged::CallOut`, not a decision a jump reads) is the VM's call-out.
+    // Any other step the staged row makes as a call-out (`staged::CallOut`, not a decision a jump reads) is the VM's call-out
+    // over the running frame (`base_body::call_out_step`).
     let call = quench_runtime::staged::Operation::<(), ()>::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
     if instruction.result_flags() == 0 && !plain.op().control_flow_layout().jumps()
         && call.is_some_and(|(call, _)| !matches!(call, quench_runtime::staged::CallOut::Decide { .. })) {
-        return Some(LaneHelper::VmStep);
+        return Some(LaneHelper::CallOutStep);
     }
     (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
 }

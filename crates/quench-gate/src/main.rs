@@ -34,6 +34,7 @@ mod ratchet;
 mod runtime_tests;
 mod startup;
 mod step;
+mod tier_order;
 mod tiers;
 
 use std::process::ExitCode;
@@ -44,7 +45,7 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 15] = [
+const STEPS: [Step; 16] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "known-lists", quick: true, blocking: false, run: known_lists::run },
@@ -53,6 +54,7 @@ const STEPS: [Step; 15] = [
     Step { name: "library", quick: false, blocking: false, run: oracle::run },
     Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
+    Step { name: "tier-order", quick: false, blocking: false, run: tier_order::run },
     Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
     Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "ir-predict", quick: false, blocking: false, run: ir_predict::run },
