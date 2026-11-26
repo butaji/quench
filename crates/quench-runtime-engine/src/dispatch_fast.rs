@@ -3356,6 +3356,10 @@ unsafe fn binary_values_classified(
 ) -> Option<Value> {
     match unsafe { vm(cx) }.number_binary_classified(operator, left, right, pair) {
         Some(value) => Some(value),
+        // Two BigInts ordered (`a < b` over BigInt keys): their cells decide it before the string and
+        // immediate probes, which would only decline them.
+        None if left.is_heap() && right.is_heap() && let Some(holds) = unsafe { vm(cx) }.bigint_relation(operator, left, right) =>
+            Some(if holds { Value::TRUE } else { Value::FALSE }),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
         // element or an emulator's `flag & mask`; a string key's `"k" + i` first.
         None if let Some(value) = concat_or_immediate(cx, operator, left, right) => Some(value),
