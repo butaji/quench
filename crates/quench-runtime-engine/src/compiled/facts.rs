@@ -16,7 +16,6 @@ use crate::ext_traits::*;
 use quench_runtime::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
 use quench_runtime::staged::{NumberOperation, Operation};
 use quench_runtime::typed_ir::Type;
-use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
 use lengths::Relations;
 
@@ -38,7 +37,7 @@ pub(crate) struct Facts {
     offsets: Vec<Option<NonZeroUsize>>,
     types: Vec<Type>,
     registers: usize,
-    reached: CompoundBitSet,
+    reached: quench_runtime::dataflow::BitSet,
     /// Join of the entry's backedge inputs, without the unknown external input.
     backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
     contracts: Vec<Contract>,
@@ -72,7 +71,7 @@ impl Facts {
 
     /// A run over `blocks` PCs of `registers` registers.
     fn new(blocks: usize, registers: usize, seeds: run::Seeds<'_>) -> Self {
-        Self { offsets: vec![None; blocks], registers, reached: CompoundBitSet::with_capacity(blocks),
+        Self { offsets: vec![None; blocks], registers, reached: quench_runtime::dataflow::BitSet::with_capacity(blocks),
             contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), ..Self::default() }
     }
 
@@ -127,7 +126,7 @@ impl Facts {
     /// lowering must still discharge entry and update requirements.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn before(&self, pc: usize, register: Register, instructions: &[WideInstruction],
-        leaders: &CompoundBitSet, constants: &[Constant],
+        leaders: &quench_runtime::dataflow::BitSet, constants: &[Constant],
         written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
@@ -154,7 +153,7 @@ impl Facts {
     /// Project each definition in `body`'s post-state through the same transfer as the fixed
     /// point. Each block replays from its own entry row, so only the blocks reaching `body` run.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    pub(crate) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
         constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool,
         body: std::ops::RangeInclusive<usize>, mut visit: impl FnMut(usize, Register, Type)) {
         // The block covering `body.start()` may begin earlier: replay it from its leader.
@@ -475,8 +474,8 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 /// and every backedge must preserve the entry hypothesis. Rejecting one input
 /// removes that assumption from all dependent proofs on the next iteration.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
-    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+pub(crate) fn inductive_int32(initial: &mut [Type], candidates: quench_runtime::dataflow::BitSet,
+    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises, observed)
@@ -485,8 +484,8 @@ pub(crate) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
 /// `inductive_int32` for the header contract `required`: an int32, or a Number (an
 /// accumulator that enters as an int32 or a double and every definition keeps a Number).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
-    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+pub(crate) fn inductive(initial: &mut [Type], mut candidates: quench_runtime::dataflow::BitSet, required: Type,
+    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     // Each unsuccessful iteration removes at least one candidate. Compile
@@ -495,7 +494,7 @@ pub(crate) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, re
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = required; }
         let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::observing(observed));
-        let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        let mut rejected: quench_runtime::dataflow::BitSet = quench_runtime::dataflow::BitSet::with_capacity(initial.len());
         for register in candidates.iter() {
             if !facts.backedge().get(register).is_some_and(|ty| ty.is_subtype(required)) { rejected.insert(register); }
         }
@@ -517,7 +516,7 @@ pub(crate) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, re
 /// under all the contracts. Rejecting one removes it from the next iteration's hypothesis.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
-    instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
+    instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Writes, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
     native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     while !candidates.is_empty() {

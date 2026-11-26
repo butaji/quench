@@ -36,7 +36,8 @@ const RESET_PEAK: &str = "5";
 const CLEAR_REFS_PATH: &str = "/proc/self/clear_refs";
 
 /// Diagnostic (`QUENCH_TRACE=rss-phases`): reports on stderr the peak resident set since the previous
-/// boundary, and the resident anonymous and file pages now, then resets the peak, so that
+/// boundary, the resident anonymous and file pages now, and the minor faults and time since the
+/// first boundary, then resets the peak, so that
 /// each phase of a run (load, start-up, entry compilation, the run up to its first
 /// collection, the rest) reports its own peak.
 #[cfg(target_os = "linux")]
@@ -48,11 +49,21 @@ pub fn phase_peak(phase: &str) {
     let field = |name: &str| {
         status.lines().find_map(|line| line.strip_prefix(name)).map_or("?", str::trim).to_owned()
     };
+    /// When the first phase was reported: each later one reports its time since.
+    static FIRST: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let since = FIRST.get_or_init(std::time::Instant::now).elapsed();
+    // SAFETY: `getrusage` writes only the struct passed.
+    let faults = unsafe {
+        let mut usage = std::mem::zeroed::<libc::rusage>();
+        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+        usage.ru_minflt
+    };
     eprintln!(
-        "quench: rss phase {phase:<20} peak {:>10} anon {:>10} file {:>10}",
+        "quench: rss phase {phase:<20} peak {:>10} anon {:>10} file {:>10} minor faults {faults:>6} at {:>8} us",
         field("VmHWM:"),
         field("RssAnon:"),
-        field("RssFile:")
+        field("RssFile:"),
+        since.as_micros()
     );
     let _ = std::fs::write(CLEAR_REFS_PATH, RESET_PEAK);
 }
@@ -481,6 +492,7 @@ pub fn release_tracked_bytes(bytes: &[u8]) {
 /// it shares with its neighbours: records are mostly smaller than a page and decode in
 /// call order, so whole pages would rarely clear; a neighbour still to decode refaults its
 /// page from the file.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_record(bytes: &[u8]) {
     let page = page_size();
     let start = bytes.as_ptr() as usize / page * page;
@@ -488,6 +500,7 @@ pub fn release_read_record(bytes: &[u8]) {
 }
 
 /// Defers releasing the tracked file pages `start..end` (page-aligned) with the others.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_tracked_range(start: usize, end: usize) {
     if start >= end {
         return;
@@ -801,6 +814,7 @@ impl EntryCompile {
 static ENTRY_COMPILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(EntryCompile::Done as u8);
 
 /// The work clock (`quench_runtime::clock::now_work`) at the last release of the read-only pages.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_RELEASE_WORK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Whether the read-only pages left, by any release, less than `RUN_CODE_RELEASE_WORK` of

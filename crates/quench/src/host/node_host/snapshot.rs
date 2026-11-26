@@ -6,12 +6,17 @@ use crate::host::startup_snapshot::{require_quiescent, HostSnap};
 use quench_runtime::{SnapshotReader, SnapshotWriter};
 
 impl NodeHost {
-    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+    /// The host's part of a snapshot: of a startup snapshot, which the restoring host finishes
+    /// installing (`Host::resume`), or `at_rest`, of a run saved at its wait for input
+    /// (`aot::prefix::reach_wait`), whose installation is finished and whose run has begun.
+    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>, at_rest: bool) -> Result<(), String> {
         let Self {
             #[cfg(feature = "native-execution")]
             module_assets: _,
             // The installation and the process's own entry and environment.
             compile_cache: _,
+            // The image's own linked operations and polled sources.
+            capabilities: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             shared_state,
@@ -27,7 +32,8 @@ impl NodeHost {
             building_snapshot: _,
             // Read only while a snapshot is built.
             snapshot_builtins: _,
-            // False at the snapshot point; a restored host sets it in `Host::resume`.
+            // Set again from `at_rest`: a startup snapshot is taken once bootstrap has set it,
+            // and its restoring host still finishes installing.
             bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
@@ -38,6 +44,7 @@ impl NodeHost {
             "socket writes",
         )?;
         writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI);
+        writer.u8(u8::from(at_rest));
         shared_state.borrow().write_snapshot(writer)
     }
 
@@ -45,6 +52,7 @@ impl NodeHost {
         if reader.u64()? != crate::host::shared_vm::BOOTSTRAP_ABI {
             return Err("Node bootstrap ABI does not match runtime".into());
         }
+        self.bootstrapped = reader.u8()? != 0;
         self.shared_state.borrow_mut().read_snapshot(reader)
     }
 }
@@ -146,7 +154,7 @@ impl SharedNodeState {
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
         require_quiescent(fs.snapshot_quiescent(), "open file descriptors")?;
         require_quiescent(process_signals.snapshot_quiescent(), "signal listeners")?;
-        require_quiescent(sqlite.snapshot_quiescent(), "open sqlite handles")?;
+        require_quiescent(sqlite.get::<crate::modules::sqlite_shared_vm::State>().is_none_or(crate::modules::sqlite_shared_vm::State::snapshot_quiescent), "open sqlite handles")?;
         require_quiescent(active_esm_requires.is_empty(), "an ESM require")?;
         require_quiescent(
             net_sockets.is_empty()
@@ -230,9 +238,9 @@ impl SharedNodeState {
         self.icu_converters.read_snapshot(reader)?;
         #[cfg(quench_openssl_provider)]
         {
-            self.crypto_hashes.read_snapshot(reader)?;
-            self.crypto.read_snapshot(reader)?;
-            self.crypto_signatures.read_snapshot(reader)?;
+            self.crypto_hashes.unarmed().read_snapshot(reader)?;
+            self.crypto.unarmed().read_snapshot(reader)?;
+            self.crypto_signatures.unarmed().read_snapshot(reader)?;
         }
         self.dns_channels.read_snapshot(reader)?;
         self.vm_scripts.read_snapshot(reader)?;
@@ -240,7 +248,7 @@ impl SharedNodeState {
         self.dns.read_snapshot(reader)?;
         self.performance_native.read_snapshot(reader)?;
         self.fs_watch.read_snapshot(reader)?;
-        self.tls_contexts.read_snapshot(reader)?;
+        self.tls_contexts.unarmed().read_snapshot(reader)?;
         self.fs_classes.read_snapshot(reader)?;
         self.fs_stat_watch.read_snapshot(reader)?;
         self.module_parent_api = HostSnap::read(reader)?;
@@ -253,8 +261,8 @@ impl SharedNodeState {
         self.node_error_api = HostSnap::read(reader)?;
         self.stdin.read_snapshot(reader)?;
         self.process_ipc.read_snapshot(reader)?;
-        self.crypto_key_material.read_snapshot(reader)?;
-        self.crypto_secret_jobs.read_snapshot(reader)?;
+        self.crypto_key_material.unarmed().read_snapshot(reader)?;
+        self.crypto_secret_jobs.unarmed().read_snapshot(reader)?;
         self.zlib_native.read_snapshot(reader)?;
         self.messaging.read_snapshot(reader)?;
         self.serdes.read_snapshot(reader)?;
@@ -341,7 +349,7 @@ if (before === Module.globalPaths || JSON.stringify(before) !== JSON.stringify(M
                 if building { host.building_snapshot = Some(kind); }
                 let mut runtime = Runtime::new(host);
                 if building {
-                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer)).unwrap();
+                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false)).unwrap();
                     fs::write(file, bytes).unwrap();
                 } else {
                     #[cfg(feature = "native-execution")]

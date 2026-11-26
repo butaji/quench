@@ -5,15 +5,48 @@ impl Vm {
         Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default())
     }
 
+    /// A VM that runs only code its image archived: it installs no JIT routes and no source
+    /// routes, so a static executable links neither compiler.
+    pub(crate) fn new_static<T: crate::Host>(host: T) -> Self {
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>())
+    }
+
+    /// `new_static` for an image that proved some intrinsic families unreachable: the realm
+    /// installs only `builtins`' families, and a family whose installer is `None` keeps its
+    /// code out of the image.
+    pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
+        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>());
+        vm.builtins = builtins;
+        vm
+    }
+
+    /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
+    pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
+    }
+
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
+        super::layer_hooks::enable_jit();
+        // A static image's support (no `source`) links no parser: its routes never install.
+        #[cfg(feature = "source")]
+        crate::compile::source_routes::enable();
+        Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
+    }
+
+    fn with_statics<T: crate::Host>(
+        host: T,
+        execution_interrupt: crate::ExecutionInterrupt,
+        host_statics: crate::host::HostStatics,
+    ) -> Self {
         let runs_lane = host.runs_lane();
         let mut vm = Self {
             host: Box::new(host),
-            host_statics: crate::host::HostStatics::of::<T>(),
+            host_statics,
             runs_lane,
+            builtins: &BuiltinTable::ALL,
             typed_views: Default::default(),
             native_microtask_running: false,
             queue_resumed: Value::UNDEFINED,
@@ -174,15 +207,15 @@ impl Vm {
             symbol_registry: FxHashMap::default(),
             well_known_symbols: WellKnownSymbols::default(),
             bound_parts_layout: std::cell::Cell::new(None),
-            call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
-            construct_targets: Box::new([super::EMPTY_CONSTRUCT_TARGET; CALL_TARGET_CACHE_SIZE]), frameless: Default::default(),
+            call_targets: lazy_table::LazyTable::new(&NO_CALL_TARGETS),
+            construct_targets: lazy_table::LazyEntries::new(super::EMPTY_CONSTRUCT_TARGET), frameless: Default::default(),
             field_caches: Default::default(),
             inherited_field_indices: Default::default(),
             accessor_field_indices: Default::default(),
             accessor_fields: Vec::new(),
             field_add_indices: Default::default(),
             field_add_sets: vec![], field_add_chains: Default::default(), json_parse_cache: Default::default(),
-            keyed_adds: Box::new([FieldAddCache::EMPTY; KEYED_ADD_ENTRIES]),
+            keyed_adds: lazy_table::LazyEntries::new(FieldAddCache::EMPTY),
             megamorphic_field_indices: Default::default(),
             field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
@@ -199,7 +232,7 @@ impl Vm {
             closure_shapes: [None; 2],
             resolver_function_shape: None,
             bound_function_shape: None,
-            closure_templates: Box::new([None; CLOSURE_TEMPLATES]),
+            closure_templates: lazy_table::LazyEntries::new(None),
             iterator_result_header: None,
             reused_iterator_result: Value::UNDEFINED,
             shared_entry_pair: Value::UNDEFINED,
@@ -213,13 +246,13 @@ impl Vm {
             regexp_symbol_layouts: Vec::new(),
             instanceof_has_instance_holder: Value::NULL,
             instanceof_has_instance_link: crate::heap::ProtoLink::NULL,
-            capture_walks: Box::new([CaptureWalk::default(); CAPTURE_WALKS]),
+            capture_walks: lazy_table::LazyEntries::new(CaptureWalk::EMPTY),
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
             runtime_atoms: RuntimeAtoms::default(),
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
-            preshaped_receivers: Box::new([preshaped_receiver::PreshapedReceiver::EMPTY; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]),
-            learned_receivers: Box::new([preshaped_receiver::LearnedReceiver::EMPTY; preshaped_receiver::LEARNED_RECEIVER_ENTRIES]),
+            preshaped_receivers: lazy_table::LazyEntries::new(preshaped_receiver::PreshapedReceiver::EMPTY),
+            learned_receivers: lazy_table::LazyEntries::new(preshaped_receiver::LearnedReceiver::EMPTY),
             object_templates: Vec::new(),
             method_caches: Default::default(),
             megamorphic_methods: vec![],
@@ -247,6 +280,7 @@ impl Vm {
         };
         vm.active_context = &*vm.idle_context;
         vm.intern_typeof_names();
+
         if crate::trace::Dev::RcGc.on() {
             vm.heap.set_rc(true);
         }

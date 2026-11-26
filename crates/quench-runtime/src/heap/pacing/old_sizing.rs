@@ -171,8 +171,16 @@ const THROUGHPUT_FULL_ONLY_HEADROOM_WIDEST: u32 = 24;
 const THROUGHPUT_FULL_ONLY_HEADROOM_TIGHTEST: u32 = 12;
 /// Eighths the headroom moves per full collection: half a live set, three steps across the range.
 const THROUGHPUT_FULL_ONLY_HEADROOM_STEP: u32 = 4;
-/// The share of time a full collection takes at which the headroom turns from tightening to widening: a quarter.
-const THROUGHPUT_FULL_ONLY_TIME_TARGET: Ratio = Ratio::new(1, 4);
+/// The share of the interval between full collections past which a full-only heap widens its
+/// headroom, and below which it tightens it: a sixteenth. At a quarter, a heap whose marking
+/// minors still reclaim well — Splay's full collections take a fifth of their interval, since a
+/// marking minor already frees what full collections free and only their record and sweep phases
+/// are left — never widened; at an eighth it widened and then tightened at the same share on the
+/// next full, oscillating at the tightest headroom. Measured on aarch64, 2026-11-24 (order-
+/// alternated pairs): Splay 2927 -> 2815 ms with full collections 55 -> 29 at 64.6 -> 82.2 MB
+/// peak RSS, json-parse-inspector 142.6 -> 134.9 ms at 80.5 -> 91.8 MB; deltaBlue, Richards,
+/// box2d, gaussian-blur and navier-stokes unchanged.
+const THROUGHPUT_FULL_ONLY_TIME_TARGET: Ratio = Ratio::new(1, 16);
 /// Garbage between full-only collections, in resident bytes, at most this many eighths of
 /// what the last one kept; zero is off. The time-share headroom is counted in records, and
 /// its three live sets of weight reached about 2.15 live sets of bytes on V8-v7 Splay. Splay

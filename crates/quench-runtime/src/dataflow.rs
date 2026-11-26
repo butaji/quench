@@ -3,8 +3,53 @@
 //! input grew. Forward analyses name their successors as `edges`, backward ones their
 //! predecessors.
 
-use cranelift_codegen::bitset::CompoundBitSet;
+/// A bitset of `usize` indices, the analyses' state: one bit per value or slot, iterated in
+/// index order.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct BitSet { words: Vec<u64> }
 
+impl BitSet {
+    pub fn new() -> Self { Self::default() }
+    pub fn with_capacity(count: usize) -> Self { Self { words: vec![0; count.div_ceil(u64::BITS as usize)] } }
+    fn word(&mut self, index: usize) -> &mut u64 {
+        let word = index / u64::BITS as usize;
+        if word >= self.words.len() { self.words.resize(word + 1, 0); }
+        &mut self.words[word]
+    }
+    pub fn insert(&mut self, index: usize) -> bool { let bit = 1 << (index % u64::BITS as usize); let word = self.word(index); let was = *word & bit != 0; *word |= bit; !was }
+    pub fn remove(&mut self, index: usize) -> bool { let bit = 1 << (index % u64::BITS as usize); let was = self.words.get(index / u64::BITS as usize).is_some_and(|word| word & bit != 0); if let Some(word) = self.words.get_mut(index / u64::BITS as usize) { *word &= !bit; } was }
+    pub fn contains(&self, index: usize) -> bool { self.words.get(index / u64::BITS as usize).is_some_and(|word| word & (1 << (index % u64::BITS as usize)) != 0) }
+    pub fn clear(&mut self) { self.words.fill(0); }
+    pub fn len(&self) -> usize { self.words.iter().map(|word| word.count_ones() as usize).sum() }
+    pub fn is_empty(&self) -> bool { self.words.iter().all(|word| *word == 0) }
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut word = 0usize;
+        let mut bits = self.words.first().copied().unwrap_or(0);
+        std::iter::from_fn(move || loop {
+            if bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                return Some(word * u64::BITS as usize + bit);
+            }
+            word += 1;
+            bits = *self.words.get(word)?;
+        })
+    }
+}
+
+/// The worklist as a bitset: one bit per block, so a block waits in it at most once and the
+/// lowest waiting block runs first.
+struct WorkSet { words: Vec<u64> }
+
+impl WorkSet {
+    fn with_capacity(count: usize) -> Self { Self { words: vec![0; count.div_ceil(u64::BITS as usize)] } }
+    fn insert(&mut self, block: usize) { self.words[block / u64::BITS as usize] |= 1 << (block % u64::BITS as usize); }
+    fn remove(&mut self, block: usize) { self.words[block / u64::BITS as usize] &= !(1 << (block % u64::BITS as usize)); }
+    fn next(&self) -> Option<usize> {
+        self.words.iter().enumerate().find(|(_, word)| **word != 0)
+            .map(|(index, word)| index * u64::BITS as usize + word.trailing_zeros() as usize)
+    }
+}
 /// A dataflow problem over `blocks()` basic blocks.
 pub trait Dataflow {
     /// The state on entry to a block, or the output of one.
@@ -48,11 +93,11 @@ pub trait Dataflow {
 pub fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
     let count = analysis.blocks();
     let mut states: Vec<Option<D::State>> = (0..count).map(|block| analysis.entry_state(block)).collect();
-    let mut work: CompoundBitSet = CompoundBitSet::with_capacity(count);
+    let mut work = WorkSet::with_capacity(count);
     for (block, state) in states.iter().enumerate() {
         if state.is_some() { work.insert(block); }
     }
-    while let Some(block) = work.iter().next() {
+    while let Some(block) = work.next() {
         work.remove(block);
         let Some(state) = states[block].as_ref() else { continue };
         let out = analysis.transfer(block, state);
@@ -70,4 +115,22 @@ pub fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
         }
     }
     states
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BitSet;
+
+    #[test]
+    fn iteration_names_every_indices_across_words() {
+        let mut set = BitSet::with_capacity(0);
+        for index in [0, 1, 64, 65, 130, 191] {
+            assert!(set.insert(index));
+            assert!(!set.insert(index));
+        }
+        set.remove(65);
+        assert_eq!(set.iter().collect::<Vec<_>>(), [0, 1, 64, 130, 191]);
+        assert_eq!(set.len(), 5);
+        assert!(set.contains(130) && !set.contains(65));
+    }
 }

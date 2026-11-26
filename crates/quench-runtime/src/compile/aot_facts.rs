@@ -28,6 +28,7 @@ use crate::typed_ir::Representation;
 use census::Census;
 use flow::FunctionFlow;
 use scope::Scope;
+pub use gate::World;
 
 /// The facts of one program.
 #[derive(Default)]
@@ -81,16 +82,41 @@ impl<'a> FunctionFacts<'a> {
 
 /// The facts of `program`, or none where the program can add code at run time.
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
-    let world = gate::world(program);
-    if world == gate::World::Open {
+    analyze_as(program, world(program))
+}
+
+/// How closed `program` is, as its source says (`gate`): an image keeps the answer its compile
+/// found (`AotImage::world`), so a binary without the source frontend derives the same facts
+/// again (`analyze_as`).
+pub fn world(program: &ResidualProgram) -> World {
+    gate::world(program)
+}
+
+/// The facts of `program` in `world`: none where it is open.
+pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
+    if world == World::Open {
         return AotFacts::default();
     }
+    // Code added as global code (`World::Locals`) may write any global or named member, so no
+    // binding of either names one closure (`Census::open_to_global_code`).
+    let census_of = |flows: &[FunctionFlow]| {
+        let mut census = Census::of(flows);
+        if world == World::Locals { census.open_to_global_code(); }
+        census
+    };
     let scope = Scope::of(program);
-    let flows: Vec<FunctionFlow> = (0..program.function_count())
-        .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function, &scope)))
-        .collect();
-    let mut census = Census::of(&flows);
-    if world == gate::World::Locals { census.open_to_global_code(); }
+    let analyze = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>| -> Vec<FunctionFlow> {
+        (0..program.function_count())
+            .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function, &scope, resolved)))
+            .collect()
+    };
+    // The first pass finds the bindings that hold one closure; the second reads their loads as
+    // that closure, so a class object or prototype reached through a binding keeps its identity
+    // and its methods prove per class, not per property name.
+    let first = analyze(&std::collections::BTreeMap::new());
+    let resolved = census_of(&first).singles();
+    let flows = analyze(&resolved);
+    let census = census_of(&flows);
     let mut facts = AotFacts::default();
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;

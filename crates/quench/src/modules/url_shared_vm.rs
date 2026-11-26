@@ -1,35 +1,35 @@
 //! `node:url` (lib/url.js) and the `internal/url` namespace host code converts file URLs
 //! through: the WHATWG classes (`url_whatwg_shared_vm`), the legacy API
 //! (`url_legacy_shared_vm`) and the file URL conversions.
-use crate::host::shared_vm::operation;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;
 
 /// The `url` exports beyond the classes, in Node's order: (name, operation, length).
-const LEGACY_EXPORTS: &[(&str, &str, &str, f64)] = &[
-    ("parse", "urlParse", "urlLegacyParse", 3.0),
-    ("resolve", "urlResolve", "urlLegacyResolve", 2.0),
-    ("resolveObject", "urlResolveObject", "urlLegacyResolveObject", 2.0),
-    ("format", "urlFormat", "urlLegacyFormat", 2.0),
+const LEGACY_EXPORTS: &[(&str, &str, MarkedOperation, f64)] = &[
+    ("parse", "urlParse", marked_operation!("urlLegacyParse"), 3.0),
+    ("resolve", "urlResolve", marked_operation!("urlLegacyResolve"), 2.0),
+    ("resolveObject", "urlResolveObject", marked_operation!("urlLegacyResolveObject"), 2.0),
+    ("format", "urlFormat", marked_operation!("urlLegacyFormat"), 2.0),
 ];
-const CONVERSIONS: &[(&str, &str, f64)] = &[
-    ("domainToASCII", "urlDomainToASCII", 1.0),
-    ("domainToUnicode", "urlDomainToUnicode", 1.0),
-    ("pathToFileURL", "urlPathToFileURL", 2.0),
-    ("fileURLToPath", "fileURLToPath", 1.0),
-    ("fileURLToPathBuffer", "fileURLToPathBuffer", 1.0),
-    ("urlToHttpOptions", "urlToHttpOptions", 1.0),
+const CONVERSIONS: &[(&str, MarkedOperation, f64)] = &[
+    ("domainToASCII", marked_operation!("urlDomainToASCII"), 1.0),
+    ("domainToUnicode", marked_operation!("urlDomainToUnicode"), 1.0),
+    ("pathToFileURL", marked_operation!("urlPathToFileURL"), 2.0),
+    ("fileURLToPath", marked_operation!("fileURLToPath"), 1.0),
+    ("fileURLToPathBuffer", marked_operation!("fileURLToPathBuffer"), 1.0),
+    ("urlToHttpOptions", marked_operation!("urlToHttpOptions"), 1.0),
 ];
 /// `internal/url` helpers beyond the public conversions.
-const INTERNALS: &[(&str, &str, f64)] = &[("isURL", "urlIsURL", 1.0), ("toPathIfFileURL", "toPathIfFileURL", 1.0)];
+const INTERNALS: &[(&str, MarkedOperation, f64)] = &[("isURL", marked_operation!("urlIsURL"), 1.0), ("toPathIfFileURL", marked_operation!("toPathIfFileURL"), 1.0)];
 
 use crate::modules::util_shared_vm::named_get as get;
 
 use crate::modules::util_shared_vm::named_put as put;
 
-fn export(c: &mut Context<'_>, object: RootId, export: &str, name: &str, operation_name: &str, length: f64) -> Result<(), RootedError> {
-    let function = c.host_function_named(operation(operation_name), name)?;
+fn export(c: &mut Context<'_>, object: RootId, export: &str, name: &str, operation: quench_runtime::HostFunctionId, length: f64) -> Result<(), RootedError> {
+    let function = c.host_function_named(operation, name)?;
     let key = c.string_rooted("length");
     let length = c.number(length);
     c.define_data_property_rooted(function, key, length, false, false, true)?;
@@ -50,14 +50,14 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let module = c.object_rooted()?;
     let url = super::url_legacy_shared_vm::class(c)?;
     put(c, module, "Url", url)?;
-    for &(name, function_name, operation_name, length) in LEGACY_EXPORTS {
-        export(c, module, name, function_name, operation_name, length)?;
+    for &(name, function_name, operation, length) in LEGACY_EXPORTS {
+        export(c, module, name, function_name, operation.id(), length)?;
     }
     let (url, params) = super::url_whatwg_shared_vm::classes(c)?;
     put(c, module, "URL", url)?;
     put(c, module, "URLSearchParams", params)?;
-    for &(name, operation_name, length) in CONVERSIONS {
-        export(c, module, name, name, operation_name, length)?;
+    for &(name, operation, length) in CONVERSIONS {
+        export(c, module, name, name, operation.id(), length)?;
     }
     Ok(module)
 }
@@ -68,8 +68,8 @@ pub(crate) fn internal_module(c: &mut Context<'_>) -> Result<RootId, RootedError
     let (url, params) = super::url_whatwg_shared_vm::classes(c)?;
     put(c, module, "URL", url)?;
     put(c, module, "URLSearchParams", params)?;
-    for &(name, operation_name, length) in CONVERSIONS.iter().chain(INTERNALS) {
-        export(c, module, name, name, operation_name, length)?;
+    for &(name, operation, length) in CONVERSIONS.iter().chain(INTERNALS) {
+        export(c, module, name, name, operation.id(), length)?;
     }
     Ok(module)
 }

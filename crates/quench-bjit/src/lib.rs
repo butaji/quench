@@ -286,7 +286,9 @@ pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> V
     let mut fields = Vec::new();
     for (k, row) in rows.iter().enumerate() {
         let relocs = row.stencil.relocs.iter();
-        for r in relocs.filter(|r| !class::is_successor(r.class) && layout.kept(rows, k, r.offset as usize) && symbolic(k, r.index)) {
+        // A successor class may still name a *value* hole: the Apple AArch64 helper site is a
+        // branch the image links (`Reloc::Arm64Call`), so its class does not decide.
+        for r in relocs.filter(|r| layout.kept(rows, k, r.offset as usize) && symbolic(k, r.index)) {
             fields.push(SymbolicField { row: k, hole: r.index, offset: layout.address(rows, k, r.offset as usize), class: r.class });
         }
     }

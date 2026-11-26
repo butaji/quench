@@ -1,0 +1,22 @@
+# AOT-image miscompiles reproduced without a benchmark (Apple M4, arm64). Same source
+# run by the interpreter, --u-jit, --b-jit and the compiled image.
+source	run	result
+sw.js (switch(typeof key) case "number" return 4; sum of t(i) for i<20000)	compiled image	80704 then 80964 (expected 80000: 176/241 extra iterations)
+sw.js	--u-jit	80000
+sw.js	--b-jit	80000
+sw.js	--no-jit	80000
+sw3.js (same call, per-case counts)	compiled image	20000 fours (correct)
+hash-map.js	compiled image	SIGBUS 138
+hash-map.js	--b-jit	SIGSEGV 139
+hash-map.js	--u-jit	JS error: switch(typeof key) fell to default for type=number key=6158
+# After the int32 unary-plus fix (40f03d1e52), with the function tier re-enabled for a test:
+# ty2.js (callee does typeof) n=20245, sw4.js n=20443 s=24080297, co.js (+k callee) n=20570
+# s=26684559 — every loop gains iterations, so a loop whose body calls a function that steps
+# out still mis-resumes under the function tier; the tier stays off (054f5ef0ea). With it off
+# all four reproducers are exact (ty2 n=20000, sw4/co s=199990000, +i sums 199990000).
+# Narrowed further: with the function tier on, r1.js (`t(i); n++`, callee does typeof) gives
+# n=20176 and r2.js (`s += t(i)`) s=121446 = 6*20241 — the extra count equals the loop index
+# where the callout left the lane, i.e. the resumed body restarts the induction at 0. The same
+# callee with more live caller values (miss2: r, shown, badr) is exact, so it depends on the
+# register allocation: a live pinned int is not restored across the callout leave/resume.
+# With the tier off all of these are exact (n=20000, s=120000).

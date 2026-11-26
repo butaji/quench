@@ -25,6 +25,24 @@ pub(crate) fn clone_key(c: &mut Context<'_>, value: RootId) -> Result<Option<Roo
     web::clone_crypto_key(c, value)
 }
 
+/// `structuredClone` of a value that is or holds a KeyObject or CryptoKey: a key travels as
+/// a record of its material, where the generic clone would copy it as an empty ordinary
+/// object. Undefined for any other value, and for every value before the module is built.
+pub(crate) fn structured_clone(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = c.undefined();
+    let value = args.first().copied().unwrap_or(undefined);
+    if super::state(c).borrow().crypto.intrinsics.is_none() {
+        return Ok(undefined);
+    }
+    if contains_nested_key(c, value)? {
+        let prepared = prepare(c, value)?;
+        let cloned = c.structured_clone_with_transfers_rooted(prepared, &[])
+            .map_err(|error| crate::modules::clone_shared_vm::as_dom_exception(c, error))?;
+        return restore(c, cloned);
+    }
+    Ok(clone_key(c, value)?.unwrap_or(undefined))
+}
+
 /// Whether `value` is a KeyObject or CryptoKey.
 pub(crate) fn is_key(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedError> {
     Ok(keys::key_of(c, value)?.is_some())

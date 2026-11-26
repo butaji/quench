@@ -128,10 +128,10 @@ mod tests {
         let defining: &[Class] = &[LoadConst, Move, LoadCapture, Binary, NumericAdd, NumericMultiply, IncDec, Unary,
             ToNumeric, GetIndex, GetField, LoadEnvLocal, LoadName];
         let lowered: &[Class] = &[StoreCapture, RequireObjectCoercible, SetIndex, DefineArrayElement, Return, Jump,
-            JumpFalse, JumpTrue];
+            JumpFalse, JumpTrue, IntCaseIndex, WasmBranchTable, LoadThis];
         let reading: &[Class] = &[Move, IncDec, Unary, ToNumeric, Binary, NumericAdd, NumericMultiply,
             JumpBinaryFalse, JumpFalse, JumpTrue, GetIndex, SetIndex];
-        let boxed: &[Class] = &[GetIndex, GetField, Move, LoadCapture, LoadEnvLocal, LoadName];
+        let boxed: &[Class] = &[GetIndex, GetField, Move, LoadCapture, LoadEnvLocal, LoadName, LoadThis];
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).expect("every catalog index is an opcode");
             let class = op.class();

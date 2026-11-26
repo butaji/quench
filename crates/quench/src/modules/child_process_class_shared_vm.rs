@@ -57,20 +57,20 @@ fn call_method(c: &mut Context<'_>, object: RootId, name: &str, args: &[RootId])
     c.call_rooted(function, object, args)
 }
 
-fn operation(c: &mut Context<'_>, name: &str) -> Outcome {
-    c.host_function(crate::host::shared_vm::operation(name))
+fn operation(c: &mut Context<'_>, name: quench_runtime::HostFunctionId) -> Outcome {
+    c.host_function(name)
 }
 
 /// Call the host operation `name` with `args`.
-fn invoke(c: &mut Context<'_>, name: &str, args: &[RootId]) -> Outcome {
+fn invoke(c: &mut Context<'_>, name: quench_runtime::HostFunctionId, args: &[RootId]) -> Outcome {
     let function = operation(c, name)?;
     let undefined = c.undefined();
     c.call_rooted(function, undefined, args)
 }
 
-fn closure(c: &mut Context<'_>, name: &str, captures: &[RootId]) -> Outcome {
+fn closure(c: &mut Context<'_>, name: quench_runtime::HostFunctionId, captures: &[RootId]) -> Outcome {
     let data = c.array_rooted(captures)?;
-    c.host_function_with_data(crate::host::shared_vm::operation(name), data)
+    c.host_function_with_data(name, data)
 }
 
 fn capture(c: &mut Context<'_>, index: usize) -> Outcome {
@@ -116,12 +116,12 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let key = c.string_rooted("spawn");
     c.define_data_property_rooted(prototype, key, spawn_method, true, false, true)?;
     for (name, operation) in [
-        ("kill", "childProcessKill"),
-        ("ref", "childProcessRef"),
-        ("unref", "childProcessUnref"),
-        ("__quenchDispatch", "childProcessDispatch"),
+        ("kill", crate::host::shared_vm::operation!("childProcessKill")),
+        ("ref", crate::host::shared_vm::operation!("childProcessRef")),
+        ("unref", crate::host::shared_vm::operation!("childProcessUnref")),
+        ("__quenchDispatch", crate::host::shared_vm::operation!("childProcessDispatch")),
     ] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation, name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
@@ -146,8 +146,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let native_sync = c.host_function_with_data(crate::host::shared_vm::operation!("childProcessSpawnSync"), buffer_prototype)?;
     let spawn_sync = c.host_function_named_with_data(crate::host::shared_vm::operation!("childProcessSpawnSyncPublic"), "spawnSync", native_sync)?;
     let sync_data = c.array_rooted(&[spawn_sync])?;
-    for (name, operation) in [("execFileSync", "childProcessExecFileSync"), ("execSync", "childProcessExecSync")] {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, sync_data)?;
+    for (name, operation) in [("execFileSync", crate::host::shared_vm::operation!("childProcessExecFileSync")), ("execSync", crate::host::shared_vm::operation!("childProcessExecSync"))] {
+        let function = c.host_function_named_with_data(operation, name, sync_data)?;
         put(c, module, name, function)?;
     }
     let is_buffer = get(c, buffer, "isBuffer")?;
@@ -177,7 +177,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outc
 
 /// A signal's number, as `convertToValidSignal` accepts it.
 fn signal_number(c: &mut Context<'_>, signal: RootId) -> Result<RootId, RootedError> {
-    let os = crate::host::shared_vm::commonjs::builtin_require(c, "os")?;
+    let os = crate::host::shared_vm::commonjs::builtin!(c, "os")?;
     let constants = get(c, os, "constants")?;
     let signals = get(c, constants, "signals")?;
     if let Some(number) = c.rooted_value(signal).and_then(|value| value.as_number()) {
@@ -222,7 +222,7 @@ pub(crate) fn kill(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
 
 fn reference(c: &mut Context<'_>, this: RootId, referenced: bool) -> Outcome {
     let referenced = c.boolean(referenced);
-    invoke(c, "childProcessReference", &[this, referenced])?;
+    invoke(c, crate::host::shared_vm::operation!("childProcessReference"), &[this, referenced])?;
     Ok(c.undefined())
 }
 
@@ -235,7 +235,7 @@ pub(crate) fn unreference_method(c: &mut Context<'_>, this: RootId, _: &[RootId]
 }
 
 pub(crate) fn dispose_method(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
-    invoke(c, "childProcessDispose", &[this])?;
+    invoke(c, crate::host::shared_vm::operation!("childProcessDispose"), &[this])?;
     Ok(c.undefined())
 }
 
@@ -290,7 +290,7 @@ pub(crate) fn dispatch(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Ou
             push(c, stream, null)?;
         }
         "exit" => {
-            invoke(c, "childProcessPrepareExit", &[this, value, value2])?;
+            invoke(c, crate::host::shared_vm::operation!("childProcessPrepareExit"), &[this, value, value2])?;
             let timer = get(c, this, TIMEOUT_TIMER)?;
             if !is_nullish(c, timer) {
                 let global = c.global_root()?;
@@ -307,7 +307,7 @@ pub(crate) fn dispatch(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Ou
             let event = c.string_rooted("exit");
             call_method(c, this, "emit", &[event, exit_code, signal_code])?;
             let id = get(c, this, CHILD_ID)?;
-            invoke(c, "childProcessFlushStdio", &[id])?;
+            invoke(c, crate::host::shared_vm::operation!("childProcessFlushStdio"), &[id])?;
         }
         "close" => {
             let event = c.string_rooted("close");
@@ -323,14 +323,14 @@ fn output(c: &mut Context<'_>, id: RootId, stdout: bool) -> Outcome {
     let readable = stream_class(c, "Readable")?;
     let options = c.object_rooted()?;
     let which = c.boolean(stdout);
-    let read = closure(c, "childProcessOutputRead", &[id, which])?;
+    let read = closure(c, crate::host::shared_vm::operation!("childProcessOutputRead"), &[id, which])?;
     put(c, options, "read", read)?;
     let stream = c.construct_rooted(readable, readable, &[options])?;
     let handle = c.object_rooted()?;
     let read_start = c.host_function_named(crate::host::shared_vm::operation!("streamNop"), "readStart")?;
     put(c, handle, "readStart", read_start)?;
     put(c, stream, "_handle", handle)?;
-    let destroy = operation(c, "childProcessDestroyReceiver")?;
+    let destroy = operation(c, crate::host::shared_vm::operation!("childProcessDestroyReceiver"))?;
     let event = c.string_rooted("end");
     call_method(c, stream, "once", &[event, destroy])?;
     Ok(stream)
@@ -339,7 +339,7 @@ fn output(c: &mut Context<'_>, id: RootId, stdout: bool) -> Outcome {
 pub(crate) fn output_read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     let id = capture(c, 0)?;
     let which = capture(c, 1)?;
-    invoke(c, "childProcessRead", &[id, which])
+    invoke(c, crate::host::shared_vm::operation!("childProcessRead"), &[id, which])
 }
 
 pub(crate) fn destroy_receiver(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
@@ -376,9 +376,9 @@ fn input(c: &mut Context<'_>, id: RootId) -> Outcome {
     let writable = stream_class(c, "Writable")?;
     let options = c.object_rooted()?;
     for (name, operation) in [
-        ("write", "childProcessInputWrite"),
-        ("final", "childProcessInputFinal"),
-        ("destroy", "childProcessInputDestroy"),
+        ("write", crate::host::shared_vm::operation!("childProcessInputWrite")),
+        ("final", crate::host::shared_vm::operation!("childProcessInputFinal")),
+        ("destroy", crate::host::shared_vm::operation!("childProcessInputDestroy")),
     ] {
         let function = closure(c, operation, &[id])?;
         put(c, options, name, function)?;
@@ -394,21 +394,21 @@ pub(crate) fn input_write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     let id = capture(c, 0)?;
     let (chunk, callback) = (arg(c, args, 0), arg(c, args, 2));
     let bytes = bytes_of(c, chunk)?;
-    let result = invoke(c, "childProcessWrite", &[id, bytes, callback]);
+    let result = invoke(c, crate::host::shared_vm::operation!("childProcessWrite"), &[id, bytes, callback]);
     complete(c, result, callback)
 }
 
 pub(crate) fn input_final(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let id = capture(c, 0)?;
     let callback = arg(c, args, 0);
-    let result = invoke(c, "childProcessEnd", &[id, callback]);
+    let result = invoke(c, crate::host::shared_vm::operation!("childProcessEnd"), &[id, callback]);
     complete(c, result, callback)
 }
 
 pub(crate) fn input_destroy(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let id = capture(c, 0)?;
     let (error, callback) = (arg(c, args, 0), arg(c, args, 1));
-    invoke(c, "childProcessDestroyInput", &[id, error, callback])
+    invoke(c, crate::host::shared_vm::operation!("childProcessDestroyInput"), &[id, error, callback])
 }
 
 /// An extra pipe (`stdio[3+]`): a duplex over the host pipe at `index`.
@@ -417,9 +417,9 @@ fn extra(c: &mut Context<'_>, id: RootId, index: usize) -> Outcome {
     let options = c.object_rooted()?;
     let index = c.number(index as f64);
     for (name, operation) in [
-        ("read", "childProcessExtraRead"),
-        ("write", "childProcessExtraWrite"),
-        ("final", "childProcessExtraFinal"),
+        ("read", crate::host::shared_vm::operation!("childProcessExtraRead")),
+        ("write", crate::host::shared_vm::operation!("childProcessExtraWrite")),
+        ("final", crate::host::shared_vm::operation!("childProcessExtraFinal")),
     ] {
         let function = closure(c, operation, &[id, index])?;
         put(c, options, name, function)?;
@@ -430,7 +430,7 @@ fn extra(c: &mut Context<'_>, id: RootId, index: usize) -> Outcome {
 pub(crate) fn extra_read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     let id = capture(c, 0)?;
     let index = capture(c, 1)?;
-    invoke(c, "childProcessReadExtra", &[id, index])
+    invoke(c, crate::host::shared_vm::operation!("childProcessReadExtra"), &[id, index])
 }
 
 pub(crate) fn extra_write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
@@ -438,7 +438,7 @@ pub(crate) fn extra_write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     let index = capture(c, 1)?;
     let (chunk, callback) = (arg(c, args, 0), arg(c, args, 2));
     let bytes = bytes_of(c, chunk)?;
-    let result = invoke(c, "childProcessWriteExtra", &[id, index, bytes, callback]);
+    let result = invoke(c, crate::host::shared_vm::operation!("childProcessWriteExtra"), &[id, index, bytes, callback]);
     complete(c, result, callback)
 }
 
@@ -446,7 +446,7 @@ pub(crate) fn extra_final(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     let id = capture(c, 0)?;
     let index = capture(c, 1)?;
     let callback = arg(c, args, 0);
-    let result = invoke(c, "childProcessEndExtra", &[id, index, callback]);
+    let result = invoke(c, crate::host::shared_vm::operation!("childProcessEndExtra"), &[id, index, callback]);
     complete(c, result, callback)
 }
 
@@ -481,10 +481,10 @@ pub(crate) fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> 
     let error_code = get(c, started, "errorCode")?;
     let failed = c.truthy_rooted(error_code)?;
     if failed {
-        invoke(c, "childProcessSpawnFailed", &[this, started, spawn_args])?;
+        invoke(c, crate::host::shared_vm::operation!("childProcessSpawnFailed"), &[this, started, spawn_args])?;
     } else {
-        invoke(c, "childProcessRegister", &[id, this, stdout, stderr, stdin])?;
-        invoke(c, "childProcessSpawnSucceeded", &[this])?;
+        invoke(c, crate::host::shared_vm::operation!("childProcessRegister"), &[id, this, stdout, stderr, stdin])?;
+        invoke(c, crate::host::shared_vm::operation!("childProcessSpawnSucceeded"), &[this])?;
     }
     if !c.is_object_rooted(options)? {
         return Ok(c.undefined());
@@ -493,7 +493,7 @@ pub(crate) fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> 
     let kill_signal = if c.truthy_rooted(kill_signal)? { kill_signal } else { c.string_rooted(DEFAULT_KILL_SIGNAL) };
     let signal = get(c, options, "signal")?;
     if c.truthy_rooted(signal)? {
-        let abort = closure(c, "childProcessAbort", &[this, signal, kill_signal])?;
+        let abort = closure(c, crate::host::shared_vm::operation!("childProcessAbort"), &[this, signal, kill_signal])?;
         hide(c, this, ABORT_SIGNAL, signal)?;
         hide(c, this, ABORT_HANDLER, abort)?;
         let aborted = get(c, signal, "aborted")?;
@@ -511,7 +511,7 @@ pub(crate) fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> 
     let timeout = get(c, options, "timeout")?;
     let timed = c.rooted_value(timeout).and_then(|value| value.as_number()).is_some_and(|ms| ms != 0.0);
     if timed && !failed {
-        let expire = closure(c, "childProcessTimeout", &[this, kill_signal])?;
+        let expire = closure(c, crate::host::shared_vm::operation!("childProcessTimeout"), &[this, kill_signal])?;
         let global = c.global_root()?;
         let timer = call_method(c, global, "setTimeout", &[expire, timeout])?;
         hide(c, this, TIMEOUT_TIMER, timer)?;
@@ -532,7 +532,7 @@ pub(crate) fn abort(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     if !is_undefined(c, reason) {
         put(c, error, "cause", reason)?;
     }
-    let report = closure(c, "childProcessReportError", &[child, error])?;
+    let report = closure(c, crate::host::shared_vm::operation!("childProcessReportError"), &[child, error])?;
     c.queue_microtask_rooted(report, &[])?;
     call_method(c, child, "kill", &[kill_signal])?;
     Ok(c.undefined())
@@ -616,7 +616,7 @@ fn through_shell(c: &mut Context<'_>, file: RootId, args: RootId, options: RootI
     for word in &words {
         parts.push(c.to_string(*word)?);
     }
-    invoke(c, "childProcessShellArgsWarning", &[args])?;
+    invoke(c, crate::host::shared_vm::operation!("childProcessShellArgsWarning"), &[args])?;
     let windows = is_windows_command_shell(c, &shell)?;
     let arguments: Vec<String> = if windows {
         let command = if parts.is_empty() { format!("\"{file}\"") } else { format!("\"{file}\" {}", parts.join(" ")) };
@@ -637,13 +637,13 @@ fn through_shell(c: &mut Context<'_>, file: RootId, args: RootId, options: RootI
 pub(crate) fn spawn(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let native = c.host_function_data()?;
     let file = arg(c, args, 0);
-    let file = invoke(c, "childProcessValidateFile", &[file])?;
+    let file = invoke(c, crate::host::shared_vm::operation!("childProcessValidateFile"), &[file])?;
     let (arguments, options) = {
         let (list, options) = (arg(c, args, 1), arg(c, args, 2));
         arguments_and_options(c, list, options, true)?
     };
     let no = c.boolean(false);
-    let options = invoke(c, "childProcessPrepareOptions", &[options, no])?;
+    let options = invoke(c, crate::host::shared_vm::operation!("childProcessPrepareOptions"), &[options, no])?;
     let undefined = c.undefined();
     if c.is_object_rooted(options)? && {
         let shell = get(c, options, "shell")?;
@@ -659,7 +659,7 @@ pub(crate) fn spawn(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome 
 pub(crate) fn spawn_sync(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let native = c.host_function_data()?;
     let command = arg(c, args, 0);
-    let command = invoke(c, "childProcessValidateFile", &[command])?;
+    let command = invoke(c, crate::host::shared_vm::operation!("childProcessValidateFile"), &[command])?;
     let (arguments, options) = {
         let (list, options) = (arg(c, args, 1), arg(c, args, 2));
         arguments_and_options(c, list, options, false)?
@@ -674,7 +674,7 @@ pub(crate) fn spawn_sync(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
         }
     }
     let yes = c.boolean(true);
-    let options = invoke(c, "childProcessPrepareOptions", &[options, yes])?;
+    let options = invoke(c, crate::host::shared_vm::operation!("childProcessPrepareOptions"), &[options, yes])?;
     let options = if is_undefined(c, options) { c.null_object_rooted()? } else { options };
     for name in ["windowsHide", "windowsVerbatimArguments"] {
         let value = get(c, options, name)?;
@@ -697,7 +697,7 @@ pub(crate) fn spawn_sync(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
 fn synchronous(c: &mut Context<'_>, command: RootId, args: RootId, options: RootId, shell: bool) -> Outcome {
     let spawn_sync = capture(c, 0)?;
     let use_shell = c.boolean(shell);
-    let options = invoke(c, "childProcessSyncOptions", &[options, use_shell])?;
+    let options = invoke(c, crate::host::shared_vm::operation!("childProcessSyncOptions"), &[options, use_shell])?;
     let undefined = c.undefined();
     let result = c.call_rooted(spawn_sync, undefined, &[command, args, options])?;
     let stdout = get(c, result, "stdout")?;

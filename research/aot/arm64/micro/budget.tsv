@@ -1,0 +1,18 @@
+# ns/op on Apple M4, 20M iterations, one op per loop (research/aot/arm64/micro).
+# aot = `quench compile --dynamic-source --profile experiment`; no-jit/u-jit = the same
+# source under quench; node 26.12.1; bun 1.4.4. Budgets are the instruction ceilings at
+# ~4.4 GHz: a.x <= 5 instr (1.14 ns), i+1 <= 3 (0.68 ns), call <= 20 (4.5 ns).
+# BEFORE restoring loop regions (js_function_tiers=false on aarch64):
+op	aot	no-jit	u-jit	node	bun
+add	6.617	6.011	5.967	0.601	1.117
+inc	7.506	6.799	6.695	0.286	0.211
+prop	5.864	4.823	4.818	0.425	0.367
+index	8.453	7.961	8.112	0.557	0.569
+call	40.618	39.319	39.242	0.333	0.220
+# AFTER restoring loop regions (lane-body tier still off on aarch64):
+op	aot	no-jit	u-jit	node	bun
+add	1.386	5.578	0.534	0.302	0.331
+inc	1.340	6.504	0.505	0.293	0.217
+prop	1.663	4.818	0.773	0.413	0.329
+index	1.618	7.488	0.717	0.583	0.544
+call	39.963	38.942	38.604	0.303	0.219

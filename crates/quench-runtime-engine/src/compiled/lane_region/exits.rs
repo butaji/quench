@@ -14,10 +14,10 @@ use super::super::exit_protocol::{LiveValue, Source};
 /// current tagged bits, or the int32, 64-bit integer or float64 view boxed there.
 #[derive(PartialEq)]
 pub(crate) struct ExitStores {
-    tagged: CompoundBitSet,
-    int: CompoundBitSet,
-    long: CompoundBitSet,
-    float: CompoundBitSet,
+    tagged: quench_runtime::dataflow::BitSet,
+    int: quench_runtime::dataflow::BitSet,
+    long: quench_runtime::dataflow::BitSet,
+    float: quench_runtime::dataflow::BitSet,
 }
 
 /// A leave block and the registers it stores to the lane frame.
@@ -29,7 +29,7 @@ pub(crate) struct ExitBlock {
 impl Lowering<'_, '_> {
     /// The caller registers a leave at `pc` stores from `state`: written, live there and not homed.
     pub(crate) fn stored_at(&self, state: &State, pc: usize) -> ExitStores {
-        let mut stores = ExitStores { tagged: CompoundBitSet::new(), int: CompoundBitSet::new(), long: CompoundBitSet::new(), float: CompoundBitSet::new() };
+        let mut stores = ExitStores { tagged: quench_runtime::dataflow::BitSet::new(), int: quench_runtime::dataflow::BitSet::new(), long: quench_runtime::dataflow::BitSet::new(), float: quench_runtime::dataflow::BitSet::new() };
         for register in self.written.iter().take_while(|register| *register < usize::from(self.unit.caller_registers)) {
             if !self.is_live(pc, register as Register) || state.proofs.homed.contains(register) { continue; }
             let fact = state.values[register];

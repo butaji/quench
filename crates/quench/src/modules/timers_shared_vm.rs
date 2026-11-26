@@ -1,5 +1,6 @@
 use crate::modules::shared_event_loop::SharedCallback;
-use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
+use quench_runtime::{HostFunctionId, NativeArithmetic, NativeContext, RootId, RootedError};
 use std::time::Duration;
 
 pub(crate) const TIMER_DESTROYED: &str = "_destroyed";
@@ -102,11 +103,11 @@ pub(crate) fn promises_module(
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     for (name, operation) in [
-        ("setTimeout", "timersPromiseSetTimeout"),
-        ("setImmediate", "timersPromiseSetImmediate"),
-        ("setInterval", "timersIntervalCreate"),
+        ("setTimeout", marked_operation!("timersPromiseSetTimeout")),
+        ("setImmediate", marked_operation!("timersPromiseSetImmediate")),
+        ("setInterval", marked_operation!("timersIntervalCreate")),
     ] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation.id(), name)?;
         install(context, module, name, function)?;
     }
     let scheduler = scheduler_object(context)?;
@@ -117,11 +118,11 @@ pub(crate) fn promises_module(
 fn scheduler_object(context: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let scheduler = context.object_rooted()?;
     for (name, operation) in [
-        ("wait", "timersPromiseSchedulerWait"),
-        ("yield", "timersPromiseSchedulerYield"),
+        ("wait", marked_operation!("timersPromiseSchedulerWait")),
+        ("yield", marked_operation!("timersPromiseSchedulerYield")),
     ] {
         let function = context
-            .host_function_with_data(crate::host::shared_vm::operation(operation), scheduler)?;
+            .host_function_with_data(operation.id(), scheduler)?;
         install(context, scheduler, name, function)?;
     }
     let global = context.global_root()?;
@@ -906,8 +907,8 @@ fn build_timer_handle_api(
     let value = context.string_rooted("getLibuvNow");
     context.define_data_property_rooted(clock, name, value, false, false, true)?;
     install(context, binding, "getLibuvNow", clock)?;
-    let timeout_prototype = timer_handle_prototype(context, "Timeout", "timerHasRef")?;
-    let immediate_prototype = timer_handle_prototype(context, "Immediate", "immediateHasRef")?;
+    let timeout_prototype = timer_handle_prototype(context, "Timeout", crate::host::shared_vm::operation!("timerHasRef"))?;
+    let immediate_prototype = timer_handle_prototype(context, "Immediate", crate::host::shared_vm::operation!("immediateHasRef"))?;
     let api = TimerHandleApi {
         refed_key: context.retain(refed_key)?,
         async_id_key: context.retain(async_id_key)?,
@@ -929,21 +930,21 @@ fn build_timer_handle_api(
 fn timer_handle_prototype(
     context: &mut NativeContext<'_>,
     owner: &str,
-    has_ref_operation: &str,
+    has_ref_operation: HostFunctionId,
 ) -> Result<RootId, RootedError> {
     // The handle classes' constructors were JavaScript (decision 38); their prototypes
     // carry the Rust-backed methods.
     let prototype = context.object_rooted()?;
     let (ref_operation, unref_operation) = match owner {
-        "Timeout" => ("timerRef", "timerUnref"),
-        "Immediate" => ("immediateRef", "immediateUnref"),
+        "Timeout" => (crate::host::shared_vm::operation!("timerRef"), crate::host::shared_vm::operation!("timerUnref")),
+        "Immediate" => (crate::host::shared_vm::operation!("immediateRef"), crate::host::shared_vm::operation!("immediateUnref")),
         _ => return Err(RootedError::host("unknown timer handle kind")),
     };
     for (name, operation) in [("ref", ref_operation), ("unref", unref_operation)]
         .into_iter()
-        .chain((owner == "Timeout").then_some(("refresh", "timerRefresh")))
+        .chain((owner == "Timeout").then_some(("refresh", crate::host::shared_vm::operation!("timerRefresh"))))
     {
-        let method = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let method = context.host_function(operation)?;
         let key = context.string_rooted(name);
         if !context.define_data_property_rooted(prototype, key, method, true, false, true)? {
             return Err(RootedError::host(format!(
@@ -965,7 +966,7 @@ fn timer_handle_prototype(
             )));
         }
     }
-    let method = context.host_function(crate::host::shared_vm::operation(has_ref_operation))?;
+    let method = context.host_function(has_ref_operation)?;
     let key = context.string_rooted("hasRef");
     if !context.define_data_property_rooted(prototype, key, method, true, false, true)? {
         return Err(RootedError::host(format!(
@@ -990,16 +991,16 @@ fn timer_handle_prototype(
     let symbol = property(context, global, "Symbol")?;
     let dispose = property(context, symbol, "dispose")?;
     let to_primitive = property(context, symbol, "toPrimitive")?;
-    let methods: &[(RootId, &str, &str)] = if owner == "Timeout" {
+    let methods: &[(RootId, &str, MarkedOperation)] = if owner == "Timeout" {
         &[
-            (dispose, "[Symbol.dispose]", "timerDispose"),
-            (to_primitive, "[Symbol.toPrimitive]", "timerToPrimitive"),
+            (dispose, "[Symbol.dispose]", marked_operation!("timerDispose")),
+            (to_primitive, "[Symbol.toPrimitive]", marked_operation!("timerToPrimitive")),
         ]
     } else {
-        &[(dispose, "[Symbol.dispose]", "immediateDispose")]
+        &[(dispose, "[Symbol.dispose]", marked_operation!("immediateDispose"))]
     };
     for &(key, name, operation) in methods {
-        let method = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let method = context.host_function_named(operation.id(), name)?;
         context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     }
     if owner == "Timeout" {

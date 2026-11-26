@@ -114,6 +114,17 @@ incremental = true
 debug = 0
 strip = "none"
 
+# A static image's cold support: code size over instruction throughput. `quench compile
+# --profile aot-compact` builds the support libs here; the guest's JavaScript objects stay
+# Cranelift's own optimized code (`aot_image::object`). The host CLI remains `experiment`.
+[profile.aot-compact]
+inherits = "experiment"
+opt-level = "z"
+lto = "thin"
+codegen-units = 16
+panic = "abort"
+strip = "symbols"
+
 # Targeted library tests in a short change-test cycle: `experiment` compiled with crate-local
 # ThinLTO and full optimization, where an edit to one test re-ran ThinLTO and LLVM passes over
 # most of quench-runtime's 256 units (time-passes: 330 s ThinLTO + 294 s passes of 725 s).
@@ -161,3 +172,5 @@ iana-time-zone = { path = "vendor/iana-time-zone" }
 oxc_parser = { path = "vendor/oxc-parser" }
 oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
 cranelift-codegen = { path = "vendor/cranelift-codegen" }
+cranelift-object = { path = "vendor/cranelift-object" }
+cranelift-frontend = { path = "vendor/cranelift-frontend" }

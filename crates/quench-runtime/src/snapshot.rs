@@ -138,10 +138,18 @@ impl Writer {
         }
     }
 
-    pub(crate) fn u64s(&mut self, values: impl ExactSizeIterator<Item = u64>) {
+    pub(crate) fn u64s(&mut self, values: &[u64]) {
         self.len(values.len());
         for value in values {
-            self.u64(value);
+            self.u64(*value);
+        }
+    }
+
+    /// Fixed-width records, which `Reader::records` reads back as one span.
+    pub(crate) fn records<const WIDTH: usize>(&mut self, records: impl ExactSizeIterator<Item = [u8; WIDTH]>) {
+        self.len(records.len());
+        for record in records {
+            self.bytes.extend_from_slice(&record);
         }
     }
 }
@@ -330,15 +338,20 @@ impl<'a> Reader<'a> {
         Ok(self.u32_iter()?.collect())
     }
 
-    pub(crate) fn u64_iter(&mut self) -> SnapshotResult<impl ExactSizeIterator<Item = u64> + '_> {
-        Ok(self.words()?.iter().copied().map(u64::from_le_bytes))
-    }
-
     /// Admit the entire word span once, then decode directly from the snapshot.
     /// Borrow the reader until consumption so later reads cannot release these pages.
     /// Decoding requires no aligned loads.
     pub(crate) fn u32_iter(&mut self) -> SnapshotResult<impl ExactSizeIterator<Item = u32> + '_> {
         Ok(self.words()?.iter().copied().map(u32::from_le_bytes))
+    }
+
+    pub(crate) fn u64_iter(&mut self) -> SnapshotResult<impl ExactSizeIterator<Item = u64> + '_> {
+        Ok(self.words()?.iter().copied().map(u64::from_le_bytes))
+    }
+
+    /// The fixed-width records `Writer::records` wrote.
+    pub(crate) fn records<const WIDTH: usize>(&mut self) -> SnapshotResult<&'a [[u8; WIDTH]]> {
+        self.words()
     }
 
     /// One checked byte span owns the bounds proof for every fixed-width element.

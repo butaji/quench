@@ -1,0 +1,11 @@
+
+diff -ruN -x Cargo.lock -x .cargo_vcs_info.json -x README.md -x Quench.patch -x Cargo.toml -x Cargo.toml.orig cranelift-frontend-0.137.1/src/frontend.rs b/src/frontend.rs
+--- cranelift-frontend-0.137.1/src/frontend.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/src/frontend.rs	2026-11-20 15:00:00.000000000 +0000
+@@ -509,6 +509,10 @@
+                 DefVariableError::TypeMismatch(var, val) => {
+                     // QUENCH: a lowering wrote a value of the wrong type into a variable; print the
+                     // function as built so far, which names the row and the instruction.
+                     eprintln!("QUENCH_VAR_MISMATCH {var:?} value {val} type {:?} var type {:?}\n{}",
+                         self.func.dfg.value_type(val), self.func_ctx.variables.get(var), self.func.display());
+                     panic!("declared type of variable {var:?} doesn't match type of value {val}");

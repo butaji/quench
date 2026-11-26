@@ -460,8 +460,10 @@ impl Vm {
     /// Forgets the outer environments the templates hold (`ClosureTemplate::outer_environment`):
     /// at a collection, which they do not root.
     pub(super) fn forget_outer_environments(&mut self) {
-        for template in self.closure_templates.iter_mut().flatten() {
-            template.outer_environment = None;
+        if let Some(templates) = self.closure_templates.filled_mut() {
+            for template in templates.iter_mut().flatten() {
+                template.outer_environment = None;
+            }
         }
     }
 
@@ -565,7 +567,13 @@ impl Vm {
         if !self.with_scope_entered
             && let Some(template) = self.recorded_closure_template(id, realm)
         {
-            return Ok(self.closure_of_template(template, env));
+            let function = self.closure_of_template(template, env);
+            if let Some(slot) = p.functions.get(id as usize)
+                && self.records_closure(p, &slot.header(), id)
+            {
+                self.record_closure(self.active_program, id, function);
+            }
+            return Ok(function);
         }
         let chain = self.frames.last().map_or_else(Vec::new, |frame| {
             self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec()
@@ -1410,6 +1418,7 @@ impl Vm {
                 self.construct_collection_native(p, native, args, new_target)
             }
             Native::ShadowRealm => self.construct_shadow_realm(p, new_target),
+            #[cfg(feature = "wasm")]
             native if super::wasm_js::is_wasm_js_constructor(native) => {
                 self.construct_wasm_js_native(p, native, args)
             }

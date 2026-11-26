@@ -3,7 +3,6 @@
 //! made in a domain run inside it, and an uncaught error reaches the active domain's
 //! `'error'` listeners through the uncaught-exception capture callback.
 use super::event_constructor_shared_vm::get;
-use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -29,22 +28,22 @@ pub(crate) use crate::modules::keys::ERROR_EVENT;
 const UNCAUGHT_EXCEPTION: &str = "uncaughtException";
 
 /// `Domain.prototype`'s methods (Node assigns anonymous functions) with their operations.
-const PROTOTYPE_METHODS: [(&str, &str); 8] = [
-    ("_errorHandler", "domainErrorHandler"),
-    ("enter", "domainEnter"),
-    ("exit", "domainExit"),
-    ("add", "domainAdd"),
-    ("remove", "domainRemove"),
-    ("run", "domainRun"),
-    ("intercept", "domainIntercept"),
-    ("bind", "domainBind"),
+const PROTOTYPE_METHODS: [(&str, crate::host::shared_vm::MarkedOperation); 8] = [
+    ("_errorHandler", crate::host::shared_vm::marked_operation!("domainErrorHandler")),
+    ("enter", crate::host::shared_vm::marked_operation!("domainEnter")),
+    ("exit", crate::host::shared_vm::marked_operation!("domainExit")),
+    ("add", crate::host::shared_vm::marked_operation!("domainAdd")),
+    ("remove", crate::host::shared_vm::marked_operation!("domainRemove")),
+    ("run", crate::host::shared_vm::marked_operation!("domainRun")),
+    ("intercept", crate::host::shared_vm::marked_operation!("domainIntercept")),
+    ("bind", crate::host::shared_vm::marked_operation!("domainBind")),
 ];
 /// The async hook that carries the active domain into the callbacks of resources made in it.
-const HOOK_CALLBACKS: [(&str, &str); 4] = [
-    ("init", "domainHookInit"),
-    ("before", "domainHookBefore"),
-    ("after", "domainHookAfter"),
-    ("destroy", "domainHookDestroy"),
+const HOOK_CALLBACKS: [(&str, crate::host::shared_vm::MarkedOperation); 4] = [
+    ("init", crate::host::shared_vm::marked_operation!("domainHookInit")),
+    ("before", crate::host::shared_vm::marked_operation!("domainHookBefore")),
+    ("after", crate::host::shared_vm::marked_operation!("domainHookAfter")),
+    ("destroy", crate::host::shared_vm::marked_operation!("domainHookDestroy")),
 ];
 const PROMISE_RESOURCE: &str = "PROMISE";
 /// The `'-'.repeat(40)` rule between an error's stack and the `require('domain')` stack.
@@ -212,7 +211,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
     put(c, prototype, "members", undefined)?;
     for (name, operation_name) in PROTOTYPE_METHODS {
-        let function = c.host_function_named(operation(operation_name), "")?;
+        let function = c.host_function_named(operation_name.id(), "")?;
         put(c, prototype, name, function)?;
     }
     put(c, state, STATE_CLASS, class)?;
@@ -224,11 +223,11 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     put(c, exports, ACTIVE, null)?;
 
     for (name, operation_name, function_name) in [
-        (STATE_CAPTURE, "domainCapture", ""),
-        (STATE_CLEAR, "domainClear", "domainUncaughtExceptionClear"),
-        (STATE_UPDATE, "domainUpdateCapture", "updateExceptionCapture"),
+        (STATE_CAPTURE, crate::host::shared_vm::operation!("domainCapture"), ""),
+        (STATE_CLEAR, crate::host::shared_vm::operation!("domainClear"), "domainUncaughtExceptionClear"),
+        (STATE_UPDATE, crate::host::shared_vm::operation!("domainUpdateCapture"), "updateExceptionCapture"),
     ] {
-        let function = c.host_function_named(operation(operation_name), function_name)?;
+        let function = c.host_function_named(operation_name, function_name)?;
         put(c, state, name, function)?;
     }
     let map = c.with_startup_intrinsics(|c| {
@@ -239,15 +238,15 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     put(c, state, STATE_PAIRING, pairing)?;
     let hooks = c.object_rooted()?;
     for (name, operation_name) in HOOK_CALLBACKS {
-        let function = c.host_function_named(operation(operation_name), name)?;
+        let function = c.host_function_named(operation_name.id(), name)?;
         put(c, hooks, name, function)?;
     }
     let async_hooks = super::async_hooks_shared_vm::module(c)?;
     let hook = call_method(c, async_hooks, "createHook", &[hooks])?;
     put(c, state, STATE_HOOK, hook)?;
 
-    for (event, operation_name) in [("newListener", "domainProcessNewListener"), ("removeListener", "domainProcessRemoveListener")] {
-        let listener = c.host_function_named(operation(operation_name), "")?;
+    for (event, operation_name) in [("newListener", crate::host::shared_vm::operation!("domainProcessNewListener")), ("removeListener", crate::host::shared_vm::operation!("domainProcessRemoveListener"))] {
+        let listener = c.host_function_named(operation_name, "")?;
         let event = c.string_rooted(event);
         call_method(c, process, "on", &[event, listener])?;
     }
@@ -436,10 +435,10 @@ pub(crate) fn run(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<
 }
 
 /// The wrapper `bind` and `intercept` return, with its domain and callback.
-fn wrapper(c: &mut Context<'_>, this: RootId, args: &[RootId], operation_name: &str, name: &str) -> Result<RootId, RootedError> {
+fn wrapper(c: &mut Context<'_>, this: RootId, args: &[RootId], operation: quench_runtime::HostFunctionId, name: &str) -> Result<RootId, RootedError> {
     let callback = argument(c, args, 0);
     let data = c.array_rooted(&[this, callback])?;
-    c.host_function_named_with_data(operation(operation_name), name, data)
+    c.host_function_named_with_data(operation, name, data)
 }
 
 fn wrapped(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
@@ -456,7 +455,7 @@ fn run_in(c: &mut Context<'_>, domain: RootId, callback: RootId, receiver: RootI
 }
 
 pub(crate) fn bind(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let bound = wrapper(c, this, args, "domainRunBound", "runBound")?;
+    let bound = wrapper(c, this, args, crate::host::shared_vm::operation!("domainRunBound"), "runBound")?;
     hidden(c, bound, DOMAIN, this)?;
     Ok(bound)
 }
@@ -467,7 +466,7 @@ pub(crate) fn run_bound(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
 }
 
 pub(crate) fn intercept(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    wrapper(c, this, args, "domainRunIntercepted", "runIntercepted")
+    wrapper(c, this, args, crate::host::shared_vm::operation!("domainRunIntercepted"), "runIntercepted")
 }
 
 /// An intercepted callback: an `Error` first argument goes to the domain's `'error'`

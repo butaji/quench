@@ -4,7 +4,8 @@ use super::scope::Scope;
 use super::value::{Fact, Key, Origin};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::typed_ir::Type;
-use crate::staged::{DecodeContext, NumberOperation, Operation};
+use crate::staged::protocol_literals::LiteralStep;
+use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -15,6 +16,8 @@ pub(super) struct Ctx<'a> {
     /// Whether the function is a root, whose `this` is the global object in a script.
     pub(super) is_root: bool,
     pub(super) scope: &'a Scope,
+    /// Bindings the census proved hold one closure, so their loads carry its fact too.
+    pub(super) resolved: &'a std::collections::BTreeMap<Key, u32>,
     pub(super) registers: usize,
 }
 
@@ -31,7 +34,9 @@ pub(super) struct Events {
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
 pub(super) fn decoded(instruction: WideInstruction) -> Option<Operation<(), ()>> {
-    Operation::<(), ()>::decode_completed(instruction, DecodeContext::EMPTY).map(|(operation, _)| operation)
+    Operation::<(), ()>::decode_completed(instruction, DecodeContext::EMPTY)
+        .or_else(|| Operation::<(), ()>::decode_literal_completed_with(instruction, None, ()))
+        .map(|(operation, _)| operation)
 }
 
 /// Applies `instruction` at `pc` to `state`, the facts before it, and returns its binding effects.
@@ -53,6 +58,11 @@ fn is_global_load(instruction: WideInstruction) -> bool {
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
 }
 
+/// The fact of a load from `key`: the closure the census proved there, else the binding.
+fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
+    ctx.resolved.get(&key).copied().map_or_else(|| Fact::from(Origin::Binding(key)), Fact::closure)
+}
+
 /// The fact of the value `instruction` defines, read from the facts before it.
 fn value_of(
     ctx: &Ctx<'_>,
@@ -62,20 +72,33 @@ fn value_of(
     events: &mut Events,
 ) -> Fact {
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
+        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::atom(atom); }
         return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::UNKNOWN, Fact::number);
     }
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() == 0 && !instruction.writes_current_this()
-        && let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+        && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
     {
-        return Fact::from(Origin::Member(atom));
+        let owner = base.register_index().map(|register| state[usize::from(register)]);
+        return match owner.and_then(|fact| fact.ty.body_index()) {
+            // `Class.prototype`: the class's prototype object.
+            Some(class) if ctx.scope.prototype == Some(atom) => Fact::prototype(class),
+            _ => match owner.and_then(Fact::class_site) {
+                Some((class, instance)) => Fact::member_on(class, instance, atom),
+                None => Fact::from(Origin::Member(atom)),
+            },
+        };
+    }
+    if instruction.op() == crate::bytecode::Op::Construct {
+        let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::UNKNOWN);
+        if let Some(class) = callee.ty.body_index() { return Fact::instance(class); }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
-        return Fact::from(Origin::Binding(Key::Global(atom)));
+        return resolved(ctx, Key::Global(atom));
     }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
-    if let Some((_, crate::staged::Allocation::Closure { function })) = crate::staged::Allocation::decode(instruction, &[]) {
+    if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
         return Fact::closure(function);
     }
     match operation {
@@ -83,12 +106,13 @@ fn value_of(
             state[usize::from(source)]
         }
         Some(Operation::LoadEnvLocal { slot, .. } | Operation::LoadLocalPlain { slot, .. }) => {
-            Fact::from(Origin::Binding(Key::Slot { owner: ctx.id, slot }))
+            resolved(ctx, Key::Slot { owner: ctx.id, slot })
         }
         Some(Operation::LoadCapture { depth, slot, .. }) => ctx
             .scope
             .owner(ctx.id, depth)
-            .map_or(Fact::UNKNOWN, |owner| Fact::from(Origin::Binding(Key::Slot { owner, slot }))),
+            .map_or(Fact::UNKNOWN, |owner| resolved(ctx, Key::Slot { owner, slot })),
+        Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::closure(function),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
         _ => Fact::UNKNOWN,
     }
@@ -151,6 +175,13 @@ fn writes(
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
 fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
+    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
+        let target = state[usize::from(instruction.register_b())];
+        let key = state[usize::from(instruction.register_c())];
+        if let (Some(atom), Some((class, instance))) = (key.atom_key(), target.class_site()) {
+            events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
+        }
+    }
     match operation {
         Some(Operation::SetField { value, atom, .. }) => events.writes.push((Key::Member(atom), state[usize::from(value)])),
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
@@ -197,34 +228,39 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
 /// Records the binding stores `operation` makes, with the facts they store.
 fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
     match operation {
-        Some(Operation::StoreEnvLocal { source, slot, .. } | Operation::StoreLocalPlain { source, slot, .. }) => {
-            write(ctx, pc, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
+        // A captured or global binding is no parameter: a store of it stays as the flow proves
+        // it even in the prologue, where a register store may be overwritten by an argument.
+        Some(Operation::StoreEnvLocal { source, slot, .. }) => {
+            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
+        }
+        Some(Operation::StoreLocalPlain { source, slot, .. }) => {
+            write(ctx, pc, false, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
         }
         Some(Operation::StoreCapture { source, depth, slot }) => match ctx.scope.owner(ctx.id, depth) {
-            Some(owner) => write(ctx, pc, events, Key::Slot { owner, slot }, state[usize::from(source)]),
+            Some(owner) => write(ctx, pc, true, events, Key::Slot { owner, slot }, state[usize::from(source)]),
             None => {
                 events.wild_global = true;
                 events.wild_owner = true;
             }
         },
         Some(Operation::IncDecLocal { local, .. }) => {
-            write(ctx, pc, events, Key::Slot { owner: ctx.id, slot: local }, Fact::UNKNOWN);
+            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Fact::UNKNOWN);
         }
         Some(Operation::GlobalWrite { source, atom, .. }) => {
-            write(ctx, pc, events, Key::Global(atom), state[usize::from(source)]);
+            write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
         }
         Some(
             Operation::SetField { atom, .. }
             | Operation::StoreField { atom, .. }
             | Operation::FieldStoreMiss { atom, .. }
             | Operation::FieldAdd { atom, .. },
-        ) => write(ctx, pc, events, Key::Global(atom), Fact::UNKNOWN),
+        ) => write(ctx, pc, true, events, Key::Global(atom), Fact::UNKNOWN),
         _ => {}
     }
 }
 
 /// Records a write of `fact` to `key` at `pc`; a store before the parameters end binds an argument.
-fn write(ctx: &Ctx<'_>, pc: usize, events: &mut Events, key: Key, fact: Fact) {
-    let fact = if pc < ctx.parameter_end { Fact::UNKNOWN } else { fact };
+fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, fact: Fact) {
+    let fact = if !stable && pc < ctx.parameter_end { Fact::UNKNOWN } else { fact };
     events.writes.push((key, fact));
 }

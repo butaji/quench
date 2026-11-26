@@ -274,10 +274,16 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::FieldLookupCacheSiteIndex => true,
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
-            FieldLayout::ElementCount => instruction
-                .constant_index()
-                .checked_add(usize::from(value))
-                .is_some_and(|end| end <= bounds.constants),
+            // A constant window (`MakeConstArray`, `StringCaseIndex`): its count reaches that many
+            // pool entries from the instruction's own index. A dense int switch's count is a case
+            // count with no constant behind it (`IntCaseIndex`, whose immediate is the minimum).
+            FieldLayout::ElementCount => match instruction.op().immediate_role() {
+                super::ImmediateRole::ConstantIndex => instruction
+                    .constant_index()
+                    .checked_add(usize::from(value))
+                    .is_some_and(|end| end <= bounds.constants),
+                _ => true,
+            },
             FieldLayout::Operand => operand_in_bounds(
                 value,
                 bounds.registers,
@@ -346,58 +352,79 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::MultiplicationOperator => {
             instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Multiplication as u32
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmSimdOperator => {
             crate::wasm::simd::SimdOperator::from_selector(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmAtomicOperator => {
             crate::wasm::atomic::AtomicOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmMemoryLoadOperator => {
             crate::wasm::memory::MemoryLoad::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmMemoryOffset => true,
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmInstanceSlot => true,
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmI32Immediate => true,
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmMemoryStoreOperator => {
             crate::wasm::memory::MemoryStore::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmI64BinaryOperator => {
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmScalarConversionOperator => {
             crate::wasm::conversion::ScalarConversionOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmF32BinaryOperator => {
             crate::wasm::float::F32BinaryOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmF32UnaryOperator => {
             crate::wasm::float::F32UnaryOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmF64BinaryOperator => {
             crate::wasm::float::F64BinaryOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmF64UnaryOperator => {
             crate::wasm::float::F64UnaryOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmI64UnaryOperator => {
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmGcField => crate::wasm::gc::GcField::from_tag(instruction.imm()).is_some(),
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmGcTypeIndex | super::ImmediateRole::WasmExceptionFieldIndex => {
             true
         } // The attached graph owns this index domain.
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmNonNullCheck => {
             crate::wasm::reference::NonNullCheck::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmReferenceTarget => {
             crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmExternalConversion => {
             crate::wasm::reference::ExternalConversion::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmI31Operator => {
             crate::wasm::i31::I31Operator::from_tag(instruction.imm()).is_some()
         }
+        #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmI32UnaryOperator => {
             crate::wasm::integer::I32UnaryOperator::from_tag(instruction.imm()).is_some()
         }
@@ -441,6 +468,10 @@ fn immediate_domains_in_bounds(
         | super::ImmediateRole::TemplateSiteIndex
         | super::ImmediateRole::Unused
         | super::ImmediateRole::WideInstructionIndex => true,
+        // Without the WebAssembly frontend no record names a Wasm role: the image's compiler
+        // validated them, and this build runs the image's code, not its module bytes.
+        #[cfg(not(feature = "wasm"))]
+        _ => true,
     }
 }
 

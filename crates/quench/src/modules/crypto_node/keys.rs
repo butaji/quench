@@ -676,31 +676,31 @@ pub(crate) fn to_crypto_key(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
     let key_object = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoKeyObjectConstructor"), "KeyObject")?;
     let prototype = get(c, key_object, "prototype")?;
-    define_getters(c, prototype, &[("type", "cryptoKeyObjectType")], Members::Declared)?;
-    define_methods(c, prototype, &[("equals", "cryptoKeyObjectEquals")], Members::Declared)?;
+    define_getters(c, prototype, &[("type", crate::host::shared_vm::marked_operation!("cryptoKeyObjectType"))], Members::Declared)?;
+    define_methods(c, prototype, &[("equals", crate::host::shared_vm::marked_operation!("cryptoKeyObjectEquals"))], Members::Declared)?;
     super::to_string_tag(c, prototype, "KeyObject")?;
-    define_methods(c, key_object, &[("from", "cryptoKeyObjectFrom")], Members::Declared)?;
+    define_methods(c, key_object, &[("from", crate::host::shared_vm::marked_operation!("cryptoKeyObjectFrom"))], Members::Declared)?;
 
-    let secret = super::subclass(c, "cryptoKeyObjectConstructor", "SecretKeyObject", key_object)?;
+    let secret = super::subclass(c, crate::host::shared_vm::marked_operation!("cryptoKeyObjectConstructor"), "SecretKeyObject", key_object)?;
     let prototype = get(c, secret, "prototype")?;
-    define_getters(c, prototype, &[("symmetricKeySize", "cryptoKeyObjectSymmetricKeySize")], Members::Declared)?;
-    define_methods(c, prototype, &[("export", "cryptoKeyObjectExportSecret"), ("toCryptoKey", "cryptoKeyObjectToCryptoKey")], Members::Declared)?;
+    define_getters(c, prototype, &[("symmetricKeySize", crate::host::shared_vm::marked_operation!("cryptoKeyObjectSymmetricKeySize"))], Members::Declared)?;
+    define_methods(c, prototype, &[("export", crate::host::shared_vm::marked_operation!("cryptoKeyObjectExportSecret")), ("toCryptoKey", crate::host::shared_vm::marked_operation!("cryptoKeyObjectToCryptoKey"))], Members::Declared)?;
 
-    let asymmetric = super::subclass(c, "cryptoKeyObjectConstructor", "AsymmetricKeyObject", key_object)?;
+    let asymmetric = super::subclass(c, crate::host::shared_vm::marked_operation!("cryptoKeyObjectConstructor"), "AsymmetricKeyObject", key_object)?;
     let prototype = get(c, asymmetric, "prototype")?;
     define_getters(
         c,
         prototype,
-        &[("asymmetricKeyType", "cryptoKeyObjectAsymmetricKeyType"), ("asymmetricKeyDetails", "cryptoKeyObjectAsymmetricKeyDetails")],
+        &[("asymmetricKeyType", crate::host::shared_vm::marked_operation!("cryptoKeyObjectAsymmetricKeyType")), ("asymmetricKeyDetails", crate::host::shared_vm::marked_operation!("cryptoKeyObjectAsymmetricKeyDetails"))],
         Members::Declared,
     )?;
-    define_methods(c, prototype, &[("toCryptoKey", "cryptoKeyObjectToCryptoKey")], Members::Declared)?;
+    define_methods(c, prototype, &[("toCryptoKey", crate::host::shared_vm::marked_operation!("cryptoKeyObjectToCryptoKey"))], Members::Declared)?;
 
     let mut classes = vec![(Class::KeyObject, key_object), (Class::SecretKeyObject, secret)];
     for (class, name) in [(Class::PublicKeyObject, "PublicKeyObject"), (Class::PrivateKeyObject, "PrivateKeyObject")] {
-        let constructor = super::subclass(c, "cryptoKeyObjectConstructor", name, asymmetric)?;
+        let constructor = super::subclass(c, crate::host::shared_vm::marked_operation!("cryptoKeyObjectConstructor"), name, asymmetric)?;
         let prototype = get(c, constructor, "prototype")?;
-        define_methods(c, prototype, &[("export", "cryptoKeyObjectExportAsymmetric")], Members::Declared)?;
+        define_methods(c, prototype, &[("export", crate::host::shared_vm::marked_operation!("cryptoKeyObjectExportAsymmetric"))], Members::Declared)?;
         classes.push((class, constructor));
     }
     Ok(classes)
@@ -731,8 +731,8 @@ pub(crate) fn internal_module(c: &mut Context<'_>) -> Outcome {
         let constructor = super::class(c, class)?;
         put(c, module, name, constructor)?;
     }
-    for (name, operation) in [("isKeyObject", "cryptoIsKeyObject"), ("isCryptoKey", "cryptoIsCryptoKey")] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for (name, operation) in [("isKeyObject", crate::host::shared_vm::operation!("cryptoIsKeyObject")), ("isCryptoKey", crate::host::shared_vm::operation!("cryptoIsCryptoKey"))] {
+        let function = c.host_function_named(operation, name)?;
         put(c, module, name, function)?;
     }
     Ok(module)

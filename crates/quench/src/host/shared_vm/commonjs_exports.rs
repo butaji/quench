@@ -1,13 +1,22 @@
 //! Node's static CJS export recognizers operate on syntax, never evaluated values.
+#[cfg(feature = "source")]
 use oxc_ast::ast::{
     AssignmentExpression, BindingPattern, CallExpression, Expression, ObjectExpression,
     ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
     VariableDeclarator,
 };
+#[cfg(feature = "source")]
 use oxc_ast_visit::{walk, Visit};
+#[cfg(feature = "source")]
 use oxc_span::GetSpan;
-use std::{collections::BTreeSet, path::Path};
+#[cfg(feature = "source")]
+use std::collections::BTreeSet;
+use std::path::Path;
 
+#[cfg(not(feature = "source"))]
+pub(super) fn names(_: &Path, _: &str) -> Vec<String> { Vec::new() }
+
+#[cfg(feature = "source")]
 pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
     let mut names = BTreeSet::new();
     super::commonjs::with_commonjs_resolver(|resolver| {
@@ -25,6 +34,7 @@ pub(crate) fn parse(source: &str) -> (Vec<String>, Vec<String>) {
     (names, reexports)
 }
 
+#[cfg(feature = "source")]
 fn collect(
     path: &Path,
     source: &str,
@@ -59,6 +69,7 @@ fn collect(
 }
 /// What the static recognizers read from one file's text, as cjs-module-lexer returns it:
 /// the names it exports and the specifiers it re-exports, each in order.
+#[derive(Default)]
 struct FileExports {
     names: Vec<String>,
     reexports: Vec<String>,
@@ -74,6 +85,15 @@ fn file_exports(source: &str) -> FileExports {
     if let Some(found) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| FileExports::decode(bytes.as_ref().as_ref())) {
         return found;
     }
+    // A strict image carries facts its build wrote; without the front end it cannot parse
+    // text it did not see. (`parse` of a text the build kept still reads its cache entry.)
+    #[cfg(not(feature = "source"))]
+    {
+        let _ = (&entry, source);
+        return FileExports::default();
+    }
+    #[cfg(feature = "source")]
+    {
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
     let mut exports = Exports {
@@ -88,10 +108,12 @@ fn file_exports(source: &str) -> FileExports {
         entry.store(&found.encode());
     }
     found
+    }
 }
 
 impl FileExports {
     /// Each list as its length, then each string as its byte length and bytes (u32 LE).
+    #[cfg(feature = "source")]
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         for list in [&self.names, &self.reexports] {
@@ -127,6 +149,7 @@ impl FileExports {
     }
 }
 
+#[cfg(feature = "source")]
 struct Exports<'s> {
     source: &'s str,
     names: BTreeSet<String>,
@@ -135,6 +158,7 @@ struct Exports<'s> {
     required: std::collections::BTreeMap<String, String>,
 }
 /// `callee` names `object.property` or, with no object, the bare `property`.
+#[cfg(feature = "source")]
 fn callee_is(callee: &Expression<'_>, object: Option<&str>, property: &str) -> bool {
     match (callee, object) {
         (Expression::StaticMemberExpression(member), Some(object)) => {
@@ -146,6 +170,7 @@ fn callee_is(callee: &Expression<'_>, object: Option<&str>, property: &str) -> b
     }
 }
 /// The descriptor shapes cjs-module-lexer accepts: a `value`, or an enumerable getter.
+#[cfg(feature = "source")]
 fn exporting_descriptor(object: &ObjectExpression<'_>) -> bool {
     let value = |name: &str| {
         object.properties.iter().find_map(|property| match property {
@@ -158,18 +183,22 @@ fn exporting_descriptor(object: &ObjectExpression<'_>) -> bool {
     value("value").is_some()
         || value("get").is_some() && matches!(value("enumerable"), Some(Expression::BooleanLiteral(flag)) if flag.value)
 }
+#[cfg(feature = "source")]
 fn identifier(expression: &Expression<'_>, expected: &str) -> bool {
     matches!(expression, Expression::Identifier(reference) if reference.name == expected)
 }
+#[cfg(feature = "source")]
 fn exported_object(expression: &Expression<'_>) -> bool {
     identifier(expression, "exports")
         || matches!(expression,
         Expression::StaticMemberExpression(member) if identifier(&member.object, "module") && member.property.name == "exports")
 }
+#[cfg(feature = "source")]
 fn is_module_exports(target: &SimpleAssignmentTarget<'_>) -> bool {
     matches!(target, SimpleAssignmentTarget::StaticMemberExpression(member)
         if identifier(&member.object, "module") && member.property.name == "exports")
 }
+#[cfg(feature = "source")]
 fn require_specifier<'e>(expression: &'e Expression<'_>) -> Option<&'e str> {
     let Expression::CallExpression(call) = expression else {
         return None;
@@ -184,6 +213,7 @@ fn require_specifier<'e>(expression: &'e Expression<'_>) -> Option<&'e str> {
 }
 // Node recognizes an identifier prefix, even when the complete expression is
 // more complex. OXC remains the authority for the surrounding syntax and spans.
+#[cfg(feature = "source")]
 fn identifier_prefix(source: &str) -> Option<&str> {
     let mut chars = source.char_indices();
     let (_, first) = chars.next()?;
@@ -195,6 +225,7 @@ fn identifier_prefix(source: &str) -> Option<&str> {
         .map_or(source.len(), |(offset, _)| offset);
     Some(&source[..end])
 }
+#[cfg(feature = "source")]
 impl<'a> Visit<'a> for Exports<'_> {
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         if let (BindingPattern::BindingIdentifier(binding), Some(init)) = (&declarator.id, &declarator.init) {

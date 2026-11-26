@@ -42,7 +42,7 @@ pub(crate) struct Sites<'a> {
 /// `State` keeps, with the stage's builder emitting each operation's IR.
 pub(crate) struct EmitFrame<'a> {
     pub(crate) registers: &'a mut Registers,
-    pub(crate) written: &'a mut CompoundBitSet,
+    pub(crate) written: &'a mut quench_runtime::dataflow::BitSet,
     pub(crate) state: &'a mut State,
     pub(crate) edges: Edges,
     pub(crate) constants: &'a [quench_runtime::bytecode::Constant],
@@ -391,7 +391,7 @@ pub(crate) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut R
 /// Define `register` with `value` and `fact`, retiring the proofs it carried.
 #[inline(always)]
 pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    written: &mut CompoundBitSet, state: &mut State, register: Register, value: ir::Value,
+    written: &mut quench_runtime::dataflow::BitSet, state: &mut State, register: Register, value: ir::Value,
     mut fact: RegisterFact) {
     let index = usize::from(register);
     written.insert(index);
@@ -400,6 +400,26 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
         Representation::Int32 => register_int(builder, registers, index),
         Representation::Int64 => register_long(builder, registers, index),
         Representation::Float64 => register_float(builder, registers, index),
+    };
+    // Each representation has its own variable (`Registers`), so a value whose lane disagrees with
+    // the fact cannot be stored there: the body's accounting missed a path and is declined
+    // (`note_mismatch`, `lower`). The value is converted only so the builder stays well-formed for
+    // the rest of the discarded lowering.
+    let expected = match fact.value.representation {
+        Representation::Tagged | Representation::Int64 => types::I64,
+        Representation::Int32 => types::I32,
+        Representation::Float64 => types::F64,
+    };
+    let actual = builder.func.dfg.value_type(value);
+    let value = if actual == expected { value } else {
+        super::note_mismatch();
+        match (actual.is_int(), expected.is_int()) {
+            (true, true) if actual.bits() > expected.bits() => builder.ins().ireduce(expected, value),
+            (true, true) => builder.ins().uextend(expected, value),
+            (false, true) => builder.ins().fcvt_to_sint_sat(expected, value),
+            (true, false) => builder.ins().fcvt_from_sint(types::F64, value),
+            (false, false) => builder.ins().fpromote(expected, value),
+        }
     };
     builder.def_var(variable, value);
     if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
@@ -415,7 +435,7 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
 /// `source`'s value into `destination`, with every fact proved of it.
 #[inline(always)]
 pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    written: &mut CompoundBitSet, state: &mut State, destination: Register, source: Register) -> ir::Value {
+    written: &mut quench_runtime::dataflow::BitSet, state: &mut State, destination: Register, source: Register) -> ir::Value {
     let source_index = usize::from(source);
     let fact = state.values[source_index];
     let value = register_read(builder, registers, state, source);

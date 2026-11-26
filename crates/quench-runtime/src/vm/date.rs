@@ -3,12 +3,14 @@ use super::*;
 mod legacy_parse;
 mod local_zone;
 pub use local_zone::local_timezone_changed;
+#[cfg(feature = "tzdb")]
 use local_zone::local_timezone;
 use crate::host::{CapabilityId, HostContext};
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Offset, TimeZone,
     Timelike, Utc,
 };
+#[cfg(feature = "tzdb")]
 use chrono_tz::OffsetName;
 
 /// The `Date.prototype` aliases the rows do not hold: each names a row's function under another name.
@@ -610,6 +612,7 @@ fn local_offset_cached(timestamp: i64) -> Option<i32> {
 }
 
 fn local_offset_at(timestamp: i64) -> Option<i32> {
+    #[cfg(feature = "tzdb")]
     if let Some(zone) = local_timezone() {
         return zone
             .timestamp_millis_opt(timestamp)
@@ -623,15 +626,17 @@ fn local_offset_at(timestamp: i64) -> Option<i32> {
 }
 
 fn local_offset_now() -> i32 {
-    local_timezone()
-        .and_then(|zone| {
-            zone.timestamp_millis_opt(Utc::now().timestamp_millis())
-                .single()
-        })
+    #[cfg(feature = "tzdb")]
+    if let Some(offset) = local_timezone()
+        .and_then(|zone| zone.timestamp_millis_opt(Utc::now().timestamp_millis()).single())
         .map(|date| date.offset().fix().local_minus_utc())
-        .unwrap_or_else(|| Local::now().offset().fix().local_minus_utc())
+    {
+        return offset;
+    }
+    Local::now().offset().fix().local_minus_utc()
 }
 
+#[cfg(feature = "tzdb")]
 fn local_timezone_abbreviation(milliseconds: f64) -> Option<String> {
     let timestamp = milliseconds.trunc() as i64;
     let zone = local_timezone()?;
@@ -641,7 +646,16 @@ fn local_timezone_abbreviation(milliseconds: f64) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Without the time zone database, the C library names no zone (`chrono::Local` has no
+/// abbreviation), so `Date.prototype.toString` omits the parenthesized name.
+#[cfg(not(feature = "tzdb"))]
+fn local_timezone_abbreviation(milliseconds: f64) -> Option<String> {
+    let _ = milliseconds;
+    None
+}
+
 fn resolve_local_date_time(date_time: NaiveDateTime) -> Option<DateTime<Utc>> {
+    #[cfg(feature = "tzdb")]
     if let Some(zone) = local_timezone() {
         return super::local_time::resolve_local_datetime(
             date_time,

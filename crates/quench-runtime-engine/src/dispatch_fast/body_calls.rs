@@ -76,6 +76,8 @@ fn leave(cx: *mut LaneContext, resume: Ip, acc: Value) -> u64 {
 /// too, at the record the lane left at (`left_lane`), as does a call no nested run takes:
 /// one below such a leave, or without native stack.
 pub(crate) fn finish(cx: *mut LaneContext, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
+    // Execution-only support runs no record: the body's call leaves it for the general loop.
+    if !cfg!(feature = "jit") { return leave(cx, resume, acc); }
     let (plain, nested) = if constructs { (Completion::Constructs, Completion::ConstructsToBody) } else { (Completion::Plain, Completion::ReturnsToBody) };
     let Ok(_stack) = quench_runtime::stack::StackGuard::enter() else { return leave(cx, resume, acc) };
     if left_lane(resume) || !recomplete(cx, depth, plain, nested) { return leave(cx, resume, acc); }
@@ -109,6 +111,8 @@ fn run_nested(cx: *mut LaneContext, resume: Ip, acc: Value) -> Option<Ip> {
 /// iteration completes the call (`LANE_CALL_COMPLETED`); a run that leaves the lane for the
 /// general path leaves the body at the record it left at.
 pub(crate) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
+    // Execution-only support runs no record: the iteration leaves for the general loop.
+    if !cfg!(feature = "jit") { return leave(cx, resume, Value::UNDEFINED); }
     ended(cx, run_nested(cx, resume, Value::UNDEFINED))
 }
 

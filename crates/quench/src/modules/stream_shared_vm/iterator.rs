@@ -55,8 +55,8 @@ fn create(c: &mut Context<'_>, stream: RootId, options: RootId) -> Outcome {
     let nop = intrinsic(c, |i| i.nop)?;
     put(c, record, "callback", nop)?;
     let iterator = c.object_rooted()?;
-    define_methods(c, iterator, &[(Key::Symbol(Slot::AsyncIterator), "streamIteratorSelf", "[Symbol.asyncIterator]")])?;
-    for (name, operation) in [("next", "streamIteratorNext"), ("return", "streamIteratorReturn"), ("throw", "streamIteratorThrow")] {
+    define_methods(c, iterator, &[(Key::Symbol(Slot::AsyncIterator), crate::host::shared_vm::marked_operation!("streamIteratorSelf"), "[Symbol.asyncIterator]")])?;
+    for (name, operation) in [("next", crate::host::shared_vm::operation!("streamIteratorNext")), ("return", crate::host::shared_vm::operation!("streamIteratorReturn")), ("throw", crate::host::shared_vm::operation!("streamIteratorThrow"))] {
         let method = closure(c, operation, name, &[record])?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(iterator, key, method, true, false, true)?;
@@ -128,7 +128,7 @@ fn drain(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
         }
         if kind == RETURN {
             call_method(c, queue, "shift", &[])?;
-            await_at_yield(c, record, promise, value, "streamIteratorReturned")?;
+            await_at_yield(c, record, promise, value, crate::host::shared_vm::operation!("streamIteratorReturned"))?;
             continue;
         }
         if kind == THROW {
@@ -150,10 +150,10 @@ fn drain(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
 fn start(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
     set_status(c, record, SUSPENDED)?;
     let stream = get(c, record, "stream")?;
-    let listener = closure(c, "streamIteratorOnReadable", "next", &[record])?;
+    let listener = closure(c, crate::host::shared_vm::operation!("streamIteratorOnReadable"), "next", &[record])?;
     put(c, record, "listener", listener)?;
     on(c, stream, "readable", listener)?;
-    let finished = closure(c, "streamIteratorOnFinished", "", &[record])?;
+    let finished = closure(c, crate::host::shared_vm::operation!("streamIteratorOnFinished"), "", &[record])?;
     let cleanup = super::eos::eos_with(c, stream, None, Some(false), finished)?;
     put(c, record, "cleanup", cleanup)
 }
@@ -192,7 +192,7 @@ fn wake(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
 /// The step an awaited wake resumes, one microtask after the wake (as `await` resumes).
 pub(crate) fn resume(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     let [record] = captures(c)?;
-    let continue_step = closure(c, "streamIteratorContinue", "", &[record])?;
+    let continue_step = closure(c, crate::host::shared_vm::operation!("streamIteratorContinue"), "", &[record])?;
     c.queue_microtask_rooted(continue_step, &[])?;
     Ok(c.undefined())
 }
@@ -219,7 +219,7 @@ fn step(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
         }
     };
     if !is_null(c, chunk) {
-        return await_at_yield(c, record, promise, chunk, "streamIteratorYielded");
+        return await_at_yield(c, record, promise, chunk, crate::host::shared_vm::operation!("streamIteratorYielded"));
     }
     let error = get(c, record, "error")?;
     if c.truthy_rooted(error)? {
@@ -237,16 +237,16 @@ fn step(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
         return Ok(());
     }
     set_status(c, record, AWAITING)?;
-    let wake = closure(c, "streamIteratorResume", "", &[record])?;
+    let wake = closure(c, crate::host::shared_vm::operation!("streamIteratorResume"), "", &[record])?;
     put(c, record, "callback", wake)
 }
 
 /// The `Await` a suspended generator takes at its `yield`: of the value it yields, or of
 /// the value `return(value)` resumes it with; `settled` continues with the result.
-fn await_at_yield(c: &mut Context<'_>, record: RootId, promise: RootId, value: RootId, settled: &str) -> Result<(), RootedError> {
+fn await_at_yield(c: &mut Context<'_>, record: RootId, promise: RootId, value: RootId, settled: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
     set_status(c, record, AWAITING)?;
     let fulfilled = closure(c, settled, "", &[record, promise])?;
-    let rejected = closure(c, "streamIteratorYieldFailed", "", &[record, promise])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamIteratorYieldFailed"), "", &[record, promise])?;
     super::await_then(c, value, fulfilled, rejected)
 }
 

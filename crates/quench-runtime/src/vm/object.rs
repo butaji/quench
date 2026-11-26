@@ -1080,7 +1080,7 @@ impl Vm {
         self.enumerable_key_lists.clear();
         self.enumerable_key_value_lists.clear();
         self.field_add_sets.clear();
-        self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.keyed_adds.clear();
         self.field_add_chains.clear();
         self.megamorphic_fields.clear();
         self.field_stubs.clear();
@@ -1092,7 +1092,7 @@ impl Vm {
         self.resolver_function_shape = None;
         self.bound_function_shape = None;
         self.function_name_shapes.clear();
-        self.closure_templates.fill(None);
+        self.closure_templates.clear();
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
@@ -1297,7 +1297,10 @@ impl Vm {
     /// Its holes are defined next (`define_literal_element`), so no young run holds them.
     pub fn hole_array(&mut self, length: usize) -> Value {
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        let elements = crate::heap::ArrayElements::from_fn(length, |_| Value::DELETED);
+        // `new Array(n)` starts double where backings take the kind (`double_elements`): a
+        // numeric program then stores and loads raw doubles. Holes read `undefined` still,
+        // and a value that is no Number widens the backing once (`make_mut`).
+        let elements = crate::heap::ArrayElements::double_holes(length);
         self.heap.alloc_fresh_array(prototype, elements)
     }
 
@@ -2503,9 +2506,18 @@ impl Vm {
         site: u16,
     ) -> Option<(Value, u32)> {
         debug_assert!(self.specialized_operations_enabled(p));
+        // The site's head entry, proved against the receiver, answers without the walk and
+        // without the holder's slot read (its constant is kept under a watch on that holder):
+        // a site whose reads alternate between receiver shapes walks from the head to its own.
+        let site = self.field_cache_index(site);
+        // SAFETY: as `cached_inherited_field_value`: every site index was installed with its entry.
+        let head = unsafe { self.inherited_field_indices.get_unchecked(site) };
+        if head != NO_INHERITED_FIELD && let Some(value) = self.proved_inherited_entry_value(head, object) {
+            return Some((value, head));
+        }
         let (receiver, kind) = self.inherited_receiver(object)?;
         let (hit, index, proof) =
-            self.cached_inherited_field_value(self.field_cache_index(site), receiver, kind == super::field_cache::InheritedReceiver::Function)?;
+            self.cached_inherited_field_value(site, receiver, kind == super::field_cache::InheritedReceiver::Function)?;
         self.inherited_entry_answers(kind, index).then_some(())?;
         if let Some(proof) = proof {
             self.prove_inherited_chain(proof);

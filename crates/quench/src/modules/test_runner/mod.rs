@@ -12,7 +12,8 @@ pub(crate) mod reporters;
 pub(crate) mod run;
 pub(crate) mod wait_for;
 
-use quench_runtime::{NativeContext, RootId, RootedError};
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
+use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError};
 use std::time::Instant;
 
 type Context<'a> = NativeContext<'a>;
@@ -231,8 +232,8 @@ use crate::modules::util_shared_vm::named_get as get;
 
 use crate::modules::util_shared_vm::named_put as put;
 
-fn function(c: &mut Context<'_>, operation: &str, name: &str, data: RootId) -> Result<RootId, RootedError> {
-    c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)
+fn function(c: &mut Context<'_>, operation: HostFunctionId, name: &str, data: RootId) -> Result<RootId, RootedError> {
+    c.host_function_named_with_data(operation, name, data)
 }
 
 fn accessor(c: &mut Context<'_>, target: RootId, name: &str, getter: RootId) -> Result<(), RootedError> {
@@ -274,7 +275,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             (Kind::Suite, None) => "suite".to_owned(),
             _ => "test".to_owned(),
         };
-        factories.push((tag, function(c, "nodeTestRegister", &name, data)?));
+        factories.push((tag, function(c, crate::host::shared_vm::operation!("nodeTestRegister"), &name, data)?));
     }
     let factory = |tag: &str| factories.iter().find(|(name, _)| *name == tag).map(|(_, f)| *f);
     let test = factory("test").ok_or_else(|| RootedError::host("node:test factory missing"))?;
@@ -289,14 +290,14 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
     for name in ["after", "afterEach", "before", "beforeEach"] {
         let data = c.string_rooted(name);
-        let hook = function(c, "nodeTestHook", name, data)?;
+        let hook = function(c, crate::host::shared_vm::operation!("nodeTestHook"), name, data)?;
         put(c, test, name, hook)?;
     }
-    let run = function(c, "nodeTestRun", "run", undefined)?;
+    let run = function(c, crate::host::shared_vm::operation!("nodeTestRun"), "run", undefined)?;
     for (name, value) in [("describe", suite), ("it", test), ("run", run), ("suite", suite), ("test", test)] {
         put(c, test, name, value)?;
     }
-    let getter = function(c, "nodeTestRootMock", "get mock", undefined)?;
+    let getter = function(c, crate::host::shared_vm::operation!("nodeTestRootMock"), "get mock", undefined)?;
     let descriptor = c.null_object_rooted()?;
     put(c, descriptor, "get", getter)?;
     let yes = c.boolean(true);
@@ -344,13 +345,13 @@ fn bootstrap(c: &mut Context<'_>) -> Result<(), RootedError> {
     });
     let on = get(c, process, "on")?;
     for (event, operation, data) in [
-        ("uncaughtException", "nodeTestProcessError", "uncaughtException"),
-        ("unhandledRejection", "nodeTestProcessError", "unhandledRejection"),
-        ("beforeExit", "nodeTestBeforeExit", ""),
+        ("uncaughtException", marked_operation!("nodeTestProcessError"), "uncaughtException"),
+        ("unhandledRejection", marked_operation!("nodeTestProcessError"), "unhandledRejection"),
+        ("beforeExit", marked_operation!("nodeTestBeforeExit"), ""),
     ] {
         let event = c.string_rooted(event);
         let data = c.string_rooted(data);
-        let handler = function(c, operation, "", data)?;
+        let handler = function(c, operation.id(), "", data)?;
         c.call_rooted(on, process, &[event, handler])?;
     }
     Ok(())
@@ -572,9 +573,9 @@ fn context(c: &mut Context<'_>, id: NodeId) -> Result<RootId, RootedError> {
 }
 
 /// The operation of a context accessor; every other member is a method.
-const GETTER: &str = "nodeTestContextGet";
+const GETTER: MarkedOperation = marked_operation!("nodeTestContextGet");
 /// A context class member: (name, operation, operation data), in Node's order.
-type Member = (&'static str, &'static str, &'static str);
+type Member = (&'static str, MarkedOperation, &'static str);
 const SUITE_MEMBERS: [Member; 4] = [
     ("signal", GETTER, "signal"),
     ("name", GETTER, "name"),
@@ -588,24 +589,24 @@ const TEST_MEMBERS: [Member; 19] = [
     ("fullName", GETTER, "fullName"),
     ("error", GETTER, "error"),
     ("passed", GETTER, "passed"),
-    ("diagnostic", "nodeTestDiagnostic", ""),
-    ("plan", "nodeTestPlan", ""),
+    ("diagnostic", marked_operation!("nodeTestDiagnostic"), ""),
+    ("plan", marked_operation!("nodeTestPlan"), ""),
     ("assert", GETTER, "assert"),
     ("mock", GETTER, "mock"),
-    ("runOnly", "nodeTestRunOnly", ""),
-    ("skip", "nodeTestDirective", "skip"),
-    ("todo", "nodeTestDirective", "todo"),
-    ("test", "nodeTestSubtest", ""),
-    ("before", "nodeTestContextHook", "before"),
-    ("after", "nodeTestContextHook", "after"),
-    ("beforeEach", "nodeTestContextHook", "beforeEach"),
-    ("afterEach", "nodeTestContextHook", "afterEach"),
-    ("waitFor", "nodeTestWaitFor", ""),
+    ("runOnly", marked_operation!("nodeTestRunOnly"), ""),
+    ("skip", marked_operation!("nodeTestDirective"), "skip"),
+    ("todo", marked_operation!("nodeTestDirective"), "todo"),
+    ("test", marked_operation!("nodeTestSubtest"), ""),
+    ("before", marked_operation!("nodeTestContextHook"), "before"),
+    ("after", marked_operation!("nodeTestContextHook"), "after"),
+    ("beforeEach", marked_operation!("nodeTestContextHook"), "beforeEach"),
+    ("afterEach", marked_operation!("nodeTestContextHook"), "afterEach"),
+    ("waitFor", marked_operation!("nodeTestWaitFor"), ""),
 ];
 
 fn class_prototype(c: &mut Context<'_>, name: &str, members: &[Member]) -> Result<RootId, RootedError> {
     let undefined = c.undefined();
-    let constructor = function(c, "nodeTestIllegalConstructor", name, undefined)?;
+    let constructor = function(c, crate::host::shared_vm::operation!("nodeTestIllegalConstructor"), name, undefined)?;
     let prototype = c.object_rooted()?;
     let key = c.string_rooted("constructor");
     c.define_data_property_rooted(prototype, key, constructor, true, false, true)?;
@@ -613,11 +614,11 @@ fn class_prototype(c: &mut Context<'_>, name: &str, members: &[Member]) -> Resul
     c.define_data_property_rooted(constructor, key, prototype, false, false, false)?;
     for (name, operation, tag) in members {
         let data = c.string_rooted(tag);
-        if *operation == GETTER {
-            let getter = function(c, operation, &format!("get {name}"), data)?;
+        if operation.id() == GETTER.id() {
+            let getter = function(c, operation.id(), &format!("get {name}"), data)?;
             accessor(c, prototype, name, getter)?;
         } else {
-            let method = function(c, operation, name, data)?;
+            let method = function(c, operation.id(), name, data)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(prototype, key, method, true, false, true)?;
         }
@@ -708,6 +709,8 @@ fn signal(c: &mut Context<'_>, id: NodeId) -> Result<RootId, RootedError> {
         return Ok(signal);
     }
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let controller = get(c, global, "AbortController")?;
     let controller = c.construct_rooted(controller, controller, &[])?;
     let signal = get(c, controller, "signal")?;
@@ -798,7 +801,7 @@ pub(crate) fn run_files(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     let yes = c.boolean(true);
     put(c, options, "objectMode", yes)?;
     let undefined = c.undefined();
-    let read = function(c, "nodeTestRunRead", "read", undefined)?;
+    let read = function(c, crate::host::shared_vm::operation!("nodeTestRunRead"), "read", undefined)?;
     put(c, options, "read", read)?;
     let readable = c.construct_rooted(readable, readable, &[options])?;
     let mut counters = report::Counters::default();
@@ -812,7 +815,7 @@ pub(crate) fn run_files(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     events.push(run::summary_event(c, &counters)?);
     let events = c.array_rooted(&events)?;
     let data = c.array_rooted(&[readable, events])?;
-    let deliver = function(c, "nodeTestRunDeliver", "", data)?;
+    let deliver = function(c, crate::host::shared_vm::operation!("nodeTestRunDeliver"), "", data)?;
     let global = c.global_root()?;
     let set_immediate = get(c, global, "setImmediate")?;
     c.call_rooted(set_immediate, global, &[deliver])?;

@@ -1,0 +1,28 @@
+# Typed-array access costs, ns/op on Apple M4 (research/aot/arm64/micro). aot = the same
+# source under `quench` (Ultra regions), no-jit = the interpreter, node 26.12.1, bun 1.4.4.
+# BEFORE per-array typed kinds (`LoopArray::views` from the entry's kind): every access walked
+# `typed_elements::by_word`'s chain over the 9 native kinds.
+op	aot	no-jit	node	bun
+ta_read	2.592	15.339	0.952	1.289
+ta_store	1.474	20.156	0.738	0.837
+ta_f32	6.189	181.310	1.982	1.652
+gauss_inner	25.861	29.676	2.898	2.612
+# AFTER (one arm per access; gaussian-blur 1698 -> 1418 ms):
+op	aot	node	bun
+ta_read	1.746	0.952	1.289
+ta_store	1.472	0.738	0.837
+ta_f32	5.135	1.982	1.652
+gauss_inner	25.841	2.898	2.612
+# ta_f32's inner loop is 166 -> 18 CLIF blocks per pixel; what remains there is 15 branches
+# (5 bounds checks, 4 `sadd_overflow` index steps, the loop test), against Node's 1.
+# The store index's form decides whether the loop's range proofs fire (ns/op):
+#   li += 4 (a strided induction) 6.20 / 5.88   node 2.07
+#   j * 4  (a product index)      4.42          node 2.00     -29%
+#   constant indices 0..3         4.47          node 1.70
+# i.e. the index-proof machinery (`loop_versions`, `facts::IndexProof::Proven`) recognises a
+# product of the loop counter, not a register stepped by a constant inside the loop.
+# A dense int `switch` dispatch (op_switch_mem.js: `switch (mem[i & 65535])` with 15 cases, a
+# Uint8Array on `this`), ns/op, 2M iterations:
+#   quench --no-jit 61.1   quench default 69.8   node 1.5   bun 1.6
+# The compiled path is *slower* than the interpreter here, and both are ~40x Node: the switch is
+# gbemu's core loop shape (and Basic's string switch the same family).

@@ -39,7 +39,8 @@ struct Solver<'a> {
 }
 
 /// The facts of function `id`, whose record is `function`.
-pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope) -> FunctionFlow {
+pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope,
+    resolved: &std::collections::BTreeMap<Key, u32>) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let ctx = Ctx {
@@ -47,6 +48,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope) -> F
         parameter_end: function.parameter_end_pc as usize,
         is_root: function.parent.is_none(),
         scope,
+        resolved,
         registers: usize::from(function.registers),
     };
     let mut solver = Solver { ctx: &ctx, function, blocks: &blocks };

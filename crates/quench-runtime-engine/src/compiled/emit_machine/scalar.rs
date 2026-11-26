@@ -282,6 +282,25 @@ crate::compiled::emit_machine::for_each_builder!(MachineScalar {
     fn raw_compare_imm(&mut self, relation: Relation, a: ir::Value, bits: i64) -> ir::Value {
         compare_imm(self.function_builder(), relation, a, bits)
     }
+    /// The immediate forms, as `Stage::add_imm` and its siblings: a constant an operand of the
+    /// instruction, where the trait's default materializes a register holding it. A power-of-two
+    /// product is a shift, which the backend folds into the addressing of the access it feeds.
+    fn raw_binary_imm(&mut self, operation: Binary, a: ir::Value, bits: i64) -> ir::Value {
+        let ins = self.function_builder().ins();
+        match operation {
+            Binary::Add => ins.iadd_imm_s(a, bits),
+            // No `isub_imm`: a subtraction is the addition of the negated immediate.
+            Binary::Sub => ins.iadd_imm_s(a, bits.wrapping_neg()),
+            Binary::Mul if bits > 0 && (bits as u64).is_power_of_two() => ins.ishl_imm_s(a, bits.trailing_zeros() as i64),
+            Binary::Mul => ins.imul_imm_s(a, bits),
+            Binary::ShiftLeft => ins.ishl_imm_s(a, bits),
+            _ => {
+                let lane = self.raw_lane(a);
+                let b = self.raw_const(lane, bits);
+                self.raw_binary(operation, a, b)
+            }
+        }
+    }
     fn raw_select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.function_builder().ins().select(cond, then, otherwise)
     }

@@ -1,8 +1,8 @@
 //! The WHATWG `URL` and `URLSearchParams` classes (lib/internal/url.js) in Rust over the
 //! `url` crate. A URL keeps its serialization in a private slot; a search-params object
 //! keeps its name/value list (alternating strings) and the URL it belongs to.
-use crate::host::shared_vm::operation;
-use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
+use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError, ValueType};
 use super::private_slots as slots;
 use url::Url;
 
@@ -60,19 +60,19 @@ enum Kind {
 
 /// The `URLSearchParams.prototype` methods, in Node's order, with the arguments each
 /// requires (`ERR_MISSING_ARGS`) and its length.
-const PARAMS_METHODS: &[(&str, &str, usize)] = &[
-    ("append", "urlParamsAppend", 2),
-    ("delete", "urlParamsDelete", 1),
-    ("get", "urlParamsGet", 1),
-    ("getAll", "urlParamsGetAll", 1),
-    ("has", "urlParamsHas", 1),
-    ("set", "urlParamsSet", 2),
-    ("sort", "urlParamsSort", 0),
-    ("entries", "urlParamsEntries", 0),
-    ("forEach", "urlParamsForEach", 1),
-    ("keys", "urlParamsKeys", 0),
-    ("values", "urlParamsValues", 0),
-    ("toString", "urlParamsToString", 0),
+const PARAMS_METHODS: &[(&str, MarkedOperation, usize)] = &[
+    ("append", marked_operation!("urlParamsAppend"), 2),
+    ("delete", marked_operation!("urlParamsDelete"), 1),
+    ("get", marked_operation!("urlParamsGet"), 1),
+    ("getAll", marked_operation!("urlParamsGetAll"), 1),
+    ("has", marked_operation!("urlParamsHas"), 1),
+    ("set", marked_operation!("urlParamsSet"), 2),
+    ("sort", marked_operation!("urlParamsSort"), 0),
+    ("entries", marked_operation!("urlParamsEntries"), 0),
+    ("forEach", marked_operation!("urlParamsForEach"), 1),
+    ("keys", marked_operation!("urlParamsKeys"), 0),
+    ("values", marked_operation!("urlParamsValues"), 0),
+    ("toString", marked_operation!("urlParamsToString"), 0),
 ];
 
 type Pairs = Vec<(String, String)>;
@@ -164,8 +164,8 @@ fn accessor(c: &mut Context<'_>, target: RootId, name: &str, getter: RootId, set
     Ok(())
 }
 
-fn method(c: &mut Context<'_>, target: RootId, key: RootId, name: &str, operation_name: &str, length: usize, enumerable: bool) -> Result<RootId, RootedError> {
-    let function = c.host_function_named(operation(operation_name), name)?;
+fn method(c: &mut Context<'_>, target: RootId, key: RootId, name: &str, operation_name: HostFunctionId, length: usize, enumerable: bool) -> Result<RootId, RootedError> {
+    let function = c.host_function_named(operation_name, name)?;
     let length_key = c.string_rooted("length");
     let length = c.number(length as f64);
     c.define_data_property_rooted(function, length_key, length, false, false, true)?;
@@ -173,7 +173,7 @@ fn method(c: &mut Context<'_>, target: RootId, key: RootId, name: &str, operatio
     Ok(function)
 }
 
-fn named_method(c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, length: usize) -> Result<RootId, RootedError> {
+fn named_method(c: &mut Context<'_>, target: RootId, name: &str, operation_name: HostFunctionId, length: usize) -> Result<RootId, RootedError> {
     let key = c.string_rooted(name);
     method(c, target, key, name, operation_name, length, true)
 }
@@ -187,10 +187,10 @@ fn tag(c: &mut Context<'_>, target: RootId, value: &str) -> Result<(), RootedErr
     Ok(())
 }
 
-fn custom_inspect(c: &mut Context<'_>, target: RootId, operation_name: &str) -> Result<(), RootedError> {
+fn custom_inspect(c: &mut Context<'_>, target: RootId, operation_name: HostFunctionId) -> Result<(), RootedError> {
     let primordials = super::util_shared_vm::primordials(c)?;
     let key = get(c, primordials, "custom")?;
-    let function = c.host_function_named(operation(operation_name), "[nodejs.util.inspect.custom]")?;
+    let function = c.host_function_named(operation_name, "[nodejs.util.inspect.custom]")?;
     c.define_data_property_rooted(target, key, function, true, false, true)?;
     Ok(())
 }
@@ -201,7 +201,7 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
     let one = c.number(1.0);
     c.define_data_property_rooted(url, key, one, false, false, true)?;
     let prototype = get(c, url, "prototype")?;
-    named_method(c, prototype, "toString", "urlToString", 0)?;
+    named_method(c, prototype, "toString", crate::host::shared_vm::operation!("urlToString"), 0)?;
     for (index, &(name, _, settable)) in COMPONENTS.iter().enumerate() {
         let data = c.number(index as f64);
         let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("urlGet"), &format!("get {name}"), data)?;
@@ -212,11 +212,11 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
         };
         accessor(c, prototype, name, getter, setter)?;
     }
-    named_method(c, prototype, "toJSON", "urlToString", 0)?;
+    named_method(c, prototype, "toJSON", crate::host::shared_vm::operation!("urlToString"), 0)?;
     tag(c, prototype, "URL")?;
-    custom_inspect(c, prototype, "urlInspect")?;
-    for (name, operation_name) in [("parse", "urlParseStatic"), ("canParse", "urlCanParse")] {
-        let function = c.host_function_named(operation(operation_name), name)?;
+    custom_inspect(c, prototype, crate::host::shared_vm::operation!("urlInspect"))?;
+    for (name, operation_name) in [("parse", marked_operation!("urlParseStatic")), ("canParse", marked_operation!("urlCanParse"))] {
+        let function = c.host_function_named(operation_name.id(), name)?;
         let key = c.string_rooted("length");
         let one = c.number(1.0);
         c.define_data_property_rooted(function, key, one, false, false, true)?;
@@ -233,7 +233,7 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
     accessor(c, params_prototype, "size", size, None)?;
     let mut entries = None;
     for &(name, operation_name, length) in PARAMS_METHODS {
-        let function = named_method(c, params_prototype, name, operation_name, length)?;
+        let function = named_method(c, params_prototype, name, operation_name.id(), length)?;
         if name == "entries" {
             entries = Some(function);
         }
@@ -245,7 +245,7 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
         c.define_data_property_rooted(params_prototype, iterator, entries, true, false, true)?;
     }
     tag(c, params_prototype, "URLSearchParams")?;
-    custom_inspect(c, params_prototype, "urlParamsInspect")?;
+    custom_inspect(c, params_prototype, crate::host::shared_vm::operation!("urlParamsInspect"))?;
     let iterator_prototype = c.object_rooted()?;
     let array = c.array_rooted(&[])?;
     let values = get(c, array, "values")?;
@@ -253,9 +253,9 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
     let array_iterator_prototype = c.prototype_rooted(array_iterator)?;
     let base = c.prototype_rooted(array_iterator_prototype)?;
     c.set_prototype_rooted(iterator_prototype, base)?;
-    named_method(c, iterator_prototype, "next", "urlParamsIteratorNext", 0)?;
+    named_method(c, iterator_prototype, "next", crate::host::shared_vm::operation!("urlParamsIteratorNext"), 0)?;
     tag(c, iterator_prototype, "URLSearchParams Iterator")?;
-    custom_inspect(c, iterator_prototype, "urlParamsIteratorInspect")?;
+    custom_inspect(c, iterator_prototype, crate::host::shared_vm::operation!("urlParamsIteratorInspect"))?;
     cache(c, ITERATOR_PROTOTYPE, iterator_prototype)?;
     let url = cache(c, URL_CLASS, url)?;
     let params = cache(c, PARAMS_CLASS, params)?;

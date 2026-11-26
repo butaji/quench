@@ -133,6 +133,12 @@ pub struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub max_compilations: u32,
+    /// The entries after which a site whose native runs complete only `min_trip_per_entry`
+    /// iterations each stops entering: a loop that leaves after a handful of iterations pays its
+    /// entry and exit more often than those iterations save (ML's short-trip loops, 33M entries
+    /// of 2-20 iterations after a loop admission).
+    pub trip_check_entries: u32,
+    pub min_trip_per_entry: u32,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -382,7 +388,8 @@ pub const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
+    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16,
+        trip_check_entries: 64, min_trip_per_entry: 4 },
     lane_body: LaneBody {
         warmup_entries: 400,
         base_entries: 8,
@@ -528,6 +535,12 @@ pub const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 /// hot loop's inlined call graph (Richards' ~900 instructions) costs. A larger body is planned
 /// again with less inlined (`Vm::compile_lane_method`).
 pub const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
+
+/// The code one ahead-of-time image body may take. An image compiles once, offline, into a file
+/// the process loads: nothing of its cost is paid under a guest's warm-up, so the JIT's lane-body
+/// limit (a warm-up resource bound) does not apply, and a body it would replan is instead part of
+/// the image. The bound stays a resource limit: the image is loaded whole.
+pub const AHEAD_BODY_MAX_CODE_BYTES: usize = 4 * LANE_BODY_MAX_CODE_BYTES;
 
 /// The callee instructions one unit inlines in all, the region's budget: what a lane body's
 /// code-size budget holds (`LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative

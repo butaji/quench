@@ -3,6 +3,7 @@
 //! Resolver's `ChannelWrap`. The callback and promise surfaces share one Resolver base and
 //! one default channel; only how a completion is delivered differs.
 
+use crate::host::shared_vm::marked_operation;
 use crate::modules::util_shared_vm::{validate_boolean, validate_function};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
@@ -162,8 +163,8 @@ fn call_method(c: &mut Context<'_>, object: RootId, name: &str, args: &[RootId])
     c.call_rooted(function, object, args)
 }
 
-fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, data: RootId) -> Result<(), RootedError> {
-    let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, data: RootId) -> Result<(), RootedError> {
+    let function = c.host_function_named_with_data(operation, name, data)?;
     let key = c.string_rooted(name);
     c.define_data_property_rooted(target, key, function, true, false, true)?;
     Ok(())
@@ -208,12 +209,12 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let prototype = get(c, base, "prototype")?;
     let undefined = c.undefined();
     for (name, operation) in [
-        ("cancel", "dnsResolverCancel"),
-        ("getServers", "dnsResolverGetServers"),
-        ("setServers", "dnsResolverSetServers"),
-        ("setLocalAddress", "dnsResolverSetLocalAddress"),
+        ("cancel", marked_operation!("dnsResolverCancel")),
+        ("getServers", marked_operation!("dnsResolverGetServers")),
+        ("setServers", marked_operation!("dnsResolverSetServers")),
+        ("setLocalAddress", marked_operation!("dnsResolverSetLocalAddress")),
     ] {
-        method(c, prototype, name, operation, undefined)?;
+        method(c, prototype, name, operation.id(), undefined)?;
     }
     put(c, holder, "ResolverBase", base)?;
     for delivery in [Delivery::Callback, Delivery::Promise] {
@@ -229,7 +230,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
             let key = c.string_rooted(name);
             c.define_data_property_rooted(resolver_prototype, key, function, true, false, true)?;
         }
-        method(c, resolver_prototype, "resolve", "dnsResolverResolve", promise)?;
+        method(c, resolver_prototype, "resolve", crate::host::shared_vm::operation!("dnsResolverResolve"), promise)?;
         let instance = c.construct_rooted(resolver, resolver, &[])?;
         let (class_name, default_name) = match delivery {
             Delivery::Callback => ("Resolver", "defaultResolver"),
@@ -944,21 +945,26 @@ pub(crate) fn set_default_servers(c: &mut Context<'_>, _: RootId, args: &[RootId
 /// The members `dns` and `dns/promises` share, in export order up to the error codes.
 fn surface(c: &mut Context<'_>, target: RootId, delivery: Delivery) -> Result<(), RootedError> {
     let (lookup, service, class, resolver) = match delivery {
-        Delivery::Callback => ("dnsLookup", "dnsLookupService", "Resolver", "defaultResolver"),
-        Delivery::Promise => ("dnsLookupPromise", "dnsLookupServicePromise", "PromisesResolver", "promisesDefaultResolver"),
+        Delivery::Callback => (marked_operation!("dnsLookup"), marked_operation!("dnsLookupService"), "Resolver", "defaultResolver"),
+        Delivery::Promise => (
+            marked_operation!("dnsLookupPromise"),
+            marked_operation!("dnsLookupServicePromise"),
+            "PromisesResolver",
+            "promisesDefaultResolver",
+        ),
     };
-    let lookup = c.host_function_named(crate::host::shared_vm::operation(lookup), "lookup")?;
+    let lookup = c.host_function_named(lookup.id(), "lookup")?;
     put(c, target, "lookup", lookup)?;
-    let service = c.host_function_named(crate::host::shared_vm::operation(service), "lookupService")?;
+    let service = c.host_function_named(service.id(), "lookupService")?;
     put(c, target, "lookupService", service)?;
     let class = intrinsic(c, class)?;
     put(c, target, "Resolver", class)?;
     for (name, operation) in [
-        ("getDefaultResultOrder", "dnsGetDefaultResultOrder"),
-        ("setDefaultResultOrder", "dnsSetDefaultResultOrder"),
-        ("setServers", "dnsSetDefaultServers"),
+        ("getDefaultResultOrder", marked_operation!("dnsGetDefaultResultOrder")),
+        ("setDefaultResultOrder", marked_operation!("dnsSetDefaultResultOrder")),
+        ("setServers", marked_operation!("dnsSetDefaultServers")),
     ] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         put(c, target, name, function)?;
     }
     if delivery == Delivery::Callback {

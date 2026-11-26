@@ -11,7 +11,6 @@
 use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
-use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
@@ -30,17 +29,18 @@ impl BaseImage {
 /// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
-    facts: &AotFacts,
     target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<(BaseImage, Vec<CallSite>), String> {
     // The target changes no base row: the body names no target's layout.
     let _ = target;
-    let built = crate::compiled::image_body(program, id, facts)?;
+    let built = crate::compiled::image_body(program, id)?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
-        Relocation { offset: site.offset, kind: Reloc::Abs8, namespace, key, addend: 0 }
+        // Apple AArch64 names a helper call as a branch hole; every other site is a 64-bit word.
+        let kind = if site.class == quench_bjit::BRANCH26 { Reloc::Arm64Call } else { Reloc::Abs8 };
+        Relocation { offset: site.offset, kind, namespace, key, addend: 0 }
     }).collect();
     let mut pc_offsets = vec![NO_ENTRY; program.function(id as usize).instructions().count()];
     for &(pc, offset) in built.entries.iter() {

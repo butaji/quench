@@ -28,9 +28,11 @@ struct Span {
     pub writable: usize,
     /// A typed array's element kind, and its buffer's bytes (which other views may share).
     pub typed: Option<(TypedArrayKind, (usize, usize))>,
+    /// An array's double backing: its words are f64 bits, a hole `Value::DELETED`'s word.
+    pub double: bool,
 }
 
-const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None };
+const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None, double: false };
 
 /// A run's state: the entry facts and the recurrences' current values.
 pub(crate) struct State {
@@ -594,20 +596,9 @@ impl LoopKernel {
             unsafe { typed::load(kind, values.cast(), first, step, out) };
             return true;
         }
-        if step == 1 {
-            // SAFETY: as below, for the chunk's contiguous run of elements.
-            let elements = unsafe { std::slice::from_raw_parts(values.add(first as usize), out.len()) };
-            return decode(out, elements);
-        }
-        let mut numbers = true;
-        for (k, o) in out.iter_mut().enumerate() {
-            // SAFETY: `limit` keeps every index of the run below the span's readable length.
-            let value = unsafe { *values.add((first + step * k as i64) as usize) };
-            let number = value.as_number();
-            numbers &= number.is_some();
-            *o = number.unwrap_or(0.0);
-        }
-        numbers
+        // SAFETY: `limit` keeps every index of the run below the span's readable length.
+        if span.double { return unsafe { quench_runtime::double_read_run(values.cast(), (first, step), out) }; }
+        unsafe { quench_runtime::word_read_run(values, (first, step), out) }
     }
 
     /// Whether every element the chunk's stores replace is present.
@@ -617,15 +608,11 @@ impl LoopKernel {
             if span.typed.is_some() {
                 return true;
             }
-            let values = span.values;
             let first = self.index(state, store.index, done);
             let step = state.steps[usize::from(store.index)];
-            let mut deleted = 0u64;
-            for k in 0..len as i64 {
-                // SAFETY: `limit` keeps every index below the span's writable length.
-                deleted |= u64::from(unsafe { *values.add((first + step * k) as usize) }.is_deleted());
-            }
-            deleted == 0
+            // SAFETY: `limit` keeps every index below the span's writable length.
+            if span.double { return unsafe { quench_runtime::double_stores_present(span.values.cast(), (first, step), len) }; }
+            unsafe { quench_runtime::word_stores_present(span.values, (first, step), len) }
         })
     }
 
@@ -640,6 +627,11 @@ impl LoopKernel {
                 let numbers = (0..len).map(|k| self.value(state, scratch, store.value, k, done));
                 // SAFETY: `limit` keeps every index below the span's writable length.
                 unsafe { typed::store(kind, values.cast(), first, step, numbers) };
+                continue;
+            }
+            // SAFETY: `limit` keeps every index below the span's writable length.
+            if span.double {
+                unsafe { quench_runtime::double_write_run(values.cast(), (first as i64, step as i64), len, |k| self.value(state, scratch, store.value, k, done)) };
                 continue;
             }
             // SAFETY: as in `stores_present`; a Number needs no write barrier.
@@ -709,12 +701,17 @@ fn overlaps((a, a_length): (usize, usize), (b, b_length): (usize, usize)) -> boo
 
 /// The span of an array kernel accesses: a record array's or a typed array's elements.
 fn span(vm: &mut Vm, base: Value) -> Option<Span> {
+    // A double backing first: `array_storage_span` treats it as no span, and reads one only by
+    // widening it for good.
+    if let Some((words, readable, writable)) = vm.array_double_span(base) {
+        return Some(Span { base, values: words.as_ptr().cast(), readable, writable, typed: None, double: true });
+    }
     if let Some((values, readable, writable)) = vm.array_storage_span(base) {
-        return Some(Span { base, values: values.as_ptr(), readable, writable, typed: None });
+        return Some(Span { base, values: values.as_ptr(), readable, writable, typed: None, double: false });
     }
     let typed = vm.typed_array_span(base)?;
     let writable = if typed.writable { typed.length } else { 0 };
-    Some(Span { base, values: typed.first.cast(), readable: typed.length, writable, typed: Some((typed.kind, typed.store)) })
+    Some(Span { base, values: typed.first.cast(), readable: typed.length, writable, typed: Some((typed.kind, typed.store)), double: false })
 }
 
 /// The longest chunk for a load whose index is `distance` past a store's, both stepping by
@@ -734,17 +731,5 @@ fn hazard(distance: i64, step: i64, load_first: bool) -> Option<usize> {
     }
     let behind = usize::try_from(-ahead).ok()?;
     (behind >= MIN_CHUNK).then_some(behind.min(CHUNK))
-}
-
-/// Decodes `elements` into `out` without branches, so the loop vectorizes; `false` where one
-/// is no Number.
-fn decode(out: &mut [f64], elements: &[Value]) -> bool {
-    let mut others = 0u64;
-    for (o, element) in out.iter_mut().zip(elements) {
-        let (number, int, double) = element.number_parts();
-        others |= u64::from(!number);
-        *o = std::hint::select_unpredictable(int, f64::from(element.to_bits() as u32 as i32), double);
-    }
-    others == 0
 }
 

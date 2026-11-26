@@ -1,5 +1,6 @@
 //! Node's shared listener limit and its emitter/target projections.
 
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) const DEFAULT_MAX_LISTENERS: f64 = 10.0;
@@ -72,13 +73,13 @@ pub(crate) fn initialize(context: &mut NativeContext<'_>) -> Result<(), RootedEr
     let prototype = get(context, emitter, "prototype")?;
     // Node's `EventEmitter.setMaxListeners` is an anonymous function assignment.
     for (target, name, function_name, operation) in [
-        (prototype, "getMaxListeners", "getMaxListeners", "emitterProtoMaxGet"),
-        (prototype, "setMaxListeners", "setMaxListeners", "emitterProtoMaxSet"),
-        (emitter, "getMaxListeners", "getMaxListeners", "eventsMaxGet"),
-        (emitter, "setMaxListeners", "", "eventsMaxSet"),
+        (prototype, "getMaxListeners", "getMaxListeners", marked_operation!("emitterProtoMaxGet")),
+        (prototype, "setMaxListeners", "setMaxListeners", marked_operation!("emitterProtoMaxSet")),
+        (emitter, "getMaxListeners", "getMaxListeners", marked_operation!("eventsMaxGet")),
+        (emitter, "setMaxListeners", "", marked_operation!("eventsMaxSet")),
     ] {
         let key = context.string_rooted(name);
-        let value = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), function_name, data)?;
+        let value = context.host_function_named_with_data(operation.id(), function_name, data)?;
         context.define_data_property_rooted(target, key, value, true, true, true)?;
     }
     let descriptor = context.null_object_rooted()?;

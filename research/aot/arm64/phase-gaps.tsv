@@ -1,0 +1,40 @@
+# Per-phase gap analysis of the default path (2026-11-22, after the image path was closed)
+# json-parse-inspector: row = JSON.stringify(payload) once, then JSON.parse 20x (payload 7,333,850 bytes, 846 top-level keys)
+row	phase	quench_ms	node_ms	bun_ms	quench_bytes_per_s	bun_bytes_per_s	gap_to_bun	needed_to_beat_bun_by_1.5x
+json-parse-inspector	JSON.parse	7.58	11.09	3.77	967e6	1.94e9	2.01x	3.02x
+# profile of the parse (sample, 1600 main-thread samples): parse_json_text 688, GC (mark/compact/quicksort) ~250,
+# string dedup (heap_builder::ascii_strings, hashbrown find) 124, number_parse 64, arena bookkeeping/memmove ~80
+json-parse-inspector	parse split	parse 43%	GC 16%	dedup 8%	numbers 4%	arena 5%	driver 24%
+# raytrace: row = 120 iterations x 8 scene renders
+raytrace	whole row	7273	557	359	-	-	20.2x	30.4x
+# profile (sample): interpreter generated rows (field reads) 693, planned_construct_returned_miss 136, operator_row 278,
+# construct_plan 66, protocol_row 57, returning_miss 53 -> short-lived Vector/Color objects per arithmetic op
+raytrace	cost shape	per-op object construction in the interpreter, no scalar replacement	-	-	-	-	-	-
+# Cheap-lever tests on JSON.parse (json-only.js, 7,333,850-byte payload, 20 parses)
+json-parse-inspector	dedup removed	8.46 ms (was 7.79)	-8.6% (a loss)	the string cache is a net win: it reuses every string after the first parse, so dropping it allocates thousands of strings per parse	reverted
+json-parse-inspector	property-arena sort	25 of 1600 samples	1.6%	`compact_property_arenas`'s quicksort is not worth removing (and compaction keeps shapes tight)	not attempted
+json-parse-inspector	measurement hygiene	-	-	a per-string `std::env::var_os` in the string path cost 5.9 ms/parse (7.8 -> 13.7): a per-string library call is not free, and the dedup experiment had to move its switch to a `OnceLock` before its numbers meant anything	-
+json-parse-inspector	verdict	0% of the 2.01x recovered	-	neither cheap lever helps; the remaining costs are the scalar `parse_json_text` (43%) and allocation/GC (16%+), which need a structural/SIMD parser and allocation-free building, not a tuning change	-
+# Ceiling arithmetic for json-parse-inspector (from the same profile split)
+json-parse-inspector	perfect tokenizer ceiling	even if the scalar tokenizer (43%, 3.35 ms) became free, the remaining 4.44 ms would still be 1.18x slower than Bun's 3.77 ms; beating Bun by 1.5x needs 2.51 ms, i.e. tokenizing AND object building both near-free	-	-	so no parser-only change can reach the bar on this row; it needs the builder (GC/alloc/dedup) cut ~2x at the same time	-
+# Construction ablation: the ceiling of scalar replacement on raytrace (2026-11-22)
+raytrace	planned construction skipped	8840 ms (planned 7252)	+22%	so the whole planned-construction path is worth at most that 22% to the row (the fallback it drops to is itself slow, so a perfect scalar replacement would save a little more, not an order of magnitude): removing every per-op Vector/Color allocation lands raytrace near 5.1 s, still **14x** behind Bun's 0.359 s and 30x short of the 0.239 s needed to beat Bun by 1.5x	ablation reverted
+raytrace	scalar replacement ceiling	-25-30% at best	-	the interpreter's generated field/operator rows are the other ~47% of the profile; even with construction free, raytrace needs native code for those rows plus escape analysis to move an order of magnitude, i.e. a full optimizing tier	-
+verdict	no bounded lever reaches the bar	-	-	every measured ceiling is below the target: json-parse with a free tokenizer is 1.18x behind Bun; raytrace with construction free is 14x behind Bun. The bar as stated (>=1.50x of C, Node and Bun on all 36 rows) is not attainable by bounded work in this architecture	-
+# Micro-benchmark of raytrace's Vector pattern (ns/iteration, 3M iterations)
+micro	alloc (construct + read fields)	3.89	3.61	6.31	Bun slower than us: a within-function construct + three field reads is at parity	-
+micro	plain (three locals, same arithmetic)	1.36	4.23	0.74	1.9x faster than Node, 1.8x slower than Bun	-
+micro	ops (new Vec x2, a.add(b) x1, six field reads, a.dot(b) x1)	73.22	6.77	2.71	10.8x slower than Node, 27x slower than Bun: this is raytrace's actual pattern	-
+micro	opsMut (same, callee mutates this instead of constructing)	70.48	4.73	2.45	removing the callee's construction saves 2.7 ns of 73 (3.7%), i.e. one construction is ~2.7 ns and the pattern's three are ~11% of it	-
+micro	where the 73 ns goes	-	-	-	calls and property reads, not allocation: even with the callee construction-free the loop is 70 ns against Bun's 2.45 (29x). A prototype that only removes allocations cannot move this	-
+# Per-operation breakdown of the raytrace pattern (ns/iter, 3M iterations)
+micro	callConst (call a method returning 7)	10.37	0.42	0.43	full activation call, no inline form exists for a constant body	-
+micro	callField (call a method returning this.x)	7.82	0.44	0.43	already inlined by the Reads form (`CallEntry::Reads`), so 4.8 ns of the 7.8 is the call-site machinery itself (the read is 3.0)	call_body_forms.rs
+micro	callAdd (call returning this.x + o.x)	13.54	0.46	0.47	two field reads plus the call	-
+micro	fieldOnly (a.x)	3.00	0.46	0.33	the interpreter's per-field floor	-
+micro	newOnly (new V(i,i,i); v.x)	2.01	1.00	1.29	construction is already competitive (faster than Node and Bun here)	-
+micro	ops decomposition	73 ns = calls ~20 + 6 reads ~18 + 3 constructions ~6 + ~9 arithmetic rows ~15 + loop ~10	-	-	with a *perfect* call (0 ns) the loop is still ~53 ns against Bun's 2.71: the floor is the interpreter's ~3 ns per operation across ~20 operations, not any single fast path	-
+# The inliner's prize, measured by source-level inlining (the prototype's ceiling)
+micro	calls (a.add(b), a.dot(b))	74.89	6.41	2.87	raytrace's pattern as written	-
+micro	the same computation hand-inlined (locals, no calls, no objects)	2.41	4.31	1.17	quench is **31x faster inlined than with calls**, and faster than Node and 2x behind Bun: the interpreter's arithmetic core is competitive; the entire gap is the call + object path	-
+micro	what each step is worth	a call-site inliner alone removes the call share (~27%: 20 ns of 75); inlining + scalar replacement of the constructed vector removes everything the hand-inlined version removes, i.e. up to 31x on this loop	-	-	so the prize is real and large, and it is exactly the pair (inline, escape analysis) that the disabled lane-body tier was built to do	-

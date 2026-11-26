@@ -897,6 +897,11 @@ impl Heap {
         }
     }
 
+    /// Every live function record (`Vm::held_host_operations`).
+    pub(crate) fn for_each_live_function_record(&self, mut visit: impl FnMut(u32, &FunctionRecord)) {
+        self.function_records.for_each_live(|record_id, function| visit(record_id, function));
+    }
+
     /// Every live object record, for a diagnostics census (`Vm::field_site_report`).
     pub(crate) fn for_each_live_object_record(&self, mut visit: impl FnMut(&Object)) {
         self.object_records.for_each_live(|_, object| visit(object));

@@ -108,6 +108,7 @@ pub(crate) mod node_protocol_constants;
 pub(crate) mod os_facts;
 pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
+pub(crate) mod path_glob;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
 pub(crate) mod perf_timeline;

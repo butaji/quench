@@ -24,21 +24,21 @@ pub(crate) fn build(c: &mut Context<'_>, emitter: RootId) -> Outcome {
         c,
         prototype,
         &[
-            (Key::Name("pipe"), "streamLegacyPipe", ""),
-            (Key::Name("eventNames"), "streamLegacyEventNames", "eventNames"),
+            (Key::Name("pipe"), crate::host::shared_vm::marked_operation!("streamLegacyPipe"), ""),
+            (Key::Name("eventNames"), crate::host::shared_vm::marked_operation!("streamLegacyEventNames"), "eventNames"),
         ],
     )?;
     Ok(constructor)
 }
 
 /// The listeners one legacy `pipe` installs, by name and operation.
-const LISTENERS: &[(&str, &str)] = &[
-    ("ondata", "streamLegacyOnData"),
-    ("ondrain", "streamLegacyOnDrain"),
-    ("onend", "streamLegacyOnEnd"),
-    ("onclose", "streamLegacyOnClose"),
-    ("onerror", "streamLegacyOnError"),
-    ("cleanup", "streamLegacyCleanup"),
+const LISTENERS: &[(&str, crate::host::shared_vm::MarkedOperation)] = &[
+    ("ondata", crate::host::shared_vm::marked_operation!("streamLegacyOnData")),
+    ("ondrain", crate::host::shared_vm::marked_operation!("streamLegacyOnDrain")),
+    ("onend", crate::host::shared_vm::marked_operation!("streamLegacyOnEnd")),
+    ("onclose", crate::host::shared_vm::marked_operation!("streamLegacyOnClose")),
+    ("onerror", crate::host::shared_vm::marked_operation!("streamLegacyOnError")),
+    ("cleanup", crate::host::shared_vm::marked_operation!("streamLegacyCleanup")),
 ];
 
 /// `Stream.prototype.pipe(dest, options)`.
@@ -49,7 +49,7 @@ pub(crate) fn pipe(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     put(c, record, "dest", dest)?;
     put_bool(c, record, "didOnEnd", false)?;
     for &(name, operation) in LISTENERS {
-        let listener = closure(c, operation, name, &[record])?;
+        let listener = closure(c, operation.id(), name, &[record])?;
         put(c, record, name, listener)?;
     }
     let listener = get(c, record, "ondata")?;

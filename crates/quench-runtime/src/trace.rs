@@ -28,7 +28,7 @@ fn parse(variable: &str, names: &[&str]) -> Named {
             .map_or((entry, None), |(name, value)| (name, Some(value)));
         match names.iter().position(|known| *known == name) {
             Some(index) => {
-                named.on |= 1 << index;
+                named.on |= 1u64 << index;
                 named.values[index] = value.map(str::to_owned);
             }
             None => eprintln!("Quench: unknown {variable} name `{name}`; known: {}", names.join(",")),
@@ -56,7 +56,7 @@ macro_rules! setting {
 
             /// Whether the setting names this.
             pub fn on(self) -> bool {
-                Self::named().on & (1 << self as u64) != 0
+                Self::named().on & (1u64 << self as u32) != 0
             }
 
             /// The argument written after `=` for this name, if any.
@@ -90,6 +90,9 @@ setting! {
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
         JitDump = "jit-dump",
+        /// Keep a failed `compile`'s build directory (objects, linker command) and name it, so a
+        /// relocation or link defect can be inspected after the failure.
+        BuildDir = "build-dir",
         /// Per-loop residual counts of each compiled hot loop (`quench-bench --residuals`).
         Residuals = "residuals",
         PerfMap = "perf-map",
@@ -151,6 +154,14 @@ setting! {
         /// declined and run where a declined unit runs. Bare `unit-bisect` numbers each cleared
         /// unit on stderr. A miscompile's bisection under `sync-compile`.
         UnitBisect = "unit-bisect",
+        /// An image lane body's leaves continue in its base body at the same PC (`AheadLeaves`);
+        /// off because the join's store layout gives the base body the previous activation's
+        /// values (`fbits9`), so leaves return their exit word and the lane runs the record.
+        AheadJoins = "ahead-joins",
+        /// An ahead image's lane bodies install on a VM whose runtime lane-body compiles are off
+        /// (AArch64). Off: with them raytrace runs 7524 ms against 7260, deltablue 4470 against
+        /// 4379, richards 6097 against 6089 (image bodies, 2026-11-22).
+        AheadBodies = "ahead-bodies",
         /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
         /// instruction has a row, instead of Cranelift IR.
         Bjit = "bjit",

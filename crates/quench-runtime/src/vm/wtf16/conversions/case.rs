@@ -31,9 +31,8 @@ fn ascii_case(bytes: &[u8], upper: bool) -> Option<JsString> {
         return None;
     }
     Some(JsString::from_flat(FlatUnits::ascii_with(bytes.len(), |output| {
-        for (slot, byte) in output.iter_mut().zip(bytes) {
-            slot.write(string_text::ascii_case_byte(*byte, upper));
-        }
+        // The case map writes every byte of the output (`Stage::case_span`).
+        string_text::ascii_case_raw(bytes, upper, output.as_mut_ptr().cast());
     })))
 }
 

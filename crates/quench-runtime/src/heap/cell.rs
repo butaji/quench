@@ -658,6 +658,8 @@ natives! {
     WeakRefInitialize: unshared,
     FinalizationRegistryInitialize: unshared,
     DataViewInitialize: unshared,
+    /// The `console` family's stderr writer (`warn`/`error`).
+    PrintError,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.

@@ -2,7 +2,7 @@
 //! lib/internal/process/per_thread.js and lib/internal/process/finalization.js), defined
 //! together on the first read of any of them (`process_surface::LAZY_MEMBERS`).
 use super::event_constructor_shared_vm::get;
-use crate::host::shared_vm::operation;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -11,26 +11,26 @@ type Context<'a> = NativeContext<'a>;
 const DEFAULT_DEBUG_PORT: f64 = 9229.0;
 
 /// The plain `process` methods: property and operation.
-const METHODS: &[(&str, &str)] = &[
-    ("getActiveResourcesInfo", "processGetActiveResourcesInfo"),
-    ("_getActiveRequests", "processGetActiveRequests"),
-    ("availableMemory", "availableMemory"),
-    ("constrainedMemory", "constrainedMemory"),
-    ("setSourceMapsEnabled", "processSetSourceMapsEnabled"),
-    ("abort", "processAbort"),
-    ("getBuiltinModule", "processGetBuiltinModule"),
-    ("ref", "processRef"),
-    ("unref", "processUnref"),
+const METHODS: &[(&str, MarkedOperation)] = &[
+    ("getActiveResourcesInfo", marked_operation!("processGetActiveResourcesInfo")),
+    ("_getActiveRequests", marked_operation!("processGetActiveRequests")),
+    ("availableMemory", marked_operation!("availableMemory")),
+    ("constrainedMemory", marked_operation!("constrainedMemory")),
+    ("setSourceMapsEnabled", marked_operation!("processSetSourceMapsEnabled")),
+    ("abort", marked_operation!("processAbort")),
+    ("getBuiltinModule", marked_operation!("processGetBuiltinModule")),
+    ("ref", marked_operation!("processRef")),
+    ("unref", marked_operation!("processUnref")),
 ];
 
 /// `process.allowedNodeEnvironmentFlags`'s class prototype methods, each with its operation.
-const FLAG_SET_MEMBERS: &[(&str, &str)] = &[
-    ("add", "processFlagsAdd"),
-    ("delete", "processFlagsDelete"),
-    ("clear", "processFlagsClear"),
-    ("has", "processFlagsHas"),
-    ("entries", "processFlagsEntries"),
-    ("forEach", "processFlagsForEach"),
+const FLAG_SET_MEMBERS: &[(&str, MarkedOperation)] = &[
+    ("add", marked_operation!("processFlagsAdd")),
+    ("delete", marked_operation!("processFlagsDelete")),
+    ("clear", marked_operation!("processFlagsClear")),
+    ("has", marked_operation!("processFlagsHas")),
+    ("entries", marked_operation!("processFlagsEntries")),
+    ("forEach", marked_operation!("processFlagsForEach")),
 ];
 const FLAG_SET_CLASS: &str = "NodeEnvironmentFlagsSet";
 const FLAG_SET_CACHE: &str = "\0native:allowed-node-environment-flags";
@@ -38,10 +38,10 @@ const ALLOWED_FLAGS: &str = "allowedNodeEnvironmentFlags";
 
 /// The events `process.finalization` runs its callbacks on, with their listener names.
 const FINALIZATION_EVENTS: [(&str, &str); 2] = [("exit", "onExit"), ("beforeExit", "onBeforeExit")];
-const FINALIZATION_FUNCTIONS: [(&str, &str, &str); 3] = [
-    ("register", "processFinalizationRegister", "process.finalization.register"),
-    ("registerBeforeExit", "processFinalizationRegisterBeforeExit", "process.finalization.registerBeforeExit"),
-    ("unregister", "processFinalizationUnregister", "process.finalization.unregister"),
+const FINALIZATION_FUNCTIONS: [(&str, MarkedOperation, &str); 3] = [
+    ("register", marked_operation!("processFinalizationRegister"), "process.finalization.register"),
+    ("registerBeforeExit", marked_operation!("processFinalizationRegisterBeforeExit"), "process.finalization.registerBeforeExit"),
+    ("unregister", marked_operation!("processFinalizationUnregister"), "process.finalization.unregister"),
 ];
 /// A finalization state's member holding an event's listener.
 const LISTENER_SUFFIX: &str = "Listener";
@@ -86,7 +86,7 @@ fn intrinsic(c: &mut Context<'_>, constructor: &str, member: Option<&str>) -> Re
 pub(crate) fn initialize(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let process = process(c)?;
     for &(name, operation_name) in METHODS {
-        let function = c.host_function_named(operation(operation_name), name)?;
+        let function = c.host_function_named(operation_name.id(), name)?;
         put(c, process, name, function)?;
     }
     #[cfg(unix)]
@@ -230,7 +230,7 @@ fn flag_set(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let prototype = get(c, class, "prototype")?;
     c.set_prototype_rooted(prototype, set_prototype)?;
     for &(name, operation_name) in FLAG_SET_MEMBERS {
-        let function = c.host_function_named_with_data(operation(operation_name), name, inner)?;
+        let function = c.host_function_named_with_data(operation_name.id(), name, inner)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
@@ -332,7 +332,7 @@ pub(crate) fn finalization_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> 
     }
     let api = c.object_rooted()?;
     for (name, operation_name, _) in FINALIZATION_FUNCTIONS {
-        let function = c.host_function_named_with_data(operation(operation_name), name, state)?;
+        let function = c.host_function_named_with_data(operation_name.id(), name, state)?;
         put(c, api, name, function)?;
     }
     put(c, cell, "0", api)?;

@@ -16,13 +16,13 @@ enum Member {
     /// error names (`fsCall`'s `fn.name`).
     Promise(&'static str, usize, Op, &'static str),
     /// Another method: name and operation.
-    Method(&'static str, &'static str),
+    Method(&'static str, crate::host::shared_vm::MarkedOperation),
     /// `get fd()`.
     Fd,
 }
 
 const PROTOTYPE: [Member; 20] = [
-    Member::Method("getAsyncId", "fsHandleAsyncId"),
+    Member::Method("getAsyncId", crate::host::shared_vm::marked_operation!("fsHandleAsyncId")),
     Member::Fd,
     Member::Promise("appendFile", 2, Op::AppendFile, "writeFileHandle"),
     Member::Promise("chmod", 1, Op::Fchmod, "fchmod"),
@@ -32,16 +32,16 @@ const PROTOTYPE: [Member; 20] = [
     Member::Promise("read", 4, Op::Read, "read"),
     Member::Promise("readv", 2, Op::Readv, "readv"),
     Member::Promise("readFile", 1, Op::ReadFile, "readFileHandle"),
-    Member::Method("readLines", "fsHandleReadLines"),
+    Member::Method("readLines", crate::host::shared_vm::marked_operation!("fsHandleReadLines")),
     Member::Promise("stat", 1, Op::Fstat, "fstat"),
     Member::Promise("truncate", 0, Op::Ftruncate, "ftruncate"),
     Member::Promise("utimes", 2, Op::Futimes, "futimes"),
     Member::Promise("write", 4, Op::Write, "write"),
     Member::Promise("writev", 2, Op::Writev, "writev"),
     Member::Promise("writeFile", 2, Op::WriteFile, "writeFileHandle"),
-    Member::Method("createReadStream", "fsHandleCreateReadStream"),
-    Member::Method("createWriteStream", "fsHandleCreateWriteStream"),
-    Member::Method("[nodejs.asyncDispose]", "fsHandleDispose"),
+    Member::Method("createReadStream", crate::host::shared_vm::marked_operation!("fsHandleCreateReadStream")),
+    Member::Method("createWriteStream", crate::host::shared_vm::marked_operation!("fsHandleCreateWriteStream")),
+    Member::Method("[nodejs.asyncDispose]", crate::host::shared_vm::marked_operation!("fsHandleDispose")),
 ];
 
 pub(crate) fn define_prototype(c: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
@@ -180,7 +180,7 @@ fn close_handle(c: &mut Context<'_>, this: RootId) -> Outcome {
     c.set_property_rooted(this, key, closed, this)?;
     let outcome = crate::modules::stream_shared_vm::attempt(super::ops::close_descriptor(c, fd))?;
     let undefined = c.undefined();
-    let closer = crate::modules::stream_shared_vm::closure(c, "fsHandleClosed", "", &[this, promise])?;
+    let closer = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsHandleClosed"), "", &[this, promise])?;
     let rejected = c.boolean(outcome.is_err());
     let value = outcome.err().unwrap_or(undefined);
     super::streams::complete(c, closer, &[rejected, value])?;
@@ -253,7 +253,7 @@ pub(crate) fn stream_operations(c: &mut Context<'_>, handle: RootId) -> Outcome 
         let operation = get(c, fs, name)?;
         put(c, operations, name, operation)?;
     }
-    let close = crate::modules::stream_shared_vm::closure(c, "fsHandleStreamClose", "close", &[handle])?;
+    let close = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsHandleStreamClose"), "close", &[handle])?;
     put(c, operations, "close", close)?;
     Ok(operations)
 }
@@ -263,8 +263,8 @@ pub(crate) fn stream_close(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> O
     let [handle] = crate::modules::stream_shared_vm::captures::<1>(c)?;
     let callback = arg(c, args, 1);
     let closing = close_handle(c, handle)?;
-    let done = crate::modules::stream_shared_vm::closure(c, "fsHandleStreamClosed", "", &[callback])?;
-    let failed = crate::modules::stream_shared_vm::closure(c, "fsHandleStreamClosed", "", &[callback])?;
+    let done = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsHandleStreamClosed"), "", &[callback])?;
+    let failed = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsHandleStreamClosed"), "", &[callback])?;
     call_method(c, closing, "then", &[done, failed])?;
     Ok(c.undefined())
 }

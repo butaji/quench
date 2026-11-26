@@ -48,7 +48,14 @@ pub(crate) fn install(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedE
     c.define_data_property_rooted(handle, key, function, true, true, true)?;
     c.assign_named_property_rooted(socket, "ssl", handle)
 }
-pub(crate) fn reusable(c: &mut Context<'_>, socket: RootId) -> Result<Option<RootId>, RootedError> {
+/// The handle a TLS session's socket `args[0]` reuses, else `undefined`.
+pub(crate) fn reusable_handle(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = c.undefined();
+    let socket = args.first().copied().unwrap_or(undefined);
+    Ok(reusable(c, socket)?.unwrap_or(undefined))
+}
+
+fn reusable(c: &mut Context<'_>, socket: RootId) -> Result<Option<RootId>, RootedError> {
     if super::sessions::find_owner(c, socket)?.is_none() {
         return Ok(None);
     }

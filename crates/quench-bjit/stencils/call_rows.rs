@@ -83,6 +83,16 @@ pub unsafe extern "C" fn leave_status() {
 /// A semantic helper (`body_call_helper`): (vm, residual, lane context, call pc) -> status.
 type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
 
+/// The helper at hole V1 as a *branch*: Mach-O arm64 allows a branch into text but not an
+/// absolute word there, so on Apple AArch64 the row calls the hole's symbol directly and the
+/// image links the branch to the helper (`Reloc::Arm64Call`). Every other target loads the
+/// address the hole holds and calls it.
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+unsafe extern "C" {
+    #[link_name = "HOLE_V1_BRANCH"]
+    fn helper_branch(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64;
+}
+
 /// `dead` with a (status, word) for `leave_status` in the first two pinned ints.
 #[inline(always)]
 fn leaving(s: &S, status: u32, word: u64) -> S {
@@ -122,6 +132,14 @@ macro_rules! helper_row {
                 let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
                 let payload = payload(&s);
                 let (vm, residual, context) = (word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT));
+                #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+                let status = if PACKED {
+                    helper_branch(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>(), hole64::<{ HelperHole::PackedFirst as u8 }>(), hole64::<{ HelperHole::PackedImm as u8 }>())
+                } else {
+                    // The four-argument helper reads only its four: the packed words are unused.
+                    helper_branch(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>(), 0, 0)
+                };
+                #[cfg(not(all(target_arch = "aarch64", target_vendor = "apple")))]
                 let status = if PACKED {
                     let helper: HelperPacked = transmute(hole64::<{ HelperHole::Helper as u8 }>() as usize);
                     helper(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>(), hole64::<{ HelperHole::PackedFirst as u8 }>(), hole64::<{ HelperHole::PackedImm as u8 }>())

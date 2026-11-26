@@ -898,7 +898,7 @@ opcodes!($;
     LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; staged Local; step Body; owned LoadLocal; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD RELOCATABLE_LOCAL LOCAL_BINDING_LOAD FRAME_SLOT_READ CHECKED_LOCAL ACCESSES_LOCAL_SLOT, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class StoreLocal; staged Local; step Body; owned StoreLocal; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_STORE LOCAL_BINDING_STORE RELOCATABLE_LOCAL LOCAL_SLOT_STORE CHECKED_LOCAL LANE_WRITES_RESULT ACCESSES_LOCAL_SLOT STORES_LOCAL_SLOT, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot; class StoreVarBinding; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal; traits ENV_LOCAL_LOAD ENV_LOCAL_ACCESS ROW_HANDLER OWNER_ONLY MAY_ALLOCATE ACCESSES_LOCAL_SLOT DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal; traits ENV_LOCAL_LOAD ENV_LOCAL_ACCESS ROW_HANDLER OWNER_ONLY BOXED_RESULT MAY_ALLOCATE ACCESSES_LOCAL_SLOT DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; class StoreEnvLocal; staged Names; step Body; owned StoreEnvLocal; traits ENV_LOCAL_STORE ENV_LOCAL_ACCESS LOCAL_SLOT_STORE ROW_HANDLER OWNER_ONLY MAY_ALLOCATE ACCESSES_LOCAL_SLOT STORES_LOCAL_SLOT, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; class LoadCapture; staged Value; step Body; owned LoadCapture; traits ROW_HANDLER BOXED_RESULT INLINABLE CAPTURE_LOAD CAPTURE_ACCESS MAY_ALLOCATE READS_VARIABLE DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot; class StoreCapture; staged Value; step Body; owned StoreCapture; traits ROW_HANDLER CAPTURE_STORE CAPTURE_ACCESS MAY_ALLOCATE LOWERS_IN_LOOP, @ Register, @ fields(Register, Unused, Unused),
@@ -914,7 +914,7 @@ opcodes!($;
     LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits BOXED_RESULT UNIT_REWRITTEN MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Lane; traits NAME_OPERATION BINDING_FORM ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
-    LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER BOXED_RESULT MAY_ALLOCATE LOWERS_IN_LOOP, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; staged Value; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex; class MakeClosure; staged Literal; step Body; traits MAKES_CLOSURE ENVIRONMENT_CAPTURE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -4139,8 +4139,11 @@ impl ProgramSource {
     }
 
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        // `layout` is a memo of `text`, made again on the first position read.
-        crate::vm::freeze_source_call_sites(self);
+        // `layout` is a memo of `text`, made again on the first position read. A binary without
+        // the source frontend writes the call sites its source froze, if any (`source_routes`).
+        if let Some(routes) = crate::compile::source_routes::routes() {
+            (routes.freeze_call_sites)(self);
+        }
         let Self { text, typescript, base, line_offset, column_offset, layout: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
@@ -4510,10 +4513,17 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
+        // A Wasm module's function lowers from its bytes through the frontend, which a build
+        // without `jit` does not carry: its images archive every record.
+        #[cfg(feature = "jit")]
         if let Some(lazy) = &self.wasm_lazy {
             let function = lazy.lower(index, &self.constants);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
+        }
+        #[cfg(not(feature = "jit"))]
+        if self.wasm_lazy.is_some() {
+            panic!("native Wasm function {index} of {} was not lowered before linking", self.source_name);
         }
         let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
@@ -4535,14 +4545,19 @@ impl ResidualProgram {
                 function
             }
             None => {
-                if !crate::DYNAMIC_EXECUTION_ENABLED {
-                    panic!("native function {index} of {} has no archived record", self.source_name);
+                #[cfg(not(feature = "jit"))]
+                panic!("native function {index} of {} has no archived record and this build compiles no source", self.source_name);
+                #[cfg(feature = "jit")]
+                {
+                    if !crate::DYNAMIC_EXECUTION_ENABLED {
+                        panic!("native function {index} of {} has no archived record", self.source_name);
+                    }
+                    crate::compile::replay::recompile(self, index as u32)
+                    .unwrap_or_else(|error| {
+                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                    })
+                    .function
                 }
-                crate::compile::replay::recompile(self, index as u32)
-                .unwrap_or_else(|error| {
-                    panic!("function {index} of {} does not compile again: {error}", self.source_name)
-                })
-                .function
             },
         };
         // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.

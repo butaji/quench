@@ -10,6 +10,7 @@
 #![feature(stmt_expr_attributes)]
 
 pub mod dispatch_fast;
+pub(crate) mod ahead_runner;
 pub mod compiled;
 pub mod js_compiled;
 pub mod aot_image;
@@ -17,6 +18,7 @@ pub mod native_program;
 pub mod native_object;
 #[cfg(feature = "jit")]
 pub mod regexp_native;
+pub(crate) mod jit_routes;
 pub(crate) mod engine_calls;
 pub(crate) mod engine_calls2;
 pub(crate) mod lifted;
@@ -340,4 +342,5 @@ pub mod api {
     pub use crate::compiled::ahead_images::AheadImagesOps1;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1;
     pub use crate::native_program::NativeJsProgramOps1;
+    pub use crate::jit_routes::{LANE_ROW_GROUP, LaneRow, install_all_lane_rows, install_lane_rows, lane_rows};
 }

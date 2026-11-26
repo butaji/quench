@@ -1,5 +1,5 @@
 //! `node:punycode` in Rust: Punycode.js (RFC 3492 Bootstring), which lib/punycode.js is.
-use crate::host::shared_vm::operation;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -250,11 +250,11 @@ fn to_unicode_units(input: &[u16]) -> Result<Vec<u16>, Failure> {
 }
 
 /// The exports' operations, in Node's order: (export, name, operation).
-const FUNCTIONS: &[(&str, &str, &str)] = &[
-    ("decode", "decode", "punycodeDecode"),
-    ("encode", "encode", "punycodeEncode"),
-    ("toASCII", "toASCII", "punycodeToASCII"),
-    ("toUnicode", "toUnicode", "punycodeToUnicode"),
+const FUNCTIONS: &[(&str, &str, MarkedOperation)] = &[
+    ("decode", "decode", marked_operation!("punycodeDecode")),
+    ("encode", "encode", marked_operation!("punycodeEncode")),
+    ("toASCII", "toASCII", marked_operation!("punycodeToASCII")),
+    ("toUnicode", "toUnicode", marked_operation!("punycodeToUnicode")),
 ];
 
 /// `node:punycode`, which warns once that it is deprecated unless required from a package.
@@ -279,13 +279,13 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let version = c.string_rooted(VERSION);
     c.assign_named_property_rooted(module, "version", version)?;
     let ucs2 = c.object_rooted()?;
-    for (name, function_name, operation_name) in [("decode", "ucs2decode", "punycodeUcs2Decode"), ("encode", "ucs2encode", "punycodeUcs2Encode")] {
-        let function = c.host_function_named(operation(operation_name), function_name)?;
+    for (name, function_name, operation_name) in [("decode", "ucs2decode", marked_operation!("punycodeUcs2Decode")), ("encode", "ucs2encode", marked_operation!("punycodeUcs2Encode"))] {
+        let function = c.host_function_named(operation_name.id(), function_name)?;
         c.assign_named_property_rooted(ucs2, name, function)?;
     }
     c.assign_named_property_rooted(module, "ucs2", ucs2)?;
     for &(export, name, operation_name) in FUNCTIONS {
-        let function = c.host_function_named(operation(operation_name), name)?;
+        let function = c.host_function_named(operation_name.id(), name)?;
         c.assign_named_property_rooted(module, export, function)?;
     }
     Ok(module)

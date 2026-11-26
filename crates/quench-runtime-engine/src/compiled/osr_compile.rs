@@ -105,6 +105,8 @@ struct LoopFacts {
     string_registers: Vec<Register>,
     typed_captures: Vec<u16>,
     int_captures: Vec<u16>,
+    /// The kind each loop array's register held at entry (`Observation::typed_kinds`).
+    typed_kinds: Vec<(Register, quench_runtime::tier_surface::TypedArrayKind)>,
     frame_captures: Vec<(usize, usize)>,
     entry_bounds: bool,
     /// By (function, PC) of each construction of the plans' units, the scalar plan its callee
@@ -162,7 +164,7 @@ impl LoopJob {
             super::lane_region::RegionSpecializer {
                 admitted: self.admitted,
                 number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
-                typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures,
+                typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures, typed_kinds: &self.facts.typed_kinds,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
                 global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), online, ..VmFacts::STATIC }, generic: &plan.generic,
                 direct: &plan.sites, frame_captures: &self.facts.frame_captures, isa: &*self.isa,
@@ -399,10 +401,59 @@ fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32,
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
-/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
+/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access), or
+/// without the JIT's routes (`jit_routes`).
 /// A Cranelift region is planned here and lowered on the code generator's thread with its code
 /// (`LoopJob`): lowering on the loop's own thread stalled it as compiling did.
 pub(crate) fn start_osr_region(
+    region: &LoopRegion, views: super::ElementViews,
+    observation: &Observation<'_>,
+    tiers: &'static Tiers,
+    program: &ResidualProgram,
+    function_id: u32,
+    helpers: LaneHelpers,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
+    widened_stores: (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
+    calls: RegionCalls,
+    base: bool,
+    admitted: super::admission::CompiledUnit,
+    online: Option<OsrOnline<'_>>,
+) -> Option<PendingOsrRegion> {
+    (crate::jit_routes::jit()?.region)(region, views, observation, tiers, program, function_id, helpers, global_reads, widened_stores, calls, base, admitted, online)
+}
+
+/// `start_osr_region`'s route, which `jit_routes` installs.
+pub(crate) type RegionStart = fn(&LoopRegion, super::ElementViews, &Observation<'_>, &'static Tiers, &ResidualProgram, u32, LaneHelpers,
+    &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
+    (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>), RegionCalls, bool, super::admission::CompiledUnit, Option<OsrOnline<'_>>) -> Option<PendingOsrRegion>;
+
+pub(crate) fn compile_osr_region(
+    region: &LoopRegion, views: super::ElementViews,
+    observation: &Observation<'_>,
+    tiers: &'static Tiers,
+    program: &ResidualProgram,
+    function_id: u32,
+    helpers: LaneHelpers,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
+    (widened, stores): (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
+    calls: RegionCalls,
+    base: bool,
+    admitted: super::admission::CompiledUnit,
+    online: Option<OsrOnline<'_>>,
+) -> Option<PendingOsrRegion> {
+    #[cfg(feature = "jit")]
+    { start_osr_region_compiled(region, views, observation, tiers, program, function_id, helpers, global_reads, (widened, stores), calls, base, admitted, online) }
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = (region, views, observation, tiers, program, function_id, helpers, global_reads, widened, stores, calls, base, admitted, online);
+        None
+    }
+}
+
+/// An execution-only build (no `jit`) starts no run-time region compile.
+#[cfg(feature = "jit")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn start_osr_region_compiled(
     region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
     tiers: &'static Tiers,
@@ -458,7 +509,7 @@ pub(crate) fn start_osr_region(
         .filter(|(_, ty)| **ty == quench_runtime::typed_ir::Type::NUMBER)
         .filter_map(|(register, _)| quench_runtime::bytecode::Register::try_from(register).ok()).collect();
     let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: number_entries, string_registers: observation.string_entries.to_vec(),
-        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
+        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(), typed_kinds: observation.typed_kinds.to_vec(),
         frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds, construct_plans };
     let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers, admitted,
         held: stores.map(|names| (names.clone(), invalidation.address())),

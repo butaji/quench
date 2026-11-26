@@ -221,7 +221,10 @@ fn main() {
         fs::write(instance_file(&out, shard), part.iter().map(|(row, _, _)| row.as_str()).collect::<String>()).unwrap();
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
-    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
+
+    // `VARIANTS` are x86-64 cpu levels; another target has the one baseline table, built without a
+    // `-C target-cpu` (which for an AArch64 target is not a cpu at all).
+    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { if builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] } } else { &[("BASELINE", None)] };
     // Each family's sources as rustc reads them, from the first instance file of the family, are the rerun
     // triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
     // the opcode table reach a shard only through its instance file, and the flags file through its arguments.
@@ -252,6 +255,7 @@ fn main() {
         if jobs.iter().any(|job| job.family == family && !job.cached() && !job.unchanged_by_edit()) {
             type_check(&out, family, first(family).expect("a shard of the family"));
         }
+
     }
     // Only a fresh target dir (no shard object yet) uses the shared cache, fetching what it can and publishing what it
     // compiles. On the project's network mount a lookup or a write could hold the build for seconds (a write once for
@@ -284,7 +288,8 @@ fn main() {
 /// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
 /// and its base tier falls back as a `--b-jit` without one does.
 fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize, Family)> {
-    let base: Vec<(String, usize)> = if arch == Arch::X86_64 {
+    // The base tier's rows are built for both hosted targets (an AOT image stencils them).
+    let base: Vec<(String, usize)> = if matches!(arch, Arch::X86_64 | Arch::Aarch64) {
         let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
         let heap_weight = |kind: u8| match kind {
             library::INDEX_ROW | library::STORE_ROW => shards::INDEX_WEIGHT,
@@ -427,6 +432,12 @@ impl Shard {
 /// the stencil cfgs.
 fn base_args() -> Vec<String> {
     let mut args = vec!["--target".to_string(), env::var("TARGET").expect("cargo sets TARGET")];
+    // Every AArch64 target has NEON (ASIMD) in its architectural baseline, and an Apple one has no
+    // other vector unit: the stencil words name `vreg` operands for it, which rustc admits only
+    // where the feature is enabled for the crate it compiles.
+    if args[1].starts_with("aarch64") {
+        args.extend(["-C".to_string(), "target-feature=+neon".to_string()]);
+    }
     args.extend(rustc_flags());
     args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--check-cfg", "cfg(stencil_family, values(\"js\", \"wasm\", \"regexp\"))", "--cfg", "stencil_build"].map(String::from));
     args
@@ -846,6 +857,9 @@ fn check_movw_groups(row: &ObjectRow) {
     }
 }
 
+/// The suffix a hole's symbol carries where a branch names it (`stencils/call_rows.rs`).
+const HOLE_BRANCH_SUFFIX: &str = "_BRANCH";
+
 /// The hole index of a relocation. Value hole `HOLE_V<n>` is index n; `HOLE_NEXT` 0, `HOLE_TAKEN` 1,
 /// `HOLE_EXIT<k>` 2 + k (the successor indexes of `quench_bjit`).
 fn hole_index(row: &str, symbol: &str, class: u8) -> u32 {
@@ -855,6 +869,12 @@ fn hole_index(row: &str, symbol: &str, class: u8) -> u32 {
         (true, "NEXT") => NEXT,
         (true, "TAKEN") => TAKEN,
         (true, exit) if exit.starts_with("EXIT") => EXIT_BASE + number(&exit[EXIT_PREFIX..]),
+        // A value hole named by a branch: the Apple AArch64 helper site, which the image links to
+        // the helper (`Reloc::Arm64Call`) instead of writing an address word into text. Its symbol
+        // carries the suffix, so no definition of the hole's own name can leave an addend in the
+        // branch (ld64 refuses a B/BL with one).
+        (true, value) if value.starts_with('V') && value.ends_with(HOLE_BRANCH_SUFFIX) =>
+            number(&value[1..value.len() - HOLE_BRANCH_SUFFIX.len()]),
         (false, value) if value.starts_with('V') => number(&value[1..]),
         _ => panic!("stencil {row}: hole {symbol} used in the wrong way"),
     }

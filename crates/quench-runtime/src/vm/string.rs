@@ -484,7 +484,15 @@ impl Vm {
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
-                    map_case(receiver.units(), |text| quench_intl::locale_case(text, &locale, upper))
+                    #[cfg(feature = "intl")]
+                    let text = map_case(receiver.units(), |text| quench_intl::locale_case(text, &locale, upper));
+                    // Without Intl's locale tailoring, a locale case mapping is the default one.
+                    #[cfg(not(feature = "intl"))]
+                    let text = {
+                        let _ = &locale;
+                        map_case(receiver.units(), if upper { str::to_uppercase } else { str::to_lowercase })
+                    };
+                    text
                 } else {
                     map_case(receiver.units(), str::to_lowercase)
                 };
@@ -500,14 +508,9 @@ impl Vm {
                 )?;
                 Ok(Value::number(collation.compare(receiver.host_string(), other.host_string())))
             }
-            Native::StringConcat => {
-                let mut text = receiver;
-                for value in args {
-                    let value = self.coerce_js_string(p, *value)?;
-                    text.push_js_string(&value);
-                }
-                Ok(self.heap.alloc_string(text))
-            }
+            // The receiver then each argument, converted in order: the one StringConcat step of
+            // `+` and template literals (`string_concat`).
+            Native::StringConcat => self.string_concat(p, 1 + args.len(), |_, part| if part == 0 { this } else { args[part - 1] }),
             Native::StringNormalize => {
                 use unicode_normalization::UnicodeNormalization;
                 let form = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;

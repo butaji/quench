@@ -8,6 +8,7 @@
 pub(crate) mod child;
 pub(crate) mod primary;
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -83,8 +84,8 @@ fn call(c: &mut Context<'_>, object: RootId, method: &str, args: &[RootId]) -> R
     c.call_rooted(function, object, args)
 }
 
-fn function(c: &mut Context<'_>, operation: &str, name: &str, data: RootId) -> Result<RootId, RootedError> {
-    c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)
+fn function(c: &mut Context<'_>, operation: quench_runtime::HostFunctionId, name: &str, data: RootId) -> Result<RootId, RootedError> {
+    c.host_function_named_with_data(operation, name, data)
 }
 
 fn number(c: &mut Context<'_>, value: RootId) -> Option<f64> {
@@ -142,11 +143,11 @@ fn default_policy() -> f64 {
 }
 
 /// The methods each side gives `Worker.prototype`.
-const SHARED_METHODS: [(&str, &str); 4] = [
-    ("kill", "clusterWorkerKill"),
-    ("send", "clusterWorkerSend"),
-    ("isDead", "clusterWorkerIsDead"),
-    ("isConnected", "clusterWorkerIsConnected"),
+const SHARED_METHODS: [(&str, MarkedOperation); 4] = [
+    ("kill", marked_operation!("clusterWorkerKill")),
+    ("send", marked_operation!("clusterWorkerSend")),
+    ("isDead", marked_operation!("clusterWorkerIsDead")),
+    ("isConnected", marked_operation!("clusterWorkerIsConnected")),
 ];
 
 /// Node's `internal/cluster/worker`: an EventEmitter over its process.
@@ -157,9 +158,9 @@ fn worker_class(c: &mut Context<'_>, events: RootId) -> Result<RootId, RootedErr
     c.set_prototype_rooted(prototype, emitter_prototype)?;
     c.set_prototype_rooted(constructor, events)?;
     let undefined = c.undefined();
-    let side: &[(&str, &str)] = if is_worker() { &child::WORKER_METHODS } else { &primary::WORKER_METHODS };
+    let side: &[(&str, MarkedOperation)] = if is_worker() { &child::WORKER_METHODS } else { &primary::WORKER_METHODS };
     for (name, operation) in SHARED_METHODS.iter().chain(side) {
-        let method = function(c, operation, name, undefined)?;
+        let method = function(c, operation.id(), name, undefined)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, method, true, false, true)?;
     }
@@ -204,8 +205,8 @@ pub(crate) fn worker_construct(c: &mut Context<'_>, this: RootId, args: &[RootId
     };
     if c.truthy_rooted(process)? {
         put(c, receiver, "process", process)?;
-        for (event, operation) in [("error", "clusterWorkerForwardError"), ("message", "clusterWorkerForwardMessage")] {
-            let forward = function(c, operation, "", receiver)?;
+        for (event, operation) in [("error", marked_operation!("clusterWorkerForwardError")), ("message", marked_operation!("clusterWorkerForwardMessage"))] {
+            let forward = function(c, operation.id(), "", receiver)?;
             let event = c.string_rooted(event);
             call(c, process, "on", &[event, forward])?;
         }

@@ -315,10 +315,12 @@ impl CompiledUnit {
 /// The code-size policy of a unit of `kind`: a JavaScript function's numeric entry, a regexp
 /// program's search, or a lane body or region (every other kind).
 fn code_ceiling(kind: UnitKind) -> usize {
-    use quench_runtime::vm::tier_policy::{JS_COMPILED_MAX_CODE_BYTES, LANE_BODY_MAX_CODE_BYTES, REGEXP_NATIVE_MAX_CODE_BYTES};
+    use quench_runtime::vm::tier_policy::{AHEAD_BODY_MAX_CODE_BYTES, JS_COMPILED_MAX_CODE_BYTES, LANE_BODY_MAX_CODE_BYTES, REGEXP_NATIVE_MAX_CODE_BYTES};
     match kind {
         UnitKind::Entry => JS_COMPILED_MAX_CODE_BYTES,
         UnitKind::Regexp => REGEXP_NATIVE_MAX_CODE_BYTES,
+        // An image body compiles once, offline: the JIT lane body's warm-up bound is not its cost.
+        UnitKind::Ahead(_) => AHEAD_BODY_MAX_CODE_BYTES,
         _ => LANE_BODY_MAX_CODE_BYTES,
     }
 }

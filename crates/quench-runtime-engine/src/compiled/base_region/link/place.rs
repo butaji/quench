@@ -8,22 +8,34 @@ use crate::aot_image::Symbol;
 use quench_bjit::EXIT_STUB_LEN;
 use crate::compiled::stitcher::{self, Exit};
 
+/// An AArch64 branch instruction: four bytes, its 26-bit immediate the last field ld64 relocates.
+const BRANCH_INSTRUCTION_BYTES: usize = 4;
+const BRANCH_IMMEDIATE_BITS: u32 = 26;
+const BRANCH_IMMEDIATE_MASK: u32 = (1 << BRANCH_IMMEDIATE_BITS) - 1;
+
 /// A run-time address a linked body names by symbol: the code offset of its absolute word, which the
 /// loader fills (`Symbol`), where the code holds zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SymbolSite {
     pub(crate) offset: usize,
     pub(crate) symbol: Symbol,
+    /// The hole's class (`quench_bjit::ABS64`, or `BRANCH26` for an Apple AArch64 helper call,
+    /// which the loader patches as a branch rather than a word).
+    pub(crate) class: u8,
 }
 
 /// The symbolic fields of `rows` (`symbols` by row, the symbol of each row's named hole), at their code
 /// offsets from the code's start, `head` bytes past the entry thunk; a field must be an absolute word.
 fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Vec<SymbolSite>, String> {
     let named = |row: usize, hole: u32| symbols.get(row).into_iter().flatten().flatten().find(|(index, _)| u32::from(*index) == hole).map(|(_, symbol)| *symbol);
-    let fields = quench_bjit::absolute_symbolic_fields(rows, |row, hole| named(row, hole).is_some()).ok_or("a symbolic hole is not an absolute word")?;
-    fields.into_iter().map(|field| -> Result<SymbolSite, String> {
+    quench_bjit::symbolic_fields(rows, |row, hole| named(row, hole).is_some()).into_iter().map(|field| -> Result<SymbolSite, String> {
+        // A value hole is an absolute word; Apple AArch64 names a helper call as a branch hole
+        // (`Reloc::Arm64Call`), which the loader patches in place.
+        if !matches!(field.class, quench_bjit::ABS64 | quench_bjit::BRANCH26) {
+            return Err("a symbolic hole is neither an absolute word nor a branch".to_string());
+        }
         let symbol = named(field.row, field.hole).ok_or("a symbolic field has no symbol")?;
-        Ok(SymbolSite { offset: head + field.offset, symbol })
+        Ok(SymbolSite { offset: head + field.offset, symbol, class: field.class })
     }).collect()
 }
 
@@ -54,6 +66,16 @@ pub(crate) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[
         patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
     }
     let sites = symbol_sites(rows, symbols, head)?;
+    // A symbolic branch arrives carrying the stencil's placeholder displacement in its immediate,
+    // which ld64 reads as an addend (`ARM64_RELOC_ADDEND` is what it would need); the loader
+    // patches the branch, so its field starts at zero.
+    for site in &sites {
+        if site.class == quench_bjit::BRANCH26 {
+            let field = code.get_mut(site.offset..site.offset + BRANCH_INSTRUCTION_BYTES).ok_or("a symbolic branch is outside its code")?;
+            let word = u32::from_le_bytes(field.try_into().expect("four-byte instruction"));
+            field.copy_from_slice(&(word & !BRANCH_IMMEDIATE_MASK).to_le_bytes());
+        }
+    }
     let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
     let thunk_bytes = thunk(ending, head, proven_at)?;
     debug_assert_eq!(thunk_bytes.len(), head);

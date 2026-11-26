@@ -9,12 +9,15 @@ mod assets;
 pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceView, EmbeddedModules, EmbeddedImportResolution, EmbeddedModuleSource, ModuleAssets, ModuleFile, PreparedModuleSource};
 pub(crate) use assets::ModuleAssetState;
 mod graph;
+mod host_operations;
+mod image;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;
+mod builtin_families;
 pub(crate) mod prefix;
 mod strict;
-pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
+pub use compiler::{ImageHost, SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 pub use quench_runtime::native_link::NativeImageInputs;
 
 /// One compiler-owned source pool, shared by all embedding hosts.
@@ -23,10 +26,11 @@ macro_rules! linked_source_pool {
     ($($tokens:tt)*) => { quench_runtime::linked_source_pool! { $($tokens)* } };
 }
 
-/// Node's host selection for the shared linked-program catalog.
+/// Node's host selection for the shared linked-program catalog: the catalog's programs are the
+/// erased host's (`ErasedHost`), which the driver wraps its `NodeHost` in.
 #[macro_export]
 macro_rules! linked_native_sources {
-    ($($tokens:tt)*) => { quench_runtime::linked_native_sources! { host $crate::NodeHost; $($tokens)* } };
+    ($($tokens:tt)*) => { quench_runtime::linked_native_sources! { host quench_runtime::ErasedHost; $($tokens)* } };
 }
 
 /// Derive a static loader archive from compiler-owned raw inputs and edges.
@@ -109,6 +113,37 @@ pub fn execute_native_process_entry_with_bootstrap(
     bootstrap: &'static [u8],
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, Some(bootstrap))
+}
+
+/// A run saved at its first wait for input at build time (`aot::prefix::reach_wait`), as an
+/// image's catalog lists it: the answers it assumed (question keys), the writes it made before
+/// the wait, and the saved runtime.
+pub struct SavedWait {
+    pub answers: &'static [(&'static str, bool)],
+    pub effects: &'static [(i32, &'static [u8])],
+    pub rest: &'static [u8],
+}
+
+/// The first of `saved` whose answers hold in this process.
+pub fn saved_wait(saved: &'static [SavedWait]) -> Option<&'static SavedWait> {
+    saved.iter().find(|wait| wait.answers.iter().all(|&(key, answer)| prefix::Question::of_key(key).is_ok_and(|question| question.holds() == answer)))
+}
+
+/// Continues a linked entry from `wait`: its writes before the wait are made again in order,
+/// then the event loop waits for the same input. The entry does not run.
+pub fn resume_native_process_entry(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram, support: NativeImageSupport, wait: &'static SavedWait,
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    for &(descriptor, bytes) in wait.effects {
+        prefix::replay(descriptor, bytes);
+    }
+    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_at_rest(host), crate::shared_run::Teardown::ProcessExit);
+    runtime.set_execution_mode(support.execution_mode());
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    crate::host::resident_pages::phase_peak("saved wait runtime made");
+    let execution = runtime.resume_native_from_snapshot(std::rc::Rc::new(wait.rest), program, |host, reader| host.read_snapshot(reader));
+    crate::host::resident_pages::phase_peak("saved wait resumed");
+    crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)
 }
 
 fn execute_native_with_teardown(

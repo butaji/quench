@@ -1,0 +1,10 @@
+# ns/op on Apple M4, 20M iterations (research/aot/arm64/micro). AOT = image,
+# default = the same source under quench, no-jit/u-jit for reference. Budgets: a.x<=5 instr
+# (1.14 ns), i+1<=3 (0.68), call<=20 (4.5).
+# AFTER the Base tier leaves the AArch64 default mode (Cranelift regions only):
+op	aot	default	no-jit	u-jit	node	bun
+add	1.301	0.641	5.580	0.518	0.597	1.084
+inc	1.177	0.659	6.508	0.534	0.290	0.212
+prop	1.659	0.859	4.847	0.756	0.465	0.373
+index	1.497	0.783	7.511	0.702	0.565	0.593
+call	39.664	40.025	39.172	39.941	0.377	0.215

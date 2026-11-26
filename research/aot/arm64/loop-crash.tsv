@@ -1,0 +1,23 @@
+# AOT loop-region crash bisect (Apple M4, macOS arm64). Each row is a standalone script
+# compiled with `quench compile --dynamic-source`; "crash" is SIGSEGV (exit 139) in the
+# loop region the runtime builds (frame: CompiledOsrRegion::run -> osr_lane::enter -> code),
+# "ok" is its own printed result. The interpreter (--no-jit) prints every result.
+script	array	index	result
+b2_512	new Array(512), stored 0..511	register	then sum	ok
+b2_1024	new Array(1024), stored 0..1023	register	then sum	crash
+e1	new Array(1024), stored 0..1023	constant a[1000]	read loop	ok
+e2	new Array(1024), stored 0..1023	register (while)	read loop	crash
+e3	new Array(1024), stored 0..1023	register (i-1)	read loop	crash
+f1	new Array(1024), stored 0..1023	register via j=i	then a[j]	crash
+f2	new Array(1024), stored 0..1023	register a[i|0]	read loop	crash
+c1	[] grown by push to 1024	register	then a[i]	ok
+grow	[] grown by push to 2000 (objects)	register	then a[i].k	ok
+d1	new Array(1024), filled, then stored	register	then a[i]	ok
+c3	literal [0..15]	register a[i & 15]	1024 reads	ok
+# hash-map (SIGBUS at 0x2aac000130): region (loop header=22, 4016 bytes) offset 0x360 is
+# `str x9, [x8, x20]` with x8 = 0x0000002000000030 and x20 = 0xaac000100 (the window). The
+# literal is the *layout entry word* (meta 0x30 | auxiliary<<32 = shape 0x20), loaded at
+# 0x2ec and unpacked at 0x2fc (`lsr x10,x8,#32` = the shape). The store's address adds the
+# layout word to the window instead of a slot offset (the field lookup at 0x338-0x35c has the
+# slot in x10 = 0x18), so a row/plan leaves the layout word in the register the store uses as
+# its base. BaseJIT stitched region (fast_pending dump), not Cranelift IR.

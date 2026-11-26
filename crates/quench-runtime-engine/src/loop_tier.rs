@@ -293,13 +293,18 @@ pub(crate) fn loop_compile_in_lane(
     let strings: Vec<quench_runtime::bytecode::Register> = region.entry_registers()
         .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register)).chain(field_bases)
         .filter(|register| machine.heap_reads().is_string(r.get(*register))).collect();
+    // The kind each loop array holds at entry: a typed array's accesses then keep one arm
+    // (`ElementViews::Typed`), where a region of mixed kinds would walk every kind per access.
+    let typed_kinds: Vec<(quench_runtime::bytecode::Register, quench_runtime::tier_surface::TypedArrayKind)> = region.arrays.iter()
+        .filter(|array| array.field.is_none())
+        .filter_map(|array| machine.typed_array_kind(r.get(array.register)).map(|kind| (array.register, kind))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
     // A construction site's plan, where the region may keep its receiver as its field values.
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
-    let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
+    let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap_reads().memory_policy();
@@ -399,6 +404,25 @@ pub(crate) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion
     let doubles = !region.arrays.is_empty() && region.arrays.iter().all(|array| {
         vm.heap_reads().record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().double_values().is_some())
     });
+    if quench_runtime::trace::Channel::JsJit.on() {
+        for array in &region.arrays {
+            let value = value_of((array.register, array.field), &*entry);
+            let record = vm.heap_reads().record_array(value).map(|object| object.elements());
+            eprintln!("ARRAY reg={} written={} double={} dvals={}", array.register, array.written,
+                record.is_some_and(|elements| elements.is_double()),
+                record.is_some_and(|elements| elements.double_values().is_some()));
+        }
+    }
+    // The view is per region: a `Dense` view reads and writes `Value`s, which a double
+    // backing's words are not. A region with one double array and one that is no double
+    // declines the entry rather than widen the double one for good (a `Dense` view widens
+    // its encoded arrays at entry); a region of double arrays alone takes `Double`.
+    if !doubles && region.arrays.iter().any(|array| {
+        vm.heap_reads().record_array(value_of((array.register, array.field), &*entry))
+            .is_some_and(|object| object.elements().is_double())
+    }) {
+        return None;
+    }
     let mut views = None;
     for array in &region.arrays {
         let value = value_of((array.register, array.field), &*entry);

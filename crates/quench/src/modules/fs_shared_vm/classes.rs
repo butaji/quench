@@ -84,13 +84,10 @@ pub(crate) fn require_new(c: &mut Context<'_>, name: &str) -> Result<(), RootedE
     Err(c.throw(error))
 }
 
-fn operation(name: &str) -> quench_runtime::HostFunctionId {
-    crate::host::shared_vm::operation(name)
-}
 
 /// A constructor whose prototype inherits `parent`'s, and which inherits `parent` itself.
-fn constructor(c: &mut Context<'_>, op: &str, name: &str, parent: Option<RootId>) -> Result<(RootId, RootId), RootedError> {
-    let constructor = c.host_constructor_named(operation(op), name)?;
+fn constructor(c: &mut Context<'_>, op: crate::host::shared_vm::MarkedOperation, name: &str, parent: Option<RootId>) -> Result<(RootId, RootId), RootedError> {
+    let constructor = c.host_constructor_named(op.id(), name)?;
     let prototype = match parent {
         Some(parent) => inherit(c, constructor, parent)?,
         None => get(c, constructor, "prototype")?,
@@ -99,10 +96,10 @@ fn constructor(c: &mut Context<'_>, op: &str, name: &str, parent: Option<RootId>
 }
 
 /// A method as a class body defines it: writable, configurable, not enumerable.
-pub(crate) fn method(c: &mut Context<'_>, target: RootId, key: RootId, op: &str, name: &str, data: Option<RootId>) -> Result<RootId, RootedError> {
+pub(crate) fn method(c: &mut Context<'_>, target: RootId, key: RootId, op: crate::host::shared_vm::MarkedOperation, name: &str, data: Option<RootId>) -> Result<RootId, RootedError> {
     let function = match data {
-        Some(data) => c.host_function_named_with_data(operation(op), name, data)?,
-        None => c.host_function_named(operation(op), name)?,
+        Some(data) => c.host_function_named_with_data(op.id(), name, data)?,
+        None => c.host_function_named(op.id(), name)?,
     };
     c.define_data_property_rooted(target, key, function, true, false, true)?;
     Ok(function)
@@ -134,13 +131,13 @@ pub(crate) fn well_known_symbol(c: &mut Context<'_>, name: &str, fallback: &str)
 }
 
 fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Root::COUNT]) -> Result<(), RootedError> {
-    let (base, base_prototype) = constructor(c, "fsStatsBase", "StatsBase", None)?;
+    let (base, base_prototype) = constructor(c, crate::host::shared_vm::marked_operation!("fsStatsBase"), "StatsBase", None)?;
     for (name, mode, _) in super::stats::TYPE_PREDICATES {
         let data = c.number(f64::from(mode));
         let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStatsIsType"), "", data)?;
         put(c, base_prototype, name, function)?;
     }
-    let stat_class = |c: &mut Context<'_>, op: &str, name: &str, bigint: bool| -> Result<(RootId, RootId), RootedError> {
+    let stat_class = |c: &mut Context<'_>, op: crate::host::shared_vm::MarkedOperation, name: &str, bigint: bool| -> Result<(RootId, RootId), RootedError> {
         let (class, prototype) = constructor(c, op, name, Some(base))?;
         for (index, field) in super::stats::TIME_FIELDS.into_iter().enumerate() {
             let data = c.number(index as f64);
@@ -153,8 +150,8 @@ fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Ro
         put(c, prototype, "_checkModeProperty", check)?;
         Ok((class, prototype))
     };
-    let stats = stat_class(c, "fsStatsConstruct", "Stats", false)?;
-    let bigint = stat_class(c, "fsBigIntStatsConstruct", "BigIntStats", true)?;
+    let stats = stat_class(c, crate::host::shared_vm::marked_operation!("fsStatsConstruct"), "Stats", false)?;
+    let bigint = stat_class(c, crate::host::shared_vm::marked_operation!("fsBigIntStatsConstruct"), "BigIntStats", true)?;
     let deprecated = c.host_constructor_named(crate::host::shared_vm::operation!("fsStatsDeprecated"), "deprecated")?;
     let key = c.string_rooted("prototype");
     let fields = DescriptorFields { value: Some(stats.1), ..DescriptorFields::default() };
@@ -164,7 +161,7 @@ fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Ro
     values[Root::Stats as usize] = Some(stats);
     values[Root::BigIntStats as usize] = Some(bigint);
     values[Root::DeprecatedStats as usize] = Some((deprecated, stats.1));
-    values[Root::StatFs as usize] = Some(constructor(c, "fsStatFsConstruct", "StatFs", None)?);
+    values[Root::StatFs as usize] = Some(constructor(c, crate::host::shared_vm::marked_operation!("fsStatFsConstruct"), "StatFs", None)?);
     Ok(())
 }
 
@@ -187,7 +184,7 @@ fn build(c: &mut Context<'_>) -> Result<Roots, RootedError> {
     values[Root::Dirent as usize] = Some(super::dir::dirent_class(c)?);
     values[Root::Dir as usize] = Some(super::dir::dir_class(c)?);
     let emitter = get(c, global, "__nodeEventEmitter")?;
-    let (handle, handle_prototype) = constructor(c, "fsFileHandleConstruct", "FileHandle", Some(emitter))?;
+    let (handle, handle_prototype) = constructor(c, crate::host::shared_vm::marked_operation!("fsFileHandleConstruct"), "FileHandle", Some(emitter))?;
     values[Root::FileHandle as usize] = Some((handle, handle_prototype));
     let mut roots = Roots { values: [undefined; Root::COUNT], prototypes: [undefined; Root::COUNT] };
     for (index, entry) in values.into_iter().enumerate() {

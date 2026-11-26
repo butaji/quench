@@ -136,8 +136,16 @@ pub mod slot_store;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
 pub mod strings;
+/// The natives run in place by identity: the table (`native_row_table`) and the map to it (`native_row`).
+pub mod native_row_table;
+pub mod native_row;
 pub mod string_length;
 pub(crate) mod code_units;
+/// The span primitives string rows call (find, rfind, equal at).
+pub mod spans;
+/// The rows host operations declare (`Host::function_row`).
+#[cfg(not(stencil_build))]
+pub mod host_rows;
 pub(crate) mod parse_int;
 /// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
 pub(crate) mod string_text;
@@ -1123,6 +1131,11 @@ pub const fn awaits(op: Op) -> bool { matches!(op, Op::Await) }
 pub const fn constructs(op: Op) -> bool { matches!(op, Op::Construct) }
 /// Selects a case by a string (`StringCaseIndex`).
 pub const fn selects_string_case(op: Op) -> bool { matches!(op, Op::StringCaseIndex) }
+/// Selects a case of a dense int switch (`IntCaseIndex`), whose slot the `WasmBranchTable` after it
+/// reads as an int32.
+pub const fn selects_int_case(op: Op) -> bool { matches!(op, Op::IntCaseIndex) }
+/// A branch table (`WasmBranchTable`): the jump a dense int switch or a Wasm `br_table` takes.
+pub const fn branch_table(op: Op) -> bool { matches!(op, Op::WasmBranchTable) }
 /// Stores an environment slot (`StoreEnvLocal`).
 pub const fn writes_environment_slot(op: Op) -> bool { matches!(op, Op::StoreEnvLocal) }
 /// Checks an iterator result object (`RequireIteratorResult`).

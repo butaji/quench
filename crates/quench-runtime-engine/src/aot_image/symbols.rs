@@ -25,7 +25,7 @@ const BASE_PC_NAMESPACE: u32 = RelocKind::GuardShape as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
-const NARROW_WORDS_NAMESPACE: u32 = CALL_RECORD_NAMESPACE + 1;
+pub(crate) const NARROW_WORDS_NAMESPACE: u32 = CALL_RECORD_NAMESPACE + 1;
 /// The namespace of `Symbol::Attention`, one byte keyed 0.
 const ATTENTION_NAMESPACE: u32 = NARROW_WORDS_NAMESPACE + 1;
 

@@ -1,4 +1,4 @@
-//! The file form of an `AotImage`: magic, build id, fingerprint, the recipe tables and atom
+//! The file form of an `AotImage`: magic, build id, fingerprint, how closed its program is, the recipe tables and atom
 //! texts, the base PC labels, operand records and proven call sites, then per function its base and lane code with
 //! relocations. Every number is
 //! little-endian; `Words` reads it back and rejects a file that ends early or names an unknown tag.
@@ -28,6 +28,8 @@ const RELOC_X86_PC_REL4: u8 = 1;
 const RELOC_X86_CALL_PC_REL4: u8 = 2;
 const RELOC_X86_CALL_PLT_REL4: u8 = 3;
 const RELOC_ARM64_CALL: u8 = 4;
+const RELOC_ARM64_PAGE21: u8 = 5;
+const RELOC_ARM64_PAGEOFF12: u8 = 6;
 /// A relocation kind `RelocatableCode` never holds; the reader rejects it.
 const RELOC_UNPATCHABLE: u8 = u8::MAX;
 
@@ -36,6 +38,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     let mut out = MAGIC.to_vec();
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
+    out.push(image.world as u8);
     put_recipes(&mut out, image);
     put_sites(&mut out, image);
     put_count(&mut out, image.functions.len());
@@ -55,6 +58,7 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
         return Err("images from another quench-node build".into());
     }
     let fingerprint = words.quad()?;
+    let world = quench_runtime::compile::aot_facts::World::from_byte(words.byte()?).ok_or("an AOT image's world is unknown")?;
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
     let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
     let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
@@ -62,7 +66,7 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
     let wasm = read_wasm(&mut words)?;
     let regexps = read_regexps(&mut words)?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls, wasm, regexps })
+    Ok(AotImage { fingerprint, build_id, world, functions, shapes, heap_values, atoms, labels, calls, wasm, regexps })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -230,6 +234,8 @@ fn reloc_tag(kind: Reloc) -> u8 {
         Reloc::X86CallPCRel4 => RELOC_X86_CALL_PC_REL4,
         Reloc::X86CallPLTRel4 => RELOC_X86_CALL_PLT_REL4,
         Reloc::Arm64Call => RELOC_ARM64_CALL,
+        Reloc::Arm64Page21 => RELOC_ARM64_PAGE21,
+        Reloc::Arm64PageOff12 => RELOC_ARM64_PAGEOFF12,
         _ => RELOC_UNPATCHABLE,
     }
 }
@@ -241,6 +247,8 @@ fn reloc_of(tag: u8) -> Result<Reloc, String> {
         RELOC_X86_CALL_PC_REL4 => Reloc::X86CallPCRel4,
         RELOC_X86_CALL_PLT_REL4 => Reloc::X86CallPLTRel4,
         RELOC_ARM64_CALL => Reloc::Arm64Call,
+        RELOC_ARM64_PAGE21 => Reloc::Arm64Page21,
+        RELOC_ARM64_PAGEOFF12 => Reloc::Arm64PageOff12,
         _ => return Err("an AOT image relocation has an unknown kind".into()),
     })
 }

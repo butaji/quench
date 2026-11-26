@@ -288,3 +288,4 @@ mod tests {
         assert_eq!(super::vernum("1.3.1-zlib-rs-0.6.8"), f64::from(0x1310));
     }
 }
+

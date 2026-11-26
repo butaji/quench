@@ -441,6 +441,13 @@ pub struct CompiledProgram {
 pub type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
 
 /// A program's ahead-of-time image, and its link into this process once a VM loads it.
+impl AheadImages {
+    /// Whether the image's value table names the closure of `function` (`HeapValueRecipe::ClosureOf`).
+    pub fn names_closure(&self, function: u32) -> bool {
+        self.image.heap_values.iter().any(|recipe| matches!(recipe, HeapValueRecipe::ClosureOf(found) if *found == function))
+    }
+}
+
 pub struct AheadImages {
     pub image: AotImage,
     /// The programs (by number) checked against it, and whether each is it.
@@ -2791,6 +2798,9 @@ pub struct AotImage {
     /// The program the image is valid for (`ahead_images::fingerprint`) and the build it came from.
     pub fingerprint: u64,
     pub build_id: u64,
+    /// How closed the program is (`aot_facts::world`) as its compile found: its facts derive
+    /// again from this (`aot_facts::analyze_as`).
+    pub world: crate::compile::aot_facts::World,
     /// By function id, ascending; every function of the program has one.
     pub functions: Vec<AotFunction>,
     /// The shapes the code folds, by `Symbol::Shape` key.
@@ -3260,8 +3270,12 @@ pub const CODE_GRANULE: usize = 64;
 /// The AOT image the system linker placed in this executable for a program (`aot_image::object`):
 /// a VM that runs the program loads it as its ahead images (`Vm::load_linked_image`), and its
 /// functions run their bodies on the lane runner (`Vm::install_ahead_body`).
-pub struct NativeJsCode {
-    pub table: LinkedTable,
+pub enum NativeJsCode {
+    /// Code the system linker placed in this executable (`NativeJsProgram::from_linked_image`).
+    Placed(LinkedTable),
+    /// An image compiled into this process (`NativeJsProgram::compile_eager`): its file, linked
+    /// into each VM that attaches it (`aot_image::live::install`).
+    Eager(Vec<u8>),
 }
 
 pub type NativeProgramResolver = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;
@@ -4165,17 +4179,15 @@ impl AheadImages {
     /// Adds `program`'s image while recording; a program that does not lower adds none.
     #[inline]
     pub fn record(program: &ResidualProgram) {
-        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
-        if !cfg!(feature = "jit") || recorded().is_none() { return; }
-        Self::keep(program, Self::compile(program));
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower) else { return };
+        Self::keep(program, lower(program));
     }
 
     /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
     #[inline]
     pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
-        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
-        if !cfg!(feature = "jit") || recorded().is_none() { return; }
-        Self::keep(program, Self::compile_wasm(vm, id, program, bindings));
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower_wasm) else { return };
+        Self::keep(program, lower(vm, id, program, bindings));
     }
 
     /// Adds a lowering's image to the recording, or traces why `program` has none.
@@ -4187,7 +4199,7 @@ impl AheadImages {
                 return;
             }
         };
-        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
+        if !images.is_empty() { if let Some(recording) = recorded().as_mut() { recording.images.push(images.image); } }
     }
 }
 
@@ -5518,9 +5530,17 @@ impl LoopSite {
 /// The images of each program stored while recording (`start_recording`); the entry may run
 /// on a worker thread, so this is process-wide. It holds the lowered images alone: a linked
 /// image belongs to the VM (and thread) that loaded it.
-pub static RECORDED: std::sync::Mutex<Option<Vec<AotImage>>> = std::sync::Mutex::new(None);
+pub static RECORDED: std::sync::Mutex<Option<Recording>> = std::sync::Mutex::new(None);
 
-pub fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AotImage>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+/// A recording: the lowering that started it, which only a build links, and its images.
+pub struct Recording {
+    pub lower: fn(&ResidualProgram) -> Result<AheadImages, String>,
+    /// The lowering of a Wasm program, from its module's binding types.
+    pub lower_wasm: fn(&Vm, ProgramId, &ResidualProgram, &[crate::WasmBindingType]) -> Result<AheadImages, String>,
+    pub images: Vec<AotImage>,
+}
+
+pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
 
 

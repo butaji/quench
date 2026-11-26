@@ -4,6 +4,9 @@ pub mod jit_backend;
 pub mod tier_policy;
 pub mod tier_queries;
 pub mod engine_types; pub mod fact_edge;
+pub mod lazy_table;
+pub mod builtin_table;
+use builtin_table::{BuiltinFamilies, BuiltinTable};
 pub mod engine_calls;
 pub(crate) use engine_calls::EngineVm;
 pub mod engine_calls2;
@@ -151,7 +154,7 @@ pub mod builtins;
 pub mod native_rows;
 pub mod call_arguments;
 pub mod call_printer;
-pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
+pub(crate) use call_printer::freeze_call_sites;
 pub mod call_out;
 pub mod call_out_calls;
 pub mod call_out_literals;
@@ -379,15 +382,13 @@ pub(super) struct CaptureCache {
     root: Option<Option<u32>>,
 }
 
+impl CaptureCache {
+    const EMPTY: Self = Self { env: Value::NULL, captured: false, epoch: 0, slots: std::ptr::null(), root: None };
+}
+
 impl Default for CaptureCache {
     fn default() -> Self {
-        Self {
-            env: Value::NULL,
-            captured: false,
-            epoch: 0,
-            slots: std::ptr::null(),
-            root: None,
-        }
+        Self::EMPTY
     }
 }
 
@@ -403,12 +404,18 @@ const CLOSURE_TEMPLATES: usize = 1024;
 const _: () = assert!(CLOSURE_TEMPLATES.is_power_of_two());
 const _: () = assert!(CAPTURE_WALKS.is_power_of_two());
 
+/// The entries a `LazyTable` answers with before its first write, shared by every VM that never
+/// fills it.
 /// A remembered capture walk: `depth` layers out from `cache.env`, as `CaptureCache` holds
 /// the innermost one.
 #[derive(Clone, Copy, Default)]
 pub(super) struct CaptureWalk {
     depth: u16,
     cache: CaptureCache,
+}
+
+impl CaptureWalk {
+    const EMPTY: Self = Self { depth: 0, cache: CaptureCache::EMPTY };
 }
 
 impl Frame {
@@ -2071,6 +2078,9 @@ pub struct Vm {
     pub(crate) host_statics: crate::host::HostStatics,
     /// `Host::runs_lane`, read once: whether bodies run in the lane (`dispatch_fast`).
     pub runs_lane: bool,
+    /// The intrinsic families this realm installs (`builtin_table`): `ALL` unless an image
+    /// proved a family unreachable from its program.
+    pub(crate) builtins: &'static BuiltinTable,
     pub specialized: bool,
     pub(crate) heap: Heap,
     pub realm: Realm,
@@ -2355,8 +2365,8 @@ pub struct Vm {
     /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
-    pub call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
-    construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
+    pub call_targets: lazy_table::LazyTable<InLoopCallTarget, CALL_TARGET_CACHE_SIZE>,
+    construct_targets: lazy_table::LazyEntries<ConstructTarget, CALL_TARGET_CACHE_SIZE>,
     pub frameless: crate::vm::engine_types::CalleeAdmissions,
     pub field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -2381,7 +2391,7 @@ pub struct Vm {
     /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
     /// site's keys vary, so the entries are shared, indexed by source shape and atom
     /// (`keyed_add_index`); cleared with the field caches.
-    keyed_adds: Box<[FieldAddCache; KEYED_ADD_ENTRIES]>,
+    keyed_adds: lazy_table::LazyEntries<FieldAddCache, KEYED_ADD_ENTRIES>,
     megamorphic_field_indices: site_table::CacheSiteTable<u32>,
     /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
     /// `field_add_indices`, `inherited_field_indices`) were written since the last
@@ -2435,7 +2445,7 @@ pub struct Vm {
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
-    closure_templates: Box<[Option<construction::ClosureTemplate>; CLOSURE_TEMPLATES]>,
+    closure_templates: lazy_table::LazyEntries<Option<construction::ClosureTemplate>, CLOSURE_TEMPLATES>,
     /// The header of an iterator result `{ value, done }` (`Vm::iterator_result`) and the
     /// prototype it was derived for; derived from shapes, so field-cache invalidation clears it.
     iterator_result_header: Option<(Value, crate::heap::InlineObjectHeader)>,
@@ -2480,7 +2490,7 @@ pub struct Vm {
     instanceof_has_instance_link: ProtoLink,
     /// Recent capture walks (`Vm::walked_capture_slots`), direct-mapped by start environment
     /// and depth.
-    capture_walks: Box<[CaptureWalk; CAPTURE_WALKS]>,
+    capture_walks: lazy_table::LazyEntries<CaptureWalk, CAPTURE_WALKS>,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     pub runtime_atoms: RuntimeAtoms,
@@ -2488,10 +2498,10 @@ pub struct Vm {
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// `Vm::preshape_receiver` answers: the constant or declared layout a construction
     /// allocates its receiver in; cleared by every collection and with the heap.
-    preshaped_receivers: Box<[preshaped_receiver::PreshapedReceiver; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]>,
+    preshaped_receivers: lazy_table::LazyEntries<preshaped_receiver::PreshapedReceiver, {preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES}>,
     /// What constructions' receivers reach, per `new.target` (`Vm::preshape_receiver`'s slack
     /// tracking); kept across collections, which restart its sampling.
-    learned_receivers: Box<[preshaped_receiver::LearnedReceiver; preshaped_receiver::LEARNED_RECEIVER_ENTRIES]>,
+    learned_receivers: lazy_table::LazyEntries<preshaped_receiver::LearnedReceiver, {preshaped_receiver::LEARNED_RECEIVER_ENTRIES}>,
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: method_cache::MethodCacheTable,
@@ -2586,8 +2596,8 @@ impl Vm {
 
     /// Retire weak callee bindings and frameless admissions at their lifetime-changing edge.
     fn clear_call_targets(&mut self) {
-        self.call_targets.fill(EMPTY_CALL_TARGET);
-        self.construct_targets.fill(EMPTY_CONSTRUCT_TARGET);
+        self.call_targets.clear();
+        self.construct_targets.clear();
         self.frameless.clear();
     }
 
@@ -2939,9 +2949,15 @@ impl Vm {
     /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
     /// `program`: the host resumes its installation where the snapshot left it.
     pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        self.check_execution_interrupt()?;
-        self.resume_host()?;
+        self.resume_restored()?;
         self.run_main(program, false)
+    }
+
+    /// Resumes the host of a VM restored from a run saved at rest (`snapshot_at_rest`), whose
+    /// main program has already run: the run continues from the host's own sources.
+    pub(crate) fn resume_restored(&mut self) -> Result<(), JsError> {
+        self.check_execution_interrupt()?;
+        self.resume_host()
     }
 
     /// Runs the main program of an installed realm: its module graph, its declarations and
@@ -3374,7 +3390,7 @@ impl Vm {
         self.shared_async_waiters.clear();
         // Reset reuses environment locators and collection counters. Retire raw
         // capture views at this boundary before either identity can appear again.
-        self.capture_walks.fill(CaptureWalk::default());
+        self.capture_walks.clear();
         #[cfg(feature = "profile-lane-exits")]
         eprintln!("capture-reset {:p}", self.capture_walks.as_ptr());
         // SAFETY: initialization runs outside any native body, before reuse.
@@ -3455,7 +3471,7 @@ impl Vm {
         self.accessor_fields.clear();
         self.field_add_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
-        self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.keyed_adds.clear();
         self.field_add_chains.clear();
         self.megamorphic_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
@@ -3485,7 +3501,7 @@ impl Vm {
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
-        self.closure_templates.fill(None);
+        self.closure_templates.clear();
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.shared_entry_pair = Value::UNDEFINED;

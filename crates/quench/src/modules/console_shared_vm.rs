@@ -154,6 +154,23 @@ pub(crate) fn write(context: &mut NativeContext<'_>, _: RootId, args: &[RootId])
     write_line(context, args)
 }
 
+/// A writer's call of strings alone (`HostRow::PlainText`, which `NodeHost::function_row`
+/// declares for `consoleWrite`): joined by spaces and written, when the console is not
+/// indented and no format specifier applies; else `false`, and the call formats (`write`).
+pub(crate) fn write_plain(context: &mut NativeContext<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (&index, args) = args.split_first().ok_or_else(|| RootedError::host("console writer without its index"))?;
+    let index = context.to_number(index)? as usize;
+    let stream = *WRITERS.get(index).ok_or_else(|| RootedError::host("console writer index out of range"))?;
+    let console = facade(context)?;
+    if super::console_class_shared_vm::indentation(context, console)?.is_empty() {
+        if let Some(text) = plain_line(context, stream, args)? {
+            write_stream(context, stream, &text)?;
+            return Ok(context.undefined());
+        }
+    }
+    Ok(context.boolean(false))
+}
+
 fn write_line(context: &mut NativeContext<'_>, args: &[RootId]) -> Result<RootId, RootedError> {
     let (&index, args) = args.split_first().ok_or_else(|| RootedError::host("console writer without its index"))?;
     let index = context.to_number(index)? as usize;

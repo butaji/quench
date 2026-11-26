@@ -10,11 +10,16 @@
 //! copies it to an allocation of its own (`make_mut`), as does the collection its array
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
+// Raw-pointer field access predates `dangerous_implicit_autorefs`; the sites are reads and
+// writes of `Copy` fields of a live record, and converting them to `addr_of!` is its own
+// change (TOD-1202). Nothing here is a new allow: the lint did not exist when they landed.
+#![allow(dangerous_implicit_autorefs)]
 use crate::staged::record_heads::ArrayHeaderHead;
 use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
+use super::double_word;
 
 /// A backing's header: its words are `ArrayHeaderHead` (`staged::record_heads`), which the
 /// stencils read by offset. `capacity` takes `BIASED` when the header was moved past values a
@@ -162,12 +167,6 @@ thread_local! {
 #[inline(always)]
 fn decode_double(word: u64) -> Value {
     if word == Value::DELETED.to_bits() { Value::DELETED } else { Value::number(f64::from_bits(word)) }
-}
-
-/// The word a double backing holds for the Number `number`: its bits, NaN canonical.
-#[inline(always)]
-fn double_word(number: f64) -> u64 {
-    if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() }
 }
 
 /// The block step of the allocator backings come from (`quench_alloc`'s size classes): a
@@ -481,6 +480,13 @@ impl ArrayElements {
         self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
     }
 
+    /// Whether this array alone owns its double backing's words, so a store replaces them
+    /// in place (a shared double backing copies before its store, `replace_in_place`).
+    #[inline]
+    pub(crate) fn owns_double_words(&self) -> bool {
+        self.is_double() && self.header().owners == 1
+    }
+
     #[inline(always)]
     fn double_words(&self) -> *mut u64 {
         // SAFETY: as in `values`: the words follow the header.
@@ -690,6 +696,13 @@ impl ArrayElements {
     #[inline(always)]
     pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
         if !self.is_unique() {
+            // A shared double backing copies as another double one for a Number store: the
+            // copy keeps the kind a proved view read, where a wide copy would lose it for
+            // good (`KEEP_WIDE`) and every later read would decode a `Value`.
+            if self.is_double() && self.header().owners != 1 && value.as_number().is_some() {
+                self.copy_double();
+                return self.replace_encoded_in_place(index, value);
+            }
             return self.replace_encoded_in_place(index, value);
         }
         if self.header().others == 0 && !value.is_tagged() && self.takes_double() {
@@ -789,6 +802,23 @@ impl ArrayElements {
         }
     }
 
+    /// `length` holes as a double backing of one owner (`double_elements`): `new Array(n)`,
+    /// whose Numbers then store and load as their own bits. A hole is `Value::DELETED`'s
+    /// word, which a double backing holds and `others` counts, so a hole still reads
+    /// `undefined`; any other value stored into it widens the backing first (`make_mut`).
+    pub(crate) fn double_holes(length: usize) -> Self {
+        let elements = Self::from_fn(length, |_| Value::DELETED);
+        if length == 0 || !double_elements() { return elements; }
+        // SAFETY: the backing is this array's alone, every one of its `length` words a hole,
+        // which `others` already counts, and no value is a heap reference.
+        unsafe {
+            let header = elements.header.as_ptr();
+            (*header).head.len |= DOUBLE_LEN;
+            (*header).head.others = length as u32;
+        }
+        elements
+    }
+
     /// An empty double backing of one owner with room for its first appends, where backings
     /// take the double kind (`double_elements`); the shared empty header where they do not.
     /// A TypeScript `number[]` binding's empty literal starts with it (`Vm::make_array`).
@@ -877,6 +907,31 @@ impl ArrayElements {
     #[inline(never)]
     fn detach(&mut self) {
         *self = self.widened();
+    }
+
+    /// Copies this double backing, which several arrays share, as another double one this
+    /// array alone owns: a raw word copy, the hole count kept. The words stop being reachable
+    /// through the old backing alone, so the running lane's proofs retire first.
+    #[cold]
+    #[inline(never)]
+    fn copy_double(&mut self) {
+        debug_assert!(self.is_double() && self.header().owners != 1);
+        super::array_proofs::retire_array_storage_proofs();
+        let (len, capacity) = (self.len(), self.capacity());
+        let copy = Self::allocate(capacity, len);
+        let words = self.double_words();
+        for index in 0..len {
+            // SAFETY: the source holds `len` double words, the copy `len` slots.
+            let word = unsafe { words.add(index).read() };
+            unsafe { copy.values().add(index).write(Value::from_bits(word)) };
+        }
+        // SAFETY: a fresh allocation of one owner, its `len` words doubles.
+        unsafe {
+            let header = copy.header.as_ptr();
+            (*header).head.len |= DOUBLE_LEN;
+            (*header).head.others = self.header().others;
+        }
+        *self = copy;
     }
 
     /// A wide copy of this backing, of one owner.

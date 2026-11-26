@@ -113,12 +113,12 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:fs", |c| {
         let binding = c.object_rooted()?;
         for (name, operation) in [
-            ("writeFileUtf8", "fsBindingWriteFileUtf8"),
-            ("readdir", "fsBindingReaddir"),
-            ("readdirRecursive", "fsBindingReaddirRecursive"),
-            ("internalModuleStat", "fsBindingInternalModuleStat"),
+            ("writeFileUtf8", crate::host::shared_vm::marked_operation!("fsBindingWriteFileUtf8")),
+            ("readdir", crate::host::shared_vm::marked_operation!("fsBindingReaddir")),
+            ("readdirRecursive", crate::host::shared_vm::marked_operation!("fsBindingReaddirRecursive")),
+            ("internalModuleStat", crate::host::shared_vm::marked_operation!("fsBindingInternalModuleStat")),
         ] {
-            let function = c.host_function(crate::host::shared_vm::operation(operation))?;
+            let function = c.host_function(operation.id())?;
             let key = c.string_rooted("name");
             let value = c.string_rooted(name);
             c.define_data_property_rooted(function, key, value, false, false, true)?;

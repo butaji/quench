@@ -1,5 +1,6 @@
 //! Shared-VM adapter for the canonical Node Path string algorithms.
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]
@@ -26,19 +27,19 @@ enum Method {
 
 /// Each method's property name and the host operation that implements it, in [`Method`]
 /// order.
-const METHODS: [(&str, &str); Method::ALL.len()] = [
-    ("join", "pathJoin"),
-    ("resolve", "pathResolve"),
-    ("relative", "pathRelative"),
-    ("basename", "pathBasename"),
-    ("dirname", "pathDirname"),
-    ("extname", "pathExtname"),
-    ("normalize", "pathNormalize"),
-    ("isAbsolute", "pathIsAbsolute"),
-    ("toNamespacedPath", "pathToNamespacedPath"),
-    ("parse", "pathParse"),
-    ("format", "pathFormat"),
-    ("matchesGlob", "pathMatchesGlob"),
+const METHODS: [(&str, MarkedOperation); Method::ALL.len()] = [
+    ("join", marked_operation!("pathJoin")),
+    ("resolve", marked_operation!("pathResolve")),
+    ("relative", marked_operation!("pathRelative")),
+    ("basename", marked_operation!("pathBasename")),
+    ("dirname", marked_operation!("pathDirname")),
+    ("extname", marked_operation!("pathExtname")),
+    ("normalize", marked_operation!("pathNormalize")),
+    ("isAbsolute", marked_operation!("pathIsAbsolute")),
+    ("toNamespacedPath", marked_operation!("pathToNamespacedPath")),
+    ("parse", marked_operation!("pathParse")),
+    ("format", marked_operation!("pathFormat")),
+    ("matchesGlob", marked_operation!("pathMatchesGlob")),
 ];
 
 impl Flavor {
@@ -86,7 +87,7 @@ impl Method {
         METHODS[self as usize].0
     }
 
-    fn operation_name(self) -> &'static str {
+    fn operation_name(self) -> MarkedOperation {
         METHODS[self as usize].1
     }
 
@@ -126,7 +127,7 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
         let namespace = context.object_rooted()?;
         for method in Method::ALL {
             let data = context.string_rooted(flavor.name());
-            let operation = crate::host::shared_vm::operation(method.operation_name());
+            let operation = method.operation_name().id();
             let function = context.host_function_with_data(operation, data)?;
             set(context, namespace, method.name(), function)?;
             if matches!(method, Method::ToNamespacedPath) {
@@ -502,67 +503,7 @@ pub(super) fn path_matches_glob(path: &str, pattern: &str, windows: bool) -> boo
     } else {
         (path.to_owned(), pattern.to_owned())
     };
-    let source = glob_regex_source(&pattern);
-    regex::Regex::new(&source).is_ok_and(|matcher| matcher.is_match(&path))
-}
-
-pub(super) fn glob_regex_source(pattern: &str) -> String {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut regex = String::from("^");
-    let mut index = 0;
-    while index < chars.len() {
-        match chars[index] {
-            '*' => {
-                if chars.get(index + 1) == Some(&'*') {
-                    let segment_start = index == 0 || chars[index - 1] == '/';
-                    if segment_start && chars.get(index + 2) == Some(&'/') {
-                        regex.push_str("(?:[^/]+/)*");
-                        index += 2;
-                    } else {
-                        regex.push_str(".*");
-                        index += 1;
-                    }
-                } else {
-                    regex.push_str("[^/]*");
-                }
-            }
-            '?' => regex.push_str("[^/]"),
-            '[' => {
-                let end = chars[index + 1..].iter().position(|ch| *ch == ']');
-                if let Some(end) = end {
-                    let end = index + 1 + end;
-                    regex.push('[');
-                    let mut start = index + 1;
-                    if chars.get(start) == Some(&'!') {
-                        regex.push('^');
-                        start += 1;
-                    } else if chars.get(start) == Some(&'^') {
-                        regex.push('\\');
-                    }
-                    for ch in &chars[start..end] {
-                        if *ch == '\\' {
-                            regex.push_str("\\\\");
-                        } else {
-                            regex.push(*ch);
-                        }
-                    }
-                    regex.push(']');
-                    index = end;
-                } else {
-                    regex.push_str("\\[");
-                }
-            }
-            ch => {
-                if ".+()|{}^$\\".contains(ch) {
-                    regex.push('\\');
-                }
-                regex.push(ch);
-            }
-        }
-        index += 1;
-    }
-    regex.push('$');
-    regex
+    super::path_glob::Glob::new(&pattern).matches(&path) == Some(true)
 }
 
 fn parse_flavor(name: String) -> Option<Flavor> {

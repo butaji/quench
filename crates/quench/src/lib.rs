@@ -16,6 +16,7 @@ pub mod qimg;
 pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};
+pub use quench_layers::engine::{install_all_lane_rows, install_lane_rows, lane_rows, LaneRow, LANE_ROW_GROUP};
 
 /// The environment variable naming the file a `quench-node-test` case process writes its result to.
 pub const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";

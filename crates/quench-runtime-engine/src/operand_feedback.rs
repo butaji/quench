@@ -166,7 +166,7 @@ pub(crate) use quench_runtime::vm::engine_types::Records;
 #[quench_macros::ext(RecordsOps1)]
 impl Records {
     /// A record that holds nothing, whose bytes the feedback bytes are.
-    fn blank() -> LaneInstruction {
+    pub(crate) fn blank() -> LaneInstruction {
         LaneInstruction {
             handler: std::ptr::null(),
             operand: LaneOperand { jump: 0 },

@@ -115,7 +115,9 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{start_osr_region, RegionStart, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+#[cfg(feature = "jit")]
+pub(crate) use osr_compile::compile_osr_region;
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
@@ -145,6 +147,7 @@ pub(crate) mod lane_sites;
 use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
+#[path = "compiled/lane_method.rs"] pub(crate) mod lane_method;
 #[path = "compiled/site_posterior.rs"]
 pub(crate) mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(crate) mod entry_cell;
@@ -157,6 +160,7 @@ pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fing
 pub(crate) mod lane_facts;
 #[path = "compiled/tier_model.rs"] pub(crate) mod tier_model;
 #[path = "compiled/loop_model.rs"] pub(crate) mod loop_model;
+#[path = "compiled/loop_tier_up.rs"] pub(crate) mod loop_tier_up;
 pub(crate) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 pub(crate) mod static_loops;
@@ -201,7 +205,6 @@ use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
 pub(crate) mod wasm_codes_check;
-#[cfg(target_arch = "x86_64")]
 pub(crate) mod wasm_call_vm;
 pub(crate) use lane_unit::{CalleeBinding, CallTarget, InlinedCall};
 #[cfg(test)]
@@ -927,13 +930,6 @@ fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value
     integer_code(&mut stage, value)
 }
 
-/// Binding time changes the table address, never the packed-value semantics.
-#[derive(Clone, Copy)]
-enum NarrowTable {
-    Process,
-    Linked(u32),
-}
-
 /// The linked data symbol `symbol` as a global value of `builder`'s function.
 fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
     let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
@@ -943,19 +939,24 @@ fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Glo
     })
 }
 
-/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
-/// passed to `join`.
+/// The narrow decode's upper-word table in a live compile: this process's own table.
+fn process_narrow_table(builder: &mut FunctionBuilder<'_>) -> ir::Value {
+    object_slots::emit(builder).constant(quench_runtime::value::NarrowLayout::upper_words() as u64)
+}
+
+/// The narrow decode's upper-word table of a statically linked image: the object's copy.
+fn linked_narrow_table(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Value {
+    let global = linked_data_symbol(builder, symbol);
+    object_slots::emit(builder).symbol_address(global)
+}
+
+/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow` and the
+/// table `address` it decodes through, passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
-    table: NarrowTable, join: ir::Block)
+    address: ir::Value, join: ir::Block)
 {
     use quench_runtime::staged::machine::{Lane, Unary};
-    let table = match table {
-        NarrowTable::Process => object_slots::emit(builder).constant(quench_runtime::value::NarrowLayout::upper_words() as u64),
-        NarrowTable::Linked(symbol) => {
-            let global = linked_data_symbol(builder, symbol);
-            object_slots::emit(builder).symbol_address(global)
-        }
-    };
+    let table = address;
     let mut stage = object_slots::emit(builder);
     let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
     let encoded = quench_runtime::staged::object::decode_narrow_through(&mut stage, narrow, table);
@@ -1060,6 +1061,30 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            // Mach-O has no `.pushsection`; the trampolines are laid out in this function's own
+            // section, which never runs (the instance exists for its symbols alone).
+            #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
+            // SAFETY: as above. `.subsections_via_symbols` makes each trampoline its own
+            // subsection, so `ld64 -dead_strip` keeps only the helpers an image names.
+            unsafe {
+                core::arch::asm!(
+                    $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".subsections_via_symbols",
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))]
+            // SAFETY: as above. `.subsections_via_symbols` makes each trampoline its own
+            // subsection, so `ld64 -dead_strip` keeps only the helpers an image names.
+            unsafe {
+                core::arch::asm!(
+                    $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".subsections_via_symbols",
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -1284,7 +1309,17 @@ impl LaneHelpers {
     pub(crate) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
         match self {
             Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
-            Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
+            Self::Numeric => lane_region::atom_symbol(builder, atom),
+            // An ahead image's atom is a word beside its code (`Symbol::Atom`), which the loader
+            // fills with the running VM's id: an image's atom numbers are its build's, not this
+            // VM's, and an `adrp` can reach a word but not an immediate.
+            Self::Ahead => {
+                use quench_runtime::staged::machine::{Lane, Unary};
+                let base = lane_region::atom_symbol(builder, atom);
+                let mut stage = object_slots::emit(builder);
+                let word = stage.raw_load(Lane::I32, invariant(), base, 0);
+                stage.raw_unary(Unary::ZeroExtend(Lane::I64), word)
+            }
             Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
                 use quench_runtime::staged::machine::{Lane, Unary};
                 let table = linked_data_symbol(builder, narrow + NATIVE_ATOM_TABLE_OFFSET);
@@ -1542,7 +1577,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[], admitted,
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
@@ -2828,6 +2863,8 @@ fn compiled_reference_target(
         })
 }
 
+/// A Wasm program's compile (`compile_wasm_program`), the route `jit_routes` installs.
+pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, Option<usize>, bool, admission::CompiledUnit) -> Option<CompiledProgram>;
 pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
 use quench_runtime::vm::engine_types::WasmJitDiagnostics;
@@ -7559,8 +7596,14 @@ impl Vm {
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
     /// `unit` (`UnitKind::WasmEager`) says.
     pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
+        // An execution-only build (no `jit`) compiles no Wasm module at run time.
+        #[cfg(feature = "jit")]
+        {
+            let _ = unit;
+            self.programs.compile_wasm_modules_at_first_entry();
+        }
+        #[cfg(not(feature = "jit"))]
         let _ = unit;
-        self.programs.compile_wasm_modules_at_first_entry();
     }
 
     pub(crate) fn native_execution_rejections(&self) -> u64 {
@@ -7636,6 +7679,24 @@ impl Vm {
     /// else `None`, and the activation runs from its entry. `parameters` are the
     /// activation's parameter registers.
     pub(crate) fn js_tier_activation_entry(
+        &mut self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+        parameters: &[Value],
+    ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
+        #[cfg(feature = "jit")]
+        { self.js_tier_activation_entry_compiled(program, id, function, parameters) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, id, function, parameters);
+            None
+        }
+    }
+
+    /// An execution-only build (no `jit`) compiles no function at an activation's entry.
+    #[cfg(feature = "jit")]
+    fn js_tier_activation_entry_compiled(
         &mut self,
         program: &ResidualProgram,
         id: ProgramId,
@@ -7752,6 +7813,18 @@ impl Vm {
     /// of the `Return` that completes the frame; else `None`, the entry counted as an
     /// interpreter fallback, and the untouched frame runs from its entry.
     pub(crate) fn js_tier_frame_entry(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
+        #[cfg(feature = "jit")]
+        { self.js_tier_frame_entry_compiled(program, frame) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, frame);
+            None
+        }
+    }
+
+    /// An execution-only build (no `jit`) compiles no function at an entry.
+    #[cfg(feature = "jit")]
+    fn js_tier_frame_entry_compiled(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
@@ -8052,6 +8125,20 @@ impl Vm {
     /// path. This is an opt-in diagnostic tier; normal root compilation keeps
     /// its current closure behavior.
     fn compile_program_with_diagnostics_and_root_mode(
+        &self,
+        program: ProgramId,
+        env: Value,
+        diagnostics_enabled: bool,
+        root: Option<usize>,
+        root_only: bool,
+        unit: admission::CompiledUnit,
+    ) -> Option<CompiledProgram> {
+        // Without the JIT's routes (`jit_routes`) the program runs in the interpreter.
+        (crate::jit_routes::jit()?.wasm)(self, program, env, diagnostics_enabled, root, root_only, unit)
+    }
+
+    /// `compile_program_with_diagnostics_and_root_mode`'s route, which `jit_routes` installs.
+    fn compile_wasm_program(
         &self,
         program: ProgramId,
         env: Value,
@@ -8593,6 +8680,17 @@ impl Vm {
     /// after the tiers' entry counters and compiles this entry makes (`offer_compiled_in`).
     /// `None` where no tier runs it: the interpreter takes the call.
     pub(crate) fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
+        #[cfg(feature = "jit")]
+        { self.offer_compiled_compiled(caller, id) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (caller, id);
+            None
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn offer_compiled_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
         let (program, env) = {
             let frame = self.frames.get(caller)?;
             (frame.program, frame.env)
@@ -8603,6 +8701,23 @@ impl Vm {
     /// Runs the code `offer_compiled` offered for function `id`, with arguments from frame
     /// `caller`'s register `window`. `None` leaves the call to the interpreter.
     pub(crate) fn run_offered(
+        &mut self,
+        compiled: Rc<CompiledProgram>,
+        caller: usize,
+        id: u32,
+        window: quench_runtime::bytecode::RegisterWindow,
+    ) -> Option<Result<Value, JsError>> {
+        #[cfg(feature = "jit")]
+        { self.run_offered_compiled(compiled, caller, id, window) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (compiled, caller, id, window);
+            None
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn run_offered_compiled(
         &mut self,
         compiled: Rc<CompiledProgram>,
         caller: usize,
@@ -8627,7 +8742,13 @@ impl Vm {
         id: u32,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        self.run_offered_in(compiled, program, env, id, CompiledArgs::Values(args))
+        #[cfg(feature = "jit")]
+        { self.run_offered_in(compiled, program, env, id, CompiledArgs::Values(args)) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (compiled, program, env, id, args);
+            None
+        }
     }
 
     /// Run function `id` of `program` in instance `env` as native code, with
@@ -8640,7 +8761,13 @@ impl Vm {
         id: u32,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        self.run_compiled_inner(program, env, id, CompiledArgs::Values(args))
+        #[cfg(feature = "jit")]
+        { self.run_compiled_inner(program, env, id, CompiledArgs::Values(args)) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, env, id, args);
+            None
+        }
     }
 
     /// Convert an owned argument window or a public Wasm value slice into the
@@ -8851,8 +8978,16 @@ impl Vm {
     /// Makes the root compile of function `id` of Wasm module `program` and installs it; whether
     /// the tier keeps it.
     fn compile_wasm_root(&mut self, program: ProgramId, env: Value, id: u32) -> bool {
-        let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
-        tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
+        #[cfg(feature = "jit")]
+        {
+            let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
+            tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
+        }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, env, id);
+            false
+        }
     }
 
     /// Runs `compiled`, the code `offer_compiled_in` offered for function `id` of `program`, in
@@ -9277,7 +9412,8 @@ mod tests {
         let narrow = builder.block_params(entry)[0];
         let done = builder.create_block();
         let result = builder.append_block_param(done, types::I64);
-        emit_narrow_read(&mut builder, narrow, NarrowTable::Process, done);
+        let table = process_narrow_table(&mut builder);
+        emit_narrow_read(&mut builder, narrow, table, done);
         builder.switch_to_block(done);
         builder.ins().return_(&[result]);
         builder.seal_all_blocks();
@@ -10356,19 +10492,21 @@ mod tests {
 
     #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
-        let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
-        let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
-        let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
-        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
-            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-            vm.programs.enable_js_lane_methods();
-            vm.set_execution_mode(mode);
-            if mode == ExecutionMode::NativeOnly { vm.execute_native_program(&native, true).unwrap(); }
-            else { quench_runtime::test_support::execute(&mut vm, &program).unwrap(); }
-            let atom = vm.lookup_atom("answer").unwrap();
-            // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
-            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
-        }
+        quench_runtime::test_support::on_compile_stack(|| {
+            let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
+            let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
+            let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
+                let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+                vm.programs.enable_js_lane_methods();
+                vm.set_execution_mode(mode);
+                if mode == ExecutionMode::NativeOnly { vm.execute_native_program(&native, true).unwrap(); }
+                else { quench_runtime::test_support::execute(&mut vm, &program).unwrap(); }
+                let atom = vm.lookup_atom("answer").unwrap();
+                // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
+            }
+        });
     }
 
     #[test]

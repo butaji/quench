@@ -16,7 +16,16 @@ use quench_runtime::staged::regexp::{emit_search, PARAMETERS};
 /// Whether this thread's hot regexp programs run natively: only under a compiling mode. The
 /// stencil tier stitches a program after `stitch_runs` searches, the Cranelift tiers compile it
 /// after `native_runs`, each where the mode runs it (`compiler`).
-pub(crate) fn enable(enabled: bool, (stitch_runs, native_runs): (u32, u32)) {
+/// Without the JIT's routes (`jit_routes`) no program compiles.
+pub(crate) fn enable(enabled: bool, runs: (u32, u32)) {
+    match crate::jit_routes::jit() {
+        Some(routes) => (routes.regexp)(enabled, runs),
+        None => quench_regexp::backtrack::native::enable_native_search(false),
+    }
+}
+
+/// `enable`'s route, which `jit_routes` installs.
+pub(crate) fn enable_compiler(enabled: bool, (stitch_runs, native_runs): (u32, u32)) {
     quench_regexp::backtrack::native::set_native_compiler(compiler(stitch_runs, native_runs));
     quench_regexp::backtrack::native::enable_native_search(enabled);
 }

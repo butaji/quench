@@ -195,7 +195,7 @@ impl Vm {
 
     /// The native a field read at `member` defines, as `native_callees` names it.
     fn native_member_callee(&mut self, program: &ResidualProgram, function: u32, code: &[quench_runtime::bytecode::WideInstruction],
-        entered: &cranelift_codegen::bitset::CompoundBitSet, member: usize) -> Option<(quench_runtime::value::Value, quench_runtime::tier_surface::Native, u32)> {
+        entered: &quench_runtime::dataflow::BitSet, member: usize) -> Option<(quench_runtime::value::Value, quench_runtime::tier_surface::Native, u32)> {
         if let Some(GlobalRead::NativeMember { value, native, holder, .. }) = self.method_native(&code[member]) {
             return Some((value, native, holder));
         }
@@ -311,8 +311,8 @@ impl Vm {
 }
 
 /// The PCs a jump or a branch table enters: where control may arrive other than by falling through.
-fn branch_targets(code: &[quench_runtime::bytecode::WideInstruction]) -> cranelift_codegen::bitset::CompoundBitSet {
-    let mut entered = cranelift_codegen::bitset::CompoundBitSet::with_capacity(code.len());
+fn branch_targets(code: &[quench_runtime::bytecode::WideInstruction]) -> quench_runtime::dataflow::BitSet {
+    let mut entered = quench_runtime::dataflow::BitSet::with_capacity(code.len());
     for (pc, instruction) in code.iter().enumerate() {
         quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |successor| {
             if successor != pc + 1 {
@@ -326,7 +326,7 @@ fn branch_targets(code: &[quench_runtime::bytecode::WideInstruction]) -> craneli
 /// The PC of the instruction defining the callee register of the call at `call`, if it is the only
 /// one reaching it: the nearest before the call that writes the register, with no jump landing
 /// between the two.
-fn straight_definition(code: &[quench_runtime::bytecode::WideInstruction], entered: &cranelift_codegen::bitset::CompoundBitSet, call: usize) -> Option<usize> {
+fn straight_definition(code: &[quench_runtime::bytecode::WideInstruction], entered: &quench_runtime::dataflow::BitSet, call: usize) -> Option<usize> {
     let callee = code[call].register_b();
     let defined = (0..call).rev().find(|pc| code[*pc].written_registers().any(|register| register == callee))?;
     (defined + 1..=call).all(|pc| !entered.contains(pc)).then_some(defined)

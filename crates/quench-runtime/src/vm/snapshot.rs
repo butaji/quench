@@ -53,6 +53,7 @@ impl Vm {
             declined_resume: _,
             shared_entry_pair: _,
             share_entry_pair: _,
+            builtins: _,
             main_realm,
             unobserved_jobs_entered: _,
             job_queue_programs: _,
@@ -270,11 +271,12 @@ impl Vm {
         writer.len(atom_text.len());
         atom_text.iter().for_each(|name| writer.str(name));
         writer.len(atom_sequence.appended_len());
-        // Each beside its table hash, which a restoring VM of this build indexes it by.
+        // Each appended name with its text hash, which a restore indexes it by instead of
+        // hashing it again: the hash is a function of the text alone.
         for offset in 0..atom_sequence.appended_len() {
             let name = atom_sequence.appended(offset);
             name.write_snapshot(&mut writer);
-            writer.u64(Self::atom_hash_units(name.units()));
+            writer.u32(name.units().text_hash());
         }
         heap.write_snapshot(&mut writer)?;
         writer.value(*globals);
@@ -295,24 +297,12 @@ impl Vm {
         startup_intrinsics.write_snapshot(&mut writer)?;
         writer.bool(*with_scope_entered);
         programs.write_snapshot(&mut writer)?;
-        // The root shape is every table's first; the others follow their parents. Each is
-        // written whole, its derived facts and last child included: a restoring VM of this
-        // build reads the table back without deriving them again from the chain.
-        writer.len(shapes.len());
-        writer.u16(shapes[0].facts.0);
-        writer.u32(shapes[0].last_child.get());
-        for shape in &shapes[1..] {
-            writer.u32(shape.parent);
-            shape.transition.snap(&mut writer)?;
-            writer.u32(shape.storage_len);
-            writer.u16(shape.facts.0);
-            writer.u32(shape.last_child.get());
-        }
+        // The shape table and its transition index as they stand: fixed-width records and raw
+        // slots, which a restore copies back with no shape made again.
+        writer.records(shapes.iter().map(snap_impls::shape_record));
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
-        let children = transitions.children().collect::<Vec<_>>();
-        writer.u32s(&children);
-        writer.u64s(shape_transitions::ShapeTransitionIndex::hashes(shapes, &children));
+        writer.u64s(transitions.slots());
         shape_lookup::owned_dictionaries(shapes).snap(&mut writer)?;
         symbol_registry.snap(&mut writer)?;
         well_known_symbols.snap(&mut writer)?;
@@ -524,7 +514,7 @@ impl Vm {
     }
 
     /// The atom sequence `write_snapshot` wrote: the base table, then each appended name, which
-    /// the VM indexes again as it appends them, under the hash written beside it.
+    /// the VM indexes again as it appends them.
     fn read_atoms(&mut self, reader: &mut Reader<'_>, native: Option<&AtomTable>) -> SnapshotResult<()> {
         let base = reader.len()?;
         self.atom_text = if let Some(atoms) = native {
@@ -563,49 +553,33 @@ impl Vm {
         }
         for _ in 0..appended {
             let name = JsString::read_snapshot(reader)?;
-            let hash = reader.u64()?;
+            let hash = crate::vm::wtf16::table_hash(reader.u32()?);
             self.insert_dynamic_atom(name, hash);
         }
         Ok(())
     }
 
-    /// The shape table `write_snapshot` wrote, each shape whole as this build derived it: its
-    /// facts and last child are read, not derived again from its chain, and each cached
-    /// transition is indexed under the hash written beside it.
+    /// The shape table `write_snapshot` wrote, record by record as the saved VM held it, and
+    /// its transition index's slots.
     fn read_shapes(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
-        let count = reader.len()?;
-        self.shapes = Shape::table();
-        self.shapes.reserve(count.saturating_sub(self.shapes.len()));
-        self.shapes[0].facts = ShapeFacts(reader.u16()?);
-        self.shapes[0].last_child.set(reader.u32()?);
-        for id in 1..count {
-            let parent = reader.u32()?;
-            if parent as usize >= id {
+        let records = reader.records::<{ snap_impls::SHAPE_RECORD }>()?;
+        let mut shapes = Vec::with_capacity(records.len().max(SHAPE_TABLE_CAPACITY));
+        for (id, record) in records.iter().enumerate() {
+            let shape = snap_impls::shape_of_record(record)?;
+            // A parent precedes its children, and only the first shape, the root, has none.
+            if shape.parent().map_or(id != 0, |parent| parent as usize >= id) {
                 return Err(SnapshotError("snapshot shape follows no parent".into()));
             }
-            self.shapes.push(Shape {
-                parent,
-                transition: Snap::unsnap(reader)?,
-                storage_len: reader.u32()?,
-                facts: ShapeFacts(reader.u16()?),
-                memo: std::cell::Cell::new(ShapeMemo::INITIAL),
-                lookup_index: OnceCell::new(),
-                last_child: std::cell::Cell::new(reader.u32()?),
-            });
+            shapes.push(shape);
         }
+        if shapes.is_empty() {
+            return Err(SnapshotError("snapshot shape table has no root".into()));
+        }
+        self.shapes = shapes;
         self.shape_constructors = Snap::unsnap(reader)?;
         self.shape_accessors = Snap::unsnap(reader)?;
-        let children = reader.u32s()?;
-        let hashes = reader.u64_iter()?;
-        if hashes.len() != children.len() {
-            return Err(SnapshotError("snapshot transition hashes do not match their children".into()));
-        }
-        self.transitions = shape_transitions::ShapeTransitionIndex::with_capacity(children.len());
-        for (child, hash) in children.into_iter().zip(hashes) {
-            if !self.transitions.insert_hashed(&self.shapes, child, hash) {
-                return Err(SnapshotError("snapshot transition names no cached shape".into()));
-            }
-        }
+        self.transitions = shape_transitions::ShapeTransitionIndex::from_slots(self.shapes.len(), reader.u64_iter()?)
+            .ok_or_else(|| SnapshotError("snapshot transition index names no shape".into()))?;
         shape_lookup::restore_owned_dictionaries(&mut self.shapes, Snap::unsnap(reader)?)?;
         Ok(())
     }

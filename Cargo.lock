@@ -546,8 +546,6 @@ dependencies = [
 [[package]]
 name = "cranelift-frontend"
 version = "0.137.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bc727c856bf57eae76c72ac4f9b1eaf49947a2b02f699798262fc8399557b7a"
 dependencies = [
  "cranelift-codegen",
  "hashbrown 0.17.1",
@@ -589,8 +587,6 @@ dependencies = [
 [[package]]
 name = "cranelift-object"
 version = "0.137.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c38304b64d440315410ae0229340dd2087bed7d7e8411a7bb72b4b6a2132db05"
 dependencies = [
  "anyhow",
  "cranelift-codegen",

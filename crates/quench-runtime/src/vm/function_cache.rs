@@ -24,6 +24,13 @@ impl Vm {
         })
     }
 
+    /// Records `value`, the closure of `program`'s function `function` a lane made, for an image's
+    /// `ClosureOf(function)` recipe (`cached_functions`).
+    pub fn record_closure(&mut self, program: ProgramId, function: u32, value: Value) {
+        if self.heap.function(value).is_none() { return; }
+        if let Some(handle) = self.heap.weak_handle(value) { self.function_values.record((program, function), [handle]); }
+    }
+
     /// Drops the cache's handles a collection freed, before their slots are reused. A minor
     /// collection frees only young cells, so it visits only the entries that hold one.
     pub(super) fn prune_function_values(&mut self, full: bool) {
@@ -66,8 +73,10 @@ pub(super) struct FunctionValues {
 impl FunctionValues {
     /// Records `handles`, new closures of `key`, which are young until a collection promotes them.
     pub(super) fn record(&mut self, key: (ProgramId, u32), handles: impl IntoIterator<Item = WeakHandle>) {
-        self.entries.entry(key).or_default().extend(handles);
-        self.young.push(key);
+        let entry = self.entries.entry(key).or_default();
+        for handle in handles {
+            if !entry.contains(&handle) { entry.push(handle); self.young.push(key); }
+        }
     }
 }
 

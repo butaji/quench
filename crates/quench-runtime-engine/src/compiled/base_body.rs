@@ -13,6 +13,7 @@ use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
 use super::admission::{refuse, Refusal};
+#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use quench_runtime::code_dependencies::{InstanceofFact, Invalidation};
 use quench_runtime::vm::global_facts::GlobalTable;
 use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
@@ -334,6 +335,19 @@ impl Vm {
     /// `NotAmortized`), or indexing a typed parameter.
     pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+        // An execution-only build (no `jit`) runs no stencil tier.
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, function, parameters, caller);
+            return Err(LaneBodyOutcome::Declined);
+        }
+        #[cfg(feature = "jit")]
+        self.base_unit_or_outcome_compiled(program, function, parameters, caller)
+    }
+
+    #[cfg(feature = "jit")]
+    fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         self.keep_slot_representations();
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
@@ -356,9 +370,19 @@ impl Vm {
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
-        if !cfg!(feature = "jit") {
-            return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
+        // An execution-only build (no `jit`) stitches no stencil body.
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (unit, program, function, generic, parameters, caller, direct);
+            return LaneBodyOutcome::Declined;
         }
+        #[cfg(feature = "jit")]
+        self.base_body_work_compiled(unit, program, function, generic, parameters, caller, direct)
+    }
+
+    #[cfg(feature = "jit")]
+    fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         let _ = unit;
         // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, 0);
@@ -466,7 +490,7 @@ pub(crate) struct ImageBody {
 }
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
-pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quench_runtime::compile::aot_facts::AotFacts) -> Result<ImageBody, String> {
+pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<ImageBody, String> {
     let _focus = quench_runtime::fallback::focus(program, function, 0);
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
@@ -477,7 +501,10 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quenc
     if let Some(wasm) = code.iter().find(|instruction| !planned(instruction)) {
         return Err(format!("function {function}: the wasm instruction {:?} has no base row", wasm.op()));
     }
-    let callees = Callees::proven(program, function, &code, facts);
+    // The base body takes no proven call: its direct rows' image records are not wired (see
+    // `image_calls`), and the lane body inlines the calls it proves itself. The base body is the
+    // lane body's join target, which needs no call of its own.
+    let callees = Callees::default();
     let (length, live) = (code.len(), program.shared_register_root_masks(function));
     let reason = if length == 0 { "an empty function" } else { "no liveness masks" };
     let region = LoopRegion::of_whole_function(code, &[], live).ok_or_else(|| format!("function {function} ({length} instructions) has no base span: {reason}"))?;
@@ -491,22 +518,15 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quenc
     let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
-    let calls = image_calls(&built, facts.function_facts(function))?;
+    let calls = image_calls(&built)?;
     Ok(ImageBody { scratch: built.scratch, code: built.code, symbols: built.symbols, entries: built.entries, generic: built.generic, calls })
 }
 
 /// Each direct row's record with its site and callee: the rows' `Symbol::CallRecord`s in code order are
 /// the records in row order (`Body::records`; an image body has no builtin row, whose record names none).
-fn image_calls(built: &Body, facts: quench_runtime::compile::aot_facts::FunctionFacts<'_>) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
-    let sites: Vec<u32> = built.symbols.iter().filter_map(|site| match site.symbol {
-        crate::aot_image::Symbol::CallRecord { pc, .. } => Some(pc),
-        _ => None,
-    }).collect();
-    if sites.len() != built.records.len() { return Err("a direct row names no call record".into()); }
-    sites.into_iter().zip(&built.records).map(|(pc, record)| {
-        let callee = facts.call_target(pc).ok_or("a direct row of an unproven call")?;
-        Ok((pc, callee, **record))
-    }).collect()
+fn image_calls(built: &Body) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
+    if !built.records.is_empty() { return Err("a base body planned a direct row".into()); }
+    Ok(Box::default())
 }
 
 #[cfg(test)]

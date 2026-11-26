@@ -6,6 +6,7 @@ use super::{
     crypto_digest_error::{self as errors, Operation},
     crypto_digest_state::{HashState, HmacState},
 };
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use crate::host::NodeHost;
 use quench_runtime::{CollectionContext, HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::Arc;
@@ -126,7 +127,7 @@ fn register(c: &mut Context<'_>, receiver: RootId, value: Value) -> Result<RootI
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let index = {
         let mut shared = shared.borrow_mut();
-        let state = &mut shared.crypto_hashes;
+        let state = &mut *shared.crypto_hashes;
         let handle = Some(Handle { identity, value });
         match state.free.pop() {
             Some(index) => {
@@ -334,23 +335,31 @@ fn one_shot_error(c: &mut Context<'_>, name: &str, error: DigestError) -> Rooted
     }
 }
 /// The native handle classes: name, constructor operation and prototype methods.
-const CLASSES: [(&str, &str, &[(&str, &str)]); 2] = [
-    ("Hash", "cryptoNativeHashNew", &[("update", "cryptoNativeHashUpdate"), ("digest", "cryptoNativeHashDigest")]),
+const CLASSES: [(&str, MarkedOperation, &[(&str, MarkedOperation)]); 2] = [
+    (
+        "Hash",
+        marked_operation!("cryptoNativeHashNew"),
+        &[("update", marked_operation!("cryptoNativeHashUpdate")), ("digest", marked_operation!("cryptoNativeHashDigest"))],
+    ),
     (
         "Hmac",
-        "cryptoNativeHmacNew",
-        &[("init", "cryptoNativeHmacInit"), ("update", "cryptoNativeHashUpdate"), ("digest", "cryptoNativeHashDigest")],
+        marked_operation!("cryptoNativeHmacNew"),
+        &[
+            ("init", marked_operation!("cryptoNativeHmacInit")),
+            ("update", marked_operation!("cryptoNativeHashUpdate")),
+            ("digest", marked_operation!("cryptoNativeHashDigest")),
+        ],
     ),
 ];
 /// A class whose instances and methods share the slot key as function data.
-fn class(c: &mut Context<'_>, slot_key: RootId, name: &str, operation: &str, methods: &[(&str, &str)]) -> Result<RootId, RootedError> {
-    let constructor = c.host_constructor_with_data(crate::host::shared_vm::operation(operation), slot_key)?;
+fn class(c: &mut Context<'_>, slot_key: RootId, name: &str, operation: MarkedOperation, methods: &[(&str, MarkedOperation)]) -> Result<RootId, RootedError> {
+    let constructor = c.host_constructor_with_data(operation.id(), slot_key)?;
     let key = c.string_rooted("name");
     let text = c.string_rooted(name);
     c.define_data_property_rooted(constructor, key, text, false, false, true)?;
     let prototype = c.object_rooted()?;
     for (name, operation) in methods {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, slot_key)?;
+        let function = c.host_function_named_with_data(operation.id(), name, slot_key)?;
         put(c, prototype, name, function)?;
     }
     let key = c.string_rooted("constructor");
@@ -380,27 +389,30 @@ pub(crate) fn binding(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Ro
     })
 }
 
-pub(crate) fn prune(context: &mut CollectionContext<'_>) {
-    let shared = context.host_as::<crate::host::NodeHost>().shared_state();
-    let mut shared = shared.borrow_mut();
-    let state = &mut shared.crypto_hashes;
-    for (index, slot) in state.handles.iter_mut().enumerate() {
-        if slot.as_ref().is_some_and(|handle| !context.host_weak_root_is_live(handle.identity)) {
-            let handle = slot.take().expect("collected hash slot");
-            state.free.push(index);
-            context.release_host_weak_root(handle.identity);
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let state = std::mem::take(&mut *shared.borrow_mut().crypto_hashes);
+        for handle in state.handles.into_iter().flatten() {
+            runtime.release_host_weak_root(handle.identity);
         }
     }
-    if state.free.len() == state.handles.len() {
-        state.handles.clear();
-        state.free.clear();
-    }
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let state = std::mem::take(&mut shared.borrow_mut().crypto_hashes);
-    for handle in state.handles.into_iter().flatten() {
-        runtime.release_host_weak_root(handle.identity);
+
+    fn prune_at_collection(context: &mut CollectionContext<'_>) {
+        let shared = context.host_as::<crate::host::NodeHost>().shared_state();
+        let mut shared = shared.borrow_mut();
+        let state = &mut *shared.crypto_hashes;
+        for (index, slot) in state.handles.iter_mut().enumerate() {
+            if slot.as_ref().is_some_and(|handle| !context.host_weak_root_is_live(handle.identity)) {
+                let handle = slot.take().expect("collected hash slot");
+                state.free.push(index);
+                context.release_host_weak_root(handle.identity);
+            }
+        }
+        if state.free.len() == state.handles.len() {
+            state.handles.clear();
+            state.free.clear();
+        }
     }
 }
 

@@ -88,26 +88,26 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         put(c, api, "set", set)?;
         let result = c.object_rooted()?;
         let constructors = [
-            ("Zlib", "Zlib"),
-            ("ZstdCompress", "ZstdCompress"),
-            ("ZstdDecompress", "ZstdDecompress"),
-            ("BrotliEncoder", "BrotliEncoder"),
-            ("BrotliDecoder", "BrotliDecoder"),
+            ("Zlib", crate::host::shared_vm::marked_operation!("Zlib")),
+            ("ZstdCompress", crate::host::shared_vm::marked_operation!("ZstdCompress")),
+            ("ZstdDecompress", crate::host::shared_vm::marked_operation!("ZstdDecompress")),
+            ("BrotliEncoder", crate::host::shared_vm::marked_operation!("BrotliEncoder")),
+            ("BrotliDecoder", crate::host::shared_vm::marked_operation!("BrotliDecoder")),
         ];
         for (name, operation) in constructors {
             let ctor =
-                c.host_constructor_with_data(crate::host::shared_vm::operation(operation), api)?;
+                c.host_constructor_with_data(operation.id(), api)?;
             let proto = get(c, ctor, "prototype")?;
             for (name, op) in [
-                ("write", "zlibNativeWrite"),
-                ("writeSync", "zlibNativeWriteSync"),
-                ("close", "zlibNativeClose"),
-                ("init", "zlibNativeInit"),
-                ("params", "zlibNativeParams"),
-                ("reset", "zlibNativeReset"),
+                ("write", crate::host::shared_vm::operation!("zlibNativeWrite")),
+                ("writeSync", crate::host::shared_vm::operation!("zlibNativeWriteSync")),
+                ("close", crate::host::shared_vm::operation!("zlibNativeClose")),
+                ("init", crate::host::shared_vm::operation!("zlibNativeInit")),
+                ("params", crate::host::shared_vm::operation!("zlibNativeParams")),
+                ("reset", crate::host::shared_vm::operation!("zlibNativeReset")),
             ] {
                 let f = c.host_function_named_with_data(
-                    crate::host::shared_vm::operation(op),
+                    op,
                     name,
                     api,
                 )?;

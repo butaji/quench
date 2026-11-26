@@ -10,6 +10,8 @@ pub(super) enum Key {
     Slot { owner: u32, slot: u16 },
     /// The named property `atom` of any object: every store of that name, wherever it lands.
     Member(u32),
+    /// A method `atom` stored on class `class`'s static object (`instance: false`) or its prototype.
+    MemberOn { class: u32, instance: bool, atom: u32 },
 }
 
 /// Where a register's value was read from, which the census follows to the closure it names.
@@ -19,6 +21,14 @@ pub(super) enum Origin {
     Binding(Key),
     /// The value of a named property `atom` read off some object (a method read before its call).
     Member(u32),
+    /// A property-key constant, by the atom its text interns to.
+    Atom(u32),
+    /// The prototype of class `function` (`Class.prototype`).
+    Prototype(u32),
+    /// An instance of class `function` (`new`).
+    Instance(u32),
+    /// A method `atom` read on class `function`'s static object (`instance: false`) or prototype.
+    MemberOn { class: u32, instance: bool, atom: u32 },
 }
 
 /// What a register is known to hold at a point: its type in the one fact lattice
@@ -47,6 +57,46 @@ impl Fact {
     /// The closure of function `function`.
     pub(super) const fn closure(function: u32) -> Self {
         Self::of(Type::function_body(function))
+    }
+
+    /// The property-key constant `atom`.
+    pub(super) const fn atom(atom: u32) -> Self {
+        Self::from(Origin::Atom(atom))
+    }
+
+    /// The prototype of class `class` (`Class.prototype`).
+    pub(super) const fn prototype(class: u32) -> Self {
+        Self::from(Origin::Prototype(class))
+    }
+
+    /// An instance of class `class` (`new`).
+    pub(super) const fn instance(class: u32) -> Self {
+        Self::from(Origin::Instance(class))
+    }
+
+    /// The method `atom` read on class `class`'s static object (`instance: false`) or prototype.
+    pub(super) const fn member_on(class: u32, instance: bool, atom: u32) -> Self {
+        Self::from(Origin::MemberOn { class, instance, atom })
+    }
+
+    /// The class object `self` is: a closure's constructor (`instance: false`), or a prototype or
+    /// instance of one (`instance: true`).
+    pub(super) fn class_site(self) -> Option<(u32, bool)> {
+        if let Some(class) = self.ty.body_index() {
+            return Some((class, false));
+        }
+        match self.origin? {
+            Origin::Prototype(class) | Origin::Instance(class) => Some((class, true)),
+            _ => None,
+        }
+    }
+
+    /// The atom `self` is the property-key constant of, if it is one.
+    pub(super) fn atom_key(self) -> Option<u32> {
+        match self.origin? {
+            Origin::Atom(atom) => Some(atom),
+            _ => None,
+        }
     }
 
     pub(super) fn is_number(self) -> bool {

@@ -62,10 +62,10 @@ fn crypto_binding(context: &mut NativeContext<'_>, native: RootId) -> Result<Roo
 /// SecureContext's native methods, then its configuration methods the engine supports.
 fn install_context_methods(context: &mut NativeContext<'_>, prototype: RootId) -> Result<(), RootedError> {
     let native = [
-        ("init", "tlsContextInit"),
-        ("setOptions", "tlsContextSetOptions"),
-        ("getMinProto", "tlsContextGetMinProto"),
-        ("getMaxProto", "tlsContextGetMaxProto"),
+        ("init", crate::host::shared_vm::marked_operation!("tlsContextInit")),
+        ("setOptions", crate::host::shared_vm::marked_operation!("tlsContextSetOptions")),
+        ("getMinProto", crate::host::shared_vm::marked_operation!("tlsContextGetMinProto")),
+        ("getMaxProto", crate::host::shared_vm::marked_operation!("tlsContextGetMaxProto")),
     ];
     let engine_methods = ["setClientCertEngine", "setEngineKey"];
     let configured = super::configuration::METHODS
@@ -74,7 +74,7 @@ fn install_context_methods(context: &mut NativeContext<'_>, prototype: RootId) -
     let methods = native.into_iter().map(|(name, operation)| (name, Some(operation))).chain(configured.map(|name| (*name, None)));
     for (name, operation) in methods {
         let function = match operation {
-            Some(operation) => context.host_function(crate::host::shared_vm::operation(operation))?,
+            Some(operation) => context.host_function(operation.id())?,
             None => {
                 let action = context.string_rooted(name);
                 context.host_function_with_data(crate::host::shared_vm::operation!("tlsContextConfigure"), action)?

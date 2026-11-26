@@ -51,7 +51,7 @@ mod tag {
 
 impl Native {
     /// One past the last native's discriminant.
-    pub const COUNT: u16 = Native::DataViewInitialize as u16 + 1;
+    pub const COUNT: u16 = Native::PrintError as u16 + 1;
 
     pub const fn from_discriminant(index: u16) -> Option<Self> {
         if index >= Self::COUNT {
@@ -476,8 +476,10 @@ impl EnvironmentRecord {
         let parent = reader.value()?;
         let function = reader.u32()?;
         let marked = reader.bool()?;
-        let values = reader.values()?;
-        let mut slots = crate::heap::ThinBoxSlice::from(values.into_iter().map(EnvironmentSlot).collect::<Vec<_>>());
+        // Read straight into the record's own slice: no list of values copied over.
+        let mut slots = crate::heap::ThinBoxSlice::from_exact_iter(
+            reader.u64_iter()?.map(|bits| EnvironmentSlot(Value::from_bits(bits))),
+        );
         if marked {
             slots.mark();
         }

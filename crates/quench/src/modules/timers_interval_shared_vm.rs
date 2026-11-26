@@ -89,11 +89,11 @@ pub(crate) fn set_interval(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
     put(c, state, WAITERS, waiters)?;
     let iterator = c.object_rooted()?;
     for (name, operation) in [
-        ("next", "timersIntervalNext"),
-        ("return", "timersIntervalReturn"),
-        ("throw", "timersIntervalThrow"),
+        ("next", crate::host::shared_vm::marked_operation!("timersIntervalNext")),
+        ("return", crate::host::shared_vm::marked_operation!("timersIntervalReturn")),
+        ("throw", crate::host::shared_vm::marked_operation!("timersIntervalThrow")),
     ] {
-        let method = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, state)?;
+        let method = c.host_function_named_with_data(operation.id(), name, state)?;
         c.define_named_data_property_rooted(iterator, name, method, true, false, true)?;
     }
     let global = c.global_root()?;
