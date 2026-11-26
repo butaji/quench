@@ -3715,7 +3715,7 @@ fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) -> Option<V
 
 /// A typed array's element at an index key (`Vm::plain_typed_element`), which no dense array
 /// read before it serves: the site then reads it through its typed element row
-/// (`TYPED_SITE`), whose kind the record's immediate holds (`requicken_typed`).
+/// (`TYPED_KIND_SITES`), whose site fixes the kind (`requicken_typed`).
 fn row_typed_element(ip: Ip, vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_typed_element(base, key)?;
     vm.publish_typed_view(base);
@@ -3854,7 +3854,7 @@ fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Value, value: V
 }
 
 /// A store of a number at an index of a typed array, which none of the array and symbol
-/// paths before it serve: the site then stores through its typed element row (`TYPED_SITE`).
+/// paths before it serve: the site then stores through its typed element row (`TYPED_KIND_SITES`).
 fn row_typed_store(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
     let stored = vm
         .array_index_key(key)
@@ -4427,55 +4427,51 @@ const FIELD_LEAF_READ: u16 = {
     }
 };
 
-/// The site fact of a keyed access of a typed array's element (`requicken_typed`): the row proves
-/// the array's view for the element kind its record's immediate holds (`LaneFrame::kept_view`),
-/// and reads or stores the element inline; a miss takes the host path (`row_index_read_miss`,
-/// `row_index_write`), which records the kind again.
-// merge: HEAD's typed element rows are restored: the shared `requicken_typed` and `row_typed_element` use them.
-pub(crate) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
-
-/// The typed sites whose rows fix the element kind when compiled: the first three native kinds
-/// (`typed_elements::native_kind_at` 0, 1, 2: Float64, Int32, Uint8), the kinds most code indexes. Their
-/// rows read and store with no dispatch on the kind; any other kind's record keeps `TYPED_SITE`, whose
-/// row reads the kind from its immediate.
-pub(crate) const TYPED_FLOAT64_SITE: u8 = own_site(false, OWN_FORMS.len() + 27);
-pub(crate) const TYPED_INT32_SITE: u8 = own_site(false, OWN_FORMS.len() + 28);
-pub(crate) const TYPED_UINT8_SITE: u8 = own_site(false, OWN_FORMS.len() + 29);
-
-/// The native kind index a typed site fixes (`TYPED_FLOAT64_SITE`..), `None` for any other site.
-pub(crate) const fn typed_site_kind(site: u8) -> Option<u32> {
-    match site {
-        TYPED_FLOAT64_SITE => Some(0),
-        TYPED_INT32_SITE => Some(1),
-        TYPED_UINT8_SITE => Some(2),
-        _ => None,
+/// The site facts of a keyed access of a typed array's element, one per native kind
+/// (`typed_elements::native_kind_at`; `requicken_typed`): the row proves the array's view for
+/// the kind its site fixes (`LaneFrame::kept_view`) and reads or stores the element inline with
+/// no dispatch on the kind; a miss takes the host path (`row_index_read_miss`, `row_index_write`),
+/// which records the kind again.
+const TYPED_KIND_SITES: [u8; quench_runtime::staged::typed_elements::NATIVE_KINDS] = {
+    const FORMS: [usize; quench_runtime::staged::typed_elements::NATIVE_KINDS] = [26, 27, 28, 29, 51, 52, 53, 54, 55];
+    let mut sites = [0; quench_runtime::staged::typed_elements::NATIVE_KINDS];
+    let mut index = 0;
+    while index < FORMS.len() {
+        sites[index] = own_site(false, OWN_FORMS.len() + FORMS[index]);
+        index += 1;
     }
+    sites
+};
+
+/// The native kind index a typed site fixes (`TYPED_KIND_SITES`), `None` for any other site.
+pub(crate) const fn typed_site_kind(site: u8) -> Option<u32> {
+    let mut index = 0;
+    while index < TYPED_KIND_SITES.len() {
+        if TYPED_KIND_SITES[index] == site {
+            return Some(index as u32);
+        }
+        index += 1;
+    }
+    None
 }
 
-/// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
-pub(crate) const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
-
-/// The generated typed keyed write (`generated_row` of `ELEMENT_WRITE`, `TYPED_SITE`).
-pub(crate) const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
-
-/// The typed keyed read or write row of the native kind at `index`: a fixed kind's own row
-/// (`typed_site_kind`), else the row that reads the kind from the record.
+/// The typed keyed read or write row of the native kind at `index`, whose site fixes the kind.
 pub(crate) const fn element_typed_row(read: bool, index: u32) -> Handler {
-    match (read, index) {
-        (true, 0) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_FLOAT64_SITE),
-        (true, 1) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_INT32_SITE),
-        (true, 2) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_UINT8_SITE),
-        (true, _) => element_typed_read_row(),
-        (false, 0) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_FLOAT64_SITE),
-        (false, 1) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_INT32_SITE),
-        (false, 2) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_UINT8_SITE),
-        (false, _) => element_typed_write_row(),
+    macro_rules! rows {
+        ($($index:literal)*) => {
+            match (read, index) {
+                $((true, $index) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_KIND_SITES[$index]),
+                (false, $index) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_KIND_SITES[$index]),)*
+                _ => panic!("no native typed kind at this index"),
+            }
+        };
     }
+    rows!(0 1 2 3 4 5 6 7 8)
 }
 
 /// Whether `handler` is a typed keyed read row (`read`) or write row, of any kind (`element_typed_row`).
 pub(crate) fn is_typed_element_row(handler: *const (), read: bool) -> bool {
-    (0..4).any(|index| element_typed_row(read, index) as *const () == handler)
+    (0..TYPED_KIND_SITES.len() as u32).any(|index| element_typed_row(read, index) as *const () == handler)
 }
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),

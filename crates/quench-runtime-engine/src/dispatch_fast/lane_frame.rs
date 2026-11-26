@@ -459,7 +459,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The form hint the VM's own-field store left for the store record, which the row writes to
     /// the record once the store completes (`PropertyFrame::field_store_host`).
     stored: Option<quench_runtime::vm::FieldCache>,
-    /// The element kind a typed element row (`TYPED_SITE`) observed, and the typed array record
+    /// The element kind a typed element row (`TYPED_KIND_SITES`) observed, and the typed array record
     /// pages the view proof reads (`Heap::typed_view_directory`); none elsewhere.
     typed: Option<(quench_runtime::staged::typed_elements::NativeKind, (*const usize, usize))>,
     /// The VM's Math calls, for a Math row (`PropertyFrame::math_call`); none elsewhere.
@@ -2062,7 +2062,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
         Some(quench_runtime::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false, double: None, uncounted: false })
     }
 
-    /// The typed view of `base` for the element kind the site observed (`TYPED_SITE`): the view
+    /// The typed view of `base` for the element kind the site observed (`TYPED_KIND_SITES`): the view
     /// proof's loads, which leave to the host path (`row_index_read_miss`, `row_index_write`) where
     /// they fail. A row with no typed site keeps no view, as before.
     #[inline(always)]
