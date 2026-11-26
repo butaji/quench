@@ -2159,7 +2159,7 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
     #[inline(always)]
     fn wide(self) -> WideInstruction {
         // SAFETY: registers fit (`fields_fit_in_lane`); flagged records are stripped here or missed first.
-        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || FLAG == FLAG_LOCAL_RESULT || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
+        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || local_result_site(OP, FLAG) || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
             self.0.a & quench_runtime::bytecode::REGISTER_MASK
         } else { self.0.a };
         unsafe {
@@ -2253,11 +2253,11 @@ pub(crate) const FLAG_KEPT_OBJECT: u8 = 18;
 pub(crate) const FLAG_REGISTERS: u8 = 19;
 /// `LaneFields`' `FLAG` for a record whose row completes its result itself (`returning_row`).
 pub(crate) const FLAG_COMPLETING: u8 = 20;
-/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`) whose result is a numeric local target
-/// (`WideInstruction::numeric_local_target`): its `a` names a local slot of the running frame, not a register.
-/// The row computes into that register number, then moves the value to the frame's slot and puts the
-/// register back (`numeric_local_slot`), as the VM's completion does (`Vm::run_row_completed`).
+/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`) whose `a` names a numeric local target's
+/// frame slot: the row computes into that register number, moves the value to the slot and puts the register
+/// back (`numeric_local_slot`, as `Vm::run_row_completed`). Other rows' `FLAG`s are site facts (21 is `HELD_OTHER_THIS`).
 pub(crate) const FLAG_LOCAL_RESULT: u8 = 21;
+pub(crate) const fn local_result_site(op: u16, flag: u8) -> bool { flag == FLAG_LOCAL_RESULT && (op == quench_runtime::staged::BINARY_ROW || op == quench_runtime::staged::NUMERIC_ADD_ROW) }
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2585,7 +2585,7 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 /// (`store_name_first_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
-    if FLAG == FLAG_LOCAL_RESULT {
+    if local_result_site(op as u16, FLAG) {
         return general_step_in_lane;
     }
     // A `Binary` the row leaves tries the lane's pure operation before the general step.

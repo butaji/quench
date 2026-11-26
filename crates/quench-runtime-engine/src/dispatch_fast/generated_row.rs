@@ -114,7 +114,7 @@ lane_handler! {
         // A record whose result carries flags holds the general step from its edge on (`derive_lane_view`,
         // `requicken`): this row's result is a register, stated so the decode's tests fold.
         if const { LaneFields::<OP, FLAG>::OPCODE.result_layout().allowed_flags() != 0 && !crate::dispatch_fast::sink_site(FLAG)
-            && FLAG != FLAG_LOCAL_RESULT
+            && !local_result_site(OP, FLAG)
             && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } {
             unsafe { std::hint::assert_unchecked(i.a <= quench_runtime::bytecode::REGISTER_MASK) }
         }
@@ -156,7 +156,7 @@ lane_handler! {
         // A numeric local target: the frame's slot the value moves to, and the register of that number the
         // row writes, put back once it has (`FLAG_LOCAL_RESULT`). A record outside a frame run takes the
         // general step.
-        let local = if const { FLAG == FLAG_LOCAL_RESULT } {
+        let local = if const { local_result_site(OP, FLAG) } {
             let register = i.a & quench_runtime::bytecode::REGISTER_MASK;
             let Some(slot) = (unsafe { crate::dispatch_fast::numeric_local_slot(cx, register) }) else {
                 sibling!(general_step_in_lane, r, ip, view)
@@ -435,7 +435,7 @@ lane_handler! {
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }
             Step::Unresolved if property => property_miss!(),
-            Step::Value(value) if const { FLAG == FLAG_LOCAL_RESULT } => {
+            Step::Value(value) if const { local_result_site(OP, FLAG) } => {
                 let Some((register, slot, kept)) = local else { unreachable!() };
                 // SAFETY: `numeric_local_slot` gave a live local slot of the running frame.
                 unsafe { *slot = Value::from_bits(value) };
