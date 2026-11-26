@@ -208,6 +208,9 @@ impl Vm {
         } else if self.heap.is_function_value(value) {
             "Function"
         } else {
+            // Object.prototype.toString's builtinTag, a separate concept from `Cell::class_name`
+            // (BigInt and Symbol read as Object here). The spec's builtinTag names only Date,
+            // RegExp and Error among these cells; the buffer, view and weak rows are extra.
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
