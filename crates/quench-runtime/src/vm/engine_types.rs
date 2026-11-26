@@ -472,7 +472,8 @@ pub struct CompiledJsFunction {
     pub result: NativeNumberResult,
     pub params: usize,
     pub mapped_bytes: usize,
-    #[cfg(any(test, feature = "test-support"))]
+    /// Test counter, kept in every build: quench-runtime's `test-support` feature unifies on in a
+    /// workspace check while the engine crate that builds this struct is not `cfg(test)`.
     pub native_entries: std::cell::Cell<u64>,
 }
 
@@ -785,9 +786,9 @@ pub struct CompiledFunction {
     pub entry: WasmEntry,
     pub params: Vec<crate::WasmType>,
     pub result: Option<crate::WasmType>,
-    #[cfg(any(test, feature = "test-support"))]
+    /// Test counter, kept in every build: quench-runtime's `test-support` feature unifies on in a
+    /// workspace check while the engine crate that builds this struct is not `cfg(test)`.
     pub native_entries: std::cell::Cell<u64>,
-    #[cfg(any(test, feature = "test-support"))]
     pub direct_reference_entries: std::cell::Cell<u64>,
 }
 
