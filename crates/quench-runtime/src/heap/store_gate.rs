@@ -55,6 +55,24 @@ impl Heap {
         !self.rc_active
     }
 
+    /// Whether an add of `value` at `slot` of `shape` (the add's after-shape) changes no slot
+    /// observation: slot values are tracked and the slot's observed type already holds the value's
+    /// class (`ValueArena::slot_observation`), so `note_shape_value` would widen nothing.
+    #[inline(always)]
+    pub(crate) fn add_observation_holds(&self, shape: u32, slot: usize, value: Value) -> bool {
+        self.properties.tracks() && !value.is_deleted() && slot < self.properties.shape_length(shape) && {
+            let held = self.properties.slot_observation(shape, slot);
+            held == crate::typed_ir::SlotType::Tagged || held.join(crate::typed_ir::SlotType::of(value)) == held
+        }
+    }
+
+    /// Notes an object's move from shape `previous` to `next` (`ValueArena::note_shape_transition`),
+    /// which retires the code that holds `previous` stable past a call.
+    #[inline(always)]
+    pub(crate) fn note_shape_departure(&mut self, previous: u32, next: u32) {
+        self.properties.note_shape_transition(previous, next);
+    }
+
     /// Whether the property arena records its slots' value classes (`ValueArena::tracks`).
     #[inline(always)]
     pub(crate) fn tracks_slot_values(&self) -> bool {

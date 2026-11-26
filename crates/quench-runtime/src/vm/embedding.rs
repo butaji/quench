@@ -863,7 +863,7 @@ impl Vm {
             _ if self.heap.is_map(value) => "#<Map>".into(),
             _ if self.heap.is_set(value) => "#<Set>".into(),
             _ if self.heap.array(value).is_some() => "[object Array]".into(),
-            Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
+            Some(cell) => format!("[object {}]", cell.class_name().unwrap_or("Object")),
             None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
         }
@@ -904,18 +904,6 @@ impl Vm {
         self.heap.string(value).map(|text| text.host_string().to_owned())
     }
 
-    fn diagnostic_class_name(cell: &Cell) -> &'static str {
-        match cell {
-            Cell::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
-            Cell::ArrayBuffer { .. } => "ArrayBuffer",
-            Cell::TypedArray { object, .. } => object.native.kind().name(),
-            Cell::DataView { .. } => "DataView",
-            Cell::Date { .. } => "Date",
-            Cell::RegExp { .. } => "RegExp",
-            Cell::Error(_) => "Error",
-            _ => "Object",
-        }
-    }
 
     pub(crate) fn embedding_is_symbol(&self, root: RootId) -> Result<bool, JsError> {
         let value = self.embedding_value(root)?;

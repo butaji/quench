@@ -141,27 +141,6 @@ impl Heap {
         }
     }
 
-    /// The ordinary value of `slot` of `environment`, through the owner a shared slot names
-    /// (`EnvironmentSlots::iteration_copy`): `None` past the slots or at a binding in its dead zone.
-    #[inline]
-    pub fn environment_slot_ordinary(&self, environment: Value, slot: usize) -> Option<Value> {
-        self.environment_slot(environment, slot).filter(|value| !value.is_internal_marker())
-    }
-
-    /// Stores `value` to the initialized `slot` of `environment`, in the owner a shared slot names, past
-    /// the owner's write barrier: whether it stored (`false` past the slots or at a binding in its dead zone).
-    pub fn store_environment_slot_ordinary(&mut self, environment: Value, slot: usize, value: Value) -> bool {
-        let Some(owner) = self.environment_slot_owner(environment, slot) else { return false };
-        if self.environment(owner).and_then(|owned| owned.slots.owned(slot)).is_none_or(|current| current.is_internal_marker()) {
-            return false;
-        }
-        self.remember_cell(owner);
-        match self.environment_mut(owner).and_then(|owned| owned.slots.owned_mut(slot)) {
-            Some(binding) => { *binding = value; true }
-            None => false,
-        }
-    }
-
     pub fn environment_slot_mut(
         &mut self,
         environment: Value,

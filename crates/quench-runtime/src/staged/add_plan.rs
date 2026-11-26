@@ -81,6 +81,21 @@ pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition:
     added
 }
 
+/// `concrete_add_property` of a value the after-shape's slot observation already holds, into the
+/// inline (packed) storage of the record: the add slot observation would see nothing of
+/// (`Heap::add_observation_holds`), whose narrow word needs no slot encoding.
+///
+/// # Safety
+/// As `concrete_add_property`.
+#[inline(always)]
+pub unsafe fn concrete_add_property_held(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+    if usize::from(transition.slot) >= OBJECT.inline_property_count { return false; }
+    // SAFETY: the caller's contract; the gate reads the heap before any write.
+    let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
+    let mut stage = Concrete::storing(heap);
+    super::add::add_property_held(&mut stage, record, u64::from(record_id), transition.edge(), Form::Packed, value.to_bits(), ()).is_some()
+}
+
 /// The interpreter's reading of `naming::set_function_name`: the function record `record_id` of
 /// `heap` named `name` (the word of the name's string) along `transition`, whose slot is its `name`'s
 /// and whose before and after shapes the naming made; `empty` is the word of the empty string the
