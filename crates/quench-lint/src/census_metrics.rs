@@ -98,6 +98,13 @@ pub fn staged_opcodes(file: &syn::File) -> usize {
 }
 
 /// Non-empty lines that are not `#` comments.
+/// Guards a staged row takes in its own body (`.guard(` and `choose_leaving(` calls): each re-checks what a carried
+/// fact (`staged::proof`) could prove once (TOD-2417).
+pub fn staged_rechecks(text: &str) -> usize {
+    text.lines().filter(|line| !line.trim_start().starts_with("//"))
+        .map(|line| line.matches(".guard(").count() + line.matches("choose_leaving(").count()).sum()
+}
+
 pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }
