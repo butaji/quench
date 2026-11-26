@@ -2145,6 +2145,10 @@ pub(crate) struct Observation<'a> {
     /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
     /// which the sample of the live registers above completes.
     pub(crate) operand_kinds: &'a [crate::dispatch_fast::operand_feedback::OperandKinds],
+    /// The typed array kind each instruction of the region, from its header, observed where its
+    /// interpreter record is a typed element row (`dispatch_fast::is_typed_element_row`): an element
+    /// row no loop entry proves then proves the view for that kind alone (`base_region::function::typed_rows`).
+    pub(crate) typed_kinds: &'a [Option<quench_runtime::tier_surface::TypedArrayKind>],
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],

@@ -168,8 +168,8 @@ impl Planned {
 /// folded read of the receiver stands on the receiver. A store's variant is its gate (`Decoded::gated`).
 fn heap_variant(heap: Heap, hole: u64) -> bool {
     match heap {
-        Heap::Store | Heap::Index => hole != 0,
-        Heap::TypedStore(_) | Heap::TypedIndex(_) | Heap::TypedLength => true,
+        Heap::Store | Heap::Index | Heap::TypedStore(_) | Heap::TypedIndex(_) => hole != 0,
+        Heap::TypedLength => true,
         Heap::SiteChain | Heap::ThisChain | Heap::ThisHeld => true,
         _ => false,
     }
