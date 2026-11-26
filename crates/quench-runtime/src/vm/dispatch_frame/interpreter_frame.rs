@@ -234,23 +234,14 @@ impl crate::staged::Frame<Concrete> for InterpreterFrame<'_> {
     #[inline(always)]
     fn this_value(&mut self, _stage: &mut Concrete) -> Option<(u64, InterpreterFact)> {
         let (program, site) = (self.program, self.site);
-        let vm = self.vm();
-        let frame = vm.owner_frame(site.owner)?;
-        match vm.checked_this_binding(program, frame) {
-            Ok(this) => Some((this.to_bits(), InterpreterFact::Value)),
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
+        let this = self.vm().owner_this(program, site.owner)?;
+        super::super::call_out::stash_raise(&mut self.raised, this).map(|this| (this.to_bits(), InterpreterFact::Value))
     }
 
     #[inline(always)]
     fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, InterpreterFact)> {
         let site = self.site;
-        let vm = self.vm();
-        let frame = vm.owner_frame(site.owner)?;
-        Some((vm.frames[frame].context.callee().unwrap_or(Value::UNDEFINED).to_bits(), InterpreterFact::Value))
+        Some((self.vm().owner_callee(site.owner)?.to_bits(), InterpreterFact::Value))
     }
 
     #[inline(always)]
@@ -457,38 +448,24 @@ impl crate::staged::Frame<Concrete> for InterpreterFrame<'_> {
     #[inline(always)]
     fn object_like(&mut self, _stage: &mut Concrete, word: u64) -> Option<()> {
         let program = self.program;
-        let vm = self.vm();
-        match vm.require_iterator_result(program, Value::from_bits(word)) {
-            Ok(()) => Some(()),
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
+        let result = self.vm().require_iterator_result(program, Value::from_bits(word));
+        super::super::call_out::stash_raise(&mut self.raised, result)
     }
 
     /// `RequireObjectCoercible`'s miss: the VM's own check, which raises for a `null` or `undefined` word.
     #[inline(always)]
     fn object_coercion_failed(&mut self, _stage: &mut Concrete, word: u64) {
         let program = self.program;
-        let vm = self.vm();
-        if let Err(error) = vm.require_object_coercible(program, Value::from_bits(word)) {
-            self.raised = Some(error);
-        }
+        let result = self.vm().require_object_coercible(program, Value::from_bits(word));
+        super::super::call_out::stash_raise(&mut self.raised, result);
     }
 
     /// `SetFunctionName` of `function` to the program atom `name` at cache `site`: the VM's naming.
     #[inline(always)]
     fn set_function_name(&mut self, _stage: &mut Concrete, function: u64, name: u32, site: u16) -> Option<()> {
         let program = self.program;
-        let vm = self.vm();
-        match vm.set_function_name(program, Value::from_bits(function), (name, site)) {
-            Ok(()) => Some(()),
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
+        let result = self.vm().set_function_name(program, Value::from_bits(function), (name, site));
+        super::super::call_out::stash_raise(&mut self.raised, result)
     }
 
     /// An array literal's element definition: the VM's definition into the fresh hole (`define_array_literal_element`).

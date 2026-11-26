@@ -6,8 +6,8 @@
 use crate::class::{JMP_REL32, NEXT, REL32 as SUCCESSOR, REL32_BYTES};
 
 /// The routines around the rows (`stencils/entry.rs`) and the rows that may make a call (`stencils/call_rows.rs`).
-const ENTRY_PREFIX: &str = "entry_";
-const LEAVE_PREFIX: &str = "leave_";
+pub(crate) const ENTRY_PREFIX: &str = "entry_";
+pub(crate) const LEAVE_PREFIX: &str = "leave_";
 /// The rows that may make a call through a register (`stencils/call_rows.rs`).
 pub(crate) const CALL_ROW_PREFIX: &str = "call_";
 

@@ -1599,6 +1599,10 @@ impl Vm {
             return Ok(primitive);
         }
         if let Some(number) = primitive.as_number() {
+            // A safe integer is one digit (`-0` is `0n`), made in place with no `num_bigint` value.
+            if let Some(integer) = self.bigint_of_safe_integer(primitive) {
+                return Ok(integer);
+            }
             let Some(integer) = crate::bigint::number_as_bigint(number) else {
                 let detail = self.detail_string(primitive);
                 return Err(self.range_error(

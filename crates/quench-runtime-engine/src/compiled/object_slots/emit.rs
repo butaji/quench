@@ -137,6 +137,7 @@ impl Stage for Emit<'_, '_> {
             }
         }
     }
+    fn imm_word(&mut self, imm: EmitImm) -> ir::Value { self.word(imm) }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         match (imm.into(), self.raw_lane(a)) {
             // A power of two is a shift, which the backend folds into the addressing mode of
