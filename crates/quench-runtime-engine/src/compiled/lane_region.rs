@@ -136,6 +136,11 @@ const INLINE_EFFECT_EDGES: usize = 4;
 const INLINE_NUMBER_PROJECTIONS: usize = 4;
 /// A loop body usually indexes only a few arrays; more spill without a limit.
 const INLINE_ARRAY_VIEWS: usize = 4;
+
+/// A typed array view an access proved (`Proofs::typed`): the tagged base, its native kind, the view's elements and
+/// length, and whether it was proved for stores (which also answers reads).
+#[derive(Clone, Copy, PartialEq)]
+struct TypedProof { bits: ir::Value, kind: quench_runtime::tier_surface::TypedArrayKind, values: ir::Value, length: ir::Value, writable: bool }
 /// A block reads the captures of a few inlined callees; more spill without a limit.
 const INLINE_CAPTURE_ADMISSIONS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
@@ -245,6 +250,9 @@ struct LocalProofs {
     numbers: smallvec::SmallVec<[(ir::Value, quench_runtime::staged::Float64<ir::Value>); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
+    /// Typed array views by the tagged base and the observed kind they prove (`row_or_typed`'s typed-only row), retired
+    /// as `arrays` are: a later access of the same base and kind takes the view without proving it again.
+    typed: smallvec::SmallVec<[TypedProof; INLINE_ARRAY_VIEWS]>,
     /// The dense capture views (values, length) a frameless admission of an inlined callee gave, by the
     /// callee's value: its frame's reads take them, all dominated by the one admission (`Lowering::admitted_captures`).
     admitted_captures: smallvec::SmallVec<[(ir::Value, (ir::Value, ir::Value)); INLINE_CAPTURE_ADMISSIONS]>,
@@ -308,7 +316,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
-            arrays: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
+            arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The facts a jump proved along `edge` (`refinements`), each narrowing its register's type for
@@ -335,6 +343,7 @@ impl State {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
+        self.proofs.typed.clear();
         // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
         self.proofs.admitted_captures.clear();
         self.proofs.headers.fill(None);
@@ -1043,6 +1052,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.admitted_captures.contains(view))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
+        state.proofs.typed = first.typed.iter().copied().filter(|view| rest.iter()
+            .all(|other| other.typed.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
         state.proofs.specialized = first.specialized && rest.iter().all(|other| other.specialized);
@@ -2498,6 +2509,7 @@ impl Lowering<'_, '_> {
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
         state.proofs.admitted_captures.retain(|view| incoming.proofs.admitted_captures.contains(view));
+        state.proofs.typed.retain(|view| incoming.proofs.typed.contains(view));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
@@ -3051,6 +3063,7 @@ impl Lowering<'_, '_> {
         self.advance_inductions(pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
+            state.proofs.typed.clear();
         }
         if let Some(read) = self.hoisted.get(&pc).copied() {
             self.hoisted_read(state, pc, instruction, read);

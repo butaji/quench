@@ -58,6 +58,7 @@ impl Lowering<'_, '_> {
         if let Some(array) = array.filter(|array| self.int_only.contains(&(array.header, array.source)))
             && self.observed.at(pc).is_some_and(|ty| ty.is_int32())
             && self.proved_int_element_read(state, pc, (destination, key), array, exit) { return true; }
+        if array.is_none() && self.typed_int_read(state, pc, (destination, base, key), exit) { return true; }
         // An element read as a Number (`number_reads`) needs no hole test of its own: a hole is a NaN
         // pattern, which the Number proof's one NaN test sends to the tag check that leaves.
         let packed = self.observed.at(pc).is_some();
@@ -185,17 +186,18 @@ impl Lowering<'_, '_> {
         // Every operand's tagged word is made before the arms split, so each arm's view of it is the same word.
         let operands = match row { Operation::ElementRead { key, .. } => [key.register_index(), None], Operation::ElementWrite { value, key, .. } => [Some(value), Some(key)], _ => [None, None] };
         for register in operands.into_iter().flatten() { self.tagged(state, register); }
+        let destination = match row { Operation::ElementRead { destination, .. } => Some(destination), _ => None };
+        // The kind the interpreter's record observed (`body_views::typed_reads`) proves the view for that kind alone.
+        let kind = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new);
+        if let Some(native) = kind { return self.typed_only(state, (bits, native), (row, destination, exit)); }
         let is_array = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_array(&mut stage, bits) };
         let (dense, typed, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.branch_if(is_array, (dense, &[]), (typed, &[]));
-        let destination = match row { Operation::ElementRead { destination, .. } => Some(destination), _ => None };
         let joined = destination.map(|_| self.builder.append_block_param(join, ir::types::I64));
         let entry = state.clone();
         self.builder.switch_to_block(dense);
         self.row_arm(state, (row, destination, exit, join));
         self.builder.switch_to_block(typed);
-        // The kind the interpreter's record observed (`body_views::typed_reads`) proves the view for that kind alone.
-        let kind = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new);
         let arms = self.typed_arms(&entry, (bits, kind), (row, destination, exit, join));
         self.builder.switch_to_block(join);
         // A register whose arms each made their own tagged word (the key's, beside its int32) is tagged again past the
@@ -207,6 +209,54 @@ impl Lowering<'_, '_> {
         }
         for register in retag { if !state.values[register].tagged.current() { self.tagged(state, register as Register); } }
         joined
+    }
+
+    /// The element `row` of a base whose record observed the typed array kind `native` alone: the row over that kind's
+    /// view, which an earlier access of the same base and kind proved (`Proofs::typed`) or this one proves and keeps. Any
+    /// other base, a direct array included, leaves at `exit` before the row's effect: no VM store runs, so no backing
+    /// moves and the kept views stay current past a store.
+    fn typed_only(&mut self, state: &mut State, (bits, native): (ir::Value, quench_runtime::staged::typed_elements::NativeKind), (row, destination, exit): (Operation<ir::Value, EmitProof>, Option<Register>, ir::Block)) -> Option<ir::Value> {
+        let view = self.typed_view_kept(state, (bits, native), destination.is_none(), exit);
+        let held = self.held_view.replace(frame_elements::Held::TypedValues(view));
+        let value = self.step(state, frame::Edges::ValueGuarded { miss: exit }, row);
+        self.held_view = held;
+        match (value, destination) { (Step::Value(value), Some(_)) => Some(value), _ => None }
+    }
+
+    /// The view of the typed array `bits` of kind `native` an earlier access proved and no storage change retired
+    /// (`Proofs::typed`), else proved here, leaving at `exit`, and kept for the accesses after.
+    fn typed_view_kept(&mut self, state: &mut State, (bits, native): (ir::Value, quench_runtime::staged::typed_elements::NativeKind), writable: bool, exit: ir::Block) -> TypedView<ir::Value> {
+        let kept = state.proofs.typed.iter().find(|proof| proof.bits == bits && proof.kind == native.kind && (proof.writable || !writable)).copied();
+        if let Some(proof) = kept {
+            return TypedView { values: proof.values, length: proof.length, kind: quench_runtime::staged::typed_elements::ViewKind::Static(native), within: false };
+        }
+        let view = self.typed_view_here((bits, Some(native)), writable, exit, !writable);
+        state.proofs.typed.retain(|proof| proof.bits != bits);
+        state.proofs.typed.push(super::TypedProof { bits, kind: native.kind, values: view.values, length: view.length, writable });
+        view
+    }
+
+    /// An element read at `pc` of a base no loop array holds, whose record observed one int32 typed array kind
+    /// (`typed_only_at`): the element's int32 word into `destination` (`typed_read_integer`), with no Number made of it
+    /// and tested again, over the kept view (`typed_view_kept`). `false` where the read is not one, with nothing emitted.
+    fn typed_int_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, quench_runtime::bytecode::Operand), exit: ir::Block) -> bool {
+        let Some(native) = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new).filter(|native| native.is_int32()) else { return false };
+        let bits = self.tagged(state, base);
+        let Some(index) = self.operand_index(state, key, exit) else { return false };
+        let view = self.typed_view_kept(state, (bits, native), false, exit);
+        let word = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let index = stage.uextend32(index);
+            typed_read_integer(&mut stage, view, index, exit)
+        }.expect("an int32 kind's static view reads its integer");
+        let int = if self.raw_lane(word) == Lane::I64 { self.raw_unary(Unary::Narrow(Lane::I32), word) } else { word };
+        self.set_int(state, destination, int);
+        true
+    }
+
+    /// Whether the element access at `pc` takes `typed_only`: its record observed one native typed array kind.
+    pub(super) fn typed_only_at(&self, pc: usize) -> bool {
+        self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new).is_some()
     }
 
     /// `row` on `state`, leaving at `exit`, whose value (a read's) goes to `join`.
@@ -419,6 +469,7 @@ impl Lowering<'_, '_> {
         // a typed view takes a Number alone.
         let array = self.loop_array(pc, Some(base))
             .filter(|array| array.writable && (number || array.views == ElementViews::Dense));
+        let keeps_typed = array.is_none() && self.typed_only_at(pc);
         match array {
             Some(array) if array.views == ElementViews::Dense && self.left_here =>
                 self.dense_element_write(state, array, pc as u32, instruction, number, exit),
@@ -433,6 +484,8 @@ impl Lowering<'_, '_> {
             }
         }
         state.proofs.arrays.clear();
+        // A typed-only store calls no VM store (`typed_only`), so no typed view moved.
+        if !keeps_typed { state.proofs.typed.clear(); }
         state.proofs.fields.clear();
         // The VM's store may write a prototype's element or a mapped argument.
         state.proofs.stable = false;
