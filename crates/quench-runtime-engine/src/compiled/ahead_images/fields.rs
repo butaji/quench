@@ -23,17 +23,25 @@ use super::constructions::ADDED_FIELD;
 pub(crate) fn guessed_fields(program: &ResidualProgram, unit: &lane_unit::Unit, facts: &AotFacts, symbols: &mut SymbolTable)
     -> Vec<Option<Vec<NativeFieldLoad>>> {
     let owners = field_owners(program, facts);
-    if owners.is_empty() { return Vec::new(); }
+    let inherited = prototype_owners(facts, &owners);
+    if owners.is_empty() && inherited.is_empty() { return Vec::new(); }
     let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().filter_map(|instruction| {
             let (atom, site, store) = accessed(*instruction)?;
-            let loads = owners.get(&atom)?.iter()
-                .flat_map(|&owner| if store { stored_classes(program, owner.0, atom) } else { vec![GuardAccess::Read] }.into_iter().map(move |access| (owner, access)))
-                .map(|(owner, access)| guessed_load(program, owner, access, symbols)).collect::<Option<Vec<_>>>()?;
+            let loads = match (owners.get(&atom), inherited.get(&atom)) {
+                (Some(owners), _) => owners.iter()
+                    .flat_map(|&owner| if store { stored_classes(program, owner.0, atom) } else { vec![GuardAccess::Read] }.into_iter().map(move |access| (owner, access)))
+                    .map(|(owner, access)| guessed_load(program, owner, access, symbols)).collect::<Option<Vec<_>>>()?,
+                (None, Some(holders)) if !store => holders.iter().map(|&(function, slot, len)| guessed_holder_load(program, (function, slot, len), atom, symbols))
+                    .collect::<Option<Vec<_>>>()?,
+                _ => return None,
+            };
             if loads.is_empty() { return None; }
             Some((usize::from(site), loads))
         }).collect();
     if quench_runtime::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: guesses {} field reads ({} names have few constructors)", sites.len(), owners.len());
+        let unguessed: Vec<_> = unit.instructions.iter().filter_map(|instruction| accessed(*instruction))
+            .filter(|(atom, _, _)| !owners.contains_key(atom) && !inherited.contains_key(atom)).filter_map(|(atom, _, _)| program.atoms.get(atom as usize)).collect();
+        eprintln!("aot-lanes: guesses {} field reads ({} own names, {} prototype names), not {unguessed:?}", sites.len(), owners.len(), inherited.len());
     }
     lane_region::flat_table(sites)
 }
@@ -68,6 +76,23 @@ fn field_owners(program: &ResidualProgram, facts: &AotFacts) -> BTreeMap<u32, Ve
     owners
 }
 
+/// By method name, the constructed functions whose `prototype` the program gives that name and no
+/// construction stores it into `this` (`AotFacts::prototype_fields`), each with the slot the name
+/// takes in the prototype after its `constructor` and the prototype's field count; a name more
+/// than `GUESSED_SHAPES` prototypes take is guessed by none.
+fn prototype_owners(facts: &AotFacts, owners: &BTreeMap<u32, Vec<(u32, u16)>>) -> BTreeMap<u32, Vec<(u32, u16, usize)>> {
+    let mut holders: BTreeMap<u32, Vec<(u32, u16, usize)>> = BTreeMap::new();
+    for function in facts.constructed_functions() {
+        let fields = facts.prototype_fields(function);
+        for (index, &atom) in fields.iter().enumerate() {
+            let Ok(slot) = u16::try_from(index + 1) else { break };
+            holders.entry(atom).or_default().push((function, slot, fields.len() + 1));
+        }
+    }
+    holders.retain(|atom, holders| holders.len() <= GUESSED_SHAPES && !owners.contains_key(atom));
+    holders
+}
+
 /// The names of the fields `function`'s body stores into `this`, each once, in the order its
 /// stores first name them: the shape a construction that runs every store makes.
 fn this_fields(program: &ResidualProgram, function: u32) -> Vec<u32> {
@@ -88,17 +113,12 @@ fn this_fields(program: &ResidualProgram, function: u32) -> Vec<u32> {
 /// construction's stores do not tell; a constant of neither class, which a later store may still
 /// widen, adds none.
 fn stored_classes(program: &ResidualProgram, function: u32, atom: u32) -> Vec<GuardAccess> {
-    use quench_runtime::bytecode::Constant;
     use quench_runtime::staged::{DecodeContext, Operation};
     use quench_runtime::typed_ir::Type;
     const BOTH: [GuardAccess; 2] = [GuardAccess::StoreInt32, GuardAccess::StoreReference];
     let Some(body) = program.function_get(function as usize) else { return BOTH.to_vec() };
     // The program's primitive constants as values, the table the staged row decodes a `LoadConst` from.
-    let table = |index: usize| match program.constants.get(index)? {
-        Constant::Number(number) => Some(quench_runtime::Value::number(*number)),
-        Constant::Null => Some(quench_runtime::Value::NULL),
-        _ => None,
-    }.map(quench_runtime::staged::Constant::untyped);
+    let table = |index: usize| program.constants.get(index).and_then(crate::compiled::facts::immediate).map(quench_runtime::staged::Constant::untyped);
     let context = DecodeContext { constant_at: Some(&table), ..DecodeContext::EMPTY };
     let instructions: Vec<WideInstruction> = body.instructions().collect();
     let mut classes = Vec::new();
@@ -116,6 +136,26 @@ fn stored_classes(program: &ResidualProgram, function: u32, atom: u32) -> Vec<Gu
         for access in class { if !classes.contains(access) { classes.push(*access); } }
     }
     classes
+}
+
+/// The read of method `atom` of an object a construction of `function` makes, which its
+/// `prototype` holds at `slot` of its `len` fields: the receiver's guard names the construction's
+/// shape (`GuardAccess::Inherited`), the holder's the prototype's shape where its slot holds the
+/// name (`GuardAccess::Holder`), both by symbol; the slot is read live, so a method stored again
+/// reads its new value, and a prototype given another layout misses its guard and asks the caches.
+fn guessed_holder_load(program: &ResidualProgram, (function, slot, len): (u32, u16, usize), atom: u32, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
+    let fields = this_fields(program, function);
+    let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(function)) else { return None };
+    let Symbol::HeapValue(constructor) = symbols.heap_value(HeapValueRecipe::ClosureOf(function)) else { return None };
+    let receiver = ShapeRecipe { prototype: Some(prototype), constructor: Some(constructor), fields: fields.iter().map(|atom| (*atom, ADDED_FIELD)).collect() };
+    let holder = ShapeRecipe { prototype: Some(prototype), constructor: None, fields: Box::new([(atom, 0)]) };
+    let symbolic = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+    let receiver = symbols.guard_shape(receiver, 0, GuardAccess::Inherited).filter(|key| *key < symbolic)?;
+    let holder = symbols.guard_shape(holder, slot, GuardAccess::Holder).filter(|key| *key < symbolic)?;
+    Some(NativeFieldLoad {
+        shape: symbolic | receiver, holder: Some(symbolic | holder), slot, storage_len: len, storage: None,
+        ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+    })
 }
 
 /// The load of `slot` of the shape a construction of `function` makes, its guard named by symbol:
