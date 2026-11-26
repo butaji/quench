@@ -83,6 +83,40 @@ pub(super) unsafe extern "C" fn constant_step(_vm: u64, _residual: u64, context:
     })
 }
 
+/// The closure the `MakeClosure` record at `call_pc` of the running body makes (`LaneHelper::ClosureStep`), over the binding
+/// environment its frame captures (`Vm::owner_closure`), written to the record's destination; `LANE_CALL_MISSED` for any
+/// other record, or where it raised (the error stashed for the general path). Making a closure runs no guest code, so the
+/// body goes on in place. A lane activation's closure is its window's environment (`window_environment`), which the
+/// general step's frames make for now.
+pub(super) unsafe extern "C" fn closure_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    use quench_runtime::vm::engine_types::LaneContext;
+    let cx = context as usize as *mut LaneContext;
+    // SAFETY: the running lane's context.
+    if unsafe { &*(*cx).vm }.lane_stack.has_frames() {
+        return unsafe { crate::dispatch_fast::vm_steps::body_general_step(vm, residual, context, call_pc) };
+    }
+    let status = crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records are the running activation's (`in_innermost_frame`).
+        let body = unsafe { &*(*cx).code }.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let instruction = body.widened(body.code[call_pc as usize]).without_return();
+        let Some((destination, quench_runtime::staged::Allocation::Closure { function })) = quench_runtime::staged::Allocation::decode(instruction, &[])
+            else { return super::LANE_CALL_MISSED };
+        // SAFETY: the running lane's context and a record of its body.
+        let (ip, frame) = unsafe { ((*cx).base.add(call_pc as usize), (*cx).frame()) };
+        let made = crate::dispatch_fast::in_place_in_lane(cx, ip, |vm, code| {
+            vm.owner_closure(code, quench_runtime::vm::var_owner::VarOwner::Frame(frame), function, call_pc as usize + 1)
+        });
+        let Some(closure) = made else { return super::LANE_CALL_MISSED };
+        // The owner's captured locals moved into its environment: the capture caches that named the old slots go.
+        crate::dispatch_fast::handler_edges::drop_environment_caches(cx);
+        // SAFETY: no guest code ran, so the lane's register file is the activation's still.
+        unsafe { (*cx).registers }.set(destination, closure);
+        super::LANE_CALL_COMPLETED
+    });
+    unsafe { crate::dispatch_fast::refresh_body_bases(context); crate::dispatch_fast::refresh_region_bases_of(context) };
+    status
+}
+
 /// The value step at `call_pc` of the running body (`LaneHelper::ValueStep`: a `Binary`, `Unary` or comparison jump over
 /// registers and constants), made by the VM's operator on their values over the running registers, a frame's or an
 /// activation's (`value_steps::activation_value_step`), as that step answers; `LANE_CALL_MISSED` for any other record.

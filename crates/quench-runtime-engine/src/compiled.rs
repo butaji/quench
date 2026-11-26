@@ -1187,6 +1187,7 @@ lane_helper_inventory! {
     /// An operator or comparison jump over registers and constants (`base_body::value_step`): the VM's operator on their
     /// values, in place of the general step.
     ValueStep => base_body::value_step,
+    ClosureStep => base_body::closure_step,
 }
 
 thread_local! {

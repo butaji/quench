@@ -379,19 +379,21 @@ fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fiel
 /// Prints each record of an image body whose rows call a general step helper (`Step`, `VmStep`), with its
 /// opcode and step kind: what an image needs the interpreter's semantics for (the aot-lanes trace).
 fn report_steps(layout: &Layout, program: &ResidualProgram, singles: &[Planned]) {
-    fn steps(row: &Planned) -> bool {
-        let named = row.symbolic.iter().flatten().any(|(_, symbol)| matches!(symbol, crate::aot_image::Symbol::Helper(helper)
-            if matches!(crate::compiled::LaneHelper::name(*helper as usize), Some("Step" | "VmStep"))));
-        named || row.pre.iter().chain(row.post.iter()).any(steps)
+    fn steps(row: &Planned) -> Option<&'static str> {
+        let named = row.symbolic.iter().flatten().find_map(|(_, symbol)| match symbol {
+            crate::aot_image::Symbol::Helper(helper) => crate::compiled::LaneHelper::name(*helper as usize).filter(|name| matches!(*name, "Step" | "VmStep")),
+            _ => None,
+        });
+        named.or_else(|| row.pre.iter().chain(row.post.iter()).find_map(steps))
     }
     let code: Vec<_> = program.function(layout.id as usize).instructions().collect();
-    for (k, _) in singles.iter().enumerate().filter(|(_, row)| steps(row)) {
+    for (k, helper) in singles.iter().enumerate().filter_map(|(k, row)| steps(row).map(|helper| (k, helper))) {
         match layout.origins.get(k) {
             Some(crate::compiled::lane_unit::Origin::Caller(pc)) => {
                 let name = code.get(*pc as usize).map_or("?", |instruction| quench_runtime::bytecode::Op::NAMES[instruction.op() as usize]);
-                eprintln!("aot-lanes: step record {} pc {pc} {name}", layout.id);
+                eprintln!("aot-lanes: step record {} pc {pc} {name} {helper}", layout.id);
             }
-            _ => eprintln!("aot-lanes: step record {} row {k} inlined", layout.id),
+            _ => eprintln!("aot-lanes: step record {} row {k} inlined {helper}", layout.id),
         }
     }
 }
