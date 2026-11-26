@@ -204,8 +204,8 @@ impl<W: Copy> Int32<W> {
 
 impl<W: Copy> Int32<W> {
     /// ToInt32 of a tagged word, as a bitwise operator reads it: an int-tagged word is its int32,
-    /// a Boolean its 0 or 1 (`(a < b) | 0`: `true`'s word is `false`'s with the low bit set), a Number
-    /// truncates (`NumericStage::to_int32`), and any other word leaves at `miss`.
+    /// a Boolean its 0 or 1 (`(a < b) | 0`: `true`'s word is `false`'s with the low bit set), `undefined` and
+    /// `null` 0, a Number truncates (`NumericStage::to_int32`), and any other word leaves at `miss`.
     #[inline(always)]
     pub fn guard_truncating<S: NumericStage<Word = W>>(stage: &mut S, tagged: W, miss: S::Miss) -> Option<Self>
     where S::Miss: Copy {
@@ -214,8 +214,14 @@ impl<W: Copy> Int32<W> {
             let boolean = super::value::is_boolean(stage, tagged);
             stage.choose_leaving(boolean, #[inline(always)] |stage| { let bit = stage.and_imm(tagged, 1u64); Some(stage.narrow(bit)) },
                 #[inline(always)] |stage| {
-                    let number = Float64::guard(stage, tagged, miss)?;
-                    stage.to_int32(number.0, miss)
+                    // `undefined` and `null` are 0 (ToNumber gives NaN and +0): `x | 0` of a hole.
+                    let (undefined, null) = (super::value::is_undefined(stage, tagged), super::value::is_null(stage, tagged));
+                    let nullish = stage.any(undefined, null);
+                    stage.choose_leaving(nullish, #[inline(always)] |stage| { let zero = stage.constant(0); Some(stage.narrow(zero)) },
+                        #[inline(always)] |stage| {
+                            let number = Float64::guard(stage, tagged, miss)?;
+                            stage.to_int32(number.0, miss)
+                        })
                 })
         }).map(Int32)
     }

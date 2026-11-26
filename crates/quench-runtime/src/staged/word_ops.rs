@@ -6,9 +6,8 @@
 /// The `Stage` methods whose bodies are identical in every stage whose `Word` is `u64` and whose
 /// `Cond` is `bool`. Expanding them in both impls keeps one definition of each rule. It is sound
 /// because each body reads only its arguments, and `number_truthy` reads only the stateless unit
-/// `NumberF64Stage`, so the same tokens mean the same operation in each stage. Stages whose bodies
-/// differ (the `*_imm` operations, which bind `imm` before use in one stage and not the other, and
-/// `uextend32`) stay in their own impls.
+/// `NumberF64Stage`, so the same tokens mean the same operation in each stage. The other `*_imm`
+/// operations derive from `imm_word` in `Stage` itself; `uextend32` stays in each impl.
 macro_rules! word_stage_ops {
     () => {
     #[inline(always)]
@@ -18,7 +17,13 @@ macro_rules! word_stage_ops {
     #[inline(always)]
     fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
     #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
+    fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
+    #[inline(always)]
+    fn imm_word(&mut self, imm: u64) -> u64 { imm }
+    #[inline(always)]
+    fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_mul(imm.into()) }
+    #[inline(always)]
+    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
     #[inline(always)]
     fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]

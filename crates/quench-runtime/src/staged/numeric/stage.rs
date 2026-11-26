@@ -25,7 +25,7 @@ pub trait NumericStage: Stage {
     /// The binary64 remainder of two binary64 words, keeping the dividend's sign.
     fn float_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The remainder of two binary64 words by the exact integer remainder where both are integral, at most
-    /// `INTEGRAL_REMAINDER_LIMIT` in magnitude and the divisor nonzero (`vm::operations::integral_remainder`, `-0`
+    /// `SAFE_INTEGER_LIMIT` in magnitude and the divisor nonzero (`vm::operations::integral_remainder`, `-0`
     /// rule included): its result, and whether it misses (the operands are none of those, and only the float
     /// remainder answers them).
     fn integral_remainder(&mut self, left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);

@@ -424,7 +424,7 @@ pub(crate) fn call_results(direct: &DirectSites, instructions: &[WideInstruction
             let callee = unsafe { &**callee };
             callee.summary().map(|summary| ty.join(summary.result))
         })?;
-        (ty != Type::NEVER && ty != Type::ANY).then_some(super::facts::ObservedRead { pc, ty })
+        (ty != Type::NEVER && ty != Type::ANY).then_some(super::facts::ObservedRead { pc, ty, kind: None })
     }).collect()
 }
 

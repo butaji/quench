@@ -124,25 +124,10 @@ impl Stage for Emit<'_, '_> {
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
     fn shr(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftRightUnsigned, a, b) }
-    fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.add(a, v)
-    }
+    fn imm_word(&mut self, imm: EmitImm) -> ir::Value { self.word(imm) }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
         self.raw_binary(Binary::Mul, a, v)
-    }
-    fn and_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.raw_binary(Binary::And, a, v)
-    }
-    fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.or(a, v)
-    }
-    fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(shift.into());
-        self.raw_binary(Binary::ShiftRightUnsigned, a, v)
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
         let low = self.narrow(a);
