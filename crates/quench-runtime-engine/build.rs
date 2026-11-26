@@ -38,9 +38,14 @@ fn build_id() -> u64 {
             hash = mix(hash, &fs::read(&path).unwrap_or_default());
         }
     }
-    for variable in ["TARGET", "OPT_LEVEL", "PROFILE"] {
-        hash = mix(hash, env::var(variable).unwrap_or_default().as_bytes());
-    }
+    // An image's ABI: the source, the target and the lane call convention. Profiles only choose
+    // code generation, so a host compiler and a static image's cold support built with different
+    // profiles share the ID when they select the same convention (M1B-3B: `aot-compact`).
+    hash = mix(hash, env::var("TARGET").unwrap_or_default().as_bytes());
+    let opt_level = env::var("OPT_LEVEL").unwrap_or_default();
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let sibling_calls = SIBLING_CALL_OPT_LEVELS.contains(&opt_level.as_str()) && SIBLING_CALL_ARCHES.contains(&arch.as_str());
+    hash = mix(hash, if sibling_calls { b"tail-calls" } else { b"plain-calls" });
     mix(hash, &rustc)
 }
 

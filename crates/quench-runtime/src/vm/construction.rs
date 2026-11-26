@@ -460,8 +460,10 @@ impl Vm {
     /// Forgets the outer environments the templates hold (`ClosureTemplate::outer_environment`):
     /// at a collection, which they do not root.
     pub(super) fn forget_outer_environments(&mut self) {
-        for template in self.closure_templates.iter_mut().flatten() {
-            template.outer_environment = None;
+        if let Some(templates) = self.closure_templates.filled_mut() {
+            for template in templates.iter_mut().flatten() {
+                template.outer_environment = None;
+            }
         }
     }
 

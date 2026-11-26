@@ -17,7 +17,7 @@ pub(super) const WAIT_WORKER_OPTION: &str = "--wait-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration|aot-compact] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -105,8 +105,8 @@ impl Options {
             }
         }
         let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if !matches!(profile.as_str(), "experiment" | "release" | "iteration") {
-            return Err("compile profile must be experiment, release or iteration".into());
+        if !matches!(profile.as_str(), "experiment" | "release" | "iteration" | "aot-compact") {
+            return Err("compile profile must be experiment, release, iteration or aot-compact".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,

@@ -446,7 +446,7 @@ impl Vm {
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         // Atom strings are not kept, so a collection may free a cached key string.
         self.enumerable_key_value_lists.clear();
-        self.preshaped_receivers.fill(super::preshaped_receiver::PreshapedReceiver::EMPTY);
+        self.preshaped_receivers.clear();
         // The sampled receivers may be freed; the counts stay as hints.
         self.forget_learned_receiver_samples();
         // Prepared regexp subjects share their strings' text: kept across a collection, they

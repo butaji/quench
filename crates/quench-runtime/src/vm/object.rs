@@ -1080,7 +1080,7 @@ impl Vm {
         self.enumerable_key_lists.clear();
         self.enumerable_key_value_lists.clear();
         self.field_add_sets.clear();
-        self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.keyed_adds.clear();
         self.field_add_chains.clear();
         self.megamorphic_fields.clear();
         self.field_stubs.clear();
@@ -1092,7 +1092,7 @@ impl Vm {
         self.resolver_function_shape = None;
         self.bound_function_shape = None;
         self.function_name_shapes.clear();
-        self.closure_templates.fill(None);
+        self.closure_templates.clear();
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];

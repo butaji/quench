@@ -7,6 +7,10 @@ use std::{fs, path::Path, process::Command, sync::Mutex};
 static BUILD: Mutex<()> = Mutex::new(());
 
 fn compile(directory: &Path, source: &str, name: &str, keep_symbols: bool) -> (std::path::PathBuf, serde_json::Value) {
+    compile_with_profile(directory, source, name, keep_symbols, "experiment")
+}
+
+fn compile_with_profile(directory: &Path, source: &str, name: &str, keep_symbols: bool, profile: &str) -> (std::path::PathBuf, serde_json::Value) {
     let _guard = BUILD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = directory.join(format!("{name}.js"));
     fs::write(&entry, source).unwrap();
@@ -15,7 +19,7 @@ fn compile(directory: &Path, source: &str, name: &str, keep_symbols: bool) -> (s
     let mut command = Command::new(env!("CARGO_BIN_EXE_quench"));
     if keep_symbols { command.env("QUENCH_KEEP_SYMBOLS", "1"); }
     let output = command.args(["compile"]).arg(&entry).arg("-o").arg(&binary)
-        .args(["--profile", "experiment", "--report"]).arg(&report).output().unwrap();
+        .args(["--profile", profile, "--report"]).arg(&report).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
     (binary, report)
@@ -124,14 +128,12 @@ fn static_multifamily_smoke_runs_like_the_interpreter() {
     assert_eq!(output.stdout, interpreted.stdout);
 }
 
-/// The argv image names no OpenSSL symbol or bind and no libiconv, but Xcode's `ld-prime` keeps the
-/// two OpenSSL `LC_LOAD_DYLIB`s from the static `openssl-sys` rlib despite `-dead_strip_dylibs`.
-/// Kept as the explicit seam check it will become.
+/// The argv image names no OpenSSL symbol or bind and no libiconv, and the compact support's
+/// thin LTO leaves `ld-prime` no OpenSSL `LC_LOAD_DYLIB` to keep in the static link.
 #[test]
-#[ignore = "ld-prime keeps libssl/libcrypto LC_LOAD_DYLIBs with no OpenSSL symbol or bind left"]
 fn static_argv_links_no_openssl_or_iconv() {
     let directory = workspace("argv");
-    let (binary, report) = compile(&directory, "console.log(process.argv.length);\n", "static-argv", false);
+    let (binary, report) = compile_with_profile(&directory, "console.log(process.argv.length);\n", "static-argv", false, "aot-compact");
     assert_eq!(report["support_variant"], "static");
     let links = links(&binary);
     for absent in ["libssl", "libcrypto", "libiconv"] {
