@@ -87,6 +87,24 @@ fn core_has_no_cranelift_symbols() {
     assert_eq!(symbols(&binary).matches("cranelift").count(), 0);
 }
 
+/// An ahead body's call writes its value to the call's result register and passes its arguments
+/// (`push_passed_in_lane` reads the record's immediate): neither is register 0 by default.
+#[test]
+fn core_body_calls_keep_result_registers_and_arguments() {
+    let directory = workspace("body-calls");
+    let source = "function scale(x) { return x * 3 + 1; }\n\
+        function counter(step) { let total = 0; function bump() { total += step; return total; } return bump; }\n\
+        const bump = counter(2);\n\
+        let sum = 0;\n\
+        for (let i = 0; i < 4; i++) { sum += scale(i) + bump(); }\n\
+        console.log(sum);\n";
+    let (binary, report) = compile(&directory, source, "core-body-calls", false);
+    assert_eq!(report["support_variant"], "core");
+    let output = run(&binary);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+}
+
 #[test]
 fn static_multifamily_smoke_runs_like_the_interpreter() {
     let directory = workspace("multifamily");

@@ -16221,7 +16221,7 @@ pub(crate) fn fields_fit_in_lane(instruction: WideInstruction, function: &Functi
 
 /// The record operand of `instruction` at `pc`, or `None` when its jump or
 /// constant cannot be resolved.
-fn operand_in_lane(
+pub(crate) fn operand_in_lane(
     instruction: WideInstruction,
     pc: usize,
     constants: &[Value],

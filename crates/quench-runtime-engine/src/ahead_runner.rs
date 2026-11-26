@@ -14,7 +14,7 @@ use crate::dispatch_fast::lane_roots::{LaneRoot, LaneStart};
 #[cfg(not(feature = "jit"))]
 use quench_runtime::vm::dispatch_frame::{ExecutingProgram, PendingGeneralCall};
 #[cfg(not(feature = "jit"))]
-use quench_runtime::vm::engine_types::{ActivationShape, Records, Registers};
+use quench_runtime::vm::engine_types::{ActivationShape, LaneInstruction, LaneOperand, Records, Registers, NO_CALL_LINK};
 #[cfg(not(feature = "jit"))]
 use quench_runtime::vm::ProgramId;
 
@@ -37,17 +37,20 @@ pub(crate) fn lane_view<'a>(vm: &Vm, function: u32, code: &Function, constants: 
 /// general loop.
 #[cfg(not(feature = "jit"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn lane_view<'a>(vm: &Vm, _function: u32, code: &Function, _constants: &[Value], _kind: ProgramKind,
+pub(crate) fn lane_view<'a>(vm: &Vm, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
     _live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, _sites: &[FieldSite], _image: bool) -> LaneView {
-    ahead_lane_view(code, vm.programs.tiers())
+    ahead_lane_view(code, constants, vm.programs.tiers())
 }
 
-/// The lane view of an execution-only build: one empty record per instruction, whose only entry
-/// is the function's first, where a loaded image's body runs it (`run_ahead_frame`).
+/// The lane view of an execution-only build: the body's own records, whose only entry is the
+/// function's first, where a loaded image's body runs it (`run_ahead_frame`). The records carry
+/// the bytecode's operand fields (result, operands and immediate metadata) because the image's
+/// helpers read them (`body_calls::ends_run`, `push_passed_in_lane`, the general step); they
+/// carry no bytecode handler, since nothing dispatches them.
 #[cfg(not(feature = "jit"))]
-fn ahead_lane_view(function: &Function, tiers: &'static quench_runtime::vm::tier_policy::Tiers) -> LaneView {
+fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static quench_runtime::vm::tier_policy::Tiers) -> LaneView {
     let count = function.code.len();
-    let records = Records::new((0..count).map(|_| Records::blank()).collect(), false);
+    let records = Records::new(body_records(function, constants), false);
     let mut entries = vec![0u64; count.div_ceil(u64::BITS as usize)];
     if let Some(first) = entries.first_mut() { *first = 1; }
     let base = records.base();
@@ -77,6 +80,31 @@ fn ahead_lane_view(function: &Function, tiers: &'static quench_runtime::vm::tier
         name_records: Box::new([]),
         int_speculating: Box::new([]),
     }
+}
+
+/// The body's records without handlers: the bytecode's result, operands and immediate metadata,
+/// which its helpers read (`body_calls::ends_run`, `push_passed_in_lane`, the general step).
+#[cfg(not(feature = "jit"))]
+fn body_records(function: &Function, constants: &[Value]) -> Box<[LaneInstruction]> {
+    function.instructions().enumerate()
+        .map(|(pc, instruction)| {
+            let operand = crate::dispatch_fast::operand_in_lane(instruction, pc, constants)
+                .unwrap_or(LaneOperand { imm: 0 });
+            LaneInstruction {
+                handler: std::ptr::null(),
+                operand,
+                a: instruction.a(),
+                b: instruction.b(),
+                c: if instruction.op() as u16 == quench_runtime::staged::ARGUMENT_GET_ROW {
+                    function.registers
+                } else {
+                    instruction.c()
+                },
+                call_link: std::cell::Cell::new(NO_CALL_LINK),
+                mode: 0,
+            }
+        })
+        .collect()
 }
 
 /// The frame's run in an execution-only build (`run_fast_lane` without a code generator): the
