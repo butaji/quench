@@ -82,6 +82,9 @@ impl LoopBody {
     pub(crate) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
 }
 
+/// The warm-ups of iterations per entry past which a loop no region runs runs long (`offer_body`).
+const LONG_TRIP_WARMUPS: u64 = 4;
+
 /// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
 /// script callee): loop bodies are off where a region runs the loop (`tier_policy::LOOP_BODIES`),
 /// but here none can, and without a body the loop interprets every iteration. Whether it did.
@@ -105,15 +108,22 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
         .filter(|pc| function.code.get(*pc).is_some_and(|packed| crate::compiled::meaning_compiled::is_call(function.widened(*packed))));
     // A loop no region runs (its analysis rejected an instruction) that holds an inner loop
     // enters the inner loop's region on every pass: a body runs both natively, its calls
-    // whatever they are, which the tier model prices. Without an inner loop the interpreter
-    // runs it as well as a body that leaves at what the region could not run.
+    // whatever they are, which the tier model prices.
     if site.analysis_failure.is_some() {
         let nests = (site.header as usize + 1..site.backedge as usize).any(|pc| function.code.get(pc).is_some_and(|packed| {
             let instruction = function.widened(*packed);
             instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget
                 && (instruction.imm() as usize) <= pc && instruction.imm() as usize > site.header as usize
         }));
-        if !nests { return false; }
+        // Without one, a body pays where the loop runs long per entry of its function and its
+        // calls run inline: its entry from the header is paid once per run, and the body runs
+        // natively the rows the region cannot (a dense `switch`, `instanceof`). A loop of a few
+        // trips per entry is its function's body's to run, and one whose calls leave interprets as well.
+        // SAFETY: the program's views outlive the lane run.
+        let entries = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
+            .and_then(|own| own.body_detail_in_lane().1);
+        let long = entries.is_some_and(|entries| site.body_iterations() / u64::from(entries.max(1)) >= u64::from(site.tiers.loops.warmup_taken) * LONG_TRIP_WARMUPS);
+        if !nests && (!long || !calls.into_iter().all(inline)) { return false; }
     } else if !calls.into_iter().all(inline) { return false; }
     let mut body = site.body.borrow_mut();
     if !matches!(*body, LoopBody::Declined) { return false; }
@@ -148,6 +158,16 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
         if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
     }));
+    // A first plan waits for the iterations that pay for a body of the loop's span, as an unpaid one
+    // waits below: planned before them, the plan would decline the loop's body for good.
+    if pending.is_none() && vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header))).is_none() {
+        let due = body_due(vm, site);
+        if site.body_iterations() < due {
+            site.body_wait.set(due - site.body_iterations());
+            *body = LoopBody::Idle { stuck, attempts };
+            return;
+        }
+    }
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(crate::compiled::pending_lane(pending), own),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
@@ -155,14 +175,16 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
         &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
     // A body its iterations have not paid for waits until they would at its planned size.
-    if matches!(outcome, LaneBodyOutcome::Unpaid) {
-        let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header)))
-            .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(vm.programs.tiers().loops.ir_per_bytecode)).unwrap_or(usize::MAX));
-        let due = crate::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true);
-        site.body_wait.set(due.saturating_sub(site.body_iterations()));
-    }
+    if matches!(outcome, LaneBodyOutcome::Unpaid) { site.body_wait.set(body_due(vm, site).saturating_sub(site.body_iterations())); }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+}
+
+/// The iterations that pay for a body of `site`'s loop at its planned size, or at its span's before a plan.
+fn body_due(vm: &Vm, site: &LoopSite) -> u64 {
+    let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), site.function, Some(site.header)))
+        .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(vm.programs.tiers().loops.ir_per_bytecode)).unwrap_or(usize::MAX));
+    crate::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true)
 }
 
 /// The running regions leave at their next backward jump (`left_for_tier_up`), and the header
