@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Fastest JavaScript runtime written in Rust? Quench, measured</title>
-<meta name="description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
+<meta name="description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x (14 Nov 2026) the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
 <meta name="robots" content="index, follow, max-image-preview:large" />
 <meta name="theme-color" content="#EF5102" />
 <link rel="canonical" href="https://quench.run/fastest-javascript-runtime-in-rust/" />
@@ -14,14 +14,14 @@
 <meta property="og:site_name" content="Quench" />
 <meta property="og:url" content="https://quench.run/fastest-javascript-runtime-in-rust/" />
 <meta property="og:title" content="Fastest JavaScript runtime written in Rust? Quench, measured" />
-<meta property="og:description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
+<meta property="og:description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x (14 Nov 2026) the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
 <meta property="og:image" content="https://quench.run/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta property="article:modified_time" content="2026-11-20" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Fastest JavaScript runtime written in Rust? Quench, measured" />
-<meta name="twitter:description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
+<meta name="twitter:description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x (14 Nov 2026) the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
 <meta name="twitter:image" content="https://quench.run/og.png" />
 <link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
 <link rel="stylesheet" href="/blog/blog.css" />
@@ -50,7 +50,7 @@
 <div class="tile metal" aria-hidden="true"></div>
 </header>
 <div class="frame"><div class="tile prose">
-<p class="answer"><b>Quench</b> is a JavaScript, TypeScript and WebAssembly runtime whose whole engine is written in Rust. With JIT turned off in every engine, it scores <b>1.49x to 2.57x</b> the faster of Node <code>--jitless</code> and Bun on all 8 V8-v7 benchmarks, at a fraction of their memory. On JetStream 3 with JIT off it sits between them (34.3 vs Node 39.7 and Bun 32.2). Its JIT tiers are not yet competitive with Node or Bun with their JITs on.</p>
+<p class="answer"><b>Quench</b> is a JavaScript, TypeScript and WebAssembly runtime whose whole engine is written in Rust. With JIT turned off in every engine, it scores <b>1.49x to 2.57x (14 Nov 2026)</b> the faster of Node <code>--jitless</code> and Bun on all 8 V8-v7 benchmarks, at a fraction of their memory. On JetStream 3 with JIT off it sits between them (34.3 vs Node 39.7 and Bun 32.2). Its JIT tiers are not yet competitive with Node or Bun with their JITs on.</p>
 <h2 id="comparison">Quench vs Node.js, Bun and Deno</h2>
 <div class="table-scroll"><table><thead><tr><th></th><th>Quench</th><th>Node.js</th><th>Bun</th><th>Deno</th></tr></thead><tbody><tr><td>Written in</td><td>Rust (engine and runtime)</td><td>C++ (V8) and JavaScript</td><td>Zig, C++ (JavaScriptCore)</td><td>Rust runtime, C++ engine (V8)</td></tr><tr><td>V8-v7 score, JIT off, geomean of 8</td><td><b>4,980</b></td><td>2,349</td><td>1,979</td><td>not measured</td></tr><tr><td>V8-v7 peak memory, JIT off, geomean</td><td><b>11.4 MB</b></td><td>65.4 MB</td><td>26.8 MB</td><td>not measured</td></tr><tr><td>JetStream 3 score, JIT off, 56 tests</td><td>34.3</td><td><b>39.7</b></td><td>32.2</td><td>not measured</td></tr><tr><td>JetStream 3 peak memory, JIT off</td><td><b>28.5 MB</b></td><td>110.1 MB</td><td>47.7 MB</td><td>not measured</td></tr><tr><td>Test262</td><td>53,353 passing, 0 failing, 53 waived</td><td>not measured</td><td>not measured</td><td>not measured</td></tr><tr><td>JIT performance</td><td>JIT tiers not yet competitive</td><td>mature JIT</td><td>mature JIT</td><td>mature JIT (V8)</td></tr><tr><td>Packaged releases</td><td>no, build from source</td><td>yes</td><td>yes</td><td>yes</td></tr></tbody></table></div><p class="small">Benchmark rows: interpreter only in every engine (<code>quench --no-jit</code>, <code>node --jitless</code>, Bun with <code>BUN_JSC_useJIT=0</code>), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. <a href="/benchmarks/">Full tables and method</a>.</p>
 <h2 id="what-is-rust">What is written in Rust</h2>
