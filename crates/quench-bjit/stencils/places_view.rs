@@ -181,11 +181,17 @@ pub(crate) fn entry_dense<const H: u8>(payload: usize) -> ElementView<u64> {
     ElementView::Dense(DenseView { values, length, packed: false, within: false, double: None, uncounted: false })
 }
 
+/// The native kind typed row `KIND` (counted from `first`) plans (`TypedArrayKind` in discriminant order).
+#[inline(always)]
+pub(crate) fn typed_kind<const KIND: u8>(first: u8) -> Option<NativeKind> {
+    NativeKind::new(TypedArrayKind::ALL[usize::from(KIND - first)])
+}
+
 /// The typed view the loop's entry recorded for the array whose entry words lie at the offset of the site
 /// at hole `at`, of the kind row `KIND` (counted from `first`) plans: the entry proved the kind once.
 #[inline(always)]
 pub(crate) fn entry_typed<const KIND: u8>(payload: usize, (at, first): (u8, u8)) -> Option<ElementView<u64>> {
-    let native = NativeKind::new(TypedArrayKind::ALL[usize::from(KIND - first)])?;
+    let native = typed_kind::<KIND>(first)?;
     let mut stage = StencilStage::from_hole(at);
     let offset = stage_site(&mut stage);
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);

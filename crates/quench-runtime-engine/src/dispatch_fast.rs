@@ -4469,6 +4469,17 @@ pub(crate) const fn element_typed_row(read: bool, index: u32) -> Handler {
     rows!(0 1 2 3 4 5 6 7 8)
 }
 
+/// The typed array kind the element record at `pc` of `view` observed, where its row is a typed
+/// element row (`requicken_typed`); `None` for any other record.
+pub(crate) fn typed_element_kind(view: &LaneView, pc: usize) -> Option<TypedArrayKind> {
+    if pc >= view.records.len() { return None; }
+    // SAFETY: `pc` names a record of the view.
+    let record = unsafe { &*view.records.base().add(pc) };
+    (is_typed_element_row(record.handler, true) || is_typed_element_row(record.handler, false))
+        // SAFETY: a typed element record's immediate is its native kind's index (`requicken_typed`).
+        .then(|| quench_runtime::staged::typed_elements::native_kind_at(unsafe { record.operand.imm }).kind)
+}
+
 /// Whether `handler` is a typed keyed read row (`read`) or write row, of any kind (`element_typed_row`).
 pub(crate) fn is_typed_element_row(handler: *const (), read: bool) -> bool {
     (0..TYPED_KIND_SITES.len() as u32).any(|index| element_typed_row(read, index) as *const () == handler)

@@ -50,7 +50,7 @@ use crate::staged::{Frame, Operation, Stage, Step, op_kind, step_local_of, step_
 use crate::codes::{EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, SHAPE_FLAT_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
 use crate::staged::object::Form;
 use crate::staged::{code_units, environment, parse_int};
-use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed};
+use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed, typed_kind};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
 
 /// `this` (`LoadThis`): the activation's receiver defined into the destination, where it holds one.
@@ -239,9 +239,11 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 /// A typed element read: the entry words' offset is hole 1, the Number delivered as `Value::number` makes it
 /// (`PlacesView` over the typed view of the kind).
 #[inline(always)]
-fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
-    let view = need!(s, entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
+fn typed_index_row<const KIND: u8, const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let mut places = Places::new::<D, MEM, B>(s);
+    // An entry row's view is the loop entry's; any other proves the array's view (hole 1 its slot) for the kind.
+    let view = if ENTRY { entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)) } else { typed_kind::<KIND>(TYPED_INDEX_ROW).and_then(|native| places.proved_typed_view(LEFT, native, false)) };
+    let view = need!(places.s, view);
     let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
     let mut frame = PlacesView::new(&mut places, LEFT, view);
     let word = match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
@@ -258,9 +260,11 @@ fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usiz
 /// A typed element store of the Number operand (hole 1): the entry words' offset is hole 0, the index hole 2
 /// (`PlacesView` over the typed view of the kind).
 #[inline(always)]
-fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
-    let view = need!(s, entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)));
+fn typed_store_row<const KIND: u8, const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let mut places = Places::new::<MEM, A, B>(s);
+    // An entry row's view is the loop entry's; any other proves the array's view (hole 0 its slot) for the kind.
+    let view = if ENTRY { entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)) } else { typed_kind::<KIND>(TYPED_STORE_ROW).and_then(|native| places.proved_typed_view(DEST, native, true)) };
+    let view = need!(places.s, view);
     let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
     let mut frame = PlacesView::new(&mut places, DEST, view);
     match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
@@ -412,9 +416,9 @@ fn element_row<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, cons
     } else if const { KIND == INDEX_ROW } {
         index_row::<ENTRY, D, B>(s, payload)
     } else if const { (TYPED_INDEX_ROW <= KIND && KIND <= TYPED_INDEX_LAST) } {
-        typed_index_row::<KIND, D, B>(s, payload)
+        typed_index_row::<KIND, ENTRY, D, B>(s, payload)
     } else if const { (TYPED_STORE_ROW <= KIND && KIND <= TYPED_STORE_LAST) } {
-        typed_store_row::<KIND, A, B>(s, payload)
+        typed_store_row::<KIND, ENTRY, A, B>(s, payload)
     } else if const { KIND == TYPED_LENGTH_ROW } {
         typed_length_row::<D>(s)
     } else if const { KIND == APPEND_ROW } {
