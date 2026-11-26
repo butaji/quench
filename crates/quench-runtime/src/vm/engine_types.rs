@@ -86,7 +86,7 @@ pub struct LaneStack {
     /// The headers the segments hold, which `activation_count` counts.
     pub sealed: std::cell::Cell<usize>,
     /// The admission bound emitted code checks native headers against (`JsStepDispatch::plain_depth_limit`):
-    /// the activation limit while the frames are bound (`native_frames_enabled`), else 0. Rust's frame
+    /// the activation limit while the frames are bound, else 0. Rust's frame
     /// changes void it (`frames_changed`), so emitted calls take the helper row until the next binding.
     pub plain_depth_limit: Box<std::cell::Cell<usize>>,
     /// The frames below the plain headers, records and sealed alike (`frames_below_plain`), as of the last

@@ -193,9 +193,6 @@ setting! {
         /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
         /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
         IrMark = "ir-mark",
-        /// Emitted direct calls take the helper row instead of pushing native headers
-        /// (one-frame-one-call.md F5), which is the default: to compare against the old path.
-        NoNativeFrames = "no-native-frames",
         /// Every expensive fallback (a refused compile, a helper call, a deopt, an opaque native
         /// in compiled code) stops the process naming its operation and source location;
         /// `=report` lists them all at exit instead, `=deopt+helper-call` stops at those kinds
