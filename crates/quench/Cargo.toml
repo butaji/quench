@@ -67,7 +67,7 @@ libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
 zstd = { version = "0.13", features = ["zstdmt"] }
 libz-rs-sys = "0.6.8"
-turso_core = { workspace = true, features = ["fs"] }
+turso_core = { workspace = true, features = ["fs", "pure-rust-crypto"] }
 turso_parser = { workspace = true }
 
 [build-dependencies]
