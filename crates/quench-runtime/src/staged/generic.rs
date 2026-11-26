@@ -189,11 +189,7 @@ pub fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], stric
         // is tested by its tags: two Numbers compare as binary64 (zero and negative zero, an int32 and
         // a double); two records (direct objects or arrays) are apart, not being identical; two other
         // heap values (strings, BigInts) are the VM's; any other pair is apart.
-        let state = stage.choose(identical, #[inline(always)] |stage| {
-            let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);
-            let (equal, apart) = (stage.constant(NUMBERS_EQUAL), stage.constant(NOT_OPEN));
-            stage.select(ordered, equal, apart)
-        }, #[inline(always)] |stage| {
+        let state = stage.choose(identical, #[inline(always)] |stage| identical_state(stage, left), #[inline(always)] |stage| {
             let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
             let ints = stage.both(left_int, right_int);
             stage.choose(ints, #[inline(always)] |stage| stage.constant(NOT_OPEN), #[inline(always)] |stage| {
@@ -216,44 +212,53 @@ pub fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], stric
         let equal = stage.eq_imm(state, NUMBERS_EQUAL);
         return (decided, equal);
     }
-    let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);
-    let same = stage.both(identical, ordered);
-    let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
-    let ints = stage.both(left_int, right_int);
-    let by_words = stage.either(identical, ints);
-    let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
-    let nullish_pair = stage.both(left_nullish, right_nullish);
-    // One nullish side and one that is no nullish value: unequal under `==` unless the other side
-    // is an [[IsHTMLDDA]] object, which is a heap cell that is neither a direct object nor a direct
-    // array (`compare::loosely_nullish`). So a primitive word or a recorded object settles it.
-    let one_nullish = stage.either(left_nullish, right_nullish);
-    let other = stage.select(left_nullish, right, left);
-    let other_heap = is_heap(stage, other);
-    let (other_object, other_array) = (super::value::is_direct_object(stage, other), super::value::is_direct_array(stage, other));
-    let recorded = stage.either(other_object, other_array);
-    let other_primitive = stage.not(other_heap);
-    let settles = stage.either(other_primitive, recorded);
-    let nullish_apart = stage.both(one_nullish, settles);
-    let decided = stage.either(by_words, nullish_pair);
-    // Two Numbers compare as binary64 under `==` as under `===`; two records are equal only when identical.
-    let words_settled = stage.either(decided, one_nullish);
-    let state = stage.choose(words_settled, #[inline(always)] |stage| stage.constant(OPEN), #[inline(always)] |stage| {
-        let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
-        let left_number = stage.either(left_int, left_double);
-        let right_number = stage.either(right_int, right_double);
-        let numbers = stage.both(left_number, right_number);
-        stage.choose(numbers, #[inline(always)] |stage| number_state(stage, [left, right]), #[inline(always)] |stage| {
-            let records = record_pair(stage, [left, right]);
-            let (apart, open) = (stage.constant(NOT_OPEN), stage.constant(OPEN));
-            stage.select(records, apart, open)
+    // Identical words are settled first, as under `===`. A pair that is not identical tests its
+    // cheapest distinguishing tag first: two int32s are apart; two nullish words are equal; a nullish
+    // word against a primitive or a recorded object is apart, and against any other heap cell it is the
+    // VM's (an [[IsHTMLDDA]] object, `compare::loosely_nullish`). Two Numbers compare as binary64; two
+    // records are apart, not being identical; any other pair is the VM's.
+    let state = stage.choose(identical, #[inline(always)] |stage| identical_state(stage, left), #[inline(always)] |stage| {
+        let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
+        let ints = stage.both(left_int, right_int);
+        stage.choose(ints, #[inline(always)] |stage| stage.constant(NOT_OPEN), #[inline(always)] |stage| {
+            let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
+            let nullish_pair = stage.both(left_nullish, right_nullish);
+            stage.choose(nullish_pair, #[inline(always)] |stage| stage.constant(NUMBERS_EQUAL), #[inline(always)] |stage| {
+                let one_nullish = stage.either(left_nullish, right_nullish);
+                stage.choose(one_nullish, #[inline(always)] |stage| {
+                    let other = stage.select(left_nullish, right, left);
+                    let other_heap = is_heap(stage, other);
+                    let (other_object, other_array) = (super::value::is_direct_object(stage, other), super::value::is_direct_array(stage, other));
+                    let recorded = stage.either(other_object, other_array);
+                    let other_primitive = stage.not(other_heap);
+                    let settles = stage.either(other_primitive, recorded);
+                    let (apart, open) = (stage.constant(NOT_OPEN), stage.constant(OPEN));
+                    stage.select(settles, apart, open)
+                }, #[inline(always)] |stage| {
+                    let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
+                    let left_number = stage.either(left_int, left_double);
+                    let right_number = stage.either(right_int, right_double);
+                    let numbers = stage.both(left_number, right_number);
+                    stage.choose(numbers, #[inline(always)] |stage| number_state(stage, [left, right]), #[inline(always)] |stage| {
+                        let records = record_pair(stage, [left, right]);
+                        let (apart, open) = (stage.constant(NOT_OPEN), stage.constant(OPEN));
+                        stage.select(records, apart, open)
+                    })
+                })
+            })
         })
     });
-    let by_state = stage.ne_imm(state, OPEN);
-    let numbers_equal = stage.eq_imm(state, NUMBERS_EQUAL);
-    let decided = stage.either(decided, nullish_apart);
-    // `same` is false for a nullish side against a non-nullish word, so `equal` needs no change.
-    let equal = stage.either(same, nullish_pair);
-    (stage.either(decided, by_state), stage.either(equal, numbers_equal))
+    let decided = stage.ne_imm(state, OPEN);
+    let equal = stage.eq_imm(state, NUMBERS_EQUAL);
+    (decided, equal)
+}
+
+/// The state of an identical word: `NUMBERS_EQUAL` unless the word is NaN, which equals nothing.
+#[inline(always)]
+fn identical_state<S: NumericStage>(stage: &mut S, left: S::Word) -> S::Word {
+    let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);
+    let (equal, apart) = (stage.constant(NUMBERS_EQUAL), stage.constant(NOT_OPEN));
+    stage.select(ordered, equal, apart)
 }
 
 /// `decide`'s states of a pair its words leave: the VM's (`OPEN`), apart, or two Numbers equal or not.
