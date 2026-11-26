@@ -53,6 +53,9 @@ const RUNTIME: &str = "crates/quench-runtime/src";
 const ENGINE: &str = "crates/quench-runtime-engine/src";
 /// The expensive fallbacks the corpus reaches (quench-gate step `fallbacks`), one `kind operation (reason)` per line.
 const FALLBACKS: &str = "crates/quench-tier-corpus/fallbacks.txt";
+const TIER_ORDER: &str = "crates/quench-tier-corpus/tier_order.txt";
+const TIER_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions.txt";
+const DEFAULT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_default.txt";
 const LANE_DISPATCH: &str = "crates/quench-runtime-engine/src/dispatch_fast";
 
 const METRICS: &[Metric] = &[
@@ -184,6 +187,26 @@ const METRICS: &[Metric] = &[
         direction: Direction::Down,
         sources: &[Source::File(FALLBACKS)],
         extract: Extract::Text(extract::fallback_opaque_natives),
+    },
+    Metric {
+        name: "tier_order_violations",
+        direction: Direction::Down,
+        sources: &[Source::File(TIER_ORDER)],
+        extract: Extract::Text(extract::text_lines),
+    },
+    // The per-op tier ladder (quench-gate step `ir-budget`): ops b-jit runs in more than the
+    // interpreter, and ops the default mode runs in more than b-jit.
+    Metric {
+        name: "tier_inversions_b_jit",
+        direction: Direction::Down,
+        sources: &[Source::File(TIER_INVERSIONS)],
+        extract: Extract::Text(extract::text_lines),
+    },
+    Metric {
+        name: "tier_inversions_default",
+        direction: Direction::Down,
+        sources: &[Source::File(DEFAULT_INVERSIONS)],
+        extract: Extract::Text(extract::text_lines),
     },
     Metric {
         name: "lane_dispatch_lines",

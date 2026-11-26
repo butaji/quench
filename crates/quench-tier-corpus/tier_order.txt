@@ -1,0 +1,7 @@
+# Programs a higher tier runs in more instructions than the tier under it (quench-gate step `tier-order`).
+# One `program higher>lower` per line. The list may only shrink; quench-lint --census counts it.
+dot default>b-jit
+dot u-jit>b-jit
+fib b-jit>no-jit
+structs default>b-jit
+sum b-jit>no-jit
