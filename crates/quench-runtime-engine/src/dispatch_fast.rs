@@ -3146,7 +3146,7 @@ fn step_beside_activations_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip) -
 /// frames, and `None` is returned for the general path to raise it. The running function's
 /// registers are `(*cx).registers` afterwards.
 #[inline(always)]
-fn in_place_in_lane<T>(
+pub(crate) fn in_place_in_lane<T>(
     cx: *mut LaneContext,
     ip: Ip,
     operation: impl FnOnce(&mut Vm, &ResidualProgram) -> Result<T, JsError>,
@@ -10743,7 +10743,7 @@ fn native_value_in_lane(
             }
         }
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
-            return regexp_call_in_lane(cx, ip, i, native, callee, receiver, args);
+            return regexp_calls::regexp_call_in_lane(cx, ip, i, native, callee, receiver, args);
         }
         // A generator's resumption runs its body, and a Wasm export its function: guest code
         // that no in-place shortcut of `string_or_native_call_in_lane` makes.
@@ -10805,7 +10805,7 @@ pub(crate) mod name_probe; use name_probe::probe_handler;
 pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
-pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, vm_operation_step};
+pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
 pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
@@ -10951,45 +10951,6 @@ fn native_complete_in_lane(
     let r = unsafe { (*cx).registers };
     r.set(i.a, value);
     Resumed::At(r, following(ip), Carried::script(cx))
-}
-
-/// `RegExp.prototype.exec` or `test`, or `String.prototype.replace` or `match` of a RegExp, made in
-/// place when it runs no guest code and raises nothing, so it observes no frame
-/// (`Vm::steady_regexp_call`, `Vm::steady_string_replace`); any other such call goes on as
-/// `string_or_native_call_in_lane` makes it.
-#[inline(never)]
-fn regexp_call_in_lane(
-    cx: *mut LaneContext,
-    ip: Ip,
-    i: &LaneInstruction,
-    native: Native,
-    callee: Value,
-    receiver: Value,
-    args: &[Value],
-) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let result_used = ImmediateLayout::call_result_used_in_lane(i.imm());
-    let steady = match (native, args) {
-        (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
-        (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
-        (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
-        _ => None,
-    };
-    let Some(result) = steady else {
-        return string_or_native_call_in_lane(cx, ip, native, callee, receiver, args);
-    };
-    let result = vm.regexp_search_outcome(result);
-    // The call's allocations may make a collection due, which the lane's safepoints take.
-    note_allocation(vm);
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            vm.lane_completion.raise(error);
-            None
-        }
-    }
 }
 
 /// A lane native call that `native_call_miss` does not make inline: a pure string method or

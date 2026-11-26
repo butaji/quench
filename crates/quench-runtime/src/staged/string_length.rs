@@ -231,3 +231,33 @@ mod tests {
         assert!(stage.holes.is_empty(), "{:?}", stage.holes);
     }
 }
+
+/// Whether `===` of two heap words that `generic::decide` left open compares contents: one family, and a
+/// direct string or a legacy cell (a BigInt). Any other open pair is unequal.
+#[inline(always)]
+pub fn content_pair<S: Stage>(stage: &mut S, [left, right]: [S::Word; 2]) -> S::Cond {
+    let family = stage.and_imm(left, crate::value::ValueLayout::HEAP_FAMILY_MASK);
+    let right_family = stage.and_imm(right, crate::value::ValueLayout::HEAP_FAMILY_MASK);
+    let one_family = stage.eq(family, right_family);
+    let string = is_direct_string(stage, left);
+    let legacy = stage.eq_imm(family, crate::value::ValueLayout::HEAP_TAG);
+    let contents = stage.any(string, legacy);
+    stage.all(one_family, contents)
+}
+
+/// `===` of two strings both held inline in their records (the short form, zero-padded): equal exactly when
+/// their records' words are. Any other pair (a small string, another form) leaves at `miss`, the VM's compare.
+#[inline(always)]
+pub fn short_strings_equal<S: Stage>(stage: &mut S, record_base: S::Word, [left, right]: [S::Word; 2], miss: S::Miss) -> Option<S::Cond> {
+    let (left_record, left_short, _) = flat_record(stage, record_base, left, miss)?;
+    let (right_record, right_short, _) = flat_record(stage, record_base, right, miss)?;
+    let shorts = stage.all(left_short, right_short);
+    stage.guard(shorts, miss)?;
+    let same_word = |stage: &mut S, word: usize| {
+        let at = (word * 8) as i32;
+        let (a, b) = (stage.load_u64(Region::HeapMeta.mutable(), left_record, at), stage.load_u64(Region::HeapMeta.mutable(), right_record, at));
+        stage.eq(a, b)
+    };
+    let first = same_word(stage, 0);
+    Some((1..form::RECORD_SIZE / 8).fold(first, |equal, word| { let same = same_word(stage, word); stage.all(equal, same) }))
+}

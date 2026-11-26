@@ -25,7 +25,7 @@ use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Re
 use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
-use quench_runtime::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
+use quench_runtime::staged::typed_view::{prove_typed_view, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
@@ -2119,7 +2119,7 @@ pub(crate) fn lower(
     // A preliminary run of the facts over the arrays the loops index without their captured reads
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false, |at| lowering.held_field(at),
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
@@ -2130,7 +2130,7 @@ pub(crate) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::compiled::performed(&instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        |at| lowering.held_field(at), lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
         && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
@@ -3499,7 +3499,6 @@ impl Lowering<'_, '_> {
     /// strictly, two heap values compare by contents where they are strings or legacy cells
     /// (BigInts) of one family (`strict_equal_cells_in_lane`), and are unequal otherwise.
     fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
-        pub use quench_runtime::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
         let (decided, equal) = quench_runtime::staged::equality_decided(&mut emit(&mut self.builder), [left, right], strict);
@@ -3507,53 +3506,19 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, decided, exit);
             return Some(equal);
         }
-        let [open, cells, join] = std::array::from_fn(|_| self.builder.create_block());
+        let [open, cells, compare, join] = std::array::from_fn(|_| self.builder.create_block());
         let joined = self.builder.append_block_param(join, types::I8);
         self.builder.set_cold_block(open);
         self.branch_if(decided, (join, &[equal]), (open, &[]));
         self.builder.switch_to_block(open);
-        let family = self.raw_binary_imm(Binary::And, left, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let right_family = self.raw_binary_imm(Binary::And, right, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let one_family = self.raw_compare(Relation::Equal, family, right_family);
-        let string = quench_runtime::staged::value::is_direct_string(&mut emit(&mut self.builder), left);
-        let legacy = self.raw_compare_imm(Relation::Equal, family, ValueLayout::HEAP_TAG as i64);
-        let contents = self.raw_binary(Binary::Or, string, legacy);
-        let compared = self.raw_binary(Binary::And, one_family, contents);
+        // The open pair's contents decide it (`content_pair`); two short strings by their records' words, any other the VM's.
+        let compared = quench_runtime::staged::string_length::content_pair(&mut emit(&mut self.builder), [left, right]);
         let unequal = self.raw_const(Lane::I8, 0);
         self.branch_if(compared, (cells, &[]), (join, &[unequal]));
         self.builder.switch_to_block(cells);
-        // Two strings both held inline (`FlatUnits::Short`, zero-padded) are equal exactly
-        // when their records' words are: decided here, the helper left for other forms.
-        let [records, short, compare] = std::array::from_fn(|_| self.builder.create_block());
-        self.branch_if(string, (records, &[]), (compare, &[]));
-        self.builder.switch_to_block(records);
         let base = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
-        let mut decided = self.raw_compare_imm(Relation::NotEqual, base, 0);
-        let mut addresses = [base; 2];
-        for (address, bits) in addresses.iter_mut().zip([left, right]) {
-            let index = self.raw_binary_imm(Binary::And, bits, i64::from(u32::MAX));
-            let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_MASK));
-            let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_BASE));
-            decided = self.raw_binary(Binary::And, decided, recorded);
-            let offset = self.raw_binary_imm(Binary::Mul, index, quench_runtime::staged::string_form::RECORD_SIZE as i64);
-            *address = self.raw_binary(Binary::Add, base, offset);
-        }
-        let shorts = self.builder.create_block();
-        self.branch_if(decided, (shorts, &[]), (compare, &[]));
-        self.builder.switch_to_block(shorts);
-        let meta = regions::flags(quench_runtime::staged::region::Region::HeapMeta.mutable());
-        let tags = addresses.map(|address| self.raw_load(Lane::I8, meta, address, quench_runtime::vm::wtf16::native_string::TAG_OFFSET));
-        let either = self.raw_binary(Binary::Or, tags[0], tags[1]);
-        let both_short = self.raw_compare_imm(Relation::Equal, either, i64::from(quench_runtime::vm::wtf16::native_string::TAG_SHORT));
-        self.branch_if(both_short, (short, &[]), (compare, &[]));
-        self.builder.switch_to_block(short);
-        let mut differ = self.raw_const(Lane::I64, 0);
-        for word in 0..quench_runtime::staged::string_form::RECORD_SIZE / 8 {
-            let [a, b] = addresses.map(|address| self.raw_load(Lane::I64, meta, address, (word * 8) as i32));
-            let bits = self.raw_binary(Binary::Xor, a, b);
-            differ = self.raw_binary(Binary::Or, differ, bits);
-        }
-        let same_text = self.raw_compare_imm(Relation::Equal, differ, 0);
+        let same_text = quench_runtime::staged::string_length::short_strings_equal(&mut emit(&mut self.builder), base, [left, right], compare)
+            .expect("the emit stage continues past its guards");
         self.goto(join, &[same_text]);
         self.builder.switch_to_block(compare);
         let result = self.helper_call(LaneHelper::StrictEqual, &[left, right]);
@@ -4428,6 +4393,7 @@ impl Lowering<'_, '_> {
                 let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
                 Some(self.builder.use_var(read.value))
             }
+            ArraySource::Field(pc) => Some(self.loop_entry_word(self.entry_fields.get(pc).copied().flatten()?)),
         }
     }
 
@@ -4454,11 +4420,7 @@ impl Lowering<'_, '_> {
     /// The proof of the typed array `bits` for `access`, leaving at `miss`, whose view the
     /// array's variables then hold.
     fn prove_typed_view_into(&mut self, variables: ArrayVariables, bits: ir::Value, access: ViewAccess, miss: ir::Block) {
-        let records = TypedRecords {
-            directory: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_directory)),
-            pages: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_pages)),
-            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
-        };
+        let records = self.typed_records();
         let view = prove_typed_view(&mut super::object_slots::emit(&mut self.builder), records, bits, access, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(variables.values, view.values);
@@ -4734,7 +4696,7 @@ impl Lowering<'_, '_> {
             return self.held_length(string);
         }
         let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
-            && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
+            && (entering != Some(array.header) || !matches!(array.source, ArraySource::Capture(_)));
         if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
             let (_, count) = self.hoisted_view(array);
             let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));

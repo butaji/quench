@@ -314,6 +314,9 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
     let mut singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     kernel_entries(&layout, &heads, &decoded, &reached, &mut singles, helpers)?;
+    if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
+        report_steps(&layout, spec.known.program, &singles);
+    }
     let mut planned = tile::tiled(&layout, &decoded, singles);
     // An image body names the process statics its rows take by symbol: their addresses are this process's.
     if helpers == LaneHelpers::Ahead {
@@ -369,6 +372,28 @@ fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fiel
             && !crate::dispatch_fast::family_helpers::admits(words, *site, fields)
         {
             row.packed = None;
+        }
+    }
+}
+
+/// Prints each record of an image body whose rows call a general step helper (`Step`, `VmStep`), with its
+/// opcode and step kind: what an image needs the interpreter's semantics for (the aot-lanes trace).
+fn report_steps(layout: &Layout, program: &ResidualProgram, singles: &[Planned]) {
+    fn steps(row: &Planned) -> Option<&'static str> {
+        let named = row.symbolic.iter().flatten().find_map(|(_, symbol)| match symbol {
+            crate::aot_image::Symbol::Helper(helper) => crate::compiled::LaneHelper::name(*helper as usize).filter(|name| matches!(*name, "Step" | "VmStep")),
+            _ => None,
+        });
+        named.or_else(|| row.pre.iter().chain(row.post.iter()).find_map(steps))
+    }
+    let code: Vec<_> = program.function(layout.id as usize).instructions().collect();
+    for (k, helper) in singles.iter().enumerate().filter_map(|(k, row)| steps(row).map(|helper| (k, helper))) {
+        match layout.origins.get(k) {
+            Some(crate::compiled::lane_unit::Origin::Caller(pc)) => {
+                let name = code.get(*pc as usize).map_or("?", |instruction| quench_runtime::bytecode::Op::NAMES[instruction.op() as usize]);
+                eprintln!("aot-lanes: step record {} pc {pc} {name} {helper}", layout.id);
+            }
+            _ => eprintln!("aot-lanes: step record {} row {k} inlined {helper}", layout.id),
         }
     }
 }

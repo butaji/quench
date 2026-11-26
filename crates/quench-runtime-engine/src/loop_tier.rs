@@ -269,6 +269,8 @@ pub(crate) fn loop_compile_in_lane(
     count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    // Native code reads slot representations, which the runtime keeps from its first compile on.
+    machine.keep_slot_representations();
     // The tier of this compile: b-jit where the u-jit region is not yet ahead of it, counting
     // the interpreter's jumps and the native iterations the loop took so far.
     let base = crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
@@ -413,8 +415,8 @@ pub(crate) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion
             push_dense_array(vm, value, array.written, entry)?;
             ElementViews::Dense
         } else {
-            // A typed array read through a field is no loop's hoisted view.
-            array.field.is_none().then_some(())?;
+            // A typed array read through a field the region never stores holds its view for the run, as a
+            // record array's does (`field_value` answers the entry's read).
             let (elements, length, kind) = vm.typed_array_elements_in_lane(value, array.written)?;
             entry.push_array(elements, length, length)?;
             ElementViews::Typed(Some(kind))
