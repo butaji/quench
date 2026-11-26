@@ -164,11 +164,13 @@ lane_handler! {
             Some((register, slot, r.get(register)))
         } else { None };
         // merge: `typed_site`/`proved_site`/`element_move_site` (trunk helpers over PROVED_SITE, PROVED_MOVE_SITE, ELEMENT_MOVE_SITE) do not exist here; TYPED_SITE is the current constant.
-        if const { FLAG == crate::dispatch_fast::TYPED_SITE } {
-            // The element kind the record observed (`requicken_typed`), and the typed array records
-            // the view proof reads.
+        if const { FLAG == crate::dispatch_fast::TYPED_SITE || crate::dispatch_fast::typed_site_kind(FLAG).is_some() } {
+            // The element kind the record observed (`requicken_typed`): fixed by the row's site for the
+            // common kinds (`typed_site_kind`), so no access dispatches on it, else the record's immediate.
+            // And the typed array records the view proof reads.
             let script: *mut LaneContext = view.memory.bytes.cast();
-            frame.typed = Some((quench_runtime::staged::typed_elements::native_kind_at(i.imm()),
+            let index = match const { crate::dispatch_fast::typed_site_kind(FLAG) } { Some(index) => index, None => i.imm() };
+            frame.typed = Some((quench_runtime::staged::typed_elements::native_kind_at(index),
                 unsafe { vm(script) }.heap_reads().typed_view_directory()));
         }
         if store {
