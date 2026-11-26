@@ -1548,14 +1548,6 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
         .specialize(program).ok().filter(|region| region.native != 0)
 }
 
-/// `lowered_lane_body`'s code with the atoms it stores without a method-cache test.
-pub(crate) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
-) -> Option<(ir::Function, Box<[Atom]>)> {
-    lowered_lane_body(program, function_id, isa, helpers, facts, global_reads)
-        .map(|region| (region.function, region.stable.atoms))
-}
-
 pub use quench_runtime::vm::engine_types::ExecutionMode;
 
 

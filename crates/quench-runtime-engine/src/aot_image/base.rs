@@ -35,9 +35,8 @@ pub(crate) fn lower(
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<(BaseImage, Vec<CallSite>), String> {
-    // The target changes no base row: the body names no target's layout.
-    let _ = target;
-    let built = crate::compiled::image_body(program, id, facts)?;
+    // The body is the target CPU's stencils, not the compiling CPU's.
+    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, id, facts))?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
         Relocation { offset: site.offset, kind: Reloc::Abs8, namespace, key, addend: 0 }

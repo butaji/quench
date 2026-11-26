@@ -212,10 +212,11 @@ pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
 /// rustc and shared for the life of the process; `None` for a pair the library does not hold (the
 /// pair is then planned as single rows). Misses are remembered too.
 pub fn supernode_stencil(nodes: [supernodes::Node; supernodes::NODES]) -> Option<&'static Stencil> {
-    type Table = Mutex<HashMap<[supernodes::Node; supernodes::NODES], Option<&'static Stencil>>>;
+    // Kept per library, as `rustc::Memo` keeps stencils.
+    type Table = Mutex<HashMap<(bool, [supernodes::Node; supernodes::NODES]), Option<&'static Stencil>>>;
     static TABLE: OnceLock<Table> = OnceLock::new();
     let mut table = TABLE.get_or_init(Default::default).lock().ok()?;
-    *table.entry(nodes).or_insert_with(|| crate::rustc::stencil(&supernodes::name(&nodes)).map(|found| &*Box::leak(Box::new(found))))
+    *table.entry((crate::rustc::uses_v3(), nodes)).or_insert_with(|| crate::rustc::stencil(&supernodes::name(&nodes)).map(|found| &*Box::leak(Box::new(found))))
 }
 
 #[cfg(test)]
