@@ -3566,7 +3566,8 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     // SAFETY: the function's contract.
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
     debug_assert!(target.entry.activates() && !target.settles());
-    debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+    // A leaf entry's own call form proves it published or not (`script_call_leaf_prove_miss`).
+    debug_assert!(target.entry != super::CallEntry::Activates || !unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
