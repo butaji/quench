@@ -59,6 +59,14 @@ const DEFAULT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_defa
 const LANE_DISPATCH: &str = "crates/quench-runtime-engine/src/dispatch_fast";
 
 const METRICS: &[Metric] = &[
+    // TOD-2417 (check once, facts travel, rows trust them): every guard a staged row takes itself is a re-check
+    // a fact could carry instead; shrinks as rows take proof tokens (`staged::proof`) and held dependencies.
+    Metric {
+        name: "staged_rechecks",
+        direction: Direction::Down,
+        sources: &[Source::Tree("crates/quench-runtime/src/staged", &[])],
+        extract: Extract::Text(extract::staged_rechecks),
+    },
     Metric {
         name: "opcodes",
         direction: Direction::Informational,
