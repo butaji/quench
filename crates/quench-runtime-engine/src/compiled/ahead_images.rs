@@ -83,7 +83,7 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads))
-    -> Result<(RelocatableCode, bool), &'static str> {
+    -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
@@ -99,7 +99,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
         NativeCompileRejection::Relocations => "a relocation the image cannot name",
         _ => "Cranelift rejects the code",
     })?;
-    Ok((code, lowered.region.fault_poll))
+    Ok((code, lowered.region.fault_poll, std::mem::take(&mut lowered.region.exits)))
 }
 
 /// The lane body of `function` for an AOT image under the closed-world `facts`, whose leaves
@@ -112,8 +112,6 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
-    // A VM installs no lane body that inlines a frame (`ahead_lane_method`): its leaves inside one have no store list.
-    if !unit.frames.is_empty() { return Err("inlines a call (not installable)"); }
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
     let strings = string_constants(program, &unit, symbols);
@@ -122,18 +120,28 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let crosses = crosses_bodies(&unit);
-    let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     // A lane body that polls and calls enters its callee's body through the VM's call helper, where
     // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
     // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
     if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
-    Ok(LaneImage { code, fault_poll })
+    Ok(LaneImage { code, fault_poll, exits })
 }
 
-/// Whether `unit` may enter another body: a call of any form or a construction.
+/// Whether `unit` may enter another body: a call of any form or a construction that it does not inline (a call whose
+/// frame the unit holds runs in the body; its alternatives' last leaves at the call, as any guard does).
 fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
-    unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
+    let inlined = |unit_pc: usize| {
+        let site = match unit.origins.get(unit_pc) {
+            Some(Origin::Caller(pc)) => (None, *pc),
+            Some(Origin::Inlined { frame, pc }) => (Some(*frame), *pc),
+            None => return false,
+        };
+        unit.frames.iter().any(|frame| (frame.parent, frame.call) == site)
+    };
+    unit.instructions.iter().enumerate().any(|(unit_pc, instruction)| !inlined(unit_pc)
+        && [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 
 /// By constant pool slot, the heap value key of each string constant `unit` loads (`HeapValueRecipe::String`).
@@ -285,15 +293,15 @@ impl Vm {
         let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze(program))) else {
             refused("no unit"); return None;
         };
-        // An image has no lowering to ask which registers a leave inside an inlined frame stores.
-        if !unit.frames.is_empty() { refused("inlined frames"); return None; }
         let Some((linked, roots)) = live::link_lane(&images.image, self, linked_live, function) else {
             refused("link_lane"); return None;
         };
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() }, entry_types: Default::default(), summary: None,
-            exits: ExitTable::of_unit(&unit, |_, _| Vec::new(), |_| None) };
+            // The leaves the image's lowering laid out, each inlined one with the values it stores.
+            exits: ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone(),
+                crossings: (0..lane.exits.sites.len()).map(|_| std::cell::Cell::new(0)).collect() } };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish(&linked, None, None);

@@ -17,8 +17,9 @@ fn decoded(instruction: WideInstruction) -> Option<Operation<(), ()>> {
 /// The index of the function a closure record makes (`MakeClosure`).
 #[inline(always)]
 pub(crate) fn closure_function(instruction: WideInstruction) -> Option<u32> {
-    match decoded(instruction)? {
-        Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. } => Some(function),
+    // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
+    match super::Allocation::decode(instruction, &[])? {
+        (_, super::Allocation::Closure { function }) => Some(function),
         _ => None,
     }
 }
