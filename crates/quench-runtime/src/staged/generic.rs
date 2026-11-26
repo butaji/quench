@@ -261,6 +261,17 @@ fn number_state<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]) -> 
     stage.select(equal, equal_state, apart)
 }
 
+/// `===` of a proved binary64 `number` and any word `other` (`decide` where one side is known a
+/// Number): equal only where `other` is a Number whose binary64 equals it, so NaN equals nothing.
+#[inline(always)]
+pub fn number_strict_equal<S: NumericStage>(stage: &mut S, number: S::Word, other: S::Word) -> S::Cond {
+    let (int, double) = (is_int(stage, other), is_double(stage, other));
+    let is_number = stage.either(int, double);
+    let value = number_bits(stage, other);
+    let equal = stage.float_eq(number, value);
+    stage.both(is_number, equal)
+}
+
 /// The binary64 word of Number word `bits`: an int32 widened, a double as it is.
 #[inline(always)]
 fn number_bits<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Word {

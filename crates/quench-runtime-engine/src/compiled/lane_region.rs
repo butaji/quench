@@ -3451,19 +3451,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc);
         let number = self.operand_number(state, number, exit)?;
         let bits = self.operand_tagged(state, other)?;
-        let [decode, join] = std::array::from_fn(|_| self.builder.create_block());
-        let equal = self.builder.append_block_param(join, types::I8);
-        let double = quench_runtime::staged::value::is_double(&mut emit(&mut self.builder), bits);
-        let int = is_int_tagged(&mut self.builder, bits);
-        let is_number = self.raw_binary(Binary::Or, double, int);
-        let unequal = self.raw_const(Lane::I8, 0);
-        self.branch_if(is_number, (decode, &[]), (join, &[unequal]));
-        self.builder.switch_to_block(decode);
-        let value = emit_known_number(&mut self.builder, bits);
-        let same = self.raw_compare(Relation::FloatEqual, number, value);
-        self.goto(join, &[same]);
-        self.builder.switch_to_block(join);
-        Some(equal)
+        Some(quench_runtime::staged::number_strict_equal(&mut emit(&mut self.builder), number, bits))
     }
 
     /// `===` or `==` of two operands: a strict pair of strings the loop holds compares their held
