@@ -204,14 +204,19 @@ impl<W: Copy> Int32<W> {
 
 impl<W: Copy> Int32<W> {
     /// ToInt32 of a tagged word, as a bitwise operator reads it: an int-tagged word is its int32,
-    /// a Number truncates (`NumericStage::to_int32`), and any other word leaves at `miss`.
+    /// a Boolean its 0 or 1 (`(a < b) | 0`: `true`'s word is `false`'s with the low bit set), a Number
+    /// truncates (`NumericStage::to_int32`), and any other word leaves at `miss`.
     #[inline(always)]
     pub fn guard_truncating<S: NumericStage<Word = W>>(stage: &mut S, tagged: W, miss: S::Miss) -> Option<Self>
     where S::Miss: Copy {
         let int = super::value::is_int(stage, tagged);
         stage.choose_leaving(int, #[inline(always)] |stage| Some(stage.narrow(tagged)), #[inline(always)] |stage| {
-            let number = Float64::guard(stage, tagged, miss)?;
-            stage.to_int32(number.0, miss)
+            let boolean = super::value::is_boolean(stage, tagged);
+            stage.choose_leaving(boolean, #[inline(always)] |stage| { let bit = stage.and_imm(tagged, 1u64); Some(stage.narrow(bit)) },
+                #[inline(always)] |stage| {
+                    let number = Float64::guard(stage, tagged, miss)?;
+                    stage.to_int32(number.0, miss)
+                })
         }).map(Int32)
     }
 }

@@ -199,6 +199,28 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         open
     }
+    /// Whether a store of a value the slot's type holds needs no barrier log
+    /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
+    /// the gate word is not asked; old records keep no counts (`counts_clear`), and a heap value's
+    /// owner is unmarked (`barrier::value_unlogged`). A stage with no payload answers no, and the
+    /// store leaves at its miss.
+    fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
+        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(logged);
+        let open = self.builder.append_block_param(join, types::I8);
+        let clear = self.counts_clear(payload);
+        emit_js_guard(self.builder, clear, logged);
+        quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged)
+            .expect("an Emit guard always continues");
+        let yes = self.raw_const(Lane::I8, 1);
+        self.goto(join, &[yes]);
+        self.builder.switch_to_block(logged);
+        let no = self.raw_const(Lane::I8, 0);
+        self.goto(join, &[no]);
+        self.builder.switch_to_block(join);
+        open
+    }
     /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
     /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
     /// without counts, else closed, and the store leaves at its miss.
@@ -295,9 +317,20 @@ impl Stage for Emit<'_, '_> {
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.raw_select(cond, then, otherwise)
     }
+    /// An ahead image's guessed shapes (`ic::SYMBOLIC_SHAPE`) are each compared with their
+    /// symbol; the others form the set (`shape_in_set`).
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
         let word = if self.raw_lane(shape) == Lane::I32 { shape } else { self.narrow(shape) };
-        super::shape_in_set(self.builder, word, shapes)
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        let (guessed, known): (Vec<u32>, Vec<u32>) = shapes.iter().partition(|shape| *shape & tag != 0);
+        let mut member = (!known.is_empty()).then(|| super::shape_in_set(self.builder, word, &known));
+        for shape in guessed {
+            let symbol = self.word(EmitImm::Shape(shape & !tag));
+            let symbol = self.narrow(symbol);
+            let same = self.raw_compare(Relation::Equal, word, symbol);
+            member = Some(match member { Some(member) => self.or(member, same), None => same });
+        }
+        member.expect("a shape set is non-empty")
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
         let number = self.raw_unary(Unary::Bitcast(Lane::F64), bits);

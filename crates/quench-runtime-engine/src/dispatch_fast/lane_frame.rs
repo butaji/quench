@@ -2081,18 +2081,12 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         prototype(context, self.read_value(constructor)).map(u64::from)
     }
 
-    /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
-    /// is read as an int and never converted to binary64.
+    /// ToInt32 of an operand, as the bitwise operators read it: the staged `Int32::guard_truncating`, so the
+    /// lane computes no conversion of its own (an int32 is its own, a Boolean its 0 or 1, a Number truncates).
     #[inline(always)]
-    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
-        let value = Value::from_bits(self.operand_word(stage, operand)?);
-        if let Some(int) = Int32::checked(value) {
-            return Some(int);
-        }
-        // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
-        // computes no conversion of its own.
-        let number = Float64::checked(value)?;
-        Int32::truncating(stage, number, ())
+    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<Int32<u64>> {
+        let word = self.operand_word(stage, operand)?;
+        Int32::guard_truncating(stage, word, miss)
     }
 
     #[inline(always)]
@@ -2165,7 +2159,7 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
     #[inline(always)]
     fn wide(self) -> WideInstruction {
         // SAFETY: registers fit (`fields_fit_in_lane`); flagged records are stripped here or missed first.
-        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
+        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || FLAG == FLAG_LOCAL_RESULT || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
             self.0.a & quench_runtime::bytecode::REGISTER_MASK
         } else { self.0.a };
         unsafe {
@@ -2259,6 +2253,11 @@ pub(crate) const FLAG_KEPT_OBJECT: u8 = 18;
 pub(crate) const FLAG_REGISTERS: u8 = 19;
 /// `LaneFields`' `FLAG` for a record whose row completes its result itself (`returning_row`).
 pub(crate) const FLAG_COMPLETING: u8 = 20;
+/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`) whose result is a numeric local target
+/// (`WideInstruction::numeric_local_target`): its `a` names a local slot of the running frame, not a register.
+/// The row computes into that register number, then moves the value to the frame's slot and puts the
+/// register back (`numeric_local_slot`), as the VM's completion does (`Vm::run_row_completed`).
+pub(crate) const FLAG_LOCAL_RESULT: u8 = 21;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2585,6 +2584,10 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 /// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
 /// (`store_name_first_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
+    // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
+    if FLAG == FLAG_LOCAL_RESULT {
+        return general_step_in_lane;
+    }
     // A `Binary` the row leaves tries the lane's pure operation before the general step.
     if quench_runtime::staged::computes_binary(op) && matches!(quench_runtime::staged::miss(op), quench_runtime::staged::Miss::General) {
         return super::binary_miss_in_lane;

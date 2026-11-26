@@ -114,6 +114,7 @@ lane_handler! {
         // A record whose result carries flags holds the general step from its edge on (`derive_lane_view`,
         // `requicken`): this row's result is a register, stated so the decode's tests fold.
         if const { LaneFields::<OP, FLAG>::OPCODE.result_layout().allowed_flags() != 0 && !crate::dispatch_fast::sink_site(FLAG)
+            && FLAG != FLAG_LOCAL_RESULT
             && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } {
             unsafe { std::hint::assert_unchecked(i.a <= quench_runtime::bytecode::REGISTER_MASK) }
         }
@@ -152,6 +153,16 @@ lane_handler! {
             Concrete::storing_in(unsafe { vm(view.memory.bytes.cast::<LaneContext>()) })
         } else { Concrete::new(property_values) };
         let mut frame = row_frame::<OP, ACC, FLAG>(cx, r, ip, i, view);
+        // A numeric local target: the frame's slot the value moves to, and the register of that number the
+        // row writes, put back once it has (`FLAG_LOCAL_RESULT`). A record outside a frame run takes the
+        // general step.
+        let local = if const { FLAG == FLAG_LOCAL_RESULT } {
+            let register = i.a & quench_runtime::bytecode::REGISTER_MASK;
+            let Some(slot) = (unsafe { crate::dispatch_fast::numeric_local_slot(cx, register) }) else {
+                sibling!(general_step_in_lane, r, ip, view)
+            };
+            Some((register, slot, r.get(register)))
+        } else { None };
         // merge: `typed_site`/`proved_site`/`element_move_site` (trunk helpers over PROVED_SITE, PROVED_MOVE_SITE, ELEMENT_MOVE_SITE) do not exist here; TYPED_SITE is the current constant.
         if const { FLAG == crate::dispatch_fast::TYPED_SITE } {
             // The element kind the record observed (`requicken_typed`), and the typed array records
@@ -424,6 +435,14 @@ lane_handler! {
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }
             Step::Unresolved if property => property_miss!(),
+            Step::Value(value) if const { FLAG == FLAG_LOCAL_RESULT } => {
+                let Some((register, slot, kept)) = local else { unreachable!() };
+                // SAFETY: `numeric_local_slot` gave a live local slot of the running frame.
+                unsafe { *slot = Value::from_bits(value) };
+                r.set(register, kept);
+                // The result is no register's, so no record reads it as the accumulator.
+                next!(cx, r, following(ip), view)
+            }
             Step::Value(value) => {
                 // A row that answers its value without writing its register (`row_writes_result`):
                 // the register is written here, as every producer writes it beside the carried value.
@@ -452,7 +471,10 @@ lane_handler! {
             }
             // A transfer (a Wasm return) resumes the register file the frame switched to.
             Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
-            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
+            Step::Control(_) | Step::Unresolved => {
+                if let Some((register, _, kept)) = local { r.set(register, kept); }
+                sibling!(const { row_miss::<FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view)
+            }
         }
     }
 }
