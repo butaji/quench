@@ -4580,6 +4580,17 @@ pub(crate) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
 /// is the slot load past the layout guard.
 pub(crate) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
 pub(crate) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
+/// The cell-own sites of an arena run of slot words where slots hold raw doubles (`switches::float_slots`, every JIT
+/// mode): the row folds the layout's form and decodes the word as a float slot's (`decode_float_word`), with no
+/// test of the switch or the hint layout's form, as an own-field site of the untagged run form does.
+pub(crate) const CELL_FLOAT_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 31);
+pub(crate) const CELL_FLOAT_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 31);
+/// The float cell-own sites of a run with an extras block (a function with many static members, `EXTRAS_FORM`).
+pub(crate) const CELL_FLOAT_EXTRAS_THIS: u8 = own_site(true, OWN_FORMS.len() + 32);
+pub(crate) const CELL_FLOAT_EXTRAS_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 32);
+/// The cell-own sites of a run with an extras block where slots hold tagged words: the slot load past the layout guard.
+pub(crate) const CELL_EXTRAS_THIS: u8 = own_site(true, OWN_FORMS.len() + 33);
+pub(crate) const CELL_EXTRAS_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 33);
 
 /// The site fact of a `GetField` of a local slot's row (`local_field_handler`): an own-field read of a
 /// plain local, whose hint the record binds like an own read's. Own-form index 30, a
@@ -4792,6 +4803,8 @@ fn returning_own_row(handler: *const ()) -> bool {
 
 pub(crate) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
+        || site == CELL_FLOAT_RUN_THIS || site == CELL_FLOAT_RUN_REGISTER || site == CELL_FLOAT_EXTRAS_THIS || site == CELL_FLOAT_EXTRAS_REGISTER
+        || site == CELL_EXTRAS_THIS || site == CELL_EXTRAS_REGISTER
 }
 
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
@@ -4813,6 +4826,9 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
     let index = (site.wrapping_sub(1) / 2) as usize;
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
     else if index == OWN_FORMS.len() + 7 { quench_runtime::staged::TAGGED_SLOTS }
+    else if index == OWN_FORMS.len() + 31 { 0 }
+    else if index == OWN_FORMS.len() + 32 { quench_runtime::value_vec::EXTRAS_FORM }
+    else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM | quench_runtime::staged::TAGGED_SLOTS }
     else { HINTED_FORM }
 }
 
@@ -5361,11 +5377,20 @@ script_handler! {
                         set_record_hint(ip, layout, slot);
                         // A tagged arena run is a fixed form: the row folds the layout's form test and the slot decode.
                         use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-                        let run = quench_runtime::tier_surface::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
-                            && !quench_runtime::vm::switches::float_slots();
-                        Some(if run {
+                        let form = quench_runtime::tier_surface::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM);
+                        let run = form == 0;
+                        Some(if run && !quench_runtime::vm::switches::float_slots() {
                             single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS),
                                 generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_REGISTER), general_handler(i.b))
+                        } else if run {
+                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_FLOAT_RUN_THIS),
+                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_FLOAT_RUN_REGISTER), general_handler(i.b))
+                        } else if form == EXTRAS_FORM && quench_runtime::vm::switches::float_slots() {
+                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_FLOAT_EXTRAS_THIS),
+                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_FLOAT_EXTRAS_REGISTER), general_handler(i.b))
+                        } else if form == EXTRAS_FORM {
+                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_EXTRAS_THIS),
+                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_EXTRAS_REGISTER), general_handler(i.b))
                         } else {
                             single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS),
                                 generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER), general_handler(i.b))
