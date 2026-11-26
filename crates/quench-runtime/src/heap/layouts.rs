@@ -37,6 +37,15 @@ const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as u
 #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
 const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as usize;
 
+/// The layout table's range where it sits at its fixed address, mapped before `main`: a dump of
+/// the process (`quench::aot::image_dump`) carries its written pages.
+pub fn fixed_table_range() -> Option<(usize, usize)> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    return Some((FIXED_TABLE, LAYOUT_CAPACITY * size_of::<u64>()));
+    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    None
+}
+
 /// The table's fixed address is what compiled code reads (`staged::Table::Layouts`), so it is
 /// mapped before `main` on every target: on Apple AArch64 the constant is a 32-bit unsigned
 /// displacement a row adds, and the 32 MiB mapping lies below the image's 4 GiB base.

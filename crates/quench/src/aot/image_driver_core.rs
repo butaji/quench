@@ -43,6 +43,9 @@ fn run() -> Result<std::process::ExitCode, String> {
     let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
     let policy = memory_policy();
     apply_allocator_policy(policy);
+    // The Intl and Temporal layer this support links (`support_features` includes `intl` where
+    // the program reaches it): without it the layer's stubs make Intl throw.
+    quench_runtime::install_intl();
     let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
     runtime.set_memory_policy(policy);

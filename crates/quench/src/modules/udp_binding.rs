@@ -173,6 +173,7 @@ pub(crate) fn construct(
     {
         let mut state = shared.borrow_mut();
         state.udp.identities.push((weak, id));
+        state.poll_on(crate::host::node_host::PollSlot::Udp, |runtime, _, shared| poll(runtime, shared));
         state.udp.endpoints.insert(
             id,
             Socket {

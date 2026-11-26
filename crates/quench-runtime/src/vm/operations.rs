@@ -731,7 +731,7 @@ impl Vm {
             NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
             NativeFamily::Collection => self.call_collection_native(p, native, this, args),
             #[cfg(feature = "wasm")]
-            NativeFamily::WasmJs => self.call_wasm_js_native(p, native, this, args),
+            NativeFamily::WasmJs => self.call_wasm_js_routed(p, native, this, args),
             #[cfg(not(feature = "wasm"))]
             NativeFamily::WasmJs => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
@@ -793,7 +793,7 @@ impl Vm {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
             #[cfg(feature = "wasm")]
-            Native::WebAssemblyInitialize => self.install_webassembly(p).map(|()| Value::UNDEFINED),
+            Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
             #[cfg(not(feature = "wasm"))]
             Native::WebAssemblyInitialize => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             Native::IntlInitialize => {

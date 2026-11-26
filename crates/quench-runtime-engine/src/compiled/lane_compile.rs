@@ -680,6 +680,7 @@ impl Vm {
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         self.keep_slot_representations();
+
         // Without the JIT's routes (`jit_routes`) the body declines and the interpreter runs.
         match crate::jit_routes::jit() {
             Some(routes) => (routes.body)(self, program, function, targets, trips, captures, direct, work, entry),

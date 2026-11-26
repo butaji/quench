@@ -7,7 +7,7 @@ use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::library_surface::Native;
 use quench_runtime::vm::error::JsError;
 use quench_runtime::vm::intl_core::Collation;
-use quench_runtime::vm::layer_hooks::signatures;
+use quench_runtime::vm::layer_hooks::intl_signatures as signatures;
 use quench_runtime::vm::Vm;
 use quench_runtime::Value;
 use std::rc::Rc;

@@ -96,9 +96,13 @@ impl<H: Host> Runtime<H> {
     pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
         Self { vm: Vm::new_static_with_builtins(host, builtins), host: std::marker::PhantomData }
     }
-    /// A runtime only ever restored from one saved at rest (`resume_native_from_snapshot` of a
+    /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
     /// `snapshot_at_rest`): it never installs its host.
     pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }
+    /// A runtime only ever restored from its startup snapshot (`execute_native_from_snapshot`):
+    /// it never installs its host, compiles source or runs the JIT, so a binary that makes
+    /// only such runtimes links none of them.
+    pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
@@ -152,9 +156,14 @@ impl<H: Host> Runtime<H> {
     /// Ends this runtime for a process that exits next. The host is dropped, so its effects
     /// (flushed output, terminated workers, closed handles) happen as on any drop; the heap
     /// and compiled programs, which hold only this process's memory, are left to the
-    /// operating system instead of being freed one allocation at a time.
-    pub fn end_for_process_exit(self) {
-        self.vm.end_for_process_exit();
+    /// operating system instead of being freed one allocation at a time. Ended in place, so
+    /// the runtime is not copied out first.
+    ///
+    /// # Safety
+    /// `runtime` is never used, taken or dropped again.
+    pub unsafe fn end_for_process_exit(runtime: &mut std::mem::ManuallyDrop<Self>) {
+        // SAFETY: the caller never uses the runtime again.
+        unsafe { runtime.vm.end_for_process_exit() };
     }
 
     pub fn host_mut(&mut self) -> &mut H {
@@ -320,6 +329,16 @@ impl<H: Host> Runtime<H> {
         self.vm.held_host_operations()
     }
 
+    /// How much code the programs this runtime holds carry: programs, functions and
+    /// instructions, which an image that runs them natively lowers.
+    pub fn held_code_size(&self) -> (usize, usize, usize) {
+        self.vm.programs.residuals().fold((0, 0, 0), |(programs, functions, instructions), program| {
+            let count = program.function_count();
+            let code: usize = (0..count).map(|index| program.function(index).code.len()).sum();
+            (programs + 1, functions + count, instructions + code)
+        })
+    }
+
     /// The opcodes the programs this runtime holds run, lowered: a saved runtime's image
     /// links lane handlers for these alone (`LaneTables::kept`).
     pub fn held_opcodes(&self) -> Vec<u16> {
@@ -352,16 +371,16 @@ impl<H: Host> Runtime<H> {
         self.vm.resume_restored()
     }
 
-    /// `resume_restored` for a run saved at rest that `program`'s native image continues.
+    /// `restore_snapshot` of a run saved at rest that `program`'s native image continues; the
+    /// run goes on from `resume_restored`.
     #[cfg(feature = "native-execution")]
-    pub fn resume_native_from_snapshot(
+    pub fn restore_native_at_rest(
         &mut self,
         snapshot: crate::KeptBytes,
         program: &crate::NativeJsProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<(), JsError> {
-        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
-        self.vm.resume_restored()
+        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))
     }
 
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).

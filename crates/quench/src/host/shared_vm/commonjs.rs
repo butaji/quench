@@ -529,6 +529,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let raw_queue_key = context.string_rooted("\0quench:queueMicrotaskRaw");
     context.define_data_property_rooted(global, raw_queue_key, raw_queue_microtask, false, false, true)?;
     let require = get(context, global, BOOTSTRAP_REQUIRE)?;
+    // Required by name, so its builder is marked here (`link_with_reached_operations`).
+    let _ = crate::host::shared_vm::operation!("builtin:internal/process/task_queues");
     let task_queues_name = context.string_rooted("internal/process/task_queues");
     let undefined = context.undefined();
     let task_queues = context.call_rooted(require, undefined, &[task_queues_name])?;
@@ -571,6 +573,34 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     finish_initialize(context)
 }
 
+/// The module record, globals and printing of an inline entry (`-e`, `-p`), as Node's
+/// `evalScript` binds them (a source route: `HostSourceRoutes::inline_entry`).
+pub(crate) fn install_inline_entry(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let filename = inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
+    let module = module_record(context, &filename, None, false)?;
+    let label = context.host_as::<crate::host::NodeHost>().inline_source.label();
+    let label = context.string_rooted(label);
+    set(context, module, "id", label)?;
+    let global = context.global_root()?;
+    for name in ["exports", "require"] {
+        let value = get(context, module, name)?;
+        set(context, global, name, value)?;
+    }
+    set(context, global, "module", module)?;
+    set(context, global, "__filename", label)?;
+    let dirname = context.string_rooted(".");
+    set(context, global, "__dirname", dirname)?;
+    #[cfg(quench_openssl_provider)]
+    if context.host_as::<crate::host::NodeHost>().eval_crypto {
+        crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
+    }
+    if let Some(source) = context.host_as::<crate::host::NodeHost>().eval_print.take() {
+        let name = context.host_as::<crate::host::NodeHost>().inline_source.compilation_name();
+        crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
+    }
+    Ok(())
+}
+
 /// The part of `initialize` after the startup snapshot point (`startup_snapshot`): what
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -592,7 +622,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
             .iter()
             .any(|argument| matches!(argument.as_str(), "-i" | "--interactive"));
     if interactive {
-        context.scoped(crate::modules::repl::start_interactive)?;
+        let start = super::source_route(|routes| routes.interactive)
+            .ok_or_else(|| RootedError::host("this binary has no interactive REPL: it compiles no source"))?;
+        context.scoped(start)?;
     }
     // Node exposes these web and timer globals as enumerable own properties.
     // The host bindings and several bootstrap polyfills use non-enumerable
@@ -606,7 +638,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
     if context.host_as::<crate::host::NodeHost>().eval_builtin_globals {
-        context.scoped(crate::modules::eval_globals_shared_vm::install)?;
+        let install = super::source_route(|routes| routes.eval_globals)
+            .ok_or_else(|| RootedError::host("this binary evaluates no source"))?;
+        context.scoped(install)?;
     }
     if context.is_module()? {
         crate::aot::prefix::arm(context)?;
@@ -629,28 +663,10 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         crate::aot::prefix::arm(context)?;
         context.call_rooted(run_main, module, &[filename])?;
     } else {
-        let filename = inline_directory(context)?.join(context.host_as::<crate::host::NodeHost>().inline_source.label());
-        let module = module_record(context, &filename, None, false)?;
-        let label = context.host_as::<crate::host::NodeHost>().inline_source.label();
-        let label = context.string_rooted(label);
-        set(context, module, "id", label)?;
-        let global = context.global_root()?;
-        for name in ["exports", "require"] {
-            let value = get(context, module, name)?;
-            set(context, global, name, value)?;
-        }
-        set(context, global, "module", module)?;
-        set(context, global, "__filename", label)?;
-        let dirname = context.string_rooted(".");
-        set(context, global, "__dirname", dirname)?;
-        #[cfg(quench_openssl_provider)]
-        if context.host_as::<crate::host::NodeHost>().eval_crypto {
-            crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
-        }
-        if let Some(source) = context.host_as::<crate::host::NodeHost>().eval_print.take() {
-            let name = context.host_as::<crate::host::NodeHost>().inline_source.compilation_name();
-            crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
-        }
+        // An inline entry (`-e`, `-p`), which only a binary that compiles source runs.
+        let install = super::source_route(|routes| routes.inline_entry)
+            .ok_or_else(|| RootedError::host("this binary runs no inline source"))?;
+        context.scoped(install)?;
     }
     Ok(())
 }
@@ -677,22 +693,28 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     Ok(())
 }
 
-/// The timeline classes Node exposes as globals, from `perf_hooks`.
-const PERFORMANCE_GLOBALS: [&str; 6] = [
-    "PerformanceEntry",
-    "PerformanceMark",
-    "PerformanceMeasure",
-    "PerformanceObserver",
-    "PerformanceObserverEntryList",
-    "PerformanceResourceTiming",
+/// Node's replaceable lazy globals (`defineReplaceableLazyAttribute`), each `(property,
+/// module, export, enumerable)`: an accessor that loads the module on first read. The
+/// `performance` global and the timeline classes, from `perf_hooks`.
+const REPLACEABLE_LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
+    ("performance", "perf_hooks", "performance", true),
+    ("PerformanceEntry", "perf_hooks", "PerformanceEntry", false),
+    ("PerformanceMark", "perf_hooks", "PerformanceMark", false),
+    ("PerformanceMeasure", "perf_hooks", "PerformanceMeasure", false),
+    ("PerformanceObserver", "perf_hooks", "PerformanceObserver", false),
+    ("PerformanceObserverEntryList", "perf_hooks", "PerformanceObserverEntryList", false),
+    ("PerformanceResourceTiming", "perf_hooks", "PerformanceResourceTiming", false),
 ];
 
-/// Node's replaceable `performance` global and the timeline classes load `perf_hooks` on
-/// first access.
+/// Each replaceable lazy global and the module it loads: an image links the builder of one
+/// its program can read, which the getter reaches only by name (`aot::cli`).
+pub(crate) fn replaceable_lazy_global_modules() -> impl Iterator<Item = (&'static str, &'static str)> {
+    REPLACEABLE_LAZY_GLOBALS.iter().map(|&(name, module, _, _)| (name, module))
+}
+
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
-    install_lazy_global(context, "performance", "perf_hooks", "performance", true)?;
-    for name in PERFORMANCE_GLOBALS {
-        install_lazy_global(context, name, "perf_hooks", name, false)?;
+    for &(name, module, export, enumerable) in REPLACEABLE_LAZY_GLOBALS {
+        install_lazy_global(context, name, module, export, enumerable)?;
     }
     Ok(())
 }
@@ -1020,34 +1042,28 @@ fn require_for_module_inner(
             return cached_builtin(context, BuiltinModule::Dgram);
         }
         Some(BuiltinModule::InternalDgram) => {
-            return crate::modules::dgram_shared_vm::internal_module(context);
+            return uncached_builtin(context, "internal/dgram");
         }
         Some(BuiltinModule::InternalBlockList) => {
-            let module = context.object_rooted()?;
-            let (constructor, _) = crate::modules::net_block_list::classes(context)?;
-            set(context, module, "BlockList", constructor)?;
-            return Ok(module);
+            return uncached_builtin(context, "internal/blocklist");
         }
         Some(BuiltinModule::InternalSocketAddress) => {
-            let module = context.object_rooted()?;
-            let (_, constructor) = crate::modules::net_block_list::classes(context)?;
-            set(context, module, "SocketAddress", constructor)?;
-            return Ok(module);
+            return uncached_builtin(context, "internal/socketaddress");
         }
         Some(BuiltinModule::Assert) => {
-            return crate::modules::assert_shared_vm::module(context);
+            return uncached_builtin(context, "assert");
         }
         Some(BuiltinModule::AssertStrict) => {
-            return crate::modules::assert_shared_vm::strict_module(context);
+            return uncached_builtin(context, "assert/strict");
         }
         Some(BuiltinModule::Path) => {
-            return crate::modules::path_shared_vm::module(context);
+            return uncached_builtin(context, "path");
         }
         Some(BuiltinModule::PathPosix) => {
-            return crate::modules::path_shared_vm::posix(context);
+            return uncached_builtin(context, "path/posix");
         }
         Some(BuiltinModule::PathWin32) => {
-            return crate::modules::path_shared_vm::win32(context);
+            return uncached_builtin(context, "path/win32");
         }
         Some(BuiltinModule::Url) => {
             return cached_builtin(context, BuiltinModule::Url);
@@ -1089,13 +1105,13 @@ fn require_for_module_inner(
             return if specifier.strip_prefix("node:").unwrap_or(&specifier)
                 == "internal/async_hooks"
             {
-                crate::modules::domain_trampoline::internal_hooks(context)
+                uncached_builtin(context, "internal/async_hooks")
             } else {
-                crate::modules::async_hooks_shared_vm::module(context)
+                uncached_builtin(context, "async_hooks")
             };
         }
         Some(BuiltinModule::DiagnosticsChannel) => {
-            return crate::modules::diagnostics_channel_shared_vm::module(context);
+            return uncached_builtin(context, "diagnostics_channel");
         }
         Some(BuiltinModule::Dns) => {
             return cached_builtin(context, BuiltinModule::Dns);
@@ -1434,6 +1450,25 @@ impl BuiltinModule {
         })
     }
 
+    /// The builder key of a builtin with no shared cache entry (`uncached_builtin`), as
+    /// `specifier` names it.
+    fn uncached_key(self, specifier: &str) -> Option<&'static str> {
+        Some(match self {
+            Self::Assert => "assert",
+            Self::AssertStrict => "assert/strict",
+            Self::Path => "path",
+            Self::PathPosix => "path/posix",
+            Self::PathWin32 => "path/win32",
+            Self::AsyncHooks if specifier.trim_start_matches("node:") == "internal/async_hooks" => "internal/async_hooks",
+            Self::AsyncHooks => "async_hooks",
+            Self::DiagnosticsChannel => "diagnostics_channel",
+            Self::InternalDgram => "internal/dgram",
+            Self::InternalBlockList => "internal/blocklist",
+            Self::InternalSocketAddress => "internal/socketaddress",
+            _ => return None,
+        })
+    }
+
     fn cache_key(self) -> Option<&'static str> {
         match self {
             Self::Internal(name) => Some(name),
@@ -1692,6 +1727,15 @@ fn cached_builtin(
     keyed_builtin(context, key, operation)
 }
 
+/// The builtin `key` (a module with no shared cache entry: it keeps its own, or makes a fresh
+/// object) built by its builder operation, so `require` links only the builders a program reaches.
+fn uncached_builtin(context: &mut Context<'_>, key: &str) -> Result<RootId, RootedError> {
+    let operation = builtin_operation(key).ok_or_else(|| RootedError::host(format!("node:{key} has no builder")))?;
+    let build = context.host_as::<crate::host::NodeHost>().capabilities.operations[operation.0 as usize];
+    let undefined = context.undefined();
+    build(context, undefined, &[])
+}
+
 /// The host operation that builds the builtin `key` names, if any.
 pub(crate) fn builtin_operation(key: &str) -> Option<quench_runtime::HostFunctionId> {
     named_operation(&format!("builtin:{key}"))
@@ -1717,7 +1761,21 @@ pub(crate) fn named_operation(name: &str) -> Option<quench_runtime::HostFunction
 
 /// The builder operation of the builtin `specifier` names, if any (`aot::cli` keeps it).
 pub(crate) fn builtin_operation_of(specifier: &str) -> Option<quench_runtime::HostFunctionId> {
-    BuiltinModule::from_specifier(specifier)?.cache_key().and_then(builtin_operation)
+    let module = BuiltinModule::from_specifier(specifier)?;
+    module.cache_key().or_else(|| module.uncached_key(specifier)).and_then(builtin_operation)
+}
+
+/// The builtin `key` when the image links its builder, else `None`: named without marking its
+/// builder, for a start that only a program naming the builtin can reach.
+fn linked_builtin(context: &mut Context<'_>, key: &str) -> Result<Option<RootId>, RootedError> {
+    let Some(operation) = builtin_operation(key) else {
+        return Ok(None);
+    };
+    let callback = context.host_as::<crate::host::NodeHost>().capabilities.operations[operation.0 as usize];
+    if std::ptr::fn_addr_eq(callback, crate::host::unlinked_operation as quench_runtime::HostCallback) {
+        return Ok(None);
+    }
+    keyed_builtin(context, key, operation).map(Some)
 }
 
 pub(crate) fn keyed_builtin(
@@ -2137,6 +2195,49 @@ pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[Roo
 /// the builders its code names (`shared_vm::MarkedOperation`).
 pub(super) mod builders {
     use super::*;
+
+    /// `assert`.
+    pub(crate) fn assert(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::assert_shared_vm::module(context) }
+
+    /// `assert/strict`.
+    pub(crate) fn assert_strict(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::assert_shared_vm::strict_module(context) }
+
+    /// `path`.
+    pub(crate) fn path(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::path_shared_vm::module(context) }
+
+    /// `path/posix`.
+    pub(crate) fn path_posix(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::path_shared_vm::posix(context) }
+
+    /// `path/win32`.
+    pub(crate) fn path_win32(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::path_shared_vm::win32(context) }
+
+    /// `async_hooks`.
+    pub(crate) fn async_hooks(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::async_hooks_shared_vm::module(context) }
+
+    /// `internal/async_hooks`.
+    pub(crate) fn internal_async_hooks(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::domain_trampoline::internal_hooks(context) }
+
+    /// `diagnostics_channel`.
+    pub(crate) fn diagnostics_channel(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::diagnostics_channel_shared_vm::module(context) }
+
+    /// `internal/dgram`.
+    pub(crate) fn internal_dgram(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::dgram_shared_vm::internal_module(context) }
+
+    /// `internal/blocklist`: a fresh object holding the `BlockList` class.
+    pub(crate) fn internal_blocklist(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let module = context.object_rooted()?;
+        let (constructor, _) = crate::modules::net_block_list::classes(context)?;
+        set(context, module, "BlockList", constructor)?;
+        Ok(module)
+    }
+
+    /// `internal/socketaddress`: a fresh object holding the `SocketAddress` class.
+    pub(crate) fn internal_socketaddress(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        let module = context.object_rooted()?;
+        let (_, constructor) = crate::modules::net_block_list::classes(context)?;
+        set(context, module, "SocketAddress", constructor)?;
+        Ok(module)
+    }
 
     /// `internal/options`.
     pub(crate) fn internal_options(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> { crate::modules::cli_options_shared_vm::internal::module(context) }
@@ -3614,7 +3715,11 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
         return Ok(());
     }
     let env = get(context, process, "env")?;
-    let cluster = builtin!(context, "cluster")?;
+    // Linked only in an image whose program names `cluster`: a cluster worker runs the
+    // primary's program.
+    let Some(cluster) = linked_builtin(context, "cluster")? else {
+        return Ok(());
+    };
     let setup = get(context, cluster, "_setupWorker")?;
     context.call_rooted(setup, cluster, &[])?;
     context.with_startup_intrinsics(|context| {

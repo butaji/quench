@@ -21,13 +21,56 @@ macro_rules! layer_hooks {
         )*
         /// The type of each layer entry, which its definition is checked against.
         pub mod signatures {
+            #[allow(unused_imports)]
             use super::*;
             $(#[allow(non_camel_case_types)] pub type $name = fn($($ty),*) -> $ret;)*
         }
     };
 }
 
+/// The Intl and Temporal entries, called through the layer the binary installs
+/// (`install_intl`), so an image whose program cannot reach Intl or Temporal links none of the
+/// layer: an entry it never installed throws.
+macro_rules! intl_hooks {
+    ($($(#[$meta:meta])* fn $name:ident => $symbol:ident($vm:ident: $vm_ty:ty, $p:ident: $p_ty:ty $(, $arg:ident: $ty:ty)* $(,)?) -> Result<$ok:ty, JsError>;)*) => {
+        unsafe extern "Rust" {
+            $(safe fn $symbol($vm: $vm_ty, $p: $p_ty $(, $arg: $ty)*) -> Result<$ok, JsError>;)*
+        }
+        /// The layer's entries, by name.
+        struct IntlLayer {
+            $($name: fn($vm_ty, $p_ty $(, $ty)*) -> Result<$ok, JsError>,)*
+        }
+        static INTL: std::sync::OnceLock<IntlLayer> = std::sync::OnceLock::new();
+        /// Links the Intl and Temporal layer into this binary and makes its entries callable;
+        /// the first installation holds.
+        pub fn install_intl() {
+            INTL.get_or_init(|| IntlLayer { $($name: $symbol,)* });
+        }
+        $(
+            $(#[$meta])*
+            #[inline]
+            pub fn $name($vm: $vm_ty, $p: $p_ty $(, $arg: $ty)*) -> Result<$ok, JsError> {
+                match INTL.get() {
+                    Some(layer) => (layer.$name)($vm, $p $(, $arg)*),
+                    None => Err($vm.type_error($p, "Intl and Temporal are not linked into this image".into())),
+                }
+            }
+        )*
+        /// The type of each Intl entry, which its definition is checked against.
+        pub mod intl_signatures {
+            use super::*;
+            $(#[allow(non_camel_case_types)] pub type $name = fn($vm_ty, $p_ty $(, $ty)*) -> Result<$ok, JsError>;)*
+        }
+    };
+}
+
 layer_hooks! {
+    /// Installs the JIT's compile routes (the engine's `jit_routes`) and every lane handler, as
+    /// `Vm::new` makes a runtime: a VM only restored at rest (`Vm::new_at_rest`) names neither.
+    fn enable_jit => quench_layer_enable_jit() -> ();
+}
+
+intl_hooks! {
     /// The Intl and Temporal natives of `call_native_table`.
     fn intl_temporal_call => quench_layer_intl_temporal_call(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError>;
     /// The Intl and Temporal constructors of `construct_native_with_new_target`.
@@ -46,9 +89,6 @@ layer_hooks! {
     fn canonical_locale_list => quench_layer_canonical_locale_list(vm: &mut Vm, p: &ResidualProgram, locales: Option<Value>) -> Result<Vec<String>, JsError>;
     /// The collation `String.prototype.localeCompare` compares with.
     fn locale_compare_collation => quench_layer_locale_compare_collation(vm: &mut Vm, p: &ResidualProgram, locales: Value, options: Value) -> Result<std::rc::Rc<intl_core::Collation>, JsError>;
-    /// Installs the JIT's compile routes (the engine's `jit_routes`) and every lane handler, as
-    /// `Vm::new` makes a runtime: a VM only restored at rest (`Vm::new_at_rest`) names neither.
-    fn enable_jit => quench_layer_enable_jit() -> ();
     /// `%SegmentIteratorPrototype%.next`.
     fn intl_segment_iterator_next => quench_layer_intl_segment_iterator_next(vm: &mut Vm, p: &ResidualProgram, iterator: Value) -> Result<Value, JsError>;
 }

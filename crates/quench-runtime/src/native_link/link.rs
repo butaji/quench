@@ -49,6 +49,12 @@ pub struct NativeSupport {
 
 const NATIVE_SDK_FEATURE: &str = "native-sdk";
 
+/// The linker script fragment that drops a self-contained image's unwind and landing-pad
+/// tables (`.eh_frame`, `.gcc_except_table`), inserted into the linker's default layout.
+#[cfg(target_os = "linux")]
+const DISCARD_UNWIND_TABLES: &str =
+    "SECTIONS { /DISCARD/ : { *(.eh_frame) *(.eh_frame.*) *(.gcc_except_table) *(.gcc_except_table.*) } } INSERT AFTER .text;\n";
+
 impl NativeSupport {
     pub fn from_cargo_report(report: &str, host_crate: &str, support: NativeImageSupport) -> Result<Self, String> {
         let mut host = None;
@@ -308,6 +314,14 @@ impl NativeSupport {
             for hook in ["__register_frame_info", "__deregister_frame_info"] {
                 command.arg("-C").arg(format!("link-arg=-Wl,--defsym={hook}=0"));
             }
+            // An image aborts on panic, so nothing in it unwinds: its unwind tables and
+            // landing-pad tables (5% of a readline REPL image) are discarded at link time.
+            let mut script = executable.as_os_str().to_owned();
+            script.push(".discard-unwind.ld");
+            let script = PathBuf::from(script);
+            std::fs::write(&script, DISCARD_UNWIND_TABLES).map_err(|error| format!("{}: {error}", script.display()))?;
+            command.arg("-C").arg("link-arg=-Wl,--no-eh-frame-hdr")
+                .arg("-C").arg(format!("link-arg=-Wl,-T,{}", script.display()));
         }
         // Apple Silicon's macOS floor already supports chained fixups. Request them explicitly:
         // rustc's default deployment target otherwise selects classic relocations, dirtying every

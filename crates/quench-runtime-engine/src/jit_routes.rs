@@ -25,7 +25,12 @@ pub(crate) struct JitRoutes {
     pub(crate) wasm: crate::compiled::WasmCompile,
     /// The compiler of hot regexp programs (`regexp_native::enable`).
     pub(crate) regexp: fn(bool, (u32, u32)),
+    /// The lane's fusion passes, which name every fused and chain row.
+    pub(crate) fuse: LaneFusion,
 }
+
+pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction],
+    Option<&quench_runtime::compile::liveness::RegisterMasks>, bool, bool) -> Vec<(usize, usize)>;
 
 static JIT: std::sync::OnceLock<JitRoutes> = std::sync::OnceLock::new();
 
@@ -50,6 +55,15 @@ fn quench_layer_enable_jit() {
         region: crate::compiled::compile_osr_region,
         wasm: <quench_runtime::vm::Vm as crate::compiled::CompiledVm4>::compile_wasm_program,
         regexp: crate::regexp_native::enable_compiler,
+        // Chains, the target back edges, then pairs (`derive_lane_view`); an image, whose bodies leave to the
+        // lane only at misses, links no fused row.
+        fuse: |records, decoded, live, loop_tier, raw_results| {
+            use crate::dispatch_fast::{fuse_target_backedges, lane_frame::{fuse_chains, fuse_rows}};
+            let mut fused = fuse_chains(records, decoded, live, raw_results);
+            fuse_target_backedges(records, loop_tier);
+            fused.extend(fuse_rows(records, decoded, live, loop_tier, raw_results));
+            fused
+        },
     });
     }
 }

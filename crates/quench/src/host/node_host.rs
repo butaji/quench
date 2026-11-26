@@ -148,6 +148,13 @@ pub(crate) enum CommonJsCache {
 }
 
 impl SharedNodeState {
+    /// Has the event loop poll `source` in `slot` from now on.
+    pub(crate) fn poll_on(&mut self, slot: PollSlot, source: PollSource) {
+        self.poll_sources[slot as usize] = Some(source);
+    }
+
+    /// The source set in `slot`, if any.
+
     /// The release hooks of each state its module wrote, in teardown order (`Armed`).
     pub(crate) fn armed_hooks(&self) -> impl Iterator<Item = Hooks> {
         [
@@ -269,7 +276,33 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_socket_option_keys: Option<quench_runtime::RootId>,
     pub(crate) net_handle_identities: Vec<(quench_runtime::HostWeakRoot, u64)>,
     pub(crate) net_handle_close_callbacks: std::collections::HashMap<u64, quench_runtime::RootId>,
+    /// The I/O sources the event loop polls (`process_shared_vm::poll_io`), each set by its
+    /// module when it first gets work, so a program that never opens one links none of its
+    /// code. Run-time state: a startup snapshot holds no source with work.
+    pub(crate) poll_sources: [Option<PollSource>; POLL_SLOTS],
 }
+
+/// One I/O source's poll: whether any of its work ran.
+pub(crate) type PollSource = fn(
+    &mut quench_runtime::Runtime<NodeHost>,
+    &quench_runtime::ResidualProgram,
+    &Rc<RefCell<SharedNodeState>>,
+) -> Result<bool, String>;
+
+/// The I/O sources a module sets (`SharedNodeState::poll_on`), in the order the poll phase
+/// runs them.
+#[derive(Clone, Copy)]
+pub(crate) enum PollSlot {
+    ChildIpc,
+    Child,
+    Cares,
+    Udp,
+    Napi,
+    Worker,
+    Dns,
+    Hmr,
+}
+pub(crate) const POLL_SLOTS: usize = PollSlot::Hmr as usize + 1;
 
 pub(crate) struct NetSocket {
     pub(crate) root: quench_runtime::RootId,
@@ -504,6 +537,7 @@ impl SharedNodeState {
             net_socket_option_keys: None,
             net_handle_identities: Vec::new(),
             net_handle_close_callbacks: std::collections::HashMap::new(),
+            poll_sources: [None; POLL_SLOTS],
         }
     }
 }

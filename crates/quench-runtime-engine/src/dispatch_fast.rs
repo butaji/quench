@@ -16827,9 +16827,7 @@ pub(crate) fn derive_lane_view<'live>(
             }
         }
     }
-    let mut fused = lane_frame::fuse_chains(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty());
-    fuse_target_backedges(&mut records, loop_tier);
-    fused.extend(lane_frame::fuse_rows(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     if let Some(kinds) = int_kinds.as_ref() {
         prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating);
     }
@@ -17570,7 +17568,7 @@ fn lone_target_handler(lone: &[TargetForm], lone_copy: &[TargetForm], records: &
 /// and `specialize_nullish_back_edges` (a lone back jump into a nullish test), and `lane_jump_back_update_small`
 /// (an update then its test, and its copy-then-test form: a lone back jump whose target is an update, a `Move`
 /// the test after it reads, then the test; `lone_copy_target_forms`).
-fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
+pub(crate) fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: bool) {
     macro_rules! pair {
         ($pair:literal) => {
             (
