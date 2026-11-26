@@ -1189,6 +1189,7 @@ lane_helper_inventory! {
     ValueStep => base_body::value_step,
     ClosureStep => base_body::closure_step,
     AllocationStep => base_body::allocation_step,
+    ThrowStep => base_body::throw_step,
 }
 
 thread_local! {

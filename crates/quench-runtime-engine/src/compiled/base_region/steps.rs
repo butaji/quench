@@ -256,7 +256,9 @@ fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, S
 /// after it and no registers are reloaded; a helper that did not raise (it ran beside a native
 /// callee's frames, where it makes nothing) falls to the leave at the record, as every exit does.
 fn plan_throw(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers), None)?;
+    // The typed raise where the table has it, else the general step's.
+    let raise = if call_plan::helper_address(helpers, LaneHelper::ThrowStep).is_some() { LaneHelper::ThrowStep } else { LaneHelper::Step };
+    let mut row = helper_chain(layout, pc, &[], (raise, helpers), None)?;
     row.post.push(Planned { exits: vec![Exit::At(layout.record(pc))], ..Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, None) });
     Ok(row)
 }
