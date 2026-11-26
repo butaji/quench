@@ -62,15 +62,9 @@ impl Stage for Trace {
     fn or(&mut self, a: u32, b: u32) -> u32 { self.word(format!("or w{a} w{b}")) }
     fn and(&mut self, a: u32, b: u32) -> u32 { self.word(format!("and w{a} w{b}")) }
     fn shr(&mut self, a: u32, b: u32) -> u32 { self.word(format!("shr w{a} w{b}")) }
-    fn add_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("add_imm w{a} {}", Self::operand(imm.into()))) }
+    fn imm_word(&mut self, imm: Imm) -> u32 { self.word(format!("imm {}", Self::operand(imm))) }
     fn mul_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("mul_imm w{a} {}", Self::operand(imm.into()))) }
-    fn and_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("and_imm w{a} {}", Self::operand(imm.into()))) }
-    fn or_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("or_imm w{a} {}", Self::operand(imm.into()))) }
-    fn shr_imm(&mut self, a: u32, shift: impl Into<Imm>) -> u32 { self.word(format!("shr_imm w{a} {}", Self::operand(shift.into()))) }
     fn sar32_imm(&mut self, a: u32, shift: u32) -> u32 { self.word(format!("sar32_imm w{a} {shift}")) }
-    fn eq_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("eq_imm w{a} {}", Self::operand(imm.into()))) }
-    fn ne_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ne_imm w{a} {}", Self::operand(imm.into()))) }
-    fn ugt_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ugt_imm w{a} {}", Self::operand(imm.into()))) }
     fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate {space:?} w{record_id} w{value}")) }
     fn immediate_store_open(&mut self) -> u32 { self.word("immediate_store_open".to_string()) }
     fn assumption(&mut self, watch: Imm) -> u32 { self.word(format!("assumption {}", Self::operand(watch))) }
