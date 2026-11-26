@@ -292,6 +292,13 @@ impl JsBigInt {
         self.add(&Self::from(1_u8)).negated()
     }
 
+    /// The value modulo 2^64 as two's-complement bits: ToBigInt64 / ToBigUint64's word,
+    /// with no allocation.
+    pub(crate) fn wrapping_u64(&self) -> u64 {
+        let low = self.digits().first().copied().unwrap_or(0);
+        if self.negative { low.wrapping_neg() } else { low }
+    }
+
     pub fn to_num(&self) -> num_bigint::BigInt {
         let magnitude = num_bigint::BigUint::from_slice(
             &self.digits().iter().flat_map(|&digit| [digit as u32, (digit >> u32::BITS) as u32]).collect::<Vec<_>>(),
