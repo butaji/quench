@@ -118,7 +118,9 @@ impl LaneView {
             completed.set(true);
             let completions = self.entry.note_completions(1);
             if completions % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
-            // A body compiled quick weighs the optimizing compile at each doubling of its runs.
+            // A body compiled quick weighs the optimizing compile at each doubling of its runs, and the b-jit
+            // body the default mode started on weighs the u-jit compile the same way (`promote_base_body`).
+            if completions.is_power_of_two() && self.promote_base_body(u32::try_from(completions).unwrap_or(u32::MAX)) { return true; }
             let quick_ir = self.tier().history.get().quick_ir;
             if quick_ir != 0 && completions.is_power_of_two()
                 && crate::compiled::lane_facts::optimizes_quick_body(self.tiers, self, self.records.len() as u64, u32::try_from(completions).unwrap_or(u32::MAX), quick_ir as usize)
@@ -163,6 +165,23 @@ impl LaneView {
             return false;
         };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
+        self.retire_body(body, next);
+        true
+    }
+
+    /// Retires the b-jit body the default mode started its function on once its `completions` repay the u-jit
+    /// compile over it (`lane_facts::promotes_base_body`): its next entry compiles the u-jit body.
+    fn promote_base_body(&self, completions: u32) -> bool {
+        let history = self.tier().history.get();
+        if !history.base_first || history.base_fallback { return false; }
+        let length = self.records.len() as u64;
+        let ir = usize::try_from(length.saturating_mul(self.tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
+        if !crate::compiled::lane_facts::promotes_base_body(self.tiers, self, length, completions, ir) { return false; }
+        self.tier().history.set(LaneBodyHistory { base_first: false, promoted: true, ..history });
+        // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
+        let LaneBody::Specialized { recompiles, stuck, .. } = body else { return false };
+        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup()) - 1, recompiles: *recompiles, stuck: *stuck };
         self.retire_body(body, next);
         true
     }

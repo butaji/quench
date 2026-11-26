@@ -150,7 +150,7 @@ impl Vm {
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
-        let tiers_run = self.lane_tiers_run();
+        let tiers_run = self.tiers_run_in_lanes();
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {

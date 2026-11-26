@@ -281,12 +281,11 @@ pub(crate) fn loop_compile_in_lane(
     let machine = unsafe { vm(cx) };
     // Native code reads slot representations, which the runtime keeps from its first compile on.
     machine.keep_slot_representations();
-    // The tier of this compile: b-jit where the u-jit region is not yet ahead of it, counting
-    // the interpreter's jumps and the native iterations the loop took so far.
+    // The tier of this compile: b-jit first, u-jit once the loop's native iterations repay it (`base_region`).
     // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
-    let base = region.stencil_only || crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
-        u64::from(site.taken.get()).saturating_add(tier.iterations));
+    let base = region.stencil_only || crate::compiled::loop_model::base_region(machine.programs.tiers(), site.span(), tier.iterations);
     tier.base = base && !crate::compiled::admission::stencil_regions();
+    let _mark = quench_runtime::trace::CompileMark::begin(if base { "b-jit" } else { "u-jit" }, "region", site.function(), u32::from(region.header));
     tier.promote_at = crate::compiled::loop_model::promotion_taken(machine.programs.tiers(), site.span()).filter(|_| !region.stencil_only);
     let program = machine.programs.get(machine.active_program);
     let function = site.function();

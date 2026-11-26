@@ -7574,7 +7574,7 @@ impl Vm {
     /// Whether any compiled tier may run (`tier_may_run` of every tier), decided once per execution
     /// mode and memory policy rather than at every lane entry.
     #[inline]
-    pub(crate) fn lane_tiers_run(&mut self) -> bool {
+    pub(crate) fn tiers_run_in_lanes(&mut self) -> bool {
         match self.lane_tiers_run {
             Some(run) => run,
             None => *self.lane_tiers_run.insert(self.tier_may_run(crate::compiled::admission::Tier::ANY)),

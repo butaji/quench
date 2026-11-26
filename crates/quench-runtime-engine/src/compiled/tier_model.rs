@@ -167,8 +167,21 @@ pub(crate) fn optimizes(tiers: &Tiers, observed: &Observed) -> bool {
 }
 
 fn optimizes_under(priors: &Priors, observed: &Observed) -> bool {
+    repays_over(priors, priors.quick_body_share, observed)
+}
+
+/// Whether the b-jit body the default mode started `observed` on (`LaneBodyHistory::base_first`) moves to
+/// u-jit after `observed.entries` completions: the entries to come at the u-jit body's extra saving per
+/// entry over the b-jit body's repay the u-jit plan and compile.
+pub(crate) fn promotes(tiers: &Tiers, observed: &Observed) -> bool {
+    !tiers.admits_all && repays_over(&tiers.priors, tiers.priors.base_body_share, observed)
+}
+
+/// Whether an optimizing u-jit compile repays over a body that takes `share` per mille of the
+/// interpreter's time: the entries to come (`remaining_divisor`) at the extra saving repay its plan and compile.
+fn repays_over(priors: &Priors, share: u64, observed: &Observed) -> bool {
     let work = (observed.length + observed.loop_work) * priors.interpreter_ns;
-    let gain = work * priors.quick_body_share.saturating_sub(priors.body_share) / PER_MILLE;
+    let gain = work * share.saturating_sub(priors.body_share) / PER_MILLE;
     let outlay = outlay_ns(observed.ir, priors.plan_ns_per_ir, priors.compile_ns_per_ir, compile_wall_permille(priors));
     net_gain_ns(future_count(priors, u64::from(observed.entries)), gain, outlay) > 0
 }

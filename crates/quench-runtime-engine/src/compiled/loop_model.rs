@@ -103,16 +103,17 @@ pub(crate) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, tak
     ultra > base
 }
 
-/// Whether a loop `span` bytecodes long that took `taken` iterations compiles to a b-jit region
-/// (stencils) rather than a u-jit one: under `--b-jit` (or `QUENCH_DEV=bjit`) always, under
-/// `--u-jit`/`--q-jit` never, and in the default mode where the u-jit region is not yet ahead of
-/// it (`ultra_ahead_of_base`): u-jit stays ahead of b-jit by construction, and a loop takes
-/// u-jit once its iterations repay that compile over the stencil region (`promotes`).
-pub(crate) fn base_region(tiers: &Tiers, span: u64, taken: u64) -> bool {
+/// Whether a loop `span` bytecodes long whose regions took `native` iterations compiles to a b-jit
+/// region (stencils) rather than a u-jit one: under `--b-jit` (or `QUENCH_DEV=bjit`) always, under
+/// `--u-jit`/`--q-jit` never. In the default mode the b-jit region is the loop's first tier, by
+/// construction, so the default never costs more than b-jit: the loop takes u-jit only once its
+/// native iterations reach the point where the u-jit compile is repaid over the stencil region
+/// (`promotion_taken`), counted in compiled code, not guessed from the interpreter's jumps.
+pub(crate) fn base_region(tiers: &Tiers, span: u64, native: u64) -> bool {
     use crate::compiled::admission::{stencil_regions as base_regions, tier_runs as tiers_allowed, Tier};
     if base_regions() { return true; }
     if !tiers_allowed(&[Tier::Base]) || tiers.admits_all { return false; }
-    !ultra_ahead_of_base(&tiers.priors, &tiers.loops, span, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
+    promotion_taken(tiers, span).is_none_or(|at| native < at)
 }
 
 /// The fewest iterations in all after which a u-jit region of a loop `span` bytecodes long is

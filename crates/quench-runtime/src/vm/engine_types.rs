@@ -1676,6 +1676,11 @@ pub struct LaneBodyHistory {
     /// the stencil tier also runs: the tier below serves it from then on (`tier_model::Pick::Base`), so
     /// the default mode never runs it costlier than `--b-jit` would.
     pub base_fallback: bool,
+    /// Whether its current body is the b-jit body the default mode starts every function with (the tier
+    /// below u-jit, by construction): its completions weigh the u-jit compile (`tier_model::promotes`).
+    pub base_first: bool,
+    /// Whether its b-jit body's completions repaid the u-jit compile over it: the next compile is u-jit.
+    pub promoted: bool,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps
@@ -5962,6 +5967,8 @@ impl EntryCell {
         self.proven_body.set(0);
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);
+        // The stub's entry reads the receiver from the header as any body without row entries does (`publish`).
+        self.uses_this.set(1);
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -5976,7 +5983,9 @@ impl EntryCell {
         self.rows.set(0);
         self.proven.set(0);
         self.numbers.set(0);
-        self.uses_this.set(0);
+        // A body without row entries (a u-jit body) takes the receiver its caller writes, so a b-jit call row
+        // writes it always: a b-jit caller of a body promoted to u-jit read a stale receiver otherwise.
+        self.uses_this.set(1);
         if let Some(entries) = body.row_entries() {
             self.rows.set(entries.rows);
             method.on_retire(&self.rows, entries.rows, 0);

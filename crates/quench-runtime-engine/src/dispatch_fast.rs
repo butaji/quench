@@ -6838,8 +6838,13 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
         let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
         // A start under the lane body tier waits for callees still compiling (`body_tier_in_lane::callees_compiling`).
-        let callees_compiling = starting && !base_only && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-        match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only, callees_compiling }) {
+        // The default mode starts each body on the tier below u-jit: its b-jit body's completions then weigh the
+        // u-jit compile over it (`LaneView::promote_base_body`), so the default is never costlier than b-jit.
+        let history = own.tier().history.get();
+        let base_first = starting && !history.promoted && !vm.programs.tiers().admits_all && crate::compiled::admission::stencil_below();
+        if base_first && !history.base_first { own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: true, ..history }); }
+        let callees_compiling = starting && !base_only && !base_first && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+        match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only: base_only || base_first, callees_compiling }) {
             // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
             crate::compiled::admission::LaneRoute::Base => {
                 let crate::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };

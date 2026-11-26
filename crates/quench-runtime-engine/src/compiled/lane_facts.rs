@@ -194,6 +194,12 @@ pub(crate) fn optimizes_quick_body(tiers: &Tiers, caller: &crate::dispatch_fast:
     super::tier_model::optimizes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir })
 }
 
+/// Whether `caller`'s b-jit body, which the default mode started it on, moves to u-jit now that it has
+/// completed `entries` runs, its function `length` bytecodes long and of `ir` estimated IR (`tier_model::promotes`).
+pub(crate) fn promotes_base_body(tiers: &Tiers, caller: &crate::dispatch_fast::LaneView, length: u64, entries: u32, ir: usize) -> bool {
+    super::tier_model::promotes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir })
+}
+
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
 /// declined short callee warms again while the caller publishes at once, calling it through
 /// its entry cell. A callee the plan inlines has no call of it to bind.

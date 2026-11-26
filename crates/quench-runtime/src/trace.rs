@@ -200,3 +200,45 @@ setting! {
         StrictFallback = "strict-fallback",
     }
 }
+
+/// Profiling boundary around each compile (`QUENCH_DEV=ir-mark`): it does nothing, and callgrind
+/// started with `--dump-before=quench_compile_mark` (with `--separate-threads=yes` for the code
+/// generator's thread) writes the counts since the previous mark. A compile's begin and end both
+/// call it, so the dump between a pair is that compile's cost; each call prints its tag first
+/// (`QUENCH_COMPILE_MARK`, in dump order per thread), naming the tier, the unit's kind and site.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn quench_compile_mark() {
+    std::hint::black_box(());
+}
+
+/// One compile bracketed by `quench_compile_mark` (`QUENCH_DEV=ir-mark`): begins where it is made,
+/// ends where it drops. Without the setting it holds nothing and marks nothing.
+#[must_use = "the mark ends where it drops"]
+pub struct CompileMark(Option<(&'static str, &'static str, u32, u32)>);
+
+impl CompileMark {
+    /// Begins the mark of a `tier` (`b-jit`, `u-jit`) compile of a `kind` (`region`, `body`,
+    /// `plan`) unit of `function` at `pc` (a loop header, or 0 for a whole body).
+    pub fn begin(tier: &'static str, kind: &'static str, function: u32, pc: u32) -> Self {
+        if !Dev::IrMark.on() { return Self(None); }
+        let tag = (tier, kind, function, pc);
+        print_compile_mark("begin", tag);
+        quench_compile_mark();
+        Self(Some(tag))
+    }
+}
+
+impl Drop for CompileMark {
+    fn drop(&mut self) {
+        if let Some(tag) = self.0 {
+            quench_compile_mark();
+            print_compile_mark("end", tag);
+        }
+    }
+}
+
+fn print_compile_mark(edge: &str, (tier, kind, function, pc): (&str, &str, u32, u32)) {
+    eprintln!("QUENCH_COMPILE_MARK {{\"edge\":\"{edge}\",\"tier\":\"{tier}\",\"kind\":\"{kind}\",\"function\":{function},\"pc\":{pc},\"thread\":\"{:?}\"}}",
+        std::thread::current().id());
+}
