@@ -3258,23 +3258,7 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
                 other => other,
             }
         } else if const { compare_flag(FLAG).is_some() } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    // The instance's operand form: the tags it fixes, so the operand reads test none.
-                    const CONSTANT_TAG: u16 = (quench_runtime::bytecode::OperandKind::Constant as u16) << 14;
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    let (left, right) = match const { compare_operands(FLAG) } {
-                        Some(false) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand(right.0 & payload)),
-                        Some(true) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
-                        None => (left, right),
-                    };
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
-                        left, right, negate,
-                    })
-                }
-                other => other,
-            }
+            compare_instance_operation::<OP, FLAG>(i)
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
             Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
@@ -3296,6 +3280,13 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
         if const { matches!(compare_operands(FLAG), Some(true)) } {
             frame.reads = frame.reads.with_immediate(Value::from_bits(i.mode));
         }
+        // A comparison instance holds no decision host: a pair its words leave is `Unresolved` here, and
+        // `compare_decision_miss` decides it out of line, so this row keeps no call and no frame.
+        if const { compare_flag(FLAG).is_some() } {
+            frame.decisions = None;
+            frame.binary = None;
+            frame.unary = None;
+        }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(LaneControl::Edge(Edge::Target)) => {
                 if const { TEST != quench_runtime::staged::NO_LINK } {
@@ -3306,6 +3297,61 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
             }
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
+            Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+            Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
+            Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
+            Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
+            Step::Unresolved => if const { compare_flag(FLAG).is_some() } {
+                sibling!(compare_decision_miss::<OP, BACKWARD, FLAG>, r, ip, view)
+            } else {
+                sibling!(const { jump_row_miss::<BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view)
+            },
+        }
+    }
+}
+
+/// The operation of comparison jump instance `FLAG` (`compare_flag`) on record `i`: the record's generic decode, its
+/// comparison the instance's operator and its operand kinds the ones the instance fixes. `None` where it does not decode.
+#[inline(always)]
+fn compare_instance_operation<const OP: u16, const FLAG: u8>(i: &LaneInstruction) -> Option<Operation<u64, ()>> {
+    match Operation::<u64, ()>::decode_generic(quench_runtime::staged::Fields::wide(LaneFields::<OP>(i))) {
+        Some(Operation::CompareJump { left, right, negate, .. }) => {
+            // The instance's operand form: the tags it fixes, so the operand reads test none.
+            const CONSTANT_TAG: u16 = (quench_runtime::bytecode::OperandKind::Constant as u16) << 14;
+            let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
+            let (left, right) = match const { compare_operands(FLAG) } {
+                Some(false) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand(right.0 & payload)),
+                Some(true) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
+                None => (left, right),
+            };
+            Some(Operation::CompareJump {
+                comparison: quench_runtime::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
+                left, right, negate,
+            })
+        }
+        other => other,
+    }
+}
+
+lane_handler! {
+    /// The slow decision of a comparison jump instance (`compare_flag`) whose row left its pair undecided
+    /// (`Unresolved`, a pair the words and the instance's frame do not decide). Out of line, so the row keeps no
+    /// call: the record is stepped again over a frame that holds the decisions (`row_frame`), the same step the
+    /// row makes, and a pair that still leaves takes the row's miss (`jump_row_miss`, `binary_false_chain_miss`).
+    #[cold]
+    #[inline(never)]
+    fn compare_decision_miss<OP: u16, BACKWARD: bool, FLAG: u8>(cx, r, ip, i, view) {
+        let Some(operation) = compare_instance_operation::<OP, FLAG>(i) else {
+            sibling!(general_step_in_lane, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::past_result(view) } else { view };
+        let mut frame = row_frame::<OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
+        if const { matches!(compare_operands(FLAG), Some(true)) } {
+            frame.reads = frame.reads.with_immediate(Value::from_bits(i.mode));
+        }
+        match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, ip, BACKWARD, carried, None)),
             Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, crate::dispatch_fast::take_jump(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
             Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
             Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
