@@ -192,6 +192,27 @@ impl Cell {
         )
     }
 
+    /// The built-in class this cell's object is, by its kind alone: the one table behind
+    /// inspection, embedder diagnostics and the structured-clone error text. Map and Set
+    /// live outside `Cell` (`Heap::is_map` / `is_set`); callers check them, and keep their
+    /// own spec-required exceptions in front of this table.
+    pub(crate) fn class_name(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
+            Self::ArrayBuffer { .. } => "ArrayBuffer",
+            Self::TypedArray { object, .. } => object.native.kind().name(),
+            Self::DataView { .. } => "DataView",
+            Self::WeakMap { .. } => "WeakMap",
+            Self::WeakSet { .. } => "WeakSet",
+            Self::WeakRef { .. } => "WeakRef",
+            Self::FinalizationRegistry { .. } => "FinalizationRegistry",
+            Self::Date { .. } => "Date",
+            Self::RegExp { .. } => "RegExp",
+            Self::Error(_) => "Error",
+            _ => return None,
+        })
+    }
+
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
             Self::WasmObject { .. } => "wasm_object",
