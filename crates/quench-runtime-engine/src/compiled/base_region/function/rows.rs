@@ -55,6 +55,8 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
         None => false,
     };
     if operands && instruction.result_flags() == 0 { return Some(LaneHelper::ValueStep); }
+    // A closure captures its owner's binding environment, a frame's or an activation's (`base_body::closure_step`).
+    if instruction.result_flags() == 0 && quench_runtime::staged::makes_closure(plain.op()) { return Some(LaneHelper::ClosureStep); }
     (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
 }
 
