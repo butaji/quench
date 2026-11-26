@@ -92,7 +92,7 @@ impl NumericStage for super::super::Concrete {
     }
     #[inline(always)]
     fn float_remainder(&mut self, left: u64, right: u64) -> u64 {
-        crate::vm::operations::number_remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
+        crate::vm::operations::remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
     #[inline(always)]
     fn integral_remainder(&mut self, left: u64, right: u64) -> (u64, bool) {
