@@ -943,6 +943,10 @@ pub struct LaneMethod {
     pub amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     pub direct: Box<[DirectCallee]>,
+    /// Whether its code calls callees by their entries through an AOT image's call records
+    /// (`DirectSite::Proven`, `AotImage::calls`), which name no `direct` callee: its runs bind the
+    /// shadow frames those calls push, as a body with `direct` callees does (`Vm::stack_words_in_lane`).
+    pub proven_calls: bool,
     /// Whether every call of it that has run is inlined or direct: under a direct caller's native
     /// frames the lane's helper call misses (`dispatch_fast::body_call_helper`), so only such
     /// a body is called directly.

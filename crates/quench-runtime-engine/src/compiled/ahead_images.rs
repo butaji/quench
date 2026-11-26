@@ -121,7 +121,7 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let crosses = crosses_bodies(&unit, &proven);
+    let crosses = crosses_bodies(&unit, |pc| proven.contains_key(&pc));
     let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads), &fields, target)?;
     // A lane body that polls and makes a call the closed world does not prove enters its callee's body
     // through the VM's call helper, where the base body binds its callee directly: deltablue's drivers
@@ -148,7 +148,7 @@ fn guard_dependencies(image: &AotImage, vm: &mut Vm, code: &RelocatableCode) -> 
 /// Whether `unit` may enter another body through the VM's call: a call of any form or a construction
 /// that it neither inlines (a call whose frame the unit holds runs in the body; its alternatives' last
 /// leaves at the call, as any guard does) nor calls through a proven record (`proven`).
-fn crosses_bodies(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) -> bool {
+fn crosses_bodies(unit: &lane_unit::Unit, proven: impl Fn(usize) -> bool) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     let inlined = |unit_pc: usize| {
         let site = match unit.origins.get(unit_pc) {
@@ -158,7 +158,7 @@ fn crosses_bodies(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::
         };
         unit.frames.iter().any(|frame| (frame.parent, frame.call) == site)
     };
-    unit.instructions.iter().enumerate().any(|(unit_pc, instruction)| !inlined(unit_pc) && !proven.contains_key(&unit_pc)
+    unit.instructions.iter().enumerate().any(|(unit_pc, instruction)| !inlined(unit_pc) && !proven(unit_pc)
         && [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 
@@ -181,15 +181,23 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver.
 fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], symbols: &mut SymbolTable)
     -> BTreeMap<usize, lane_region::ProvenCall> {
-    unit.origins.iter().enumerate().filter_map(|(pc, origin)| {
-        let Origin::Caller(record) = *origin else { return None };
-        let site = calls.iter().find(|site| site.function == function && site.pc == record)?;
-        let callee = program.function_get(site.callee as usize)?;
-        let this = super::base_region::callees::ThisForm::of(callee);
-        if this.lexical { return None; }
+    (0..unit.origins.len()).filter_map(|pc| {
+        let (site, callee, this) = proven_site(program, unit, function, calls, pc)?;
         let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc });
         Some((pc, lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record }))
     }).collect()
+}
+
+/// The call at unit pc `pc` of `function`'s unit, where the image proves it (`calls`) and its row
+/// reads the callee's words from the site's record: its site, callee and callee's `this` form. A
+/// lexical-`this` callee is not proven, as its `this` is no receiver the row binds.
+fn proven_site<'a>(program: &'a ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &'a [aot_image::CallSite], pc: usize)
+    -> Option<(&'a aot_image::CallSite, &'a quench_runtime::bytecode::Function, super::base_region::callees::ThisForm)> {
+    let Origin::Caller(record) = *unit.origins.get(pc)? else { return None };
+    let site = calls.iter().find(|site| site.function == function && site.pc == record)?;
+    let callee = program.function_get(site.callee as usize)?;
+    let this = super::base_region::callees::ThisForm::of(callee);
+    (!this.lexical).then_some((site, callee, this))
 }
 
 pub use quench_runtime::vm::engine_types::AheadImages;
@@ -323,9 +331,13 @@ impl Vm {
             // The leaves the image's lowering laid out, each inlined one with the values it stores.
             exits: ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone(),
                 crossings: (0..lane.exits.sites.len()).map(|_| std::cell::Cell::new(0)).collect() } };
+        // Closed (`LaneMethod::closed`): every call it makes that is no inlined frame's is a proven one, which a direct
+        // caller's native frames admit as a JIT body's direct calls; its entry cell then publishes it, which the
+        // proven calls of other image bodies enter. A body with any other call takes the VM's helper there.
+        let closed = !crosses_bodies(&unit, |pc| proven_site(program, &unit, function, &images.image.calls, pc).is_some());
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
-            direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish(&linked, None, None);
+            direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
+        let method = plan.finish(&linked, None, None).map(|method| LaneMethod { proven_calls: images.image.calls.iter().any(|site| site.function == function), ..method });
         if method.is_none() { refused("plan.finish"); }
         method
     }
@@ -335,7 +347,8 @@ impl Vm {
         let linked_live: &LiveImage = images.linked.as_ref()?;
         let base = &images.image.functions.get(function as usize)?.base;
         let registers = program.function_get(function as usize)?.registers;
-        Some(LaneMethod::of_linked_base(*linked_live.bases.get(function as usize)?, registers, base.scratch as usize, linked_live.invalidation.clone()))
+        let method = LaneMethod::of_linked_base(*linked_live.bases.get(function as usize)?, registers, base.scratch as usize, linked_live.invalidation.clone());
+        Some(LaneMethod { proven_calls: images.image.calls.iter().any(|site| site.function == function), ..method })
     }
 
 

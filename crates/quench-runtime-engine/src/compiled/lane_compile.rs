@@ -845,7 +845,7 @@ impl LanePlan {
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,
             scratch_width, caller_registers, frame_reach: 0,
-            amortizes, direct: self.direct, closed: self.closed,
+            amortizes, direct: self.direct, proven_calls: false, closed: self.closed,
             framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
             summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
         })
