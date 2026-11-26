@@ -132,9 +132,10 @@ pub(crate) use crate::staged::encodings::NARROW_LEN;
 /// (`replace_in_place`, `push_double`); any other write makes it generic first (`make_mut`),
 /// for good (`KEEP_WIDE`). An all-int32 backing becomes double where it takes its first
 /// other Number. Dense capacities stay below this bit (`grow_to`), and no backing is both
-/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Native readers
-/// miss on it with the narrow flag (`ENCODED_LEN`), and only `QUENCH_DEV=double-elements`
-/// makes one until compiled tiers guard it.
+/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Double backings
+/// are on by default (`new Array(n)` starts as one). Native element readers miss on it with
+/// the narrow flag (`ENCODED_LEN`) unless they take a double view; the native `length` read
+/// masks both flags off.
 pub use crate::staged::encodings::DOUBLE_LEN;
 
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.

@@ -422,10 +422,9 @@ pub fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word
     let plain = super::object::plain_payload(stage, header);
     stage.guard(plain, miss)?;
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
-    // A narrow or double backing flags its length's top bits: it misses.
-    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
-    let wide = stage.not(encoded);
-    stage.guard(wide, miss)?;
+    // A narrow or double backing flags its length's top bits (capacities stay below them): the
+    // count is the word without them, as the interpreter reads it.
+    let length = stage.and_imm(length, u64::from(!crate::heap::ENCODED_LEN));
     super::value::length_value(stage, length, miss)
 }
 
