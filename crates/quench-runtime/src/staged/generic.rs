@@ -182,35 +182,44 @@ pub(super) fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond 
 pub fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
     let gap = stage.sub(left, right);
     let identical = stage.eq_imm(gap, 0u64);
+    if strict {
+        // Identical words are settled first, by the one compare a C `==` makes: equal but a NaN. Only
+        // a pair that is not identical classifies its tags, so the common hit (`v === undefined` of an
+        // undefined, a loop's `i === k`) runs no tag test. Two int32s are then apart; any other pair
+        // is tested by its tags: two Numbers compare as binary64 (zero and negative zero, an int32 and
+        // a double); two records (direct objects or arrays) are apart, not being identical; two other
+        // heap values (strings, BigInts) are the VM's; any other pair is apart.
+        let state = stage.choose(identical, #[inline(always)] |stage| {
+            let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);
+            let (equal, apart) = (stage.constant(NUMBERS_EQUAL), stage.constant(NOT_OPEN));
+            stage.select(ordered, equal, apart)
+        }, #[inline(always)] |stage| {
+            let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
+            let ints = stage.both(left_int, right_int);
+            stage.choose(ints, #[inline(always)] |stage| stage.constant(NOT_OPEN), #[inline(always)] |stage| {
+                let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
+                let left_number = stage.either(left_int, left_double);
+                let right_number = stage.either(right_int, right_double);
+                let numbers = stage.both(left_number, right_number);
+                stage.choose(numbers, #[inline(always)] |stage| number_state(stage, [left, right]), #[inline(always)] |stage| {
+                    let (left_heap, right_heap) = (is_heap(stage, left), is_heap(stage, right));
+                    let heap_pair = stage.both(left_heap, right_heap);
+                    let records = record_pair(stage, [left, right]);
+                    let open_records = stage.not(records);
+                    let open = stage.both(heap_pair, open_records);
+                    let (open_bit, apart) = (stage.constant(OPEN), stage.constant(NOT_OPEN));
+                    stage.select(open, open_bit, apart)
+                })
+            })
+        });
+        let decided = stage.ne_imm(state, OPEN);
+        let equal = stage.eq_imm(state, NUMBERS_EQUAL);
+        return (decided, equal);
+    }
     let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);
     let same = stage.both(identical, ordered);
     let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
     let ints = stage.both(left_int, right_int);
-    if strict {
-        // Identical words and two int32s are settled by one compare each. Any other pair is tested
-        // by its tags only where it is not settled: two Numbers compare as binary64 (zero and negative
-        // zero, an int32 and a double); two records (direct objects or arrays) are apart, not being
-        // identical; two other heap values (strings, BigInts) are the VM's; any other pair is apart.
-        let settled = stage.either(identical, ints);
-        let state = stage.choose(settled, #[inline(always)] |stage| stage.constant(NOT_OPEN), #[inline(always)] |stage| {
-            let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
-            let left_number = stage.either(left_int, left_double);
-            let right_number = stage.either(right_int, right_double);
-            let numbers = stage.both(left_number, right_number);
-            stage.choose(numbers, #[inline(always)] |stage| number_state(stage, [left, right]), #[inline(always)] |stage| {
-                let (left_heap, right_heap) = (is_heap(stage, left), is_heap(stage, right));
-                let heap_pair = stage.both(left_heap, right_heap);
-                let records = record_pair(stage, [left, right]);
-                let open_records = stage.not(records);
-                let open = stage.both(heap_pair, open_records);
-                let (open_bit, apart) = (stage.constant(OPEN), stage.constant(NOT_OPEN));
-                stage.select(open, open_bit, apart)
-            })
-        });
-        let decided = stage.ne_imm(state, OPEN);
-        let numbers_equal = stage.eq_imm(state, NUMBERS_EQUAL);
-        return (stage.either(settled, decided), stage.either(same, numbers_equal));
-    }
     let by_words = stage.either(identical, ints);
     let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
     let nullish_pair = stage.both(left_nullish, right_nullish);
