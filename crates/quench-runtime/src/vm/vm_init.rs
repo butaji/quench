@@ -11,6 +11,15 @@ impl Vm {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>())
     }
 
+    /// `new_static` for an image that proved some intrinsic families unreachable: the realm
+    /// installs only `builtins`' families, and a family whose installer is `None` keeps its
+    /// code out of the image.
+    pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
+        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>());
+        vm.builtins = builtins;
+        vm
+    }
+
     /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
     pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
@@ -37,6 +46,7 @@ impl Vm {
             host: Box::new(host),
             host_statics,
             runs_lane,
+            builtins: &BuiltinTable::ALL,
             typed_views: Default::default(),
             native_microtask_running: false,
             queue_resumed: Value::UNDEFINED,

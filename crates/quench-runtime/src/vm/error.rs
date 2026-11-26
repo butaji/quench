@@ -1321,7 +1321,7 @@ impl Vm {
             self.set_named(program, prototype, "valueOf", native_function)?;
         }
         self.install_boolean(program)?;
-        self.install_bigint(program)?;
+        if self.builtins.families.contains(super::BuiltinFamilies::BIGINT) { self.install_bigint(program)?; }
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,

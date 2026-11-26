@@ -43,7 +43,7 @@ fn run() -> Result<std::process::ExitCode, String> {
     let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
     let policy = memory_policy();
     apply_allocator_policy(policy);
-    let mut runtime = Runtime::new_static(SystemHost);
+    let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
     runtime.set_memory_policy(policy);
     runtime.set_native_program_resolver(move |name, parts| {

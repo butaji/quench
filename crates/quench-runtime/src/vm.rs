@@ -5,6 +5,8 @@ pub mod tier_policy;
 pub mod tier_queries;
 pub mod engine_types; pub mod fact_edge;
 pub mod lazy_table;
+pub mod builtin_table;
+use builtin_table::{BuiltinFamilies, BuiltinTable};
 pub mod engine_calls;
 pub(crate) use engine_calls::EngineVm;
 pub mod engine_calls2;
@@ -2076,6 +2078,9 @@ pub struct Vm {
     pub(crate) host_statics: crate::host::HostStatics,
     /// `Host::runs_lane`, read once: whether bodies run in the lane (`dispatch_fast`).
     pub runs_lane: bool,
+    /// The intrinsic families this realm installs (`builtin_table`): `ALL` unless an image
+    /// proved a family unreachable from its program.
+    pub(crate) builtins: &'static BuiltinTable,
     pub specialized: bool,
     pub(crate) heap: Heap,
     pub realm: Realm,

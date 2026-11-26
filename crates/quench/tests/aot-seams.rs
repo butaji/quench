@@ -84,6 +84,36 @@ fn core_links_runtime_alone_with_the_quench_allocator() {
 
 /// The execution-only image carries no code generator: `quench_runtime::dataflow::BitSet` and the
 /// `jit`-gated backend leave no Cranelift symbol in it.
+/// A core image installs only the intrinsic families its program reaches: `hello` names
+/// none, and a program that names RegExp, typed memory, Map, Date, BigInt, JSON and Promise
+/// installs exactly those and runs as the interpreter does.
+#[test]
+fn core_installs_only_reachable_intrinsic_families() {
+    let directory = workspace("families");
+    let (hello, report) = compile_with_profile(&directory, "console.log('hello');\n", "core-families-none", false, "aot-compact");
+    assert_eq!(report["support_variant"], "core");
+    assert_eq!(report["builtin_families"], 0);
+    assert_eq!(String::from_utf8_lossy(&run(&hello).stdout), "hello\n");
+    let source = concat!(
+        "console.log(new Map([['a', 1]]).get('a'));\n",
+        "console.log(JSON.stringify({ a: 1 }));\n",
+        "console.log(new Date(0).toISOString());\n",
+        "console.log((2n ** 10n).toString());\n",
+        "console.log(new Uint8Array([1, 2, 3]).length);\n",
+        "console.log('abc'.replace(/b/, 'X'));\n",
+        "console.log(new RegExp('a').test('cat'));\n",
+        "console.log(typeof Promise.resolve(3).then);\n",
+    );
+    let (binary, report) = compile_with_profile(&directory, source, "core-families-all", false, "aot-compact");
+    assert_eq!(report["support_variant"], "core");
+    assert_ne!(report["builtin_families"], 0);
+    let output = run(&binary);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let interpreted = Command::new(env!("CARGO_BIN_EXE_quench")).arg(directory.join("core-families-all.js")).output().unwrap();
+    assert!(interpreted.status.success(), "{}", String::from_utf8_lossy(&interpreted.stderr));
+    assert_eq!(output.stdout, interpreted.stdout);
+}
+
 #[test]
 fn core_has_no_cranelift_symbols() {
     let directory = workspace("cranelift");

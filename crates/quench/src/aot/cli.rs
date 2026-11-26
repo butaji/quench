@@ -283,6 +283,9 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = super::image::compile_sources(core, &graph, &entry, manifest)?;
+    if core {
+        report["builtin_families"] = json!(compiled.builtin_families().bits());
+    }
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");

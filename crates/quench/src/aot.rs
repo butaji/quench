@@ -14,6 +14,7 @@ mod image;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;
+mod builtin_families;
 pub(crate) mod prefix;
 mod strict;
 pub use compiler::{ImageHost, SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};

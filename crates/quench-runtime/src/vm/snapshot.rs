@@ -53,6 +53,7 @@ impl Vm {
             declined_resume: _,
             shared_entry_pair: _,
             share_entry_pair: _,
+            builtins: _,
             main_realm,
             unobserved_jobs_entered: _,
             job_queue_programs: _,

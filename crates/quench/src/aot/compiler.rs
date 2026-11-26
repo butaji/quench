@@ -78,7 +78,13 @@ pub struct CompiledSources {
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
+    /// The intrinsic families the programs reach (a core image's realm table).
+    pub fn builtin_families(&self) -> quench_runtime::BuiltinFamilies {
+        super::builtin_families::of(std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)))
+    }
+
     pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<NativeImageInputs, String> {
+        let families = if host == ImageHost::Core { self.builtin_families() } else { quench_runtime::BuiltinFamilies::ALL };
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -128,6 +134,7 @@ impl CompiledSources {
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
             .map_err(|error| error.to_string())?;
+        if host == ImageHost::Core { write_builtin_table(&mut catalog, families)?; }
         let sources_macro = match host {
             ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
             ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),
@@ -170,6 +177,21 @@ impl CompiledSources {
         };
         Ok(NativeImageInputs::new(directory, objects, host_exports))
     }
+}
+
+/// The realm's intrinsic table: a family the program reaches names its installer, and one
+/// it does not keeps its realm objects and its installer out of the image.
+fn write_builtin_table(catalog: &mut fs::File, families: quench_runtime::BuiltinFamilies) -> Result<(), String> {
+    use quench_runtime::BuiltinFamilies as F;
+    let installer = |family: F, name: &str| {
+        if families.contains(family) { format!("Some(quench_runtime::vm::builtin_table::installers::{name})") } else { "None".to_owned() }
+    };
+    writeln!(catalog, "static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), regexp: {}, typed_memory: {}, collections: {}, date: {}, json: {}, promise: {}, shadow_realm: {} }};",
+        families.bits(),
+        installer(F::REGEXP, "REGEXP"), installer(F::TYPED_MEMORY, "TYPED_MEMORY"), installer(F::COLLECTIONS, "COLLECTIONS"),
+        installer(F::DATE, "DATE"), installer(F::JSON, "JSON"),
+        installer(F::PROMISE_ASYNC, "PROMISE_ASYNC"), installer(F::SHADOW_REALM, "SHADOW_REALM"))
+        .map_err(|error| error.to_string())
 }
 
 /// Write the Node loader's module assets into the catalog: the entry, files, resolutions,

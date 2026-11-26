@@ -14,6 +14,7 @@ use super::*;
 /// body at the next record. A decision (`CallOut::Decide`) completes with `LANE_CALL_HOLDS` where
 /// the comparison held.
 pub(crate) unsafe extern "C" fn vm_operation_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    #[cfg(not(feature = "jit"))] return crate::compiled::LANE_CALL_MISSED; // no lane context
     // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
     // the record, which the entry's per-PC fallback executes (as `body_call_helper`).
     if context == 0 { return crate::compiled::LANE_CALL_MISSED; }
@@ -224,6 +225,7 @@ unsafe fn owner_step_in(cx: *mut LaneContext, call_pc: u64, record: WideInstruct
 /// # Safety
 /// As `body_general_step_record`.
 pub(crate) unsafe extern "C" fn body_general_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    #[cfg(not(feature = "jit"))] return crate::compiled::LANE_CALL_MISSED;
     // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
     // the record, which the entry's per-PC fallback executes (`lane_body_run`: an ahead body
     // binds no lane context).
@@ -255,6 +257,7 @@ pub(crate) unsafe extern "C" fn body_general_step(vm: u64, residual: u64, contex
 /// # Safety
 /// As `lane_body_step`, and `first` and `imm` are the packed words of the record at `call_pc`.
 pub(crate) unsafe extern "C" fn lane_body_step_packed(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64 {
+    #[cfg(not(feature = "jit"))] return crate::compiled::LANE_CALL_MISSED;
     // As `body_general_step`: an ahead body has no lane run, so the record is the interpreter's.
     if context == 0 { return crate::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext;
@@ -332,6 +335,7 @@ unsafe fn body_general_step_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
 /// written to the record's destination, `LANE_CALL_MISSED` where the lane's allocator declines, and the record is
 /// the interpreter's to make.
 pub(crate) unsafe extern "C" fn lane_allocate_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    #[cfg(not(feature = "jit"))] return crate::compiled::LANE_CALL_MISSED;
     if context == 0 { return crate::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext;
     let status = native_frames::in_innermost_frame(cx, || unsafe { lane_allocate_in(cx, call_pc) });

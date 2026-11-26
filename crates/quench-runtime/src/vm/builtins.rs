@@ -152,16 +152,16 @@ impl Vm {
         self.install_object(program)?;
         self.install_console(program)?;
         self.install_array(program)?;
-        self.install_array_buffer(program)?;
+        if let Some(install) = self.builtins.typed_memory {
+            install(self, program)?;
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_object_arrays");
-        self.install_typed_array(program)?;
-        self.install_lazy_builtin_namespace(program, "DataView", Native::DataViewInitialize)?;
-        self.install_lazy_builtin_namespace(program, "Atomics", Native::AtomicsInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_typed_memory");
-        self.install_collections(program)?;
-        self.install_weak_collections(program)?;
+        if let Some(install) = self.builtins.collections {
+            install(self, program)?;
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_collections");
         self.install_iterators(program)?;
@@ -193,11 +193,17 @@ impl Vm {
             crate::bytecode::WITH_EXIT_BINDING,
             native_with_exit,
         )?;
-        self.install_date(program)?;
+        if let Some(install) = self.builtins.date {
+            install(self, program)?;
+        }
         self.install_host_globals(program)?;
         self.install_errors(program)?;
-        self.install_regexp(program)?;
-        self.install_shadow_realm(program)?;
+        if let Some(install) = self.builtins.regexp {
+            install(self, program)?;
+        }
+        if let Some(install) = self.builtins.shadow_realm {
+            install(self, program)?;
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_date_regexp_realms");
         let symbol = self.native_value(Native::Symbol);
@@ -211,7 +217,6 @@ impl Vm {
             self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
-        self.install_typed_array_iterator_symbol(program)?;
         let symbol_prototype_atom = self.prototype_atom();
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
         self.realm
@@ -249,23 +254,6 @@ impl Vm {
                 setter: None,
             },
         );
-        let native_map = self.native_value(Native::Map);
-        let native_set = self.native_value(Native::Set);
-        self.install_collection_symbols(
-            native_map,
-            self.map_proto,
-            native_set,
-            self.set_proto,
-            self.weak_map_proto,
-            self.weak_set_proto,
-        )?;
-        self.install_shadow_realm_tag(self.shadow_realm_proto)?;
-        let native_reg_exp = self.native_value(Native::RegExp);
-        self.install_regexp_symbol_properties(
-            native_reg_exp,
-            self.regexp_proto,
-            self.realm.globals,
-        )?;
         let has_instance_symbol = self.well_known_symbols[WellKnownSymbol::HasInstance];
         let has_instance = self.native_value(Native::FunctionPrototypeHasInstance);
         self.set_builtin_function_name(has_instance, "[Symbol.hasInstance]")?;
@@ -282,41 +270,14 @@ impl Vm {
                 setter: None,
             },
         );
-        self.install_lazy_builtin_namespace(program, "FinalizationRegistry", Native::FinalizationRegistryInitialize)?;
-        let bigint = self.native_value(Native::BigInt);
-        let prototype_atom = self.prototype_atom();
-        let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
-        self.install_builtin_to_string_tag(bigint_prototype, "BigInt")?;
-        let date = self.native_value(Native::Date);
-        let date_prototype = self.get_property(program, date, prototype_atom)?;
-        let date_to_primitive = self.native_value(Native::DateToPrimitive);
-        self.set_builtin_function_name(date_to_primitive, "[Symbol.toPrimitive]")?;
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
-            self.set_symbol_property(date_prototype, symbol, date_to_primitive)?;
-            self.set_property_attributes(
-                date_prototype,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
+        if self.builtins.collections.is_some() {
+            self.install_lazy_builtin_namespace(program, "FinalizationRegistry", Native::FinalizationRegistryInitialize)?;
         }
         self.install_array_species()?;
-        let native_typed_array = self.native_value(Native::TypedArray);
-        self.install_typed_array_species(
-            native_typed_array,
-            self.typed_array_proto,
-            self.realm.globals,
-        )?;
         self.install_array_unscopables(self.array_proto)?;
         self.install_abstract_module_source(program)?;
-        self.install_array_buffer_species()?;
         self.global(program, "Symbol", symbol)?;
+        self.install_family_symbols(program)?;
         let native_disposable_stack = self.native_value(Native::DisposableStack);
         let native_async_disposable_stack = self.native_value(Native::AsyncDisposableStack);
         self.install_disposable_stacks(
@@ -354,10 +315,14 @@ impl Vm {
         ] {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }
-        self.install_json_for_realm(program, self.realm.globals)?;
+        if let Some(install) = self.builtins.json {
+            install(self, program)?;
+        }
         self.install_lazy_builtin_namespace(program, "Reflect", Native::ReflectInitialize)?;
         self.install_lazy_builtin_namespace(program, "Math", Native::MathInitialize)?;
-        self.install_promise(program)?;
+        if let Some(install) = self.builtins.promise {
+            install(self, program)?;
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_before_webassembly");
         #[cfg(feature = "wasm")]
@@ -451,6 +416,23 @@ impl Vm {
         }
         self.global(program, "console", console)
     }
+    /// `Date.prototype[@@toPrimitive]`, the method every `Date`'s conversion starts at.
+    pub(super) fn install_date_to_primitive(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let date = self.native_value(Native::Date);
+        let prototype_atom = self.prototype_atom();
+        let prototype = self.get_property(program, date, prototype_atom)?;
+        let method = self.native_value(Native::DateToPrimitive);
+        self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;
+        let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) else { return Ok(()) };
+        self.set_symbol_property(prototype, symbol, method)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
+        );
+        Ok(())
+    }
+
     pub(super) fn install_json_for_realm(
         &mut self,
         program: &ResidualProgram,

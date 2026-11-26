@@ -169,6 +169,7 @@ macro_rules! arithmetic_match {
     };
 }
 
+#[cfg(feature = "jit")]
 macro_rules! arithmetic_all {
     ($pick:ident; $($op:ident),*) => {
         [$($pick!($op)),*]
@@ -371,6 +372,10 @@ impl LaneView {
     /// which completes a running leaf call (`complete_leaf_in_lane`), so no other function's
     /// return tests for one, and a leaf's return restores only what its call replaced.
     fn specialize_leaf_returns(&self, form: LeafForm) {
+        // An execution-only runtime never dispatches records: no leaf return runs.
+        #[cfg(not(feature = "jit"))] { let _ = form; }
+        #[cfg(feature = "jit")]
+        {
         macro_rules! forms {
             ($leaf:expr) => {{
                 // A constant right operand's record keeps its operator in the operand (`specialize_returning_operator`),
@@ -431,6 +436,7 @@ impl LaneView {
             if let Some((_, leaf)) = forms.iter().find(|(plain, _)| *plain as *const () == record.handler) {
                 record.handler = *leaf as *const ();
             }
+        }
         }
     }
 }
@@ -10838,7 +10844,7 @@ pub(crate) mod generator_windows; use generator_windows::{generator_returned_in_
 pub(crate) mod raised_windows;
 pub(crate) mod array_steps;
 pub(crate) mod name_probe; use name_probe::probe_handler; 
-pub(crate) mod vm_steps;
+#[cfg_attr(not(feature = "jit"), allow(unreachable_code, unused_variables))] pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
 pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, vm_operation_step};
@@ -14640,7 +14646,8 @@ enum FieldHit {
 }
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
-fn own_bound_handlers() -> [*const (); 18] {
+fn own_bound_handlers() -> [*const (); OWN_FORMS.len() + OWN_FORMS.len()] {
+    if cfg!(not(feature = "jit")) { return [std::ptr::null(); OWN_FORMS.len() + OWN_FORMS.len()]; }
     macro_rules! row { ($site:expr) => { generated_row!(FIELD_LEAF_READ, ACC_NONE, $site) as *const () } }
     own_sites!(row)
 }

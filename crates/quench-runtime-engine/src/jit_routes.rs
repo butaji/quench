@@ -37,11 +37,13 @@ pub(crate) fn jit() -> Option<&'static JitRoutes> {
 
 #[unsafe(no_mangle)]
 fn quench_layer_enable_jit() {
-    // A runtime made with `Vm::new` may run any opcode in the lane.
-    install_all_lane_rows();
-    // An execution-only build (no `jit`) installs no routes: only image bodies run natively.
+    // An execution-only build (no `jit`) runs image bodies alone: it installs neither the
+    // JIT's routes nor any lane row, so no opcode's handlers are reachable.
     #[cfg(feature = "jit")]
-    JIT.get_or_init(|| JitRoutes {
+    {
+        // A runtime made with `Vm::new` may run any opcode in the lane.
+        install_all_lane_rows();
+        JIT.get_or_init(|| JitRoutes {
         lane: crate::dispatch_fast::jit_lane_body,
         body: <quench_runtime::vm::Vm as crate::compiled::lane_compile::CompiledLaneCompileVm>::compile_body_work,
         numeric: crate::js_compiled::start_numeric,
@@ -49,6 +51,7 @@ fn quench_layer_enable_jit() {
         wasm: <quench_runtime::vm::Vm as crate::compiled::CompiledVm4>::compile_wasm_program,
         regexp: crate::regexp_native::enable_compiler,
     });
+    }
 }
 const _: quench_runtime::vm::layer_hooks::signatures::enable_jit = quench_layer_enable_jit;
 
@@ -74,8 +77,10 @@ impl LaneRow {
 
 /// The lane's rows by opcode, in groups of `TABLE_ROW`; `None` for an opcode without lane
 /// handlers.
+#[cfg(feature = "jit")]
 type LaneRows = [[Option<&'static LaneRow>; TABLE_ROW as usize]; TABLE_ROWS];
 
+#[cfg(feature = "jit")]
 macro_rules! lane_rows {
     ($($group:ident = $index:literal),*) => {
         /// Each opcode's row (`LaneRow`): opcode `LANE_ROW_GROUP * g + r` is `g{g}::R{r}`.
@@ -93,15 +98,20 @@ macro_rules! lane_rows {
     };
     (@all $group:ident $($row:ident)*) => { [$(Some(&lane_rows::$group::$row)),*] };
 }
+#[cfg(feature = "jit")]
 lane_rows!(g0 = 0, g1 = 1, g2 = 2, g3 = 3, g4 = 4, g5 = 5, g6 = 6, g7 = 7, g8 = 8, g9 = 9, g10 = 10, g11 = 11, g12 = 12, g13 = 13, g14 = 14, g15 = 15, g16 = 16, g17 = 17, g18 = 18);
+/// An execution-only support names no opcode's handlers (`quench_layer_enable_jit`).
+#[cfg(not(feature = "jit"))]
+pub mod lane_rows {}
 
 /// Opcodes per `lane_rows` group.
 pub const LANE_ROW_GROUP: u16 = TABLE_ROW;
 
-static LANE_ROWS: std::sync::OnceLock<&'static LaneRows> = std::sync::OnceLock::new();
+static LANE_ROWS: std::sync::OnceLock<&'static [[Option<&'static LaneRow>; TABLE_ROW as usize]; TABLE_ROWS]> = std::sync::OnceLock::new();
 
 /// Installs every opcode's lane handlers; the first installation holds.
 pub fn install_all_lane_rows() {
+    #[cfg(feature = "jit")]
     let _ = LANE_ROWS.set(&ALL_LANE_ROWS);
 }
 
@@ -111,7 +121,7 @@ pub fn install_all_lane_rows() {
 /// fit the lane does.
 pub fn install_lane_rows(rows: &[&'static LaneRow]) {
     static JUMP: LaneRow = LaneRow::of(quench_runtime::staged::JUMP_ROW);
-    let mut installed: Box<LaneRows> = Box::new([[None; TABLE_ROW as usize]; TABLE_ROWS]);
+    let mut installed: Box<[[Option<&'static LaneRow>; TABLE_ROW as usize]; TABLE_ROWS]> = Box::new([[None; TABLE_ROW as usize]; TABLE_ROWS]);
     for row in rows.iter().copied().chain([&JUMP]) {
         installed[usize::from(row.0 / TABLE_ROW)][usize::from(row.0 % TABLE_ROW)] = Some(row);
     }
