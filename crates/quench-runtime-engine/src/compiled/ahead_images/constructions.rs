@@ -16,7 +16,7 @@ use crate::aot_image::symbols::{
 };
 
 /// The attribute bits of a field an initializer's store adds: a plain data property.
-const ADDED_FIELD: u8 = ATTRIBUTE_WRITABLE | ATTRIBUTE_ENUMERABLE | ATTRIBUTE_CONFIGURABLE;
+pub(crate) const ADDED_FIELD: u8 = ATTRIBUTE_WRITABLE | ATTRIBUTE_ENUMERABLE | ATTRIBUTE_CONFIGURABLE;
 
 /// By `(function, pc)` of each construction in `unit` (its caller's or an inlined frame's), the
 /// plan the image keeps its receiver by, its callee and shape interned in `symbols`.
@@ -41,7 +41,7 @@ fn image_plan(program: &ResidualProgram, callee: u32, symbols: &mut SymbolTable)
     let fields = stores.iter().map(|store| Some((store.atom, field_of(store)?))).collect::<Option<_>>()?;
     let Symbol::HeapValue(closure) = symbols.heap_value(HeapValueRecipe::ClosureOf(callee)) else { return None };
     let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(callee)) else { return None };
-    let recipe = ShapeRecipe { prototype: Some(prototype), fields: stores.iter().map(|store| (store.atom, ADDED_FIELD)).collect() };
+    let recipe = ShapeRecipe { prototype: Some(prototype), constructor: Some(closure), fields: stores.iter().map(|store| (store.atom, ADDED_FIELD)).collect() };
     let Symbol::Shape(shape) = symbols.shape(recipe) else { return None };
     Some(ScalarConstructPlan { callee: PlanCallee::Image(closure), shape, fields })
 }

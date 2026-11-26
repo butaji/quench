@@ -19,6 +19,15 @@ pub(super) enum Origin {
     Binding(Key),
     /// The value of a named property `atom` read off some object (a method read before its call).
     Member(u32),
+    /// The `prototype` property of a function (`PrototypeBase`): the object its methods are stored on.
+    Prototype(PrototypeBase),
+}
+
+/// What a `prototype` read was read off: a closure, or a binding the census resolves to one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PrototypeBase {
+    Closure(u32),
+    Binding(Key),
 }
 
 /// What a register is known to hold at a point: its type in the one fact lattice

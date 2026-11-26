@@ -17,11 +17,15 @@ impl Vm {
             | LiteralStep::ObjectLiteral { .. } => self.literal_object(p, step, first, second).map(Some),
             LiteralStep::LiteralTemplate { .. } | LiteralStep::RegExp { .. } | LiteralStep::CacheTemplate { .. }
             | LiteralStep::LoadTemplate { .. } => self.literal_site(p, step, first).map(Some),
-            LiteralStep::Closure { function } => {
-                let env = self.at_binding_site(site.owner, site.resume, |vm| vm.capture_binding_environment(site.owner))?;
-                self.closure_over_environment(p, site.owner, function, env).map(Some)
-            }
+            LiteralStep::Closure { function } => self.owner_closure(p, site.owner, function, site.resume).map(Some),
         }
+    }
+
+    /// The closure of function `function` that `MakeClosure` makes in the activation `owner` (a frame, or a lane activation's
+    /// record) at the binding site resuming at `resume`: over the binding environment the owner captures there.
+    pub fn owner_closure(&mut self, p: &ResidualProgram, owner: VarOwner, function: u32, resume: usize) -> Result<Value, JsError> {
+        let env = self.at_binding_site(owner, resume, |vm| vm.capture_binding_environment(owner))?;
+        self.closure_over_environment(p, owner, function, env)
     }
 
     /// The closure of function `function` over the binding environment `env` the activation `owner` captured (`MakeClosure`):

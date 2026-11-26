@@ -200,7 +200,7 @@ pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, property_valu
 #[inline(always)]
 pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    let expected = stage.site(u64::from(shape));
+    let expected = stage.shape_site(shape);
     // The word is the shape with no storage-form bit: that shape, its values a wide flat run, on one compare.
     let exact = stage.eq_imm(word, expected);
     stage.choose_leaving(exact, #[inline(always)] |stage| {
@@ -248,6 +248,11 @@ fn own_field_miss<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, expec
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
 pub const HINTED_FORM: u32 = u32::MAX;
+
+/// The tag of a shape id that names an ahead image's shape recipe rather than a shape of this
+/// heap (`Stage::shape_site`): only an image's lowering makes one (`ahead_images::fields`), and the
+/// shape table stops short of it (`vm::push_child`).
+pub const SYMBOLIC_SHAPE: u32 = 1 << 30;
 
 /// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of the process is a
 /// tagged `Value` (`switches::float_slots` off, a per-process decision), so the read decodes

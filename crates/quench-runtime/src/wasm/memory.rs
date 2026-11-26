@@ -564,7 +564,7 @@ impl super::Lowering<'_> {
         if let Some(Some(register)) = self.memory_registers.get(index as usize) {
             return Ok(*register);
         }
-        self.instance_binding(self.layout().slot(super::WasmBinding::Memory(index as usize)))
+        self.instance_binding(self.layout.slot(super::WasmBinding::Memory(index as usize)))
     }
 
     pub(super) fn instance_binding(
@@ -756,7 +756,7 @@ impl super::Lowering<'_> {
         self.data.get(index as usize).ok_or_else(|| {
             crate::Diagnostic::unsupported(self.name, "Wasm data segment out of bounds")
         })?;
-        Ok(self.layout().slot(super::WasmBinding::Data(index as usize)) as u16)
+        Ok(self.layout.slot(super::WasmBinding::Data(index as usize)) as u16)
     }
 
     fn bulk_memory_operator(

@@ -8,12 +8,13 @@ pub(in crate::vm) const ARM64_BRANCH_IMMEDIATE_BITS: u32 = 26;
 pub(in crate::vm) const ARM64_INSTRUCTION_BYTES: usize = 4;
 const ARM64_INSTRUCTION_ALIGNMENT_BITS: u32 = 2;
 
+/// The relocation kinds `apply_relocation` fills, in the order an image file numbers them
+/// (`aot_image::file` writes a kind as its index here), so a new kind is appended.
+pub const PATCHABLE: [Reloc; 5] = [Reloc::Abs8, Reloc::X86PCRel4, Reloc::X86CallPCRel4, Reloc::X86CallPLTRel4, Reloc::Arm64Call];
+
 /// Whether `apply_relocation` fills relocations of `kind`.
 pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
-    matches!(
-        kind,
-        Reloc::Abs8 | Reloc::X86PCRel4 | Reloc::X86CallPCRel4 | Reloc::X86CallPLTRel4 | Reloc::Arm64Call
-    )
+    PATCHABLE.contains(&kind)
 }
 
 /// One relocation of compiled code: the field at `offset` takes the address of symbol

@@ -2,7 +2,7 @@
 //! names.
 
 use super::flow::FunctionFlow;
-use super::value::{Fact, Key, Origin};
+use super::value::{Fact, Key, Origin, PrototypeBase};
 use std::collections::BTreeMap;
 
 /// Every binding write of the program, counted.
@@ -43,6 +43,14 @@ impl Census {
         }
     }
 
+    /// Code added at run time as global code may write any global and any object's named
+    /// properties (`gate::World::Locals`): no binding of either names one closure.
+    pub(super) fn open_to_global_code(&mut self) {
+        self.global_wild = true;
+        self.member_wild = true;
+        self.members.clear();
+    }
+
     /// The closure `key` holds, when it is written once, with a closure, and no write the
     /// analysis cannot follow reaches it.
     fn single(&self, key: Key) -> Option<u32> {
@@ -68,6 +76,15 @@ impl Census {
             // callee it reaches (a builtin's property of that name, a closure made again, a store through a computed
             // key, `member_wild`), so the proof only picks the callee its direct row tries first.
             Origin::Member(atom) => self.members.get(&atom).copied().flatten(),
+            Origin::Prototype(_) => None,
+        }
+    }
+
+    /// The function whose `prototype` a `prototype` read off `base` takes.
+    pub(super) fn prototype_owner(&self, base: PrototypeBase) -> Option<u32> {
+        match base {
+            PrototypeBase::Closure(function) => Some(function),
+            PrototypeBase::Binding(key) => self.single(key),
         }
     }
 }

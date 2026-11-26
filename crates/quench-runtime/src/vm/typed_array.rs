@@ -1072,8 +1072,8 @@ impl Vm {
         value: Option<&Value>,
         length: usize,
     ) -> Result<usize, JsError> {
-        let Some(value) = value else { return Ok(0) };
-        Ok(crate::units::relative_index(self.to_number(p, *value)?, length))
+        // An absent argument reads as undefined, whose ToNumber (NaN) resolves to 0.
+        value.map_or(Ok(0), |value| self.to_relative_index(p, *value, length))
     }
 
     pub(super) fn uint32_from_value(number: f64) -> u32 {

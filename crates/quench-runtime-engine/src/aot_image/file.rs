@@ -9,11 +9,11 @@
 use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
-use quench_runtime::vm::engine_types::WasmRows;
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
+use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
+use quench_runtime::vm::jit_backend::relocatable_code::{PATCHABLE, RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x03";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x09";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
@@ -23,11 +23,6 @@ const RECIPE_GLOBAL: u8 = 1;
 const RECIPE_STRING: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
 const RECIPE_CLOSURE_OF: u8 = 4;
-const RELOC_ABS8: u8 = 0;
-const RELOC_X86_PC_REL4: u8 = 1;
-const RELOC_X86_CALL_PC_REL4: u8 = 2;
-const RELOC_X86_CALL_PLT_REL4: u8 = 3;
-const RELOC_ARM64_CALL: u8 = 4;
 /// A relocation kind `RelocatableCode` never holds; the reader rejects it.
 const RELOC_UNPATCHABLE: u8 = u8::MAX;
 
@@ -43,6 +38,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
         put_function(&mut out, function);
     }
     put_wasm(&mut out, image.wasm.as_ref());
+    put_regexps(&mut out, &image.regexps);
     out
 }
 
@@ -60,7 +56,8 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
     let wasm = read_wasm(&mut words)?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls, wasm })
+    let regexps = read_regexps(&mut words)?;
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, calls, wasm, regexps })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -122,6 +119,7 @@ fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
 
 fn put_shape(out: &mut Vec<u8>, shape: &ShapeRecipe) {
     out.extend(shape.prototype.unwrap_or(NO_PROTOTYPE).to_le_bytes());
+    out.extend(shape.constructor.unwrap_or(NO_PROTOTYPE).to_le_bytes());
     put_count(out, shape.fields.len());
     for (atom, attributes) in shape.fields.iter() {
         out.extend(atom.to_le_bytes());
@@ -149,9 +147,47 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
             out.push(1);
             out.push(u8::from(lane.fault_poll));
             put_code(out, &lane.code);
+            put_exits(out, &lane.exits);
         }
         None => out.push(0),
     }
+}
+
+/// A lane body's exit table: its sigs (kind, then each stored value's unit register and scratch slot), then its sites.
+fn put_exits(out: &mut Vec<u8>, exits: &ExitTable) {
+    put_count(out, exits.sigs.len());
+    for sig in &exits.sigs {
+        out.push(sig.kind as u8);
+        put_count(out, sig.live.len());
+        for LiveValue { slot, source: Source::Scratch(at) } in sig.live.iter().copied() {
+            out.extend(slot.to_le_bytes());
+            out.extend(at.to_le_bytes());
+        }
+    }
+    put_count(out, exits.sites.len());
+    for site in &exits.sites {
+        out.extend(site.word.to_le_bytes());
+        for word in [site.sig, site.id, site.unit_pc] { out.extend(word.to_le_bytes()); }
+        out.push(site.fact as u8);
+    }
+}
+
+fn read_exits(words: &mut Words<'_>) -> Result<ExitTable, String> {
+    const KINDS: [ExitKind; 4] = [ExitKind::At, ExitKind::Inlined, ExitKind::Callee, ExitKind::Entry];
+    const FACTS: [ExitFact; 6] = [ExitFact::NumberKind, ExitFact::Shape, ExitFact::Callee, ExitFact::Element, ExitFact::Global, ExitFact::Unclassified];
+    let sigs = (0..words.half()?).map(|_| {
+        let kind = *KINDS.get(usize::from(words.byte()?)).ok_or("an exit kind the image cannot name")?;
+        let live = (0..words.half()?).map(|_| Ok(LiveValue { slot: words.pair()?, source: Source::Scratch(words.pair()?) })).collect::<Result<_, String>>()?;
+        Ok(ExitSig { kind, live })
+    }).collect::<Result<Vec<_>, String>>()?;
+    let sites = (0..words.half()?).map(|_| {
+        let word = words.quad()?;
+        let (sig, id, unit_pc) = (words.half()?, words.half()?, words.half()?);
+        let fact = *FACTS.get(usize::from(words.byte()?)).ok_or("an exit fact the image cannot name")?;
+        Ok(ExitSite { word, sig, id, unit_pc, fact })
+    }).collect::<Result<Vec<_>, String>>()?;
+    let crossings = (0..sites.len()).map(|_| std::cell::Cell::new(0)).collect();
+    Ok(ExitTable { sigs, sites, crossings })
 }
 
 fn put_base(out: &mut Vec<u8>, base: &BaseImage) {
@@ -182,26 +218,13 @@ fn put_code(out: &mut Vec<u8>, code: &RelocatableCode) {
     }
 }
 
+/// A relocation kind's tag: its index among the kinds the linker fills (`PATCHABLE`).
 fn reloc_tag(kind: Reloc) -> u8 {
-    match kind {
-        Reloc::Abs8 => RELOC_ABS8,
-        Reloc::X86PCRel4 => RELOC_X86_PC_REL4,
-        Reloc::X86CallPCRel4 => RELOC_X86_CALL_PC_REL4,
-        Reloc::X86CallPLTRel4 => RELOC_X86_CALL_PLT_REL4,
-        Reloc::Arm64Call => RELOC_ARM64_CALL,
-        _ => RELOC_UNPATCHABLE,
-    }
+    PATCHABLE.iter().position(|patchable| *patchable == kind).map_or(RELOC_UNPATCHABLE, |index| index as u8)
 }
 
 fn reloc_of(tag: u8) -> Result<Reloc, String> {
-    Ok(match tag {
-        RELOC_ABS8 => Reloc::Abs8,
-        RELOC_X86_PC_REL4 => Reloc::X86PCRel4,
-        RELOC_X86_CALL_PC_REL4 => Reloc::X86CallPCRel4,
-        RELOC_X86_CALL_PLT_REL4 => Reloc::X86CallPLTRel4,
-        RELOC_ARM64_CALL => Reloc::Arm64Call,
-        _ => return Err("an AOT image relocation has an unknown kind".into()),
-    })
+    PATCHABLE.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
 }
 
 type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>);
@@ -215,8 +238,9 @@ fn read_recipes(words: &mut Words<'_>) -> Result<Recipes, String> {
 
 fn read_shape(words: &mut Words<'_>) -> Result<ShapeRecipe, String> {
     let prototype = words.half()?;
+    let constructor = words.half()?;
     let fields = (0..words.half()?).map(|_| Ok((words.half()?, words.byte()?))).collect::<Result<_, String>>()?;
-    Ok(ShapeRecipe { prototype: (prototype != NO_PROTOTYPE).then_some(prototype), fields })
+    Ok(ShapeRecipe { prototype: (prototype != NO_PROTOTYPE).then_some(prototype), constructor: (constructor != NO_PROTOTYPE).then_some(constructor), fields })
 }
 
 fn read_heap_value(words: &mut Words<'_>) -> Result<HeapValueRecipe, String> {
@@ -245,7 +269,8 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
         0 => None,
         _ => {
             let fault_poll = words.byte()? != 0;
-            Some(LaneImage { code: read_code(words)?, fault_poll })
+            let code = read_code(words)?;
+            Some(LaneImage { code, fault_poll, exits: read_exits(words)? })
         }
     };
     Ok(AotFunction { id, base, lane })
@@ -267,6 +292,28 @@ fn put_wasm(out: &mut Vec<u8>, wasm: Option<&WasmRows>) {
             None => out.push(0),
         }
     }
+}
+
+/// The RegExp literals' searches: per search its key's source, flags byte and bounds byte, then its code.
+fn put_regexps(out: &mut Vec<u8>, regexps: &[quench_runtime::vm::engine_types::AotRegexp]) {
+    put_count(out, regexps.len());
+    for regexp in regexps {
+        let (source, flags, bounds) = &regexp.key;
+        put_count(out, source.len());
+        out.extend(source.as_bytes());
+        out.extend([*flags, u8::from(*bounds)]);
+        put_count(out, regexp.code.len());
+        out.extend(&regexp.code);
+    }
+}
+
+fn read_regexps(words: &mut Words<'_>) -> Result<Vec<quench_runtime::vm::engine_types::AotRegexp>, String> {
+    (0..words.half()?).map(|_| {
+        let source = read_atom(words)?;
+        let (flags, bounds) = (words.byte()?, words.byte()? != 0);
+        let length = words.half()? as usize;
+        Ok(quench_runtime::vm::engine_types::AotRegexp { key: (source, flags, bounds), code: words.bytes(length)?.into() })
+    }).collect()
 }
 
 fn read_wasm(words: &mut Words<'_>) -> Result<Option<WasmRows>, String> {

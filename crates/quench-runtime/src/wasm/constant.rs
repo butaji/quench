@@ -351,72 +351,6 @@ impl Engine {
         }
         Err(error("missing Wasm constant expression end"))
     }
-
-    /// Static evaluation uses the same admitted expression and scalar operations.
-    /// Unresolved imports remain absent facts, never placeholder values.
-    pub fn evaluate_wasm_constant_expression<'a>(
-        name: &str,
-        expected: WasmType,
-        globals: &[WasmGlobal],
-        operators: impl IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
-    ) -> Result<WasmValue, Diagnostic> {
-        let expression = Self::lower_wasm_constant_expression(name, expected, globals, operators)?;
-        if expected.requires_declarations()
-            || globals.iter().enumerate().any(|(index, _)| {
-                WasmGlobal::value_type(globals, index).is_some_and(WasmType::requires_declarations)
-            })
-        {
-            return Err(Diagnostic::unsupported(
-                name,
-                "Wasm constant evaluation requires a declaration owner",
-            ));
-        }
-        let mut values: Vec<Option<WasmValue>> = Vec::with_capacity(globals.len());
-        for global in globals.iter() {
-            let value = match &global.initial {
-                WasmGlobalInitializer::Import { .. } => None,
-                WasmGlobalInitializer::Expression(expression) => {
-                    // Type-correct admitted arithmetic cannot trap; absence means an unresolved global or function dependency.
-                    expression
-                        .evaluate(name, None, |dependency| {
-                            let WasmInitializerEffect::Global(index) = dependency else {
-                                return Err(Diagnostic::unsupported(
-                                    name,
-                                    "unresolved Wasm constant function dependency",
-                                ));
-                            };
-                            values
-                                .get(index as usize)
-                                .copied()
-                                .flatten()
-                                .ok_or_else(|| {
-                                    Diagnostic::unsupported(
-                                        name,
-                                        "unresolved Wasm constant global dependency",
-                                    )
-                                })
-                        })
-                        .ok()
-                }
-            };
-            values.push(value);
-        }
-        expression.evaluate(name, None, |dependency| {
-            let WasmInitializerEffect::Global(index) = dependency else {
-                return Err(Diagnostic::unsupported(
-                    name,
-                    "unresolved Wasm constant function dependency",
-                ));
-            };
-            values
-                .get(index as usize)
-                .copied()
-                .flatten()
-                .ok_or_else(|| {
-                    Diagnostic::unsupported(name, "unresolved Wasm constant global dependency")
-                })
-        })
-    }
 }
 
 #[cfg(test)]
@@ -461,28 +395,6 @@ mod tests {
             ConstantExpression::Dependent { operators, .. }
                 if matches!(operators.as_ref(), [ConstantOperator::Function(_)])
         ));
-        let concrete = WasmType::Reference {
-            kind: super::super::WasmReferenceKind::DeclaredFunction {
-                index: 0,
-                exact: false,
-            },
-            nullable: true,
-        };
-        let error = Engine::evaluate_wasm_constant_expression(
-            "ownerless-concrete",
-            concrete,
-            &[],
-            [
-                Operator::RefNull {
-                    hty: wasmparser::HeapType::Concrete(wasmparser::UnpackedIndex::Module(0)),
-                },
-                Operator::End,
-            ]
-            .into_iter()
-            .map(Ok),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("requires a declaration owner"));
 
         let allocated = Engine::lower_wasm_constant_expression(
             "instance-owned-struct",
@@ -548,17 +460,8 @@ mod tests {
                     .is_err()
             );
         }
-        assert!(
-            Engine::evaluate_wasm_constant_expression(
-                "function-facts",
-                WasmType::FUNCREF,
-                &[],
-                [Operator::RefFunc { function_index: 0 }, Operator::End]
-                    .into_iter()
-                    .map(Ok),
-            )
-            .is_err()
-        );
+        // A function reference is an instance's fact: with no owner its dependency stays unresolved.
+        assert!(function.evaluate("function-facts", None, |_| Err(Diagnostic::unsupported("function-facts", "no owner"))).is_err());
         let expression = Engine::lower_wasm_constant_expression(
             "initializer-facts",
             WasmType::I32,
@@ -570,15 +473,7 @@ mod tests {
             expression.representation,
             ConstantExpression::Dependent { .. }
         ));
-        assert!(
-            Engine::evaluate_wasm_constant_expression(
-                "initializer-facts",
-                WasmType::I32,
-                &globals,
-                operators()
-            )
-            .is_err()
-        );
+        assert!(expression.evaluate("initializer-facts", None, |_| Err(Diagnostic::unsupported("initializer-facts", "unresolved import"))).is_err());
         for value in [7, 11] {
             assert_eq!(
                 expression

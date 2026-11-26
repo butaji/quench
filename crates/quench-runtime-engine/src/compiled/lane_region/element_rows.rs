@@ -6,7 +6,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::staged::typed_elements::{typed_read_integer, TypedView};
+use quench_runtime::staged::typed_elements::{typed_read_integer, TypedView, ViewKind};
 use quench_runtime::staged::{Operation, Stage, Step};
 use quench_runtime::staged::NumericStage as _;
 
@@ -72,11 +72,7 @@ impl Lowering<'_, '_> {
                 let string_within = self.ranges.string_in_bounds(pc);
                 self.string_or_row(state, pc, (destination, base, index, key), string_within, exit)
             }
-            _ => {
-                let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
-                    else { unreachable!("an element read yields a value or leaves at its miss edge") };
-                value
-            }
+            _ => self.element_read_row(state, pc, array.is_some(), exit, Operation::ElementRead { base, key, destination }),
         };
         if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
             self.set_number(state, destination, value);
@@ -89,6 +85,15 @@ impl Lowering<'_, '_> {
             None => {}
         }
         true
+    }
+
+    /// The element read `row`: through the held view of a loop's array, else `row_or_typed`.
+    fn element_read_row(&mut self, state: &mut State, pc: usize, held: bool, exit: ir::Block, row: Operation<ir::Value, EmitProof>) -> ir::Value {
+        let Operation::ElementRead { base, .. } = row else { unreachable!("an element read row") };
+        if !held { return self.row_or_typed(state, pc, base, exit, row).expect("an element read yields a value"); }
+        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, row)
+            else { unreachable!("an element read yields a value or leaves at its miss edge") };
+        value
     }
 
     /// The unit compare of the string element read at `pc` into `destination` (`PendingUnit`): a read of
@@ -164,14 +169,78 @@ impl Lowering<'_, '_> {
         self.goto(join, &[character]);
         let mut string_state = state.clone();
         self.builder.switch_to_block(row);
-        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
-            else { unreachable!("an element read yields a value or leaves at its miss edge") };
+        let value = self.row_or_typed(state, pc, base, exit, Operation::ElementRead { base, key, destination }).expect("an element read yields a value");
         self.goto(join, &[value]);
         self.builder.switch_to_block(join);
         // The destination is defined from `joined` after the join.
         string_state.values[usize::from(destination)] = state.values[usize::from(destination)];
         self.join_states(state, &string_state, pc);
         joined
+    }
+
+    /// The element `row` of a base no loop array holds: a direct array's row, any other base's the same row over the
+    /// typed view proved here (`typed_arms`). The arms' states meet at the join (`join_states`), and a read's value is joined from them.
+    fn row_or_typed(&mut self, state: &mut State, pc: usize, base: Register, exit: ir::Block, row: Operation<ir::Value, EmitProof>) -> Option<ir::Value> {
+        let bits = self.tagged(state, base);
+        // Every operand's tagged word is made before the arms split, so each arm's view of it is the same word.
+        let operands = match row { Operation::ElementRead { key, .. } => [key.register_index(), None], Operation::ElementWrite { value, key, .. } => [Some(value), Some(key)], _ => [None, None] };
+        for register in operands.into_iter().flatten() { self.tagged(state, register); }
+        let is_array = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_array(&mut stage, bits) };
+        let (dense, typed, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.branch_if(is_array, (dense, &[]), (typed, &[]));
+        let destination = match row { Operation::ElementRead { destination, .. } => Some(destination), _ => None };
+        let joined = destination.map(|_| self.builder.append_block_param(join, ir::types::I64));
+        let entry = state.clone();
+        self.builder.switch_to_block(dense);
+        self.row_arm(state, (row, destination, exit, join));
+        self.builder.switch_to_block(typed);
+        let arms = self.typed_arms(&entry, bits, (row, destination, exit, join));
+        self.builder.switch_to_block(join);
+        // A register whose arms each made their own tagged word (the key's, beside its int32) is tagged again past the
+        // join, as one arm leaves it: a later join with a tagged arm needs it current.
+        let retag: Vec<usize> = (0..state.values.len()).filter(|&register| state.values[register].tagged.current() && arms.iter().all(|arm| arm.values[register].tagged.current())).collect();
+        for mut incoming in arms {
+            if let Some(destination) = destination { incoming.values[usize::from(destination)] = state.values[usize::from(destination)]; }
+            self.join_states(state, &incoming, pc);
+        }
+        for register in retag { if !state.values[register].tagged.current() { self.tagged(state, register as Register); } }
+        joined
+    }
+
+    /// `row` on `state`, leaving at `exit`, whose value (a read's) goes to `join`.
+    fn row_arm(&mut self, state: &mut State, (row, destination, exit, join): (Operation<ir::Value, EmitProof>, Option<Register>, ir::Block, ir::Block)) {
+        let value = self.step(state, frame::Edges::ValueGuarded { miss: exit }, row);
+        self.goto(join, &match (value, destination) { (Step::Value(value), Some(_)) => vec![value], _ => Vec::new() });
+    }
+
+    /// The arms of `row_or_typed` past its direct array test, each from `entry`: the row over the typed view proved here
+    /// (`Held::TypedValues`); a base that is no typed array leaves at `exit` for a read (as the row's array proof would),
+    /// and takes the row's VM store for a write. The arms' states.
+    fn typed_arms(&mut self, entry: &State, bits: ir::Value, (row, destination, exit, join): (Operation<ir::Value, EmitProof>, Option<Register>, ir::Block, ir::Block)) -> Vec<State> {
+        let other = if destination.is_some() { exit } else { self.builder.create_block() };
+        let view = self.typed_view_here(bits, destination.is_none(), other, destination.is_some());
+        let held = self.held_view.replace(frame_elements::Held::TypedValues(view));
+        let mut arms = vec![entry.clone()];
+        self.row_arm(&mut arms[0], (row, destination, exit, join));
+        self.held_view = held;
+        if other != exit {
+            self.builder.switch_to_block(other);
+            arms.push(entry.clone());
+            self.row_arm(&mut arms[1], (row, destination, exit, join));
+        }
+        arms
+    }
+
+    /// The view of the typed array `bits` (of any native kind), proved here as a loop's entering edge
+    /// proves it (`hoist_typed_view`): a base no loop array holds, which the dense row declined.
+    /// Unpublished, a view is the VM's to publish (`hoist_typed_view`'s slow arm), else `miss` is taken at once.
+    fn typed_view_here(&mut self, bits: ir::Value, writable: bool, miss: ir::Block, publish: bool) -> TypedView<ir::Value> {
+        let mut declare = |ty| self.builder.declare_var(ty);
+        let variables = ArrayVariables { bits: declare(types::I64), values: declare(types::I64), length: declare(types::I64), kind: declare(types::I64), room: declare(types::I32) };
+        let access = ViewAccess { kind: None, writable };
+        if publish { self.hoist_typed_view(access, bits, variables, miss) } else { self.prove_typed_view_into(variables, bits, access, miss) }
+        let mut used = |variable| self.builder.use_var(variable);
+        TypedView { values: used(variables.values), length: used(variables.length), kind: ViewKind::Dynamic(used(variables.kind)), within: false }
     }
 
     /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.
@@ -352,7 +421,8 @@ impl Lowering<'_, '_> {
                 self.dense_element_write(state, array, pc as u32, instruction, number, exit),
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) });
+                let row = Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) };
+                if held.is_some() { self.step(state, frame::Edges::ValueGuarded { miss: exit }, row); } else { self.row_or_typed(state, pc, base, exit, row); }
                 // A store through a held view leaves where it misses (`index_set_host`) and calls no
                 // helper, so no backing moved and no view is read again. Only the general row may
                 // call the VM's store, which may move any backing.

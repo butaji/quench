@@ -1,7 +1,7 @@
 use super::*;
 use crate::staged::typed_elements::{
     element_integer, element_number, find_number_element, store_double_element, store_element_number,
-    store_number_element, NATIVE_LITTLE_ENDIAN,
+    native_word, store_number_element, NATIVE_LITTLE_ENDIAN,
 };
 
 const MAX_TYPED_ARRAY_ELEMENT_WIDTH: usize = std::mem::size_of::<u64>();
@@ -307,22 +307,8 @@ impl Vm {
         if kind.is_bigint() {
             return None;
         }
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
-            return Some(Value::UNDEFINED);
-        };
-        // A store this heap owns is read in place (`BufferBytes::owned`); a shared one through its lock.
-        let read;
-        let bytes: &[u8] = match bytes.owned() {
-            Some(owned) => owned,
-            None => {
-                read = bytes.read();
-                &read
-            }
-        };
-        let Some(start) = view.element(index, bytes.len()) else {
-            return Some(Value::UNDEFINED);
-        };
-        let field = &bytes[start..start + kind.width()];
+        let Some(word) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
+        let field = &word[..kind.width()];
         Some(match element_integer(kind, field) {
             Some(integer) => Value::integer(integer),
             None => Value::number(element_number(kind, field, NATIVE_LITTLE_ENDIAN)),
@@ -422,33 +408,35 @@ impl Vm {
         (end <= byte_length).then(|| (base.wrapping_add(offset), length))
     }
 
+    /// `get_index` of a BigInt typed array at an index key (the BigInt it allocates); `None` for any other read.
+    pub fn bigint_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
+        // One cell read decides the kind; a Number kind's or any other object's read declines here.
+        let view = self.typed_array_view(object).filter(|view| view.kind.is_bigint())?;
+        let index = self.array_index_key(key)? as usize;
+        let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
+        Some(self.bigint_element(view.kind, bytes))
+    }
+
+    /// A BigInt kind's element word as its one-digit BigInt, made in place: no `num_bigint` value and its
+    /// digit vector.
+    #[inline(always)]
+    fn bigint_element(&mut self, kind: TypedArrayKind, bytes: [u8; 8]) -> Value {
+        let (word, signed) = (u64::from_ne_bytes(bytes), kind == TypedArrayKind::BigInt64);
+        let negative = signed && (word as i64) < 0;
+        self.heap.alloc(Cell::BigInt(crate::bigint::JsBigInt::from_digits(negative, &[if negative { (word as i64).unsigned_abs() } else { word }])))
+    }
+
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;
         if let Some(number) = self.staged_typed_number(object, kind, index) {
             return Some(Value::number(number));
         }
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
-            return Some(Value::UNDEFINED);
-        };
-        // The element's bytes, copied out so a BigInt result can be allocated.
-        let mut element = [0; size_of::<u64>()];
-        {
-            let bytes = bytes.read();
-            let Some(start) = view.element(index, bytes.len()) else {
-                return Some(Value::UNDEFINED);
-            };
-            element[..kind.width()].copy_from_slice(&bytes[start..start + kind.width()]);
-        }
-        let bytes = &element;
-        Some(match kind {
-            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint(
-                i64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
-            )),
-            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(
-                u64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
-            )),
-            _ => Value::number(element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN)),
+        let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
+        Some(if kind.is_bigint() {
+            self.bigint_element(kind, bytes)
+        } else {
+            Value::number(element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN))
         })
     }
 
@@ -710,6 +698,15 @@ impl Vm {
 
     /// What an element access reads of the typed array `object` before its buffer: one heap
     /// read, where `typed_array_length` and the buffer checks would each make their own.
+    /// The bytes of `view`'s element at `index` in an eight-byte word, `None` past the end or of a detached buffer. A store
+    /// this heap owns is read in place (`BufferBytes::owned`); a shared one through its lock.
+    #[inline]
+    fn typed_field(&self, view: &TypedArrayView, index: usize) -> Option<[u8; 8]> {
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else { return None };
+        let read = |bytes: &[u8]| view.element(index, bytes.len()).map(|start| native_word(&bytes[start..start + view.kind.width()], NATIVE_LITTLE_ENDIAN));
+        match bytes.owned() { Some(owned) => read(owned), None => read(&bytes.read()) }
+    }
+
     fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
         match self.heap.get(object) {
             Some(Cell::TypedArray { object, buffer, length }) => Some(TypedArrayView {

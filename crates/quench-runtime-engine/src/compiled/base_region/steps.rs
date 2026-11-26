@@ -157,13 +157,13 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call
 pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => leave(pc),
-        Step::Helper => plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers)),
+        Step::Helper => plan_helper(layout, pc, decoded, (step_helper(decoded, helpers), helpers)),
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
         Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
-        Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
+        Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (step_helper(decoded, helpers), helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
             let register = match decoded.a {
@@ -177,6 +177,12 @@ pub(crate) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         }
         Step::Call(shape) => plan_call(layout, shape, pc, helpers),
     }
+}
+
+/// The helper that makes the step of `decoded`: its instruction's typed helper (`Decoded::own_step`) where the table has
+/// it, else the general step.
+fn step_helper(decoded: &Decoded, helpers: LaneHelpers) -> LaneHelper {
+    decoded.own_step.filter(|helper| decoded.packed.is_none() && call_plan::helper_address(helpers, *helper).is_some()).unwrap_or(LaneHelper::Step)
 }
 
 /// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest
@@ -250,7 +256,9 @@ fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, S
 /// after it and no registers are reloaded; a helper that did not raise (it ran beside a native
 /// callee's frames, where it makes nothing) falls to the leave at the record, as every exit does.
 fn plan_throw(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers), None)?;
+    // The typed raise where the table has it, else the general step's.
+    let raise = if call_plan::helper_address(helpers, LaneHelper::ThrowStep).is_some() { LaneHelper::ThrowStep } else { LaneHelper::Step };
+    let mut row = helper_chain(layout, pc, &[], (raise, helpers), None)?;
     row.post.push(Planned { exits: vec![Exit::At(layout.record(pc))], ..Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, None) });
     Ok(row)
 }
@@ -348,6 +356,10 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     // An image's direct rows name the site's record (`name_records`).
     if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, crate::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
+    if choice != Choice::Direct && quench_runtime::fallback::on() {
+        quench_runtime::fallback::note_at_focus(quench_runtime::fallback::Fallback::HelperCall,
+            format_args!("call through the helper row"), layout.id, shape.call_pc);
+    }
     #[cfg(test)]
     if choice == Choice::Direct { super::note_fast(shape.op); }
     chained(parts, spills.len(), record)

@@ -89,6 +89,10 @@ pub trait Stage: crate::projection::Sealed {
     /// A per-site operand `v` as this stage's `Imm`: every operand of the bytecode or of an IC
     /// site reaches the stage through here.
     fn site(&mut self, v: u64) -> Self::Imm;
+    /// A shape id operand as this stage's `Imm`: a site operand (`site`), but in an ahead image's
+    /// lowering a shape id tagged `ic::SYMBOLIC_SHAPE` names the image's shape recipe of that
+    /// number, which the Cranelift stage emits as the symbol its loader resolves.
+    fn shape_site(&mut self, shape: u32) -> Self::Imm { self.site(u64::from(shape)) }
     fn constant(&mut self, bits: u64) -> Self::Word;
     /// The loads and stores say which alias region they touch and whether it can change while
     /// code runs (`Access`): a specializer tags the access so Cranelift may reorder and hoist
@@ -190,11 +194,6 @@ pub trait Stage: crate::projection::Sealed {
     /// assumption registry retires the code when it breaks); a stage without a registry answers
     /// no, and the read leaves at its miss.
     fn assumption(&mut self, watch: Self::Imm) -> Self::Cond;
-    /// A computed initializer store's value: the Number operator `operator` (a per-site operand,
-    /// the interpreter's operator table) over the Number `passed` and the Number word `constant`,
-    /// boxed as `Value::number` does, and whether `passed` was a Number and the operator numeric.
-    /// A stage with no arithmetic for the operator answers false, and the field leaves.
-    fn number_operator(&mut self, operator: Self::Imm, passed: Self::Word, constant: Self::Word) -> (Self::Word, Self::Cond);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// Whether either condition holds.
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;

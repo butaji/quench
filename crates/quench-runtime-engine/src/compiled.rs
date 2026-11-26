@@ -110,6 +110,7 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
+pub(crate) mod fallback_sites;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
@@ -180,7 +181,7 @@ pub(crate) mod wasm_gc_allocate;
 use self::wasm_gc_allocate::allocating_reads;
 pub(crate) mod wasm_exception_stage;
 pub(crate) mod wasm_catch;
-pub(crate) mod plan_report;
+pub(crate) mod plan_report; pub(crate) mod body_views;
 pub(crate) mod wasm_gc_callout;
 pub(crate) mod wasm_instance_switch;
 pub(crate) mod wasm_roots;
@@ -469,7 +470,7 @@ pub(crate) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: quench_runtime::staged::GlobalBinding, slot: Option<(quench_runtime::vm::global_facts::GlobalSlot, quench_runtime::staged::ShapeFact)> }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -1015,7 +1016,7 @@ macro_rules! lane_helper_inventory {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
-            const COUNT: usize = [$(stringify!($name)),+].len();
+            pub(crate) const COUNT: usize = [$(stringify!($name)),+].len();
             /// Each helper's name, by its index (`addresses`).
             const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             /// The name of helper number `index` (`Symbol::Helper`), as an image's demand lists it.
@@ -1037,8 +1038,8 @@ macro_rules! lane_helper_inventory {
         /// jump to the helper, so a call through it is the helper's own (every register and the
         /// stack as the caller left them). These are the symbols an ahead image's object imports
         /// (`aot_image::object`, `lane_helper_symbol`). An executable's export macro instantiates
-        /// this once (`export_native_js_operations!`); the trampolines lie in their own section,
-        /// so the function itself runs nothing.
+        /// this once (`export_native_js_operations!`); each trampoline lies in a section of its own,
+        /// so the function itself runs nothing and the linker keeps only the ones an image names.
         #[doc(hidden)]
         #[inline(never)]
         // The labels are the exported symbols themselves, defined once: the one instantiation is
@@ -1049,9 +1050,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: the template only lays out code in another section; it runs no instruction here.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -1060,9 +1059,7 @@ macro_rules! lane_helper_inventory {
             // SAFETY: as above.
             unsafe {
                 core::arch::asm!(
-                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
-                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
-                    ".popsection",
+                    $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
                     $($name = sym $address),+,
                     options(nomem, nostack, preserves_flags),
                 );
@@ -1181,6 +1178,20 @@ lane_helper_inventory! {
     /// The runtime's Number remainder leaf (`RuntimeSlowPath::NumberRemainder`), which a body naming
     /// its helpers by symbol calls by this one (`slow_path_symbol`).
     NumberRemainder => quench_runtime::vm::operations::number_remainder,
+    /// A local, capture or name access's step over the running window or frame (`dispatch_fast::owner_step`): the owner
+    /// step alone, which a helper row or slow arm of such an instruction makes in place of the general step.
+    OwnerStep => crate::dispatch_fast::owner_step,
+    /// A constant's load into its register (`base_body::constant_step`): the running program's materialized constant,
+    /// which an image body cannot fold (a string's address is the run's), in place of the general step.
+    ConstantStep => base_body::constant_step,
+    /// An operator or comparison jump over registers and constants (`base_body::value_step`): the VM's operator on their
+    /// values, in place of the general step.
+    ValueStep => base_body::value_step,
+    ClosureStep => base_body::closure_step,
+    AllocationStep => base_body::allocation_step,
+    ThrowStep => base_body::throw_step,
+    DefineElementStep => base_body::define_element_step,
+    CallOutStep => base_body::call_out_step,
 }
 
 thread_local! {
@@ -3094,6 +3105,9 @@ impl CompiledOsrRegion {
         // (`dense`), so an entry refills it in place.
         let mut captures = self.dense.take();
         let parked = self.parked.take().filter(|_| self.crossing == Crossing::General);
+        // The region's calls, named to the lane's helpers for the run (`rebind_region_call`).
+        // SAFETY: `lane_context` is the running lane's.
+        let outer_calls = unsafe { std::mem::replace(&mut (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls, std::ptr::from_ref(&self.calls).addr()) };
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe {
             match parked {
@@ -3145,6 +3159,8 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
+        // SAFETY: as above.
+        unsafe { (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls = outer_calls };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -4144,6 +4160,7 @@ impl JsStepDispatch {
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
                 array_mark_blocks: 0, array_mark_block_count: 0,
+                typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
                 object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
@@ -4159,8 +4176,7 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
             outcome: None,
         }
@@ -4192,7 +4208,7 @@ impl JsStepDispatch {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
-        if self.vm == (vm as *const Vm).addr() && self.layout_seen == layout
+        if self.bases_vm == (vm as *const Vm).addr() && self.layout_seen == layout
             && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
             && self.store_watch == vm.heap_reads().store_watch_word()
@@ -4203,7 +4219,7 @@ impl JsStepDispatch {
             return;
         }
         self.reread_object_bases(vm);
-        self.layout_seen = layout;
+        (self.layout_seen, self.bases_vm) = (layout, (vm as *const Vm).addr());
     }
 
     #[cold]
@@ -7847,7 +7863,11 @@ impl Vm {
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
     /// the specializer declines it or the tier does not install it.
     fn js_tier_compile(&mut self, unit: admission::CompiledUnit, program_id: ProgramId, function_id: u32) -> Option<Rc<CompiledJsFunction>> {
+        if !cfg!(feature = "jit") {
+            return None; // no run-time compile without the JIT: only image bodies run natively
+        }
         let residual = self.programs.get(program_id)?;
+        self.keep_slot_representations();
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
@@ -8692,7 +8712,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn offer_compiled_cold(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !cfg!(feature = "jit") || self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
         let wasm_root_only = jit_wasm_root_only_enabled()

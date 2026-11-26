@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust</title>
+    <title>Quench — modern TypeScript, JavaScript and WebAssembly VM in Rust, with AOT and HMR</title>
     <link rel="alternate" type="application/atom+xml" title="Quench engineering blog" href="/blog/feed.xml">
     <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
-    <meta name="description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
-    <meta name="keywords" content="TypeScript runtime, JavaScript runtime, WebAssembly runtime, AOT compiler, ahead-of-time compilation, compile TypeScript to native binary, Node.js alternative, Bun alternative, Rust JavaScript engine, JIT, Cranelift, copy-and-patch, low memory" />
+    <meta name="description" content="Quench is a modern TypeScript, JavaScript and WebAssembly VM in Rust: native TypeScript types, an interpreter and two JITs, AOT to native executables, built-in HMR." />
+    <meta name="keywords" content="TypeScript runtime, JavaScript runtime, WebAssembly runtime, AOT compiler, ahead-of-time compilation, compile TypeScript to native binary, Node.js alternative, Bun alternative, Rust JavaScript engine, JavaScript VM, TypeScript native types, hot module replacement, HMR, JIT, Cranelift, copy-and-patch, partial evaluation, low memory" />
     <meta name="author" content="Quench" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#EF5102" />
@@ -17,15 +17,15 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Quench" />
     <meta property="og:url" content="https://quench.run/" />
-    <meta property="og:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
-    <meta property="og:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
+    <meta property="og:title" content="Quench — modern TypeScript, JavaScript and WebAssembly VM in Rust, with AOT and HMR" />
+    <meta property="og:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly VM in Rust: native TypeScript types, an interpreter and two JITs, AOT to native executables, built-in HMR." />
     <meta property="og:image" content="https://quench.run/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Quench: TypeScript, JavaScript and WebAssembly runtime with AOT, written in Rust" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
-    <meta name="twitter:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
+    <meta name="twitter:title" content="Quench — modern TypeScript, JavaScript and WebAssembly VM in Rust, with AOT and HMR" />
+    <meta name="twitter:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly VM in Rust: native TypeScript types, an interpreter and two JITs, AOT to native executables, built-in HMR." />
     <meta name="twitter:image" content="https://quench.run/og.png" />
 <link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
     <style>
@@ -932,6 +932,39 @@
             </div>
         </section>
 
+        <section class="frame cols-2" id="why" aria-labelledby="why-title">
+            <div class="tile wide orange">
+                <h2 id="why-title">Why Quench</h2>
+                <p>A JavaScript VM designed from first principles: one definition of the language, with every faster tier derived from it. Measured numbers are dated; targets are marked as targets.</p>
+            </div>
+            <div class="tile">
+                <h2>A modern VM</h2>
+                <p>The interpreter is the only definition of JavaScript, TypeScript and WebAssembly semantics. The b-jit is that interpreter partially evaluated on your bytecode; the u-jit and AOT specialize it further on proven facts. Tiers cannot disagree, and a faster operation is faster in every tier at once.</p>
+            </div>
+            <div class="tile">
+                <h2>TypeScript types, natively</h2>
+                <p>Quench runs <code>.ts</code> files directly and never erases the types. A declared type, or a JSDoc annotation in plain JavaScript, becomes a fact that is checked once where a value enters and then trusted by every tier, instead of re-checked on every operation.</p>
+            </div>
+            <div class="tile">
+                <h2>Fast and small</h2>
+                <!-- daily:perf -->
+                <p>With the JIT off, Quench scores <b>1.42x</b> the best of Node and Bun on V8 v7 at <b>0.45x</b> the memory (25 November 2026). With the JITs on, the target is the same: <b>1.5x the score at 0.5x the memory</b> of Node and Bun. Today the JIT tiers are far from it (0.10x the score at 0.53x the memory), and closing that gap is the current work.</p>
+                <!-- /daily:perf -->
+                <p class="fine"><a class="tlink" href="/benchmarks/">Benchmarks and method →</a></p>
+            </div>
+            <div class="tile">
+                <h2>AOT to a native binary</h2>
+                <!-- daily:aot -->
+                <p>Strict AOT runs your program at build time up to its first real input and ships only what is left. Hello world compiles to a <b>4,896-byte</b> executable that starts in <b>0.96 ms</b>. Larger programs still carry much of the runtime (63.2 MB for a static executable today); the target for every program is <b>under 1 MB and 1 ms to start</b>.</p>
+                <!-- /daily:aot -->
+                <p class="fine"><a class="tlink" href="/compile-javascript-to-native-executable/">How Quench AOT works →</a></p>
+            </div>
+            <div class="tile wide">
+                <h2>Native hot module replacement</h2>
+                <p><code>quench --hmr app.ts</code> watches the files your program loaded and swaps an edited module in place, keeping process state, when the module or its importers accept the update through <code>import.meta.hot</code> or <code>module.hot</code>. Edits nobody accepted restart the process with the same arguments. Built into the runtime: no bundler, no dev server, TypeScript included.</p>
+            </div>
+        </section>
+
         <section class="frame cols-2" id="agents" aria-labelledby="agents-title">
             <div class="tile wide orange">
                 <h2 id="agents-title">Built for agent Code Mode</h2>
@@ -939,7 +972,7 @@
             </div>
             <div class="tile">
                 <h2>The QuickJS slot, faster</h2>
-                <p>Today it is QuickJS for small scripts or V8 for heavy ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of V8's and JavaScriptCore's: with the JIT off it scores 1.49x to 2.57x the best of Node and Bun on V8-v7, and five of eight benchmarks peak at 6.4 to 8.2 MB against 43 to 50 MB for Node and 16 to 26 MB for Bun.</p>
+                <p>Today it is QuickJS for small scripts or V8 for heavy ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of V8's and JavaScriptCore's: with the JIT off it scored 1.49x to 2.57x the best of Node and Bun on V8-v7 (14 November 2026), and five of eight benchmarks peak at 6.4 to 8.2 MB against 43 to 50 MB for Node and 16 to 26 MB for Bun.</p>
                 <p class="fine">Not yet measured against QuickJS. That comparison is next, published either way.</p>
             </div>
             <div class="tile">
@@ -1026,7 +1059,9 @@
                 <h2>Where it is going</h2>
                 <ul>
                     <li><b>Interpreter:</b> 1.5x the score of the best of Node and Bun with JIT off, at half their memory.</li>
-                    <li><b>Native tiers:</b> each tier faster than the one below it, with u-jit within 5x of the equivalent C.</li>
+                    <li><b>With the JITs on:</b> 1.5x the score of Node and Bun at half their memory.</li>
+                    <li><b>Native tiers:</b> interpreter &lt; b-jit &lt; u-jit by construction, with every operation in u-jit at most 3x the equivalent C plus 6 instructions.</li>
+                    <li><b>AOT and startup:</b> executables under 1 MB that start in 1 ms; 1 ms-class startup for the interpreter and JITs too.</li>
                 </ul>
             </div>
         </section>
@@ -1049,12 +1084,13 @@
             <div class="tile">
                 <h2>Follow the build</h2>
                 <ul>
+                    <!-- daily:latest --><li><a class="tlink" href="/blog/progress-2026-11-26-a-gate-for-tier-order/">Daily progress, 26 November 2026: a hard gate for tier order</a></li><!-- /daily:latest -->
                     <li><a class="tlink" href="/blog/hello-world-in-4896-bytes/">Hello world in 4,896 bytes: AOT as the JIT run at build time</a></li>
                     <li><a class="tlink" href="/blog/chasing-a-sub-megabyte-readline-binary/">Chasing a sub-megabyte readline binary</a></li>
                     <li><a class="tlink" href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a></li>
                     <li><a class="tlink" href="/blog/an-instruction-budget-for-every-operation/">3 × C + 6: an instruction budget for every operation</a></li>
                                         <li><a class="tlink" href="/benchmarks/">All benchmarks, dated, with weak spots</a></li>
-                    <li><a class="tlink" href="/blog/">All 21 posts</a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
+                    <li><a class="tlink" href="/blog/"><!-- daily:count -->All 23 posts<!-- /daily:count --></a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
                 </ul>
             </div>
         </section>
@@ -1071,6 +1107,10 @@
                         <p>Yes, and it does not throw the types away. Quench parses TypeScript natively and keeps the type information, so the engine can use it: a declared type lets the compiler pick specialized code up front, checked once where a value enters, instead of waiting to observe types at run time. Using types for speed this way is the design and is being built out now.</p>
                     </details>
                     <details>
+                        <summary>Does Quench have hot module replacement?</summary>
+                        <p>Yes. Run with <code>--hmr</code> and Quench watches the modules your program loaded. An edited module is replaced in place when it or its importers accept the update through <code>import.meta.hot</code> or <code>module.hot</code> (accept, dispose, decline, invalidate); otherwise the process restarts with the same arguments. It works for TypeScript and JavaScript, CommonJS and ES modules, with no bundler or dev server.</p>
+                    </details>
+                    <details>
                         <summary>Does Quench support WebAssembly?</summary>
                         <p>Yes. WebAssembly modules run through the standard WebAssembly JavaScript API, and the WebAssembly workloads in JetStream 3 are part of what Quench is measured on.</p>
                     </details>
@@ -1080,7 +1120,7 @@
                     </details>
                     <details>
                         <summary>How does Quench compare to Node.js and Bun?</summary>
-                        <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal.</p>
+                        <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. On V8 v7 (25 November 2026) the interpreter scores 1.42x the best of Node --jitless and Bun at 0.45x their memory; with the JITs on, Quench is at 0.10x the score of Bun at 0.53x the memory, against a target of 1.5x at 0.5x.</p>
                     </details>
                     <details>
                         <summary>Is Quench Test262 compliant?</summary>
@@ -1088,7 +1128,7 @@
                     </details>
                     <details>
                         <summary>Can Quench run code written by AI agents?</summary>
-                        <p>That is a use Quench is built for. It embeds in a Rust harness as a library, runs interpreter only with no JIT, and runs full JavaScript and TypeScript (Test262: 53,353 passing, 0 failing). With the JIT off it scores 1.49x to 2.57x the best of Node and Bun on V8-v7, peaking at 6.4 to 8.2 MB on five of eight benchmarks. <a href="/javascript-engine-for-ai-agents/">Details</a>.</p>
+                        <p>That is a use Quench is built for. It embeds in a Rust harness as a library, runs interpreter only with no JIT, and runs full JavaScript and TypeScript (Test262: 53,353 passing, 0 failing). With the JIT off it scores 1.49x to 2.57x (14 Nov 2026) the best of Node and Bun on V8-v7, peaking at 6.4 to 8.2 MB on five of eight benchmarks. <a href="/javascript-engine-for-ai-agents/">Details</a>.</p>
                     </details>
                     <details>
                         <summary>Is Quench compatible with Node.js?</summary>
@@ -1147,6 +1187,8 @@
       "b-jit: copy-and-patch JIT",
       "u-jit: optimizing JIT on Cranelift",
       "Node-compatible APIs",
+      "TypeScript types kept: facts every tier trusts, never erased",
+      "Native hot module replacement (--hmr, import.meta.hot, module.hot)",
       "Low memory use",
       "Embeddable in Rust for running AI agent code without a JIT",
       "MIT licensed"
@@ -1158,7 +1200,7 @@
       "@type": "CreativeWork",
       "url": "https://github.com/butaji/quench#quick-start"
     },
-    "dateModified": "2026-11-20"
+    "dateModified": "2026-11-26"
   },
   {
     "@context": "https://schema.org",
@@ -1207,7 +1249,15 @@
         "name": "Can Quench run code written by AI agents?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "That is a use Quench is built for. It embeds in a Rust harness as a library, runs interpreter only with no JIT, and runs full JavaScript and TypeScript (Test262: 53,353 passing, 0 failing). With the JIT off it scores 1.49x to 2.57x the best of Node and Bun on V8-v7, peaking at 6.4 to 8.2 MB on five of eight benchmarks."
+          "text": "That is a use Quench is built for. It embeds in a Rust harness as a library, runs interpreter only with no JIT, and runs full JavaScript and TypeScript (Test262: 53,353 passing, 0 failing). With the JIT off it scores 1.49x to 2.57x (14 Nov 2026) the best of Node and Bun on V8-v7, peaking at 6.4 to 8.2 MB on five of eight benchmarks."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Quench have hot module replacement?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Run with --hmr and Quench watches the modules your program loaded. An edited module is replaced in place when it or its importers accept the update through import.meta.hot or module.hot; otherwise the process restarts with the same arguments. TypeScript and JavaScript, CommonJS and ES modules, no bundler or dev server."
         }
       },
       {
@@ -1215,7 +1265,7 @@
         "name": "How does Quench compare to Node.js and Bun?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal."
+          "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. On V8 v7 (25 November 2026) the interpreter scores 1.42x the best of Node --jitless and Bun at 0.45x their memory; with the JITs on, Quench is at 0.10x the score of Bun at 0.53x the memory, against a target of 1.5x at 0.5x."
         }
       },
       {
@@ -1283,6 +1333,15 @@
                         "description": "Compile an entry file and everything it imports into one native executable. Same semantics as the interpreter, decided ahead of time.",
                         "cmd": "quench --build-aot app.ts -o app",
                         "detail": "One file in. One binary out."
+            },
+            {
+                        "name": "Native HMR",
+                        "label": "capability: ",
+                        "vertical1": "HOT MODULE",
+                        "vertical2": "REPLACEMENT",
+                        "description": "Edit a module and Quench swaps it in place, keeping state, through import.meta.hot or module.hot. No bundler, no dev server.",
+                        "cmd": "quench --hmr app.ts",
+                        "detail": "Built into the runtime."
             },
             {
                         "name": "Three Tiers",

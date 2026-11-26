@@ -6,8 +6,8 @@
 use crate::ext_traits::*;
 use super::{facts, lane_unit::Unit};
 use quench_runtime::{Value, bytecode::{ControlFlowLayout, Operand, OperandKind, ResidualProgram, WideInstruction}};
-use quench_runtime::staged::Operation;
-use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
+use quench_runtime::staged::{BinaryClass, Operation};
+use quench_runtime::vm::operations::{NumberF64Stage, NumberRelation, PartialOrderStage};
 
 /// Small functions keep transient register facts on the compiler's stack.
 const INLINE_CONSTANT_REGISTERS: usize = 16;
@@ -146,15 +146,12 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
             let inputs = operand(program, values, instruction.operand_b()).and_then(Value::as_number)
                 .zip(operand(program, values, instruction.operand_c()).and_then(Value::as_number));
             inputs.and_then(|(left, right)| {
-                let operator = instruction.binary_operator();
-                if let Some(operation) = NumberArithmetic::from_js_instruction(instruction.op(), operator) {
-                    Some(Value::number(operation.apply(&mut NumberF64Stage, left, right)))
-                } else if let Some(operation) = NumberBitwise::from_js_instruction(instruction.op(), operator) {
-                    Some(quench_runtime::vm::operations::number_bitwise_result(operation,
-                        quench_runtime::value::number_to_i32(left), quench_runtime::value::number_to_i32(right)))
-                } else {
-                    NumberRelation::from_operator(operator).map(|operation|
-                        Value::boolean(operation.apply(&mut PartialOrderStage, left, right)))
+                match BinaryClass::of_operator(instruction.binary_operator()) {
+                    BinaryClass::Arithmetic(operation) => Some(Value::number(operation.apply(&mut NumberF64Stage, left, right))),
+                    BinaryClass::Bitwise(operation) => Some(quench_runtime::vm::operations::number_bitwise_result(operation,
+                        quench_runtime::value::number_to_i32(left), quench_runtime::value::number_to_i32(right))),
+                    BinaryClass::Relation(operation) => Some(Value::boolean(operation.apply(&mut PartialOrderStage, left, right))),
+                    BinaryClass::Remainder | BinaryClass::Other => None,
                 }
             })
         }
@@ -171,9 +168,7 @@ fn scalar_body(_program: &ResidualProgram, instruction: WideInstruction) -> bool
             || matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Move { .. }))
             || matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Number(quench_runtime::staged::NumberOperation::IncDec { .. })))
             || (super::meaning_compiled::is_numeric_binary(instruction)
-                && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
-                    || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
-                    || NumberRelation::from_operator(instruction.binary_operator()).is_some())))
+                && !matches!(BinaryClass::of_operator(instruction.binary_operator()), BinaryClass::Remainder | BinaryClass::Other)))
 }
 
 fn test(program: &ResidualProgram, values: &[Option<Value>], instruction: WideInstruction) -> Option<bool> {

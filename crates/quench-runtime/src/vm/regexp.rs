@@ -560,7 +560,7 @@ impl Vm {
                             let position = vm.get_property(p, result, atom)?;
                             let position = vm.to_primitive(p, position, "number")?;
                             let position =
-                                regexp_to_integer_or_infinity(vm.to_number(p, position)?);
+                                crate::integer_conversion::to_integer_or_infinity(vm.to_number(p, position)?);
                             let position =
                                 position.max(0.0).min(input.units().len() as f64) as usize;
                             let mut captures = Vec::new();
@@ -2789,6 +2789,16 @@ impl Vm {
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
+    /// The matchers of `program`'s RegExp literals, compiled as a VM compiles them (`compile_regexp`),
+    /// for an ahead image's native searches (`aot_image::regexps`); a literal that does not compile has none.
+    pub fn regexp_literal_matchers(program: &ResidualProgram) -> Vec<quench_regexp::Regex> {
+        let text = |index: u32| match program.constants.get(index as usize)? { Constant::String(text) => Some(Rc::clone(text)), _ => None };
+        program.regexp_literal_sites.iter().filter_map(|site| {
+            let (source, flags) = (text(site.pattern_constant)?, text(site.flags_constant)?);
+            Self::compile_regexp(&JsString::from(&*source), &flags, PatternValidity::EarlyChecked).ok()
+        }).collect()
+    }
+
     pub(super) fn compile_regexp(
         source: &JsString,
         flags: &str,
@@ -2939,16 +2949,6 @@ pub(super) fn advance_string_index_units(
         index + 2
     } else {
         index + 1
-    }
-}
-
-fn regexp_to_integer_or_infinity(value: f64) -> f64 {
-    if value.is_nan() || value == 0.0 {
-        0.0
-    } else if value.is_infinite() {
-        value
-    } else {
-        value.trunc()
     }
 }
 

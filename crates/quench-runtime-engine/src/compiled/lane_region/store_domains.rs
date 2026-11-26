@@ -13,7 +13,9 @@ pub(crate) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn
     let mut domains: Vec<(u32, u16, Type, bool)> = Vec::new();
     for instruction in instructions.iter().filter(|instruction| matches!(crate::compiled::decoded(*instruction), Some(quench_runtime::staged::Operation::SetField { .. }))) {
         let Some([field]) = field(instruction.cache_site_index()) else { continue };
-        if field.ty == Type::NEVER { continue; }
+        // An ahead image's guessed store is admitted where its guard links (`symbols::guarded_shape`):
+        // the slot's type holds every int32 it writes.
+        if field.ty == Type::NEVER || field.guessed() { continue; }
         match domains.iter_mut().find(|(shape, slot, _, _)| (*shape, *slot) == (field.shape, field.slot)) {
             Some((_, _, domain, raw)) => { *domain = domain.join(field.ty); *raw &= field.raw_double; }
             None => domains.push((field.shape, field.slot, field.ty, field.raw_double)),

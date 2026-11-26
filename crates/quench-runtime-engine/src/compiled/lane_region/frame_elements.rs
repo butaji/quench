@@ -24,6 +24,8 @@ pub(crate) enum Held {
     /// A dense array's view, and what its access proves (`DenseView::packed`, `DenseView::within`).
     Dense(super::super::DenseArrayView, (bool, bool)),
     Typed(TypedView<ir::Value>),
+    /// A typed view whose reads are `Value` words (`typed_read_value`): a base the row proved typed only at its miss.
+    TypedValues(TypedView<ir::Value>),
 }
 
 /// The barrier gate of a store of the reference `value` into the direct array `base`, read from the
@@ -61,6 +63,8 @@ pub(crate) fn index_get(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (base, 
 }
 
 impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
+    fn typed_values(&self) -> bool { matches!(self.held, Some(Held::TypedValues(_))) }
+
     /// The VM's store; a hoisted array's store leaves at `miss` instead, which no recorded miss
     /// planned a helper arm for (`Lowering::element_write`): the helper's call spills every live
     /// value, which a loop that never misses should not pay.
@@ -112,7 +116,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// retired, or the hoisted array's (`Held`); a writable view answers a read.
     fn kept_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool) -> Option<ElementView<ir::Value>> {
         let held = match self.held {
-            Some(Held::Typed(view)) => return Some(ElementView::Typed(view)),
+            Some(Held::Typed(view) | Held::TypedValues(view)) => return Some(ElementView::Typed(view)),
             Some(Held::Dense(view, proved)) => Some((view, proved)).filter(|(view, _)| view.writable || !writable),
             None => None,
         };

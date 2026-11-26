@@ -804,6 +804,11 @@ impl Vm {
         Ok(self.error_is_error(self.embedding_value(root)?))
     }
 
+    /// The error a `throw` of `value` raises: a primitive's own, else the value with its detail string.
+    pub fn thrown_error(&self, value: Value) -> JsError {
+        JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value)))
+    }
+
     pub fn detail_string(&self, value: Value) -> String {
         if let Some(detail) = super::error::primitive_detail(value) {
             return detail;

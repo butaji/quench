@@ -285,6 +285,10 @@ pub(crate) type CallContextWords = super::record_heads::CallContextHead<u64, u8,
 pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = core::mem::offset_of!(CallContextWords, adapter_payload);
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, loop_entry);
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_record_base);
+/// The typed view records a view proof reads (`JsStepHead::typed_view_directory`, `typed_view_pages`, `buffer_relocations`).
+pub(crate) const JS_STEP_TYPED_VIEW_DIRECTORY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, typed_view_directory);
+pub(crate) const JS_STEP_TYPED_VIEW_PAGES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, typed_view_pages);
+pub(crate) const JS_STEP_BUFFER_RELOCATIONS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, buffer_relocations);
 /// The storage word of the environment window the running activation holds its environment-owned locals in
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).

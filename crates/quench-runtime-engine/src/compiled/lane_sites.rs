@@ -265,11 +265,14 @@ impl Vm {
     /// `StoreName` that is no declaration's or a `LoadNameTypeof` of a name no internal binding owns, in a function whose names are global.
     fn global_store_sites(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, quench_runtime::bytecode::Atom, bool)> {
         unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
-            let store = match quench_runtime::staged::Operation::<(), ()>::decode(*instruction, quench_runtime::staged::DecodeContext::EMPTY)? {
+            // A strict code's reference (`strict_reference_step`): its store (no register defined) holds the slot as a
+            // `StoreName` does, its resolution reads it.
+            let store = if quench_runtime::staged::strict_reference_step(*instruction) { instruction.written_registers().next().is_none() }
+            else { match quench_runtime::staged::Operation::<(), ()>::decode(*instruction, quench_runtime::staged::DecodeContext::EMPTY)? {
                 quench_runtime::staged::Operation::GlobalWrite { initialize: false, .. } => true,
                 quench_runtime::staged::Operation::GlobalTypeof { .. } => false,
                 _ => return None,
-            };
+            } };
             let function = match unit.origins[pc] {
                 lane_unit::Origin::Caller(_) => function,
                 lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
@@ -286,7 +289,7 @@ impl Vm {
     fn native_member(&mut self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
         let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
         let cell = match *read {
-            GlobalRead::Stable { fact, global, realm_offset, .. } => Some(StableCell { fact, global, realm_offset }),
+            GlobalRead::Stable { fact, global, realm_offset, value, .. } => Some(StableCell { fact, global, realm_offset, value }),
             _ => None,
         };
         let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);

@@ -25,7 +25,7 @@ use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Re
 use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
-use quench_runtime::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
+use quench_runtime::staged::typed_view::{prove_typed_view, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
@@ -100,6 +100,7 @@ use captures::RootedRead;
 use call_frames::{CallSite, DirectSite, Leave, ReturnSite, Site};
 pub(crate) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] pub(crate) mod call_outs;
+#[path = "lane_region/default_rows.rs"] pub(crate) mod default_rows;
 #[path = "lane_region/jumps.rs"] pub(crate) mod jumps;
 #[path = "lane_region/call_rows.rs"] pub(crate) mod call_rows;
 #[path = "lane_region/register_rows.rs"] pub(crate) mod register_rows;
@@ -1321,15 +1322,14 @@ pub(crate) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
     let mut leaders = CompoundBitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
-        if instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable {
-            // Every entry of a branch table is a leader: its `Jump` rows start blocks.
-            for target in successors(pc, *instruction).into_iter().filter(|t| *t < instructions.len()) { leaders.insert(target); }
-        }
-        if instruction.op().control_flow_layout().jumps() {
-            if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < instructions.len()) {
+        let layout = instruction.op().control_flow_layout();
+        if layout == ControlFlowLayout::BranchTable || layout.jumps() {
+            // Every successor of a branch (a branch table's `Jump` rows included) starts a block,
+            // and so does the instruction after a jump.
+            let jump = layout.jumps().then_some(pc + 1);
+            for target in successors(pc, *instruction).into_iter().chain(jump).filter(|t| *t < instructions.len()) {
                 leaders.insert(target);
             }
-            if pc + 1 < instructions.len() { leaders.insert(pc + 1); }
         }
     }
     leaders
@@ -1421,13 +1421,12 @@ fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic:
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[quench_runtime::bytecode::Constant], start: usize,
     intrinsics: &native_calls::Intrinsics, global_reads: &quench_runtime::vm::global_facts::GlobalReads) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
-    let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
-    let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
+    let target = |instruction: &WideInstruction| quench_runtime::bytecode::jump_edge(*instruction);
     let mut loops = Vec::new();
     for (back, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
         let entry_header = start == header;
         let body = &instructions[header..=back];
-        let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
+        let entries = usize::from(header > 0 && quench_runtime::bytecode::falls_into_next(header - 1, instructions[header - 1]))
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
@@ -1575,12 +1574,9 @@ struct LoopField {
 
 /// The successors of `instruction` at `pc`: a branch table's entries, else its fall-through and jump target.
 fn successors(pc: usize, instruction: WideInstruction) -> smallvec::SmallVec<[usize; 2]> {
-    let layout = instruction.op().control_flow_layout();
-    if layout == ControlFlowLayout::BranchTable {
-        return quench_runtime::bytecode::branch_table_entries(pc, instruction).collect();
-    }
-    [layout.falls_through().then_some(pc + 1), layout.jumps().then(|| instruction.jump_target() as usize)]
-        .into_iter().flatten().collect()
+    let mut targets = smallvec::SmallVec::new();
+    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| targets.push(target));
+    targets
 }
 
 /// Forward must-alias analysis through inline argument copies and branch joins.
@@ -1774,7 +1770,7 @@ pub(crate) fn lower_body(
     generic: &[usize],
     direct: &DirectSites,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
-    number_reads: &[super::facts::ObservedRead],
+    number_reads: &[super::facts::ObservedRead], views: ElementViews,
     admitted: super::admission::CompiledUnit,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
@@ -1783,7 +1779,7 @@ pub(crate) fn lower_body(
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
-            completion: Completion::Body, views: ElementViews::Dense } };
+            completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
@@ -2119,7 +2115,7 @@ pub(crate) fn lower(
     // A preliminary run of the facts over the arrays the loops index without their captured reads
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false, |at| lowering.held_field(at),
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
@@ -2130,7 +2126,7 @@ pub(crate) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::compiled::performed(&instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        |at| lowering.held_field(at), lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
         && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
@@ -2826,7 +2822,7 @@ impl Lowering<'_, '_> {
     /// Per receiver shape a field site folds, whether the receiver has it.
     fn entry_receiver_shapes(&mut self, receiver: &LaneReceiver) -> BTreeMap<u32, Variable> {
         let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.iter().flatten().flatten() {
+        for field in self.fields.iter().flatten().flatten().filter(|field| !field.guessed()) {
             if receiver_shapes.contains_key(&field.shape) {
                 continue;
             }
@@ -3025,6 +3021,20 @@ impl Lowering<'_, '_> {
     }
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
+    /// The instruction at unit `pc`, which this body hands back to the lane, as an expensive fallback
+    /// (`quench_runtime::fallback`), at its own function's instruction.
+    #[cold]
+    fn unlowered_fallback(&self, pc: usize) {
+        let (function, at) = match self.unit.origins.get(pc) {
+            Some(super::lane_unit::Origin::Inlined { frame, pc }) => (self.unit.frames.get(*frame).map_or(self.function_id, |call| call.target.function), *pc),
+            Some(super::lane_unit::Origin::Caller(pc)) => (self.function_id, *pc),
+            None => (self.function_id, pc as u32),
+        };
+        let what = if self.helpers == LaneHelpers::Ahead { "unlowered in an ahead image" } else { "unlowered" };
+        quench_runtime::fallback::note(quench_runtime::fallback::Fallback::HelperCall, format_args!("{what}"),
+            quench_runtime::fallback::Site::new(self.program, function, at));
+    }
+
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
         // A construction readiness a loop's entry tested holds only across quiet instructions
@@ -3146,20 +3156,7 @@ impl Lowering<'_, '_> {
                 if falls { self.conform_declared_definitions(state, pc, instruction); }
                 falls
             }
-            None => {
-                super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
-                if self.helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
-                    let name = instruction.op().loads_name().then(|| self.program.atoms.get(instruction.atom_index() as usize).map(|atom| format!("({atom})"))).flatten();
-                    UNLOWERED.with(|unlowered| unlowered.borrow_mut().insert(format!("{:?}{}", instruction.op(), name.unwrap_or_default())));
-                }
-                if self.coverage.full() && (self.completion.numeric()
-                    || !((matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Return { .. })) && plain) || instruction.returns_from_frame())) {
-                    self.valid = false;
-                    declined("an unlowered instruction in full coverage", pc);
-                }
-                self.exit(state, pc32);
-                false
-            }
+            None => self.unlowered(state, pc, instruction, plain),
         }
     }
 
@@ -3350,7 +3347,7 @@ impl Lowering<'_, '_> {
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
-            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default() };
+            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default(), rebinds: Default::default() };
         super::record_boxed_numbers();
         let step = quench_runtime::staged::step(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
@@ -3454,19 +3451,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc);
         let number = self.operand_number(state, number, exit)?;
         let bits = self.operand_tagged(state, other)?;
-        let [decode, join] = std::array::from_fn(|_| self.builder.create_block());
-        let equal = self.builder.append_block_param(join, types::I8);
-        let double = quench_runtime::staged::value::is_double(&mut emit(&mut self.builder), bits);
-        let int = is_int_tagged(&mut self.builder, bits);
-        let is_number = self.raw_binary(Binary::Or, double, int);
-        let unequal = self.raw_const(Lane::I8, 0);
-        self.branch_if(is_number, (decode, &[]), (join, &[unequal]));
-        self.builder.switch_to_block(decode);
-        let value = emit_known_number(&mut self.builder, bits);
-        let same = self.raw_compare(Relation::FloatEqual, number, value);
-        self.goto(join, &[same]);
-        self.builder.switch_to_block(join);
-        Some(equal)
+        Some(quench_runtime::staged::number_strict_equal(&mut emit(&mut self.builder), number, bits))
     }
 
     /// `===` or `==` of two operands: a strict pair of strings the loop holds compares their held
@@ -3484,7 +3469,6 @@ impl Lowering<'_, '_> {
     /// strictly, two heap values compare by contents where they are strings or legacy cells
     /// (BigInts) of one family (`strict_equal_cells_in_lane`), and are unequal otherwise.
     fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
-        pub use quench_runtime::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
         let (decided, equal) = quench_runtime::staged::equality_decided(&mut emit(&mut self.builder), [left, right], strict);
@@ -3492,53 +3476,19 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, decided, exit);
             return Some(equal);
         }
-        let [open, cells, join] = std::array::from_fn(|_| self.builder.create_block());
+        let [open, cells, compare, join] = std::array::from_fn(|_| self.builder.create_block());
         let joined = self.builder.append_block_param(join, types::I8);
         self.builder.set_cold_block(open);
         self.branch_if(decided, (join, &[equal]), (open, &[]));
         self.builder.switch_to_block(open);
-        let family = self.raw_binary_imm(Binary::And, left, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let right_family = self.raw_binary_imm(Binary::And, right, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let one_family = self.raw_compare(Relation::Equal, family, right_family);
-        let string = quench_runtime::staged::value::is_direct_string(&mut emit(&mut self.builder), left);
-        let legacy = self.raw_compare_imm(Relation::Equal, family, ValueLayout::HEAP_TAG as i64);
-        let contents = self.raw_binary(Binary::Or, string, legacy);
-        let compared = self.raw_binary(Binary::And, one_family, contents);
+        // The open pair's contents decide it (`content_pair`); two short strings by their records' words, any other the VM's.
+        let compared = quench_runtime::staged::string_length::content_pair(&mut emit(&mut self.builder), [left, right]);
         let unequal = self.raw_const(Lane::I8, 0);
         self.branch_if(compared, (cells, &[]), (join, &[unequal]));
         self.builder.switch_to_block(cells);
-        // Two strings both held inline (`FlatUnits::Short`, zero-padded) are equal exactly
-        // when their records' words are: decided here, the helper left for other forms.
-        let [records, short, compare] = std::array::from_fn(|_| self.builder.create_block());
-        self.branch_if(string, (records, &[]), (compare, &[]));
-        self.builder.switch_to_block(records);
         let base = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
-        let mut decided = self.raw_compare_imm(Relation::NotEqual, base, 0);
-        let mut addresses = [base; 2];
-        for (address, bits) in addresses.iter_mut().zip([left, right]) {
-            let index = self.raw_binary_imm(Binary::And, bits, i64::from(u32::MAX));
-            let small = self.raw_binary_imm(Binary::And, index, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_MASK));
-            let recorded = self.raw_compare_imm(Relation::NotEqual, small, i64::from(quench_runtime::tier_surface::SMALL_STRING_ID_BASE));
-            decided = self.raw_binary(Binary::And, decided, recorded);
-            let offset = self.raw_binary_imm(Binary::Mul, index, quench_runtime::staged::string_form::RECORD_SIZE as i64);
-            *address = self.raw_binary(Binary::Add, base, offset);
-        }
-        let shorts = self.builder.create_block();
-        self.branch_if(decided, (shorts, &[]), (compare, &[]));
-        self.builder.switch_to_block(shorts);
-        let meta = regions::flags(quench_runtime::staged::region::Region::HeapMeta.mutable());
-        let tags = addresses.map(|address| self.raw_load(Lane::I8, meta, address, quench_runtime::vm::wtf16::native_string::TAG_OFFSET));
-        let either = self.raw_binary(Binary::Or, tags[0], tags[1]);
-        let both_short = self.raw_compare_imm(Relation::Equal, either, i64::from(quench_runtime::vm::wtf16::native_string::TAG_SHORT));
-        self.branch_if(both_short, (short, &[]), (compare, &[]));
-        self.builder.switch_to_block(short);
-        let mut differ = self.raw_const(Lane::I64, 0);
-        for word in 0..quench_runtime::staged::string_form::RECORD_SIZE / 8 {
-            let [a, b] = addresses.map(|address| self.raw_load(Lane::I64, meta, address, (word * 8) as i32));
-            let bits = self.raw_binary(Binary::Xor, a, b);
-            differ = self.raw_binary(Binary::Or, differ, bits);
-        }
-        let same_text = self.raw_compare_imm(Relation::Equal, differ, 0);
+        let same_text = quench_runtime::staged::string_length::short_strings_equal(&mut emit(&mut self.builder), base, [left, right], compare)
+            .expect("the emit stage continues past its guards");
         self.goto(join, &[same_text]);
         self.builder.switch_to_block(compare);
         let result = self.helper_call(LaneHelper::StrictEqual, &[left, right]);
@@ -4394,7 +4344,7 @@ impl Lowering<'_, '_> {
                         self.builder.def_var(checked, clear);
                     }
                 }
-                ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
+                ElementViews::Typed(_) => self.hoist_typed_view(ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable }, bits, variables, exit),
                 ElementViews::Double => {
                     let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     self.builder.def_var(variables.values, values);
@@ -4413,6 +4363,7 @@ impl Lowering<'_, '_> {
                 let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
                 Some(self.builder.use_var(read.value))
             }
+            ArraySource::Field(pc) => Some(self.loop_entry_word(self.entry_fields.get(pc).copied().flatten()?)),
         }
     }
 
@@ -4420,8 +4371,7 @@ impl Lowering<'_, '_> {
     /// (`prove_typed_view`): a proof that leaves takes the slow arm, where the VM publishes the
     /// record (`LaneHelper::TypedArrayView`) and the proof is made again, leaving at the loop's
     /// entry where it fails still.
-    fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
-        let access = ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable };
+    fn hoist_typed_view(&mut self, access: ViewAccess, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
         let publish = cold_block(&mut self.builder);
         let done = self.builder.create_block();
         self.prove_typed_view_into(variables, bits, access, publish);
@@ -4440,11 +4390,7 @@ impl Lowering<'_, '_> {
     /// The proof of the typed array `bits` for `access`, leaving at `miss`, whose view the
     /// array's variables then hold.
     fn prove_typed_view_into(&mut self, variables: ArrayVariables, bits: ir::Value, access: ViewAccess, miss: ir::Block) {
-        let records = TypedRecords {
-            directory: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_directory)),
-            pages: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_pages)),
-            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
-        };
+        let records = self.typed_records();
         let view = prove_typed_view(&mut super::object_slots::emit(&mut self.builder), records, bits, access, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(variables.values, view.values);
@@ -4720,7 +4666,7 @@ impl Lowering<'_, '_> {
             return self.held_length(string);
         }
         let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
-            && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
+            && (entering != Some(array.header) || !matches!(array.source, ArraySource::Capture(_)));
         if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
             let (_, count) = self.hoisted_view(array);
             let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));

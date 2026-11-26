@@ -168,7 +168,7 @@ impl<'a> InterpreterFrame<'a> {
     fn thrown(vm: *mut Vm, value: Value) -> JsError {
         // SAFETY: the row has finished with the VM's calls; `vm` is live (`step_row`).
         let vm = unsafe { &*vm };
-        JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, vm.detail_string(value)))
+        vm.thrown_error(value)
     }
 
     /// The running VM, which the frame's calls answer through.

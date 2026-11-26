@@ -37,28 +37,17 @@ pub mod units {
     /// The UTF-16 code units of the line terminators text readers split on.
     pub const LINE_FEED: u16 = b'\n' as u16;
     pub const CARRIAGE_RETURN: u16 = b'\r' as u16;
+    /// English month and weekday abbreviations (`Date.prototype.toString`, `util.log`, Intl's
+    /// fallback locale), January and Sunday first.
+    pub const MONTH_ABBREVIATIONS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    pub const WEEKDAY_ABBREVIATIONS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 }
 
 /// JavaScript property names the runtime and its hosts both spell.
 pub mod property_names {
     pub const LENGTH: &str = "length";
 
-    /// Whether `left` and `right` spell the same text, usable in constant evaluation (where
-    /// `str == str` is not). The one home for const string equality of the runtime and its hosts.
-    pub const fn same_text(left: &str, right: &str) -> bool {
-        let (left, right) = (left.as_bytes(), right.as_bytes());
-        if left.len() != right.len() {
-            return false;
-        }
-        let mut index = 0;
-        while index < left.len() {
-            if left[index] != right[index] {
-                return false;
-            }
-            index += 1;
-        }
-        true
-    }
+    pub use crate::const_text::same_text;
 }
 
 pub use vm::value_serializer::DESERIALIZATION_ERROR;
@@ -108,6 +97,7 @@ pub use jit_mode::JitMode;
 pub mod host;
 #[doc(hidden)]
 pub mod integer_conversion;
+mod const_text;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 #[doc(hidden)]
 pub mod memory_edge;
@@ -122,6 +112,7 @@ pub mod number_inputs;
 #[doc(hidden)]
 pub mod profile;
 pub mod trace;
+pub mod fallback;
 pub mod clock;
 #[doc(hidden)]
 pub mod snapshot;

@@ -77,7 +77,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
         || (local_name_requires_environment(name) && declared_in_environment())
 }
 #[allow(unused_imports)]
-pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, may_repeat, reachable_from};
+pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, jump_edge, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
 pub use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
@@ -905,7 +905,7 @@ opcodes!($;
     LoadName => READ_THROW; layout Scalar; meaning AtomIndex; class LoadName; staged Proved; step Body; owned LoadName; traits BOXED_RESULT UNIT_REWRITTEN NAME_LEAF NAME_OPERATION GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex; class LoadNameCall; staged Proved; step Body; owned LoadNameCall; traits NAME_OPERATION CALL_LINK GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
     LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; class LoadNameTypeof; staged Names; step Body; owned LoadNameTypeof; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS MAY_ALLOCATE, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
+    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step LaneResult; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
     LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
     DeleteName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_STORE BY_NAME_ACCESS ROW_HANDLER OWNER_ONLY MAY_ALLOCATE LANE_WRITES_RESULT, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
@@ -913,7 +913,7 @@ opcodes!($;
     // falls back to the by-name operation of its atom when the binding is not yet initialized.
     LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits BOXED_RESULT UNIT_REWRITTEN MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
-    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
+    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Lane; traits NAME_OPERATION BINDING_FORM ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; staged Value; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1366,10 +1366,7 @@ impl HotDecoding {
 /// of a loop's back edge; handler edges are not jumps and are not listed here.
 pub fn back_edges_of(instructions: impl Iterator<Item = WideInstruction>) -> impl Iterator<Item = (usize, usize)> {
     instructions.enumerate().filter_map(|(pc, instruction)| {
-        instruction.op().control_flow_layout().jumps()
-            .then(|| instruction.jump_target() as usize)
-            .filter(|&target| target <= pc)
-            .map(|target| (pc, target))
+        control_flow::jump_edge(instruction).filter(|&target| target <= pc).map(|target| (pc, target))
     })
 }
 
@@ -2630,7 +2627,7 @@ impl Function {
                     || matches!(
                         instruction.op(),
                         Op::DeleteName | Op::StoreResolvedName | Op::StoreVarBinding | Op::InitializeThis | Op::SuperCallCheck
-                    )
+                    ) && !crate::staged::strict_reference_step(instruction)
             })
             // A direct eval beside names resolved through a scope may declare dynamic bindings, which only
             // a frame (or a suspended record) keeps: the scope's other names the window's handlers serve.

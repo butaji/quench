@@ -1961,6 +1961,16 @@ impl Vm {
         (!raw_double || (holder.is_none() && depended)).then_some((ty, raw_double))
     }
 
+    /// The type `slot` of `shape` holds where a reader may take its words as tagged values, which
+    /// an ahead image's guessed field read is (`aot_image::symbols::guarded_shape`): `None` where
+    /// its words are raw doubles, or where no store has typed the slot yet, so a first Number
+    /// store could make them raw. A type within Number may still widen to raw doubles, so a
+    /// reader depends on it (`SlotDependency`); any other type stays tagged.
+    pub fn tagged_slot_type(&self, shape: u32, slot: u16) -> Option<crate::typed_ir::Type> {
+        let ty = self.heap.slot_type(shape, usize::from(slot));
+        (!self.heap.slot_holds_raw_doubles(shape, usize::from(slot)) && ty != crate::typed_ir::Type::NEVER).then_some(ty)
+    }
+
     /// The global object's own data field a by-name load's hint (an own entry) names, its
     /// values flat or behind extras (`Heap::global_field_hit`).
     #[inline(always)]
@@ -3988,6 +3998,22 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
+    /// The shape object `holder` has now and the slot of its plain data field `atom`, as a
+    /// prototype read of it guards and reads them (`immediate_prototype_data_field`): `None` where
+    /// `holder` is no object record, holds no such field, holds it as an accessor, is a module
+    /// namespace, or keeps its properties as a dictionary. An ahead
+    /// image's guessed prototype read resolves its holder guard by it (`aot_image::symbols`).
+    pub fn holder_data_field(&self, holder: Value, atom: Atom) -> Option<(u32, usize)> {
+        self.heap.object_record(holder)?;
+        let record = self.shape_property_lookup(holder, atom)?;
+        if record.is_module_namespace() { return None; }
+        let shape = record.shape();
+        // A dictionary's slots move as it changes: its shape word names no layout to read by.
+        if shape & crate::value_vec::DICTIONARY_STORAGE != 0 { return None; }
+        let slot = self.shape_slot(shape, atom)?;
+        (!self.slot_holds_accessor(record, slot)).then_some((shape, slot))
+    }
+
     fn immediate_prototype_data_field(
         &self,
         receiver_value: Value,

@@ -56,6 +56,9 @@ pub(crate) mod iteration;
 pub(crate) mod receivers;
 #[path = "osr_loop/lifetime.rs"]
 pub(crate) mod lifetime;
+#[path = "osr_loop/stores.rs"]
+mod stores;
+use stores::{admit_binding_store, admit_stored, admitted_store, stores_binding};
 
 pub(crate) use quench_runtime::vm::engine_types::ArrayUse;
 
@@ -449,10 +452,11 @@ fn tagged_registers_with_failure(
         // region calls in place); a register the loop also computes numbers into stays untagged.
         .chain(instructions.iter().filter(|instruction| quench_runtime::staged::calls_ordinary(instruction.op())).map(|instruction| instruction.register_b())
             .filter(|callee| loads_alone_define(instructions, *callee, is_receiver_load)))
-        // A field receiver the region's field or element reads give holds an object.
+        // A field receiver the region's field or element reads give, or one it never writes (its entry value), holds an object.
         .chain(instructions.iter().filter(|instruction| quench_runtime::staged::reads_named_field(instruction.op())).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            loads_alone_define(instructions, receiver, is_receiver_load).then_some(receiver)
+            (loads_alone_define(instructions, receiver, is_receiver_load) || !instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)))
+                .then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.
@@ -777,14 +781,6 @@ fn array_read(instruction: WideInstruction) -> Option<Register> {
         opcode if quench_runtime::staged::indexes_receiver(opcode) => Some(instruction.register_b()),
         _ => None,
     }
-}
-
-/// Whether a loop region admits `instruction` as a named field store: every named store the
-/// decoder makes (`SetField`, its `base` the receiver register or `None` for `this`) but a strict
-/// store to `this`.
-fn admitted_store(instruction: WideInstruction) -> bool {
-    matches!(crate::compiled::decoded_completed(instruction),
-        Some(quench_runtime::staged::Operation::SetField { base, strict, .. }) if !(strict && base.is_none()))
 }
 
 /// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
@@ -1889,7 +1885,7 @@ fn admit_register_roles(
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     let stored: std::collections::BTreeSet<u16> = instructions.iter()
-        .filter(|instruction| is_store_capture_row(**instruction) && instruction.capture_depth() == 0)
+        .filter(|instruction| matches!(Operation::<(), ()>::decode(**instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. })) && instruction.capture_depth() == 0)
         .map(|instruction| instruction.capture_slot())
         .collect();
     let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
@@ -1924,15 +1920,6 @@ fn admit_loaded(admission: &mut Admission<'_>, instruction: WideInstruction,
     if tagged.contains(&instruction.result_register()) { admission.tagged(instruction.result_register()) }
     else { admission.result(instruction).map(drop) }
 }
-
-/// A stored value's role: boxed where its register is tagged or holds an unchanged entry value
-/// (any tagged value), else a number.
-fn admit_stored(admission: &mut Admission<'_>, register: Register, tagged: &std::collections::BTreeSet<Register>,
-    defined_registers: &std::collections::BTreeSet<Register>) -> Option<()> {
-    if tagged.contains(&register) || !defined_registers.contains(&register) { admission.tagged(register) }
-    else { admission.number(register) }
-}
-
 fn admit(
     admission: &mut Admission<'_>,
     instruction: WideInstruction,
@@ -2037,12 +2024,9 @@ fn admit(
                 admission.tagged(receiver)?;
             }
         }
-        // The lane stores through the binding's own store, and a binding it does not take
+        // A capture's or global's store runs as the binding's own (`Lowering::global_cell`), and a binding it does not take
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
-        _ if is_store_capture_row(instruction) => {
-            let value = instruction.register_a();
-            admit_stored(admission, value, tagged, defined_registers)?;
-        }
+        _ if stores_binding(instruction) => admit_binding_store(admission, instruction, tagged, defined_registers)?,
         // A global binding's read (`Vm::global_reads_in_lane`), a Number where arithmetic reads it.
         opcode if quench_runtime::staged::reads_name(opcode) => {
             (instruction.result_flags() == 0).then_some(())?;
@@ -2304,11 +2288,6 @@ fn is_truthiness_row(instruction: WideInstruction) -> bool {
     matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::JumpIf { .. }))
 }
 
-/// Whether `instruction` stores to a capture, by its staged row (`Operation::StoreCapture`).
-fn is_store_capture_row(instruction: WideInstruction) -> bool {
-    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. }))
-}
-
 /// Whether `instruction` reads a capture, by its staged row (`Operation::LoadCapture`, which the
 /// row decodes only where the instruction has no result flags).
 fn is_load_capture_row(instruction: WideInstruction) -> bool {
@@ -2326,7 +2305,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(instruction) || if comparison_jump(instruction) {
+    admitted_store(instruction) || stores_binding(instruction) || if comparison_jump(instruction) {
         // A conditional jump only on a relation or a bitwise and, so one on `in` or
         // `instanceof` is an exit.
         quench_runtime::vm::operations::NumberRelation::from_operator(instruction.binary_operator_field())
