@@ -47,6 +47,14 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
     use crate::compiled::LaneHelper;
     let plain = instruction.without_return();
     if plain.op().steps_on_owner() { return Some(LaneHelper::OwnerStep); }
+    // A value step over registers and constants alone (`value_steps::activation_value_step` reads no local in a frame).
+    let held = |operand: quench_runtime::bytecode::Operand| matches!(operand.kind(), Some(quench_runtime::bytecode::OperandKind::Register | quench_runtime::bytecode::OperandKind::Constant));
+    let operands = match plain.op().value_step() {
+        Some(quench_runtime::bytecode::ValueStep::Unary) => true,
+        Some(_) => held(plain.operand_b()) && held(plain.operand_c()),
+        None => false,
+    };
+    if operands && instruction.result_flags() == 0 { return Some(LaneHelper::ValueStep); }
     (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
 }
 

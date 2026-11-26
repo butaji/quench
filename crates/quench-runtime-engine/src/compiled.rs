@@ -1184,6 +1184,9 @@ lane_helper_inventory! {
     /// A constant's load into its register (`base_body::constant_step`): the running program's materialized constant,
     /// which an image body cannot fold (a string's address is the run's), in place of the general step.
     ConstantStep => base_body::constant_step,
+    /// An operator or comparison jump over registers and constants (`base_body::value_step`): the VM's operator on their
+    /// values, in place of the general step.
+    ValueStep => base_body::value_step,
 }
 
 thread_local! {
