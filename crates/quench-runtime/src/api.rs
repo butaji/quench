@@ -313,6 +313,16 @@ impl<H: Host> Runtime<H> {
         self.vm.held_host_operations()
     }
 
+    /// How much code the programs this runtime holds carry: programs, functions and
+    /// instructions, which an image that runs them natively lowers.
+    pub fn held_code_size(&self) -> (usize, usize, usize) {
+        self.vm.programs.residuals().fold((0, 0, 0), |(programs, functions, instructions), program| {
+            let count = program.function_count();
+            let code: usize = (0..count).map(|index| program.function(index).code.len()).sum();
+            (programs + 1, functions + count, instructions + code)
+        })
+    }
+
     /// The opcodes the programs this runtime holds run, lowered: a saved runtime's image
     /// links lane handlers for these alone (`LaneTables::kept`).
     pub fn held_opcodes(&self) -> Vec<u16> {

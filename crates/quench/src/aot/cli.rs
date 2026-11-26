@@ -177,6 +177,9 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     let (operations, lazy) = runtime.held_host_operations();
     let held: super::prefix::HeldOperations = (operations, lazy, Vec::new());
     fs::write(output.with_extension("operations"), serde_json::to_vec(&held).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let (programs, functions, instructions) = runtime.held_code_size();
+    fs::write(output.with_extension("code"), json!({"programs": programs, "functions": functions, "instructions": instructions}).to_string())
+        .map_err(|error| error.to_string())?;
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
@@ -785,7 +788,9 @@ fn bootstrap_inputs(graph: &super::graph::DependencyGraph, work: &Path, native_e
             writeln!(catalog, "const _: () = assert!(quench::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
                 .map_err(|error| error.to_string())?;
             report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
-                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
+                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI),
+                // The code the startup heap's programs carry, which runs on the interpreter.
+                "heap_code": fs::read(bootstrap.with_extension("code")).ok().and_then(|code| serde_json::from_slice::<Value>(&code).ok())});
             let held = serde_json::from_slice(&fs::read(bootstrap.with_extension("operations")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
             (inputs.with_bootstrap(bootstrap), Some(held))
         },
