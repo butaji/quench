@@ -459,7 +459,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The form hint the VM's own-field store left for the store record, which the row writes to
     /// the record once the store completes (`PropertyFrame::field_store_host`).
     stored: Option<quench_runtime::vm::FieldCache>,
-    /// The element kind a typed element row (`TYPED_SITE`) observed, and the typed array record
+    /// The element kind a typed element row (`TYPED_KIND_SITES`) observed, and the typed array record
     /// pages the view proof reads (`Heap::typed_view_directory`); none elsewhere.
     typed: Option<(quench_runtime::staged::typed_elements::NativeKind, (*const usize, usize))>,
     /// The VM's Math calls, for a Math row (`PropertyFrame::math_call`); none elsewhere.
@@ -2062,7 +2062,7 @@ impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame
         Some(quench_runtime::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false, double: None, uncounted: false })
     }
 
-    /// The typed view of `base` for the element kind the site observed (`TYPED_SITE`): the view
+    /// The typed view of `base` for the element kind the site observed (`TYPED_KIND_SITES`): the view
     /// proof's loads, which leave to the host path (`row_index_read_miss`, `row_index_write`) where
     /// they fail. A row with no typed site keeps no view, as before.
     #[inline(always)]
@@ -3074,6 +3074,35 @@ fn nullish_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Opt
     Some(table[entry])
 }
 
+/// The Boolean tests a comparison jump's instance fixes (`FLAG_COMPARE_BOOLEAN + entry`): an identity test of a
+/// register and a constant `true` or `false` (`x === true`, `x !== false`), as `(expected, negated)`.
+const BOOLEAN_TESTS: [(bool, bool); 4] = [(true, false), (true, true), (false, false), (false, true)];
+/// The first `FLAG` of a Boolean test's instance: past the nullish instances.
+const FLAG_COMPARE_BOOLEAN: u8 = FLAG_COMPARE_NULLISH + NULLISH_TESTS.len() as u8;
+const _: () = assert!(FLAG_COMPARE_BOOLEAN as usize + BOOLEAN_TESTS.len() <= 256);
+
+/// The Boolean test `(expected, negated)` a comparison jump's `flag` fixes, `None` for any other flag.
+const fn boolean_flag(flag: u8) -> Option<(bool, bool)> {
+    if flag >= FLAG_COMPARE_BOOLEAN && ((flag - FLAG_COMPARE_BOOLEAN) as usize) < BOOLEAN_TESTS.len() {
+        Some(BOOLEAN_TESTS[(flag - FLAG_COMPARE_BOOLEAN) as usize])
+    } else {
+        None
+    }
+}
+
+/// The Boolean test instance of a comparison jump of `operator` whose right operand is the constant `constant`,
+/// its left a register: `None` for any other operator (only strict equality) or constant (only a Boolean).
+fn boolean_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Option<Handler> {
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
+    macro_rules! tests { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_BOOLEAN + $n)),+] } }
+    let (strict, negated) = quench_runtime::vm::operations::equality_operator(operator)?;
+    if !strict { return None }
+    let expected = constant.as_bool()?;
+    let entry = BOOLEAN_TESTS.iter().position(|&test| test == (expected, negated))?;
+    let table: [Handler; BOOLEAN_TESTS.len()] = tests!(0 1 2 3);
+    Some(table[entry])
+}
+
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
     if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
@@ -3127,12 +3156,12 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
 /// (`compare_jump_row`, either direction); `None` for any other handler. A record moved back to its plain row
 /// takes its instance again at its next run, so the move undoes only what the run learned.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
-    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len()] {
+    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39)
+        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43)
     }
-    const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() == 40);
+    const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 44);
     if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
     if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
     None
@@ -3181,6 +3210,12 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
                 requicken(ip, handler);
                 sibling!(handler, r, ip, view)
             }
+            // A register tested against a constant Boolean (`x === true`, `x !== false`): identity decides it (`Comparison::Boolean`).
+            if decodes_so && Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
+                && let Some(handler) = constant.and_then(|constant| boolean_jump_row::<BACKWARD>(operator, constant)) {
+                requicken(ip, handler);
+                sibling!(handler, r, ip, view)
+            }
             if decodes_so && formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
                 if let (Some(constant), Some(true)) = (constant, compare_operands_of::<BACKWARD>(handler)) {
                     // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
@@ -3206,6 +3241,17 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
                     let expected = if null { quench_runtime::ValueType::Null } else { quench_runtime::ValueType::Undefined };
                     Some(Operation::CompareJump {
                         comparison: quench_runtime::staged::Comparison::Nullish { expected, strict, negated },
+                        left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
+                    })
+                }
+                other => other,
+            }
+        } else if let Some((expected, negated)) = const { boolean_flag(FLAG) } {
+            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
+                Some(Operation::CompareJump { left, right, negate, .. }) => {
+                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
+                    Some(Operation::CompareJump {
+                        comparison: quench_runtime::staged::Comparison::Boolean { expected, negated },
                         left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
                     })
                 }
