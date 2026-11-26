@@ -13,7 +13,7 @@ pub(super) fn call_site_callee(source: &crate::bytecode::ProgramSource, span: Op
     let lookup = |sites: &[crate::bytecode::CallSiteDescription]| {
         sites.binary_search_by_key(&site, |found| (found.offset, found.construct)).ok().map(|index| sites[index].callee.clone())
     };
-    if crate::DYNAMIC_EXECUTION_ENABLED && source.call_sites.get().is_none()
+    if crate::SOURCE_COMPILATION_ENABLED && source.call_sites.get().is_none()
         && let Some(routes) = crate::compile::source_routes::routes()
         && let Some(callee) = (routes.unfrozen_call_sites)(source, span, site.0).and_then(|sites| lookup(&sites))
     {

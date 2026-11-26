@@ -178,7 +178,7 @@ impl Vm {
         };
         let source = source.host_string().to_owned();
         self.require_source_compilation(p)?;
-        #[cfg(feature = "jit")]
+        #[cfg(feature = "source")]
         let source_is_invalid = crate::Engine::specialize_eval_with_context(
             &source,
             "<ShadowRealm>",
@@ -190,8 +190,8 @@ impl Vm {
             None,
         )
         .is_err();
-        // An execution-only build (no `jit`) compiles no source at run time.
-        #[cfg(not(feature = "jit"))]
+        // An execution-only build without the source frontend compiles no source at run time.
+        #[cfg(not(feature = "source"))]
         let source_is_invalid = false;
         let prior_global = self.switch_realm_global(realm_global);
         let result = self.eval_global_script(p, &source, false);

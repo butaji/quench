@@ -51,7 +51,7 @@ impl<'a> Compiler<'a> {
     /// records does not bind it: its record is encoded when the program is, unlowered and
     /// unrewritten (`binary::encode_program`), and its first read settles the rewrites.
     fn may_defer_kept_rewrites(&self) -> bool {
-        crate::DYNAMIC_EXECUTION_ENABLED
+        crate::SOURCE_COMPILATION_ENABLED
             && self.mode == SpecializationMode::Enabled
             && !lowers_at_load()
             && !cfg!(feature = "profile-aggregate")

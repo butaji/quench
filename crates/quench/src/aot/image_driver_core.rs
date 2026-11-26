@@ -62,30 +62,51 @@ fn run() -> Result<std::process::ExitCode, String> {
     phase(started, "entry bound");
     let policy = memory_policy();
     apply_allocator_policy(policy);
-    // A dynamic-source core (`Variant::CoreDynamic`) keeps the interpreter and the source
-    // frontend but still runs on `SystemHost`: `Vm::new` installs every route. A closed core
-    // runs only its image's code: it installs no JIT or source route and no Intl layer unless
-    // the support carries it (`support_features` includes `intl` where the program reaches it).
-    let mut runtime = if SUPPORT.allows_dynamic_source() {
-        Runtime::new_with_builtins(SystemHost, &BUILTINS)
-    } else {
-        quench_runtime::install_intl();
-        Runtime::new_static_with_builtins(SystemHost, &BUILTINS)
-    };
-    runtime.set_execution_mode(if SUPPORT.allows_dynamic_source() { ExecutionMode::Compiled } else { ExecutionMode::NativeOnly });
+    let mut runtime = core_runtime();
     runtime.set_memory_policy(policy);
     phase(started, "runtime ready");
     runtime.set_native_program_resolver(move |name, parts| {
         // SAFETY: this resolver belongs to the same compiler-owned image.
         unsafe { resolve(&namespace, name, parts) }
     });
+    finish(runtime, &entry, started)
+}
+
+/// The runtime a core image runs on. A source-fronted core (`Variant::CoreDynamic`) links the
+/// interpreter and the source frontend but no JIT: `new_source_with_builtins` installs the source
+/// routes alone, and code it makes at run time runs in the interpreter. A closed core runs only
+/// its image's code and installs no source route. Both take the Intl layer the support carries.
+fn core_runtime() -> Runtime<SystemHost> {
+    quench_runtime::install_intl();
+    #[cfg(quench_native_source)]
+    let mut runtime = Runtime::new_source_with_builtins(SystemHost, &BUILTINS);
+    #[cfg(not(quench_native_source))]
+    let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS);
+    // A body compiled ahead is hot by construction: the image's bodies run compiled, and the JIT's
+    // routes are absent, so source compiled at run time stays in the interpreter.
+    #[cfg(quench_native_source)]
+    runtime.set_execution_mode(ExecutionMode::Compiled);
+    #[cfg(not(quench_native_source))]
+    runtime.set_execution_mode(ExecutionMode::NativeOnly);
+    runtime
+}
+
+/// Runs the entry and the jobs it left, then reports an unsettled top-level await as the Node
+/// driver does.
+fn finish(
+    mut runtime: Runtime<SystemHost>,
+    entry: &quench_runtime::NativeJsProgram,
+    started: std::time::Instant,
+) -> Result<std::process::ExitCode, String> {
     let program = entry.residual();
-    let executed = runtime.execute_native_deferred_jobs(&entry);
+    let executed = runtime.execute_native_deferred_jobs(entry);
     phase(started, "entry ran");
     match executed {
         Ok(()) => {
             runtime.run_host_jobs(program).map_err(|error| uncaught(&error))?;
+            phase(started, "host jobs ran");
             runtime.finish_deferred_execution(program).map_err(|error| uncaught(&error))?;
+            phase(started, "deferred finished");
         },
         Err(error) => return Err(uncaught(&error)),
     }
@@ -102,11 +123,22 @@ fn uncaught(error: &quench_runtime::JsError) -> String {
 }
 
 fn main() -> std::process::ExitCode {
-    match run() {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::ExitCode::FAILURE
-        }
+    // Every recursive runtime transition is bounded by `quench_stack`'s policy, which reserves
+    // `WORKER_STACK_SIZE`; the host's main thread reserves less, as the Node driver's own worker
+    // records.
+    let worker = std::thread::Builder::new()
+        .name("quench-core".into())
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
+        .spawn(run);
+    match worker.map(|worker| worker.join()) {
+        Ok(Ok(Ok(code))) => code,
+        Ok(Ok(Err(error))) => failed(&error),
+        Ok(Err(_)) => failed("core image worker panicked"),
+        Err(error) => failed(&error.to_string()),
     }
+}
+
+fn failed(error: &str) -> std::process::ExitCode {
+    eprintln!("{error}");
+    std::process::ExitCode::FAILURE
 }

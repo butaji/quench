@@ -1,13 +1,16 @@
 //! The support build an image links: its feature set, and a core image's intrinsic families.
 
-use super::{CompiledSources, DependencyGraph};
+use super::{variant::Variant, CompiledSources, DependencyGraph};
 
-/// The features a static image's support is built with: `native-execution`, plus the intl layer
-/// and the WebAssembly frontend only where the program reaches them. A dynamic-source support
-/// links the standard build's default features instead.
-pub(super) fn features(graph: &DependencyGraph, support: quench_runtime::NativeImageSupport) -> String {
-    if support.allows_dynamic_source() { return "default".into(); }
+/// The features an image's support is built with. Full support links the standard build's
+/// default features (the Node host, the JIT and the bundled sources). Every core image is
+/// execution-only: `native-execution`, the source frontend where the program can make code,
+/// and the intl layer and Wasm frontend only where the program reaches them. No core image
+/// links the JIT, so its binary carries no Cranelift and compiles nothing while it runs.
+pub(super) fn features(graph: &DependencyGraph, variant: Variant) -> String {
+    if variant == Variant::Full { return "default".into(); }
     let mut features = String::from("native-execution");
+    if variant.has_source_frontend() { features.push_str(",source"); }
     if graph.needs_intl() { features.push_str(",intl"); }
     if graph.needs_wasm() { features.push_str(",wasm"); }
     features

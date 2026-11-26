@@ -234,9 +234,14 @@ pub use vm::{IsaBaseline, NativeTarget};
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
 
-/// Ordinary builds and producers (with the JIT) support dynamic compilation and execution.
-/// Execution-only native support (a static AOT image's, built without the JIT) requires
-/// linked code and archived records.
+/// Whether this build can compile source first known at execution (eval, `Function`, a load):
+/// the source frontend's presence alone decides, so an image that links the interpreter and the
+/// parser but no JIT (`native-execution,source`) still serves every dynamic-source program.
+pub const SOURCE_COMPILATION_ENABLED: bool = cfg!(feature = "source");
+
+/// Whether this build compiles guest functions to native code while they run. An execution-only
+/// native image runs linked code and archived records; the source frontend may still interpret
+/// code it compiles at run time.
 pub const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(feature = "jit");
 
 /// Whether this build requires linked native code and archived program facts.

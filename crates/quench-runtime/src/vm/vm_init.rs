@@ -20,10 +20,13 @@ impl Vm {
         vm
     }
 
-    /// `new` with a core image's reachable intrinsic families: a dynamic-source core keeps the
-    /// interpreter and the source frontend, and installs only `builtins`' families.
-    pub(crate) fn new_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
-        let mut vm = Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default());
+    /// `new_static_with_builtins` plus the source frontend's routes: a pure-AOT image interprets
+    /// code it compiles at run time, so it links the parser and the interpreter but installs no
+    /// JIT route. Intl, when the support carries it, is the driver's to install.
+    pub(crate) fn new_source_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
+        #[cfg(feature = "source")]
+        crate::compile::source_routes::enable();
+        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>());
         vm.builtins = builtins;
         vm
     }

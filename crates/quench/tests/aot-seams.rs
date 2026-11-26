@@ -77,12 +77,34 @@ fn core_dynamic_eval_program_keeps_the_core_host() {
     assert!(!diagnostics.contains("retained compilation or interpretation support"), "{diagnostics}");
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
     assert_eq!(report["support_variant"], "core-dynamic");
-    assert_eq!(report["support_artifacts"]["dynamic_source"], true);
+    assert_eq!(report["jit"], false, "a core image is purely ahead-of-time");
+    assert_eq!(report["support_artifacts"]["source_frontend"], true);
+    let features = report["support_features"].as_str().unwrap();
+    assert!(features.split(',').any(|feature| feature == "source"), "{features}");
+    assert!(!features.split(',').any(|feature| feature == "jit"), "{features}");
+    let names = symbols(&binary);
+    assert!(!names.to_lowercase().contains("cranelift"), "a pure-AOT image links no compiler");
     assert!(links(&binary).lines().all(|line| line.contains("libSystem.B.dylib")), "{}", links(&binary));
     let native = run(&binary);
     let interpreted = Command::new(env!("CARGO_BIN_EXE_quench")).arg(&entry).output().unwrap();
     assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
     assert_eq!(native.stdout, interpreted.stdout);
+}
+
+/// A compiled-to-compiled call and a returning native complete inside the image: no body leaves
+/// for the general loop.
+#[test]
+fn pure_aot_call_chain_and_returning_native_leave_no_body() {
+    let directory = workspace("zero-leave");
+    let source = "function twice(x) { return x * 2; }\nfunction sum(n) { let s = 0; for (let i = 0; i < n; i++) s += i; return s; }\nconsole.log(twice(sum(4)));\n";
+    let (binary, report) = compile(&directory, source, "zero-leave", false);
+    assert_eq!(report["support_variant"], "core");
+    assert_eq!(report["jit"], false);
+    let native = Command::new(&binary).env("QUENCH_TRACE", "body-leave").output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(String::from_utf8_lossy(&native.stdout), "12\n");
+    let diagnostics = String::from_utf8_lossy(&native.stderr);
+    assert!(!diagnostics.contains("QUENCH_BODY_LEAVE"), "{diagnostics}");
 }
 
 #[test]

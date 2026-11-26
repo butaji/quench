@@ -557,7 +557,7 @@ impl Engine {
         // No source-derived proof is available in execution-only support.
         // Archived analysis may still satisfy static_module_analysis_with;
         // otherwise execution must use linked code or fail its admission guard.
-        if !crate::DYNAMIC_EXECUTION_ENABLED { return unbounded; }
+        if !crate::SOURCE_COMPILATION_ENABLED { return unbounded; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let mut parsed = Parser::new(&allocator, &normalized, SourceType::mjs().with_typescript(typescript)).parse();
@@ -606,7 +606,7 @@ impl Engine {
     }
 
     pub(crate) fn typescript_has_module_syntax_source(source: &str) -> Option<bool> {
-        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+        if !crate::SOURCE_COMPILATION_ENABLED { return None; }
         let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
         let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
@@ -692,7 +692,7 @@ impl Engine {
     /// where it does not parse or check. One parse serves every reading of the text
     /// (`static_module_outcome`).
     fn with_static_module<R>(source: &str, read: impl FnOnce(&Program<'_>) -> Option<R>) -> Option<R> {
-        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+        if !crate::SOURCE_COMPILATION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
@@ -1582,7 +1582,7 @@ impl Engine {
         // Lazy parsing releases function-body ASTs. A native-only build freezes complete
         // diagnostic facts once from source without forcing their bytecode replay; a
         // dynamic one defers that parse to the first diagnostic or write that reads them.
-        if !crate::DYNAMIC_EXECUTION_ENABLED {
+        if !crate::SOURCE_COMPILATION_ENABLED {
             crate::vm::freeze_call_sites(&program);
         }
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }

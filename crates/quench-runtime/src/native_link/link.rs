@@ -42,6 +42,9 @@ pub struct NativeSupport {
     optimization: String,
     rust_lto: bool,
     support: NativeImageSupport,
+    /// Whether the support carries the source frontend (and the interpreter that runs code it
+    /// compiles): a `CoreDynamic` image links it beside its ahead-of-time code and no JIT.
+    source_frontend: bool,
     host_semantic_exports: bool,
     /// The host's executable link arguments (kind, function order), applied to each image.
     executable_link_args: &'static [&'static str],
@@ -66,6 +69,7 @@ impl NativeSupport {
         let mut optimization = None;
         let mut completed = false;
         let mut host_semantic_exports = false;
+        let mut source_frontend = false;
         for line in report.lines() {
             let artifact: Value = serde_json::from_str(line).map_err(|error| error.to_string())?;
             match artifact["reason"].as_str() {
@@ -92,6 +96,7 @@ impl NativeSupport {
                         }
                     }
                     if name == host_crate || name == "quench_runtime" {
+                        source_frontend |= features.iter().any(|feature| feature == "source");
                         if !features.iter().any(|feature| feature == "native-execution")
                             || (!support.allows_dynamic_source() && features.iter().any(|feature| {
                                 matches!(feature.as_str(), Some("aot" | "bundled-sources" | "jit"))
@@ -159,6 +164,7 @@ impl NativeSupport {
             host,
             host_crate: host_crate.to_owned(),
             support,
+            source_frontend,
             rust_lto,
             host_semantic_exports,
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
@@ -200,7 +206,7 @@ impl NativeSupport {
         serde_json::json!({ "host_library": self.host, "host_crate": self.host_crate, "runtime_library": self.runtime,
             "optimization_level": self.optimization, "native_search_paths": self.native_paths,
             "driver_panic_strategy": "abort", "rust_lto": self.rust_lto,
-            "dynamic_source": self.support.allows_dynamic_source(), "host_semantic_exports": self.host_semantic_exports, "executable_link_args": self.executable_link_args })
+            "dynamic_source": self.support.allows_dynamic_source(), "source_frontend": self.source_frontend, "host_semantic_exports": self.host_semantic_exports, "executable_link_args": self.executable_link_args })
     }
 
     /// The SDK already owns the opcode-derived C ABI helpers for its host.
@@ -240,7 +246,7 @@ impl NativeSupport {
         self.add_objects(&mut command, inputs, executable);
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
-        let symbols = audit(inputs, executable, self.support)?;
+        let symbols = audit(inputs, executable, self.support, self.source_frontend)?;
         let footprint = super::footprint::read(executable, &symbols)?;
         let dynamic_interface = interface.verify(executable)?;
         Ok(NativeLinkAudit { dynamic_interface, footprint })
@@ -285,6 +291,9 @@ impl NativeSupport {
     fn apply_link_options(&self, command: &mut Command, inputs: &NativeImageInputs) {
         if self.support.allows_dynamic_source() {
             command.args(["--cfg", "quench_native_dynamic_source"]);
+        }
+        if self.source_frontend {
+            command.args(["--cfg", "quench_native_source"]);
         }
         if let Some(bootstrap) = &inputs.bootstrap {
             command.args(["--cfg", "quench_native_bootstrap"]).env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);

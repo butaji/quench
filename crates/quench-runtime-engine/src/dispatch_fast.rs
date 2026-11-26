@@ -18162,7 +18162,6 @@ impl Vm {
         receiver: Value,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        if !self.execution_mode.allows_dynamic_execution() { return None; }
         let site = self.lane_native?;
         let cx: *mut LaneContext = site.cx.cast();
         // The native runs from the lane's frame, the innermost, with no activation above it:
@@ -18193,6 +18192,7 @@ impl Vm {
             Some(target) => (target, false),
             None => cross_callback_target_in_lane(cx, callee)?,
         };
+        if !(quench_runtime::DYNAMIC_EXECUTION_ENABLED & self.execution_mode.allows_dynamic_execution()) { return None; }
         let this = call_this_in_lane(self, &target, receiver)?;
         let registers = self.active_registers;
         // SAFETY: as above; the context holds no drop glue. A completion to the native restores

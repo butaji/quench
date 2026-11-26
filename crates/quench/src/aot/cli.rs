@@ -234,14 +234,14 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     }
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
-        "support_features": super::support::features(&graph, support),
+        "execution_mode": if variant.has_source_frontend() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
+        "support_features": super::support::features(&graph, variant),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
-        "source_compilation": support.allows_dynamic_source(),
-        "js_source_frontend": support.allows_dynamic_source(),
-        "bytecode_interpreter": support.allows_dynamic_source(),
-        "jit": support.allows_dynamic_source(),
+        "source_compilation": variant.has_source_frontend(),
+        "js_source_frontend": variant.has_source_frontend(),
+        "bytecode_interpreter": variant.has_source_frontend(),
+        "jit": variant.has_jit(),
         "dynamic_eval_sites": graph.dynamic_eval_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
         "dynamic_function_sites": graph.dynamic_function_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
         "dynamic_reflective_sites": graph.dynamic_reflective_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
@@ -312,7 +312,7 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
             let mut cargo = Command::new("cargo");
             cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
-                let features = super::support::features(&graph, support);
+                let features = super::support::features(&graph, variant);
                 cargo.args(["--no-default-features", "--features", &features]);
             }
             cargo.args(["--lib", "--message-format=json"]);

@@ -13,9 +13,9 @@ pub enum Variant {
     /// No interpreter or JIT; the Wasm frontend and the Node host remain.
     Static,
     /// Standard ECMAScript on `SystemHost`, with the source frontend for `eval` and the
-    /// `Function` constructor: no Node host, bootstrap snapshot or operation table. A program
-    /// that makes code but touches no host API (a V8-v7 benchmark) takes the core host and keeps
-    /// the interpreter.
+    /// `Function` constructor: no Node host, bootstrap snapshot or operation table. The image is
+    /// compiled ahead of time; code it makes at run time runs in the interpreter. A program that
+    /// makes code but touches no host API (a V8-v7 benchmark) takes the core host.
     CoreDynamic,
     /// Standard ECMAScript and the runtime's own `console`, on `SystemHost`: no Node host, no
     /// bootstrap snapshot, no operation table, no source frontend. The smallest executable an
@@ -38,11 +38,23 @@ impl Variant {
         matches!(self, Self::CoreDynamic | Self::Core)
     }
 
+    /// Whether the image links the source frontend and the interpreter for code it makes while
+    /// it runs.
+    pub const fn has_source_frontend(self) -> bool {
+        matches!(self, Self::Full | Self::CoreDynamic)
+    }
+
+    /// Whether the image carries the run-time JIT. Only full support does; every core image
+    /// is purely ahead-of-time.
+    pub const fn has_jit(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
     /// The runtime support an image of this variant executes with.
     pub const fn image_support(self) -> NativeImageSupport {
         match self {
-            Self::Full | Self::CoreDynamic => NativeImageSupport::DynamicSource,
-            Self::Static | Self::Core => NativeImageSupport::Static,
+            Self::Full => NativeImageSupport::DynamicSource,
+            Self::Static | Self::CoreDynamic | Self::Core => NativeImageSupport::Static,
         }
     }
 }

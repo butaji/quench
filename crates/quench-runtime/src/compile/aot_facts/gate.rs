@@ -28,15 +28,15 @@ pub enum World {
 /// decision every producer makes), and whether it calls a dynamic import. A program whose source
 /// is not kept is not proved closed.
 pub(super) fn world(program: &ResidualProgram) -> World {
-    // An execution-only build runs no code its image did not archive (`require_source_compilation`
-    // refuses dynamic source), so every program it can run is closed; the source parse below is
-    // the compiler's own proof and needs the syntax frontend this build does not carry.
-    #[cfg(not(feature = "jit"))]
+    // An execution-only build without the source frontend runs no code its image did not archive
+    // (`require_source_compilation` refuses dynamic source), so every program it can run is closed;
+    // the source parse below is the compiler's own proof and needs the syntax frontend.
+    #[cfg(not(feature = "source"))]
     {
         let _ = program;
         return World::Closed;
     }
-    #[cfg(feature = "jit")]
+    #[cfg(feature = "source")]
     {
         let kind = match program.kind {
             ProgramKind::Script => SourceKind::Script,

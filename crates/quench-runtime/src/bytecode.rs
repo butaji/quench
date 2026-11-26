@@ -4502,7 +4502,7 @@ impl ResidualProgram {
             }
         };
         if let Some(unlowered) = unlowered {
-            if !crate::DYNAMIC_EXECUTION_ENABLED {
+            if !crate::SOURCE_COMPILATION_ENABLED {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
             let rewrites_pending = self.rewrite_ranges.defers(index);
@@ -4511,14 +4511,14 @@ impl ResidualProgram {
             return function;
         }
         // A Wasm module's function lowers from its bytes through the frontend, which a build
-        // without `jit` does not carry: its images archive every record.
-        #[cfg(feature = "jit")]
+        // without `wasm` does not carry: its images archive every record.
+        #[cfg(feature = "wasm")]
         if let Some(lazy) = &self.wasm_lazy {
             let function = lazy.lower(index, &self.constants);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
-        #[cfg(not(feature = "jit"))]
+        #[cfg(not(feature = "wasm"))]
         if self.wasm_lazy.is_some() {
             panic!("native Wasm function {index} of {} was not lowered before linking", self.source_name);
         }
@@ -4542,11 +4542,11 @@ impl ResidualProgram {
                 function
             }
             None => {
-                #[cfg(not(feature = "jit"))]
+                #[cfg(not(feature = "source"))]
                 panic!("native function {index} of {} has no archived record and this build compiles no source", self.source_name);
-                #[cfg(feature = "jit")]
+                #[cfg(feature = "source")]
                 {
-                    if !crate::DYNAMIC_EXECUTION_ENABLED {
+                    if !crate::SOURCE_COMPILATION_ENABLED {
                         panic!("native function {index} of {} has no archived record", self.source_name);
                     }
                     crate::compile::replay::recompile(self, index as u32)

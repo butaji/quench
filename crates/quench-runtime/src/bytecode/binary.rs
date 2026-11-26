@@ -320,7 +320,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         // the load deferred is encoded unrewritten too, and its first read runs them first,
         // against the room the entry restores (`RewriteRanges::deferred`, the rewrite room below).
         let unlowered = (deferred
-            && crate::DYNAMIC_EXECUTION_ENABLED
+            && crate::SOURCE_COMPILATION_ENABLED
             && !load_records.contains_key(&(index as u32))
             && function.record.get().is_none())
         .then(|| function.unlowered.with(|unlowered| unlowered.map(|unlowered| unlowered.function(function.header()))))

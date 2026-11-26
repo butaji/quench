@@ -170,7 +170,7 @@ pub fn freeze_call_sites(program: &ResidualProgram) {
 /// The call-site descriptions of `source`: frozen ones, or, in a dynamic build, those its
 /// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
 fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate::bytecode::CallSiteDescription]> {
-    if crate::DYNAMIC_EXECUTION_ENABLED && let Some(routes) = crate::compile::source_routes::routes() {
+    if crate::SOURCE_COMPILATION_ENABLED && let Some(routes) = crate::compile::source_routes::routes() {
         (routes.freeze_call_sites)(source);
     }
     source.call_sites.get().map(|sites| &sites[..])
@@ -506,7 +506,7 @@ mod tests {
         let released: Vec<_> = program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect();
         assert!(released.iter().any(|released| *released), "the fixture must keep a cold record");
         // A dynamic build defers the facts to their first read; a native-only one admits them.
-        assert_eq!(program.source.as_ref().unwrap().call_sites.get().is_some(), !crate::DYNAMIC_EXECUTION_ENABLED);
+        assert_eq!(program.source.as_ref().unwrap().call_sites.get().is_some(), !crate::SOURCE_COMPILATION_ENABLED);
         program.source.as_mut().unwrap().call_sites.take();
         freeze_call_sites(&program);
         assert_eq!(program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect::<Vec<_>>(), released);
@@ -519,7 +519,7 @@ mod tests {
             assert_eq!(program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr(), owner);
         }
         program.source.as_mut().unwrap().call_sites.take();
-        if crate::DYNAMIC_EXECUTION_ENABLED {
+        if crate::SOURCE_COMPILATION_ENABLED {
             assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"), "a dynamic lookup derives them");
         } else {
             assert_eq!(source_expression(&program, 1, column), None, "lookup never derives missing facts");

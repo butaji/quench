@@ -744,8 +744,8 @@ pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_
     let (code, args) = unsafe { (&*(*cx).code, call.values()) };
     if quench_runtime::fallback::on() { crate::compiled::fallback_sites::opaque_native(cx, call, code, native); }
     let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args).or_else(|| super::regexp_calls::steady_regexp_in_lane(cx, unsafe { &*call.ip }, native, receiver, &args).and_then(Result::ok)) else {
-        // A returning call the native makes out of line is the lane's to complete.
-        if call.site.returns { return (super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning), false); }
+        // A native that answers out of line, a returning call's included: the lane completes it,
+        // and a returning site returns the value its call left in the register.
         return (body_native_out_in_lane(cx, call, native, (callee, receiver), &args), false);
     };
     // A returning call's value completes the body: it reads the call's register, as it does a

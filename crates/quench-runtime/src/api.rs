@@ -96,10 +96,10 @@ impl<H: Host> Runtime<H> {
     pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
         Self { vm: Vm::new_static_with_builtins(host, builtins), host: std::marker::PhantomData }
     }
-    /// `new` with a core image's reachable intrinsic families: a dynamic-source core keeps the
-    /// interpreter and the source frontend, and installs only `builtins`' families.
-    pub fn new_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
-        Self { vm: Vm::new_with_builtins(host, builtins), host: std::marker::PhantomData }
+    /// `new_static_with_builtins` with the source frontend: a pure-AOT image interprets code it
+    /// compiles at run time and installs no JIT route.
+    pub fn new_source_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
+        Self { vm: Vm::new_source_with_builtins(host, builtins), host: std::marker::PhantomData }
     }
     /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
     /// `snapshot_at_rest`): it never installs its host.
@@ -271,7 +271,7 @@ impl<H: Host> Runtime<H> {
         &mut self,
         request: ExecutionRequest<'_>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        if !crate::DYNAMIC_EXECUTION_ENABLED {
+        if !crate::SOURCE_COMPILATION_ENABLED {
             return Err(vec![Diagnostic::unsupported(request.name,
                 "native guest code required: entry source compilation is unavailable")]);
         }

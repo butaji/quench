@@ -332,7 +332,7 @@ impl Vm {
         // that text, so no copy of the text is made for it.
         #[cfg_attr(not(feature = "jit"), allow(unused_variables))]
         let provided_text = shared_text.as_ref().and_then(eval_source::SharedText::whole_ascii).map(crate::bytecode::SourceText::Local);
-        #[cfg(feature = "jit")]
+        #[cfg(feature = "source")]
         let residual = crate::Engine::specialize_eval_with_context(
             source,
             source_name,
@@ -343,8 +343,8 @@ impl Vm {
             &facts.annex_b_forbidden_names,
             provided_text,
         );
-        // An execution-only build (no `jit`) compiles no source at run time.
-        #[cfg(not(feature = "jit"))]
+        // An execution-only build without the source frontend compiles no source at run time.
+        #[cfg(not(feature = "source"))]
         let residual: Result<crate::ResidualProgram, Vec<crate::compile::Diagnostic>> = Err(Vec::new());
         let mut residual = residual
         .map_err(|diagnostics| {
