@@ -25,9 +25,10 @@ impl Vm {
         let Some(object) = self.heap.array_store_mut(array, value) else {
             unreachable!("fresh array owner remains an array");
         };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let elements = object.elements_mut();
         if index < elements.len() {
-            elements.set(index, value);
+            // In place where the backing takes it: `hole_array`'s double holes stay unwidened.
+            super::index::set_dense_element(elements, index, value);
         } else {
             self.grow_fresh_array_element(array, index, value);
         }
