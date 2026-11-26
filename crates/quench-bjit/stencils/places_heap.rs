@@ -9,7 +9,7 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
-use crate::layout::{JS_STEP_ARRAY_MARK_BLOCKS, JS_STEP_ARRAY_MARK_BLOCK_COUNT, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_BUFFER_RELOCATIONS, JS_STEP_TYPED_VIEW_DIRECTORY, JS_STEP_TYPED_VIEW_PAGES, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
+use crate::layout::{JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS, JS_STEP_ARRAY_MARK_BLOCKS, JS_STEP_ARRAY_MARK_BLOCK_COUNT, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_BUFFER_RELOCATIONS, JS_STEP_TYPED_VIEW_DIRECTORY, JS_STEP_TYPED_VIEW_PAGES, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
 use crate::numeric::{HOLE_A, HOLE_B};
 use crate::places::on_place;
 use crate::typed_ir::Representation;
@@ -52,6 +52,18 @@ impl ElementFrame<Concrete> for Places {
         let list = MarkList { blocks: JS_STEP_ARRAY_MARK_BLOCKS, count: JS_STEP_ARRAY_MARK_BLOCK_COUNT };
         counted_store_unlogged(stage, payload(&self.s) as u64, (JS_STEP_STORE_WATCH, STORE_WATCH_COUNTS), list,
             base & u64::from(u32::MAX), value, miss)
+    }
+
+    /// The VM's store where no replacement answers it, as far as a row takes it: a hole of a direct
+    /// array filled in place (`elements::fill_hole`) while the held index-free chain proof covers the
+    /// array's prototype and the write barrier admits `value` unlogged. Any other store leaves.
+    #[inline(always)]
+    fn index_set_host(&mut self, stage: &mut Concrete, base: u64, key: u64, value: u64, miss: ()) -> Option<()> {
+        self.array_store_gate(stage, base, value, miss)?;
+        let payload = payload(&self.s);
+        let records = record_table(payload)?;
+        let chain = word_at(word_at(payload, JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS) as usize, 0);
+        elements::fill_hole(stage, records, chain, (base, key, value), miss)
     }
 
     /// A typed array's element reads deliver the element's Value word (`typed_read_value`), as the rows' places hold.
