@@ -137,10 +137,31 @@ const INLINE_NUMBER_PROJECTIONS: usize = 4;
 /// A loop body usually indexes only a few arrays; more spill without a limit.
 const INLINE_ARRAY_VIEWS: usize = 4;
 
-/// A typed array view an access proved (`Proofs::typed`): the tagged base, its native kind, the view's elements and
+/// Per block leader that a later PC enters (a loop's header, or a rotated body a latch enters), its forward edges and
+/// the last PC that enters it (`Lowering::carry_typed_views`). The entry `start` has edges no instruction names: none.
+fn loop_carries(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize) -> BTreeMap<usize, (usize, usize)> {
+    let mut edges: BTreeMap<usize, (usize, Option<usize>)> = BTreeMap::new();
+    let mut add = |pc: usize, target: usize| {
+        if !leaders.contains(target) || target == start { return; }
+        let entry = edges.entry(target).or_insert((0, None));
+        if target > pc { entry.0 += 1 } else { entry.1 = Some(entry.1.map_or(pc, |last: usize| last.max(pc))) }
+    };
+    for (pc, instruction) in instructions.iter().enumerate() {
+        for target in successors(pc, *instruction) { add(pc, target); }
+    }
+    // A latch whose loop's header is a test repeats it (`edges::rotated_bodies`): its edges are the test's, from the latch.
+    for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
+        let Some(&test) = instructions.get(header) else { continue };
+        if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump) { continue; }
+        for target in successors(header, test) { add(latch, target); }
+    }
+    edges.into_iter().filter_map(|(pc, (forward, last))| Some((pc, (forward, last?)))).collect()
+}
+
+/// A typed array view an access proved (`Proofs::typed`): the register holding the base, its native kind, the view's elements and
 /// length, and whether it was proved for stores (which also answers reads).
 #[derive(Clone, Copy, PartialEq)]
-struct TypedProof { bits: ir::Value, kind: quench_runtime::tier_surface::TypedArrayKind, values: ir::Value, length: ir::Value, writable: bool }
+struct TypedProof { register: Register, kind: quench_runtime::tier_surface::TypedArrayKind, values: ir::Value, length: ir::Value, writable: bool }
 /// A block reads the captures of a few inlined callees; more spill without a limit.
 const INLINE_CAPTURE_ADMISSIONS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
@@ -713,6 +734,10 @@ pub(crate) struct Lowering<'a, 'f> {
     /// ones arrived with: a block they all reach keeps the local proofs they share.
     forward: Vec<Option<usize>>,
     arrived: BTreeMap<usize, Vec<LocalProofs>>,
+    /// Per block leader a later PC also enters (a loop's header, a rotated body), its forward edge count and its last
+    /// entering PC, and the typed views its forward edges arrived with (`carry_typed_views`).
+    loop_carry: BTreeMap<usize, (usize, usize)>,
+    carried_typed: BTreeMap<usize, Vec<smallvec::SmallVec<[TypedProof; INLINE_ARRAY_VIEWS]>>>,
     /// The block leaders an entry or a lowered edge enters: a block none does is not
     /// lowered, its code reached only past a leave.
     entered: CompoundBitSet,
@@ -1018,9 +1043,29 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// Record `state` arriving at block leader `pc` by one of its forward edges.
     fn arrive(&mut self, state: &State, pc: usize) {
+        if self.loop_carry.contains_key(&pc) { self.carried_typed.entry(pc).or_default().push(state.proofs.typed.clone()); }
         if self.forward.get(pc).copied().flatten().is_some() {
             self.arrived.entry(pc).or_default().push(state.proofs.clone());
         }
+    }
+
+    /// The typed views every forward edge into the loop block `pc` arrived with (`loop_carry`), kept where no PC of the
+    /// loop (`pc` to its last entering PC) retires one: each is a typed-only access, keeps array views, and writes no
+    /// register a view names. The views were proved before the loop, in blocks over all its forward edges.
+    fn carry_typed_views(&mut self, state: &mut State, pc: usize) {
+        let Some(&(edges, last)) = self.loop_carry.get(&pc) else { return };
+        let Some(arrived) = self.carried_typed.remove(&pc) else { return };
+        let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
+        let mut kept: smallvec::SmallVec<[TypedProof; INLINE_ARRAY_VIEWS]> = first.iter().copied()
+            .filter(|view| rest.iter().all(|other| other.contains(view))).collect();
+        if kept.is_empty() { return; }
+        for at in pc..=last.min(self.unit.instructions.len() - 1) {
+            let instruction = self.unit.instructions[at];
+            let typed_write = matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementWrite { .. }));
+            if self.unit.markers.contains(&at) || !retains_array_views(&self.program.constants, instruction) || (typed_write && !self.typed_only_at(at)) { return; }
+                kept.retain(|view| instruction.written_registers().all(|register| register != view.register));
+        }
+        state.proofs.typed = kept;
     }
 
     /// The local proofs every forward edge into `pc` arrived with, as the same values, for
@@ -2037,7 +2082,7 @@ pub(crate) fn lower(
         entering: Vec::new(),
         at: 0,
         forward: Vec::new(), sealable: CompoundBitSet::new(),
-        arrived: BTreeMap::new(),
+        arrived: BTreeMap::new(), loop_carry: BTreeMap::new(), carried_typed: BTreeMap::new(),
         entered: CompoundBitSet::with_capacity(unit.instructions.len()),
         finishes: false,
         leave,
@@ -2162,6 +2207,7 @@ pub(crate) fn lower(
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
+    lowering.loop_carry = loop_carries(&instructions, &leaders, entry_pc);
     // No forward edge of the bytecode's enters a handler's block: its proofs are none, and it
     // seals once the region ends.
     for (pc, catch) in lowering.catches.iter().enumerate().filter_map(|(pc, catch)| Some((pc, (*catch)?))) {
@@ -2268,6 +2314,7 @@ pub(crate) fn lower(
             lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
+            lowering.carry_typed_views(&mut state, pc);
             lowering.seed_loop_shapes(&mut state, pc);
             reachable = true;
         }
@@ -4363,7 +4410,27 @@ impl Lowering<'_, '_> {
                         self.builder.def_var(checked, clear);
                     }
                 }
-                ElementViews::Typed(_) => self.hoist_typed_view(ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable }, bits, variables, exit),
+                ElementViews::Typed(_) => {
+                    let kind = array.views.observed_kind().and_then(NativeKind::new);
+                    // A view an access before the loop proved and kept for the same register and kind is the loop's.
+                    let register = match array.source { ArraySource::Register(register) => Some(register), _ => None };
+                    let kept = register.zip(kind).and_then(|(register, native)| state.proofs.typed.iter()
+                        .find(|view| view.register == register && view.kind == native.kind && (view.writable || !array.writable)).copied());
+                    match kept {
+                        Some(view) => {
+                            self.builder.def_var(variables.values, view.values);
+                            self.builder.def_var(variables.length, view.length);
+                        }
+                        None => {
+                            self.hoist_typed_view(ViewAccess { kind, writable: array.writable }, bits, variables, exit);
+                            if let (Some(register), Some(native)) = (register, kind) {
+                                let (values, length) = (self.builder.use_var(variables.values), self.builder.use_var(variables.length));
+                                state.proofs.typed.retain(|view| view.register != register);
+                                state.proofs.typed.push(TypedProof { register, kind: native.kind, values, length, writable: array.writable });
+                            }
+                        }
+                    }
+                }
                 ElementViews::Double => {
                     let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     self.builder.def_var(variables.values, values);
