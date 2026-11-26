@@ -76,14 +76,15 @@ impl WasmLayout {
 impl WasmModule {
     /// The layout of an instance's environment (`WasmLayout`).
     pub fn layout(&self) -> WasmLayout {
-        WasmLayout {
-            globals: self.globals.len(),
-            memories: self.memories.len(),
-            data: self.data.len(),
-            tables: self.tables.len(),
-            elements: self.elements.len(),
-            tags: self.tags.len(),
-        }
+        super::ModuleBindings {
+            name: "", // the layout reads only the counts
+            globals: &self.globals,
+            memories: &self.memories,
+            data: &self.data,
+            tables: &self.tables,
+            elements: &self.elements,
+            tags: &self.tags,
+        }.layout()
     }
 
     /// The binding types of an instance of this module, by environment slot (`WasmLayout`). An
