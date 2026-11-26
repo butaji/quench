@@ -57,7 +57,7 @@ impl LoopTier {
 
     /// Notes the site's fitted entry once its code's timed runs are in, and reports them under `QUENCH_TRACE=js-jit`.
     fn note_timed(&self, tiers: &Tiers, span: u64) {
-        if let Some(entry) = self.native.entry_iterations() { crate::compiled::loop_model::note_site_entry(entry, span); }
+        if let Some((entry, slope)) = self.native.entry_iterations() { crate::compiled::loop_model::note_site_entry(entry, span, slope); }
         if !quench_runtime::trace::Channel::JsJit.on() { return; }
         eprintln!("QUENCH_LOOP_TIMED ns_per_iteration={:.0} log_error={:.2} b_jit_ns={:?} b_jit={} entry_ns={}", self.native.ns_per_iteration(), self.native.mean_variance().sqrt(),
             self.base_runs.map(|base| base.ns_per_iteration() as u64), self.base, crate::compiled::loop_model::entry_ns(&tiers.priors));
@@ -279,9 +279,9 @@ impl LoopTier {
     fn publish(&mut self, vm: &mut Vm, region: crate::compiled::CompiledOsrRegion) {
         // A promoted site's stencil code goes as the u-jit region takes its place.
         if let Some(replaced) = self.code.take() { replaced.retire(); }
-        // The b-jit region's measured exits, which the u-jit region taking its place is held to (`demotes`).
-        if self.promoting { self.base_left_permille = Some(self.left_permille()); self.base_runs = Some(self.native); }
-        (self.tier_runs, self.tier_left, self.native) = (0, 0, Default::default());
+        // The b-jit region's measured exits and timed runs, which the u-jit region taking its place is held to (`demotes`); a recompile of the same tier (a fact changed, a callee rebound) keeps its timed runs, so a tier that keeps recompiling still reaches its test (`weigh_time`).
+        if self.promoting { self.base_left_permille = Some(self.left_permille()); self.base_runs = Some(std::mem::take(&mut self.native)); }
+        (self.tier_runs, self.tier_left) = (0, 0);
         self.promoting = false;
         self.code = Some({ let (mut facts, programs) = vm.fact_watch(); programs.publish_region(region, &mut facts) });
     }
@@ -314,13 +314,12 @@ impl Timing {
     }
 }
 
-/// Counts a compilation of `site`'s region, in the tier and, with diagnostics, at the site.
-fn count_compilation(tier: &mut LoopTier, site: &LoopSite) {
+/// Counts a compilation of `site`'s region, in the tier and, with diagnostics, at the site; returns when it began.
+fn count_compilation(tier: &mut LoopTier, site: &LoopSite) -> u64 {
     tier.compilations += 1;
     crate::compiled::base_region::count(crate::compiled::base_region::Event::Compiled);
-    if site.diagnostics {
-        site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
-    }
+    if site.diagnostics { site.compile_attempts.set(site.compile_attempts.get().saturating_add(1)); }
+    clock_ns()
 }
 
 /// The type each of the region's entry registers holds in the running activation's registers `r`, by
@@ -361,7 +360,7 @@ pub(crate) fn loop_compile_in_lane(
     if !cfg!(feature = "jit") {
         return; // no run-time compile without the JIT: the loop stays on its image body or the lane
     }
-    count_compilation(tier, site);
+    let compile_started = count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     // Native code reads slot representations, which the runtime keeps from its first compile on.
@@ -424,7 +423,7 @@ pub(crate) fn loop_compile_in_lane(
         drop(_mark);
         return ultra_compile_when_due(cx, r, site, region, tier, (number_arrays, int_entries), (typed_captures, int_captures));
     }
-    tier.start(started, machine, site);
+    crate::compiled::loop_model::note_base_compile(base, site.span(), clock_ns().saturating_sub(compile_started)); tier.start(started, machine, site);
 }
 
 /// Whether the site's next compile is a b-jit region: the stencil tier's own loop, a demoted site (`LoopTier::demoted`),

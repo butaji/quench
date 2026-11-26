@@ -1824,16 +1824,16 @@ impl RunStats {
         for (sum, add) in self.line.iter_mut().zip([1.0, x, y, x * y, x * x]) { *sum += add; }
     }
 
-    /// What entering and leaving this site's code costs, in its own iterations: the intercept of its runs' line
-    /// over its slope, where their iterations vary enough to fit one. One line per site, as every site's cost per
-    /// iteration differs (pooled over sites, the slopes' spread lands in the intercept); and a ratio of two times,
-    /// so a slower clock (a profiler, a loaded machine) scales both alike.
-    pub fn entry_iterations(&self) -> Option<f64> {
+    /// What entering and leaving this site's code costs, in its own iterations, and the ns one iteration takes: the
+    /// intercept of its runs' line over its slope, and the slope, where their iterations vary enough to fit one. One
+    /// line per site, as every site's cost per iteration differs (pooled over sites, the slopes' spread lands in the
+    /// intercept); and a ratio of two times, so a slower clock (a profiler, a loaded machine) scales both alike.
+    pub fn entry_iterations(&self) -> Option<(f64, f64)> {
         let [n, x, y, xy, xx] = self.line;
         let spread = n * xx - x * x;
         if spread <= n * n { return None; }
         let slope = (n * xy - x * y) / spread;
-        (slope > 0.0).then(|| (y * xx - x * xy) / spread / slope)
+        (slope > 0.0).then(|| ((y * xx - x * xy) / spread / slope, slope))
     }
 
     /// The mean log ns per iteration.
