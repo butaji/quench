@@ -373,6 +373,15 @@ macro_rules! snapshot_enum {
             use super::*;
             const VARIANTS: &[$ty] = &[$(<$ty>::$variant),+];
 
+            /// Every variant of the enum is listed: a variant added to the enum and not here is a
+            /// compile error (non-exhaustive match), not a panic at the first snapshot that meets it.
+            #[allow(dead_code)]
+            fn every_variant_listed(value: $ty) {
+                match value {
+                    $(<$ty>::$variant)|+ => {}
+                }
+            }
+
             pub(crate) fn write(writer: &mut $crate::snapshot::Writer, value: $ty) {
                 let position = VARIANTS
                     .iter()

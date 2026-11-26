@@ -834,6 +834,88 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.owner.atoms[atom as usize].starts_with('\0')
     }
 
+    /// Whether a strict plain assignment to the name `name` with right side `value` is settled
+    /// (`prepare_assignment_reference_settled`): no guest code can run before the right side either reads
+    /// `name`, which throws where the name is unresolvable, or completes. A captured reference then
+    /// resolves to what a store by name finds: the name was resolvable at the left side exactly when
+    /// it is at the store, and a binding the right side deletes fails the strict store either way.
+    pub(super) fn strict_global_name_settled(&mut self, value: &Expression<'_>, name: &str) -> bool {
+        !matches!(self.name_settling(value, name), Settling::Effect)
+    }
+
+    /// How `value` evaluates relative to a read of `name` (`strict_global_name_settled`).
+    fn name_settling(&mut self, value: &Expression<'_>, name: &str) -> Settling {
+        use oxc_ast::ast::{BinaryOperator, UnaryOperator};
+        match super::binding_time::evaluated(value) {
+            Expression::Identifier(identifier) => {
+                let read = identifier.name.as_str();
+                if read == name {
+                    return Settling::Read;
+                }
+                // A global's read may run a getter; a binding of the function, or a global value property
+                // no code can redefine, runs none.
+                if matches!(read, "undefined" | "NaN" | "Infinity") {
+                    return Settling::Pure;
+                }
+                let atom = self.owner.atom(read);
+                if self.needs_strict_global_reference_capture(atom) { Settling::Effect } else { Settling::Pure }
+            }
+            Expression::NumericLiteral(_) | Expression::StringLiteral(_) | Expression::BooleanLiteral(_)
+            | Expression::NullLiteral(_) | Expression::BigIntLiteral(_) | Expression::ThisExpression(_)
+            | Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_) => Settling::Pure,
+            Expression::TemplateLiteral(template) if template.expressions.is_empty() => Settling::Pure,
+            Expression::SequenceExpression(sequence) => {
+                for expression in &sequence.expressions {
+                    match self.name_settling(expression, name) {
+                        Settling::Pure => {}
+                        other => return other,
+                    }
+                }
+                Settling::Pure
+            }
+            // Both operands run first; then only a strict (in)equality runs no coercion.
+            Expression::BinaryExpression(binary) => match self.name_settling(&binary.left, name) {
+                Settling::Pure => match self.name_settling(&binary.right, name) {
+                    Settling::Pure if matches!(binary.operator, BinaryOperator::StrictEquality | BinaryOperator::StrictInequality) => Settling::Pure,
+                    Settling::Pure => Settling::Effect,
+                    other => other,
+                },
+                other => other,
+            },
+            // The right side may not run: only a pure one keeps the whole pure.
+            Expression::LogicalExpression(logical) => match self.name_settling(&logical.left, name) {
+                Settling::Pure => match self.name_settling(&logical.right, name) {
+                    Settling::Pure => Settling::Pure,
+                    _ => Settling::Effect,
+                },
+                other => other,
+            },
+            Expression::ConditionalExpression(conditional) => match self.name_settling(&conditional.test, name) {
+                Settling::Pure => match (self.name_settling(&conditional.consequent, name), self.name_settling(&conditional.alternate, name)) {
+                    (Settling::Pure, Settling::Pure) => Settling::Pure,
+                    (Settling::Read, Settling::Read) => Settling::Read,
+                    _ => Settling::Effect,
+                },
+                other => other,
+            },
+            Expression::UnaryExpression(unary) => match unary.operator {
+                // `typeof` of a name reads no unresolvable name as a throw: only a binding's is pure.
+                UnaryOperator::Typeof if matches!(super::binding_time::evaluated(&unary.argument), Expression::Identifier(_)) =>
+                    match self.name_settling(&unary.argument, name) {
+                        Settling::Pure => Settling::Pure,
+                        _ => Settling::Effect,
+                    },
+                UnaryOperator::LogicalNot | UnaryOperator::Void | UnaryOperator::Typeof => self.name_settling(&unary.argument, name),
+                // A numeric conversion of a pure operand may run its `valueOf`.
+                _ => match self.name_settling(&unary.argument, name) {
+                    Settling::Pure => Settling::Effect,
+                    other => other,
+                },
+            },
+            _ => Settling::Effect,
+        }
+    }
+
     pub(super) fn needs_strict_global_reference_capture(&mut self, atom: Atom) -> bool {
         if !self.strict || self.owner.atoms[atom as usize].starts_with('\0') {
             return false;
@@ -1113,4 +1195,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
         }
     }
+}
+
+/// How a right side evaluates relative to a read of the name it is assigned to
+/// (`FunctionCompiler::name_settling`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Settling {
+    /// It runs no guest code.
+    Pure,
+    /// It reads the name before any guest code runs.
+    Read,
+    /// Guest code may run before any read of the name.
+    Effect,
 }

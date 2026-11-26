@@ -505,23 +505,14 @@ impl Vm {
         new_target: Value,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        if self.object_data(prototype).is_some() {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        let (native, fallback) = if shared {
-            (Native::SharedArrayBuffer, self.shared_array_buffer_proto)
-        } else {
-            (Native::ArrayBuffer, self.array_buffer_proto)
-        };
-        Ok(self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(realm, native))
-            .copied()
-            .unwrap_or(fallback))
+        self.prototype_from_new_target(p, new_target, |vm, _, realm| {
+            let (native, fallback) = if shared {
+                (Native::SharedArrayBuffer, vm.shared_array_buffer_proto)
+            } else {
+                (Native::ArrayBuffer, vm.array_buffer_proto)
+            };
+            Ok(vm.realm.intrinsics.builtin_prototypes.get(&(realm, native)).copied().unwrap_or(fallback))
+        })
     }
 
     pub(super) fn array_buffer_zeroed_bytes(
@@ -593,14 +584,14 @@ impl Vm {
         let start = args
             .first()
             .copied()
-            .map(|value| self.array_buffer_slice_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(0);
         let end = args
             .get(1)
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_buffer_slice_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
@@ -934,14 +925,14 @@ impl Vm {
         let start = args
             .first()
             .copied()
-            .map(|value| self.array_buffer_slice_index(p, value, source_length))
+            .map(|value| self.to_relative_index(p, value, source_length))
             .transpose()?
             .unwrap_or(0);
         let end = args
             .get(1)
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_buffer_slice_index(p, value, source_length))
+            .map(|value| self.to_relative_index(p, value, source_length))
             .transpose()?
             .unwrap_or(source_length)
             .max(start);
@@ -971,15 +962,6 @@ impl Vm {
             resizable: false,
             immutable: true,
         }))
-    }
-
-    fn array_buffer_slice_index(
-        &mut self,
-        p: &ResidualProgram,
-        value: Value,
-        length: usize,
-    ) -> Result<usize, JsError> {
-        Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 }
 

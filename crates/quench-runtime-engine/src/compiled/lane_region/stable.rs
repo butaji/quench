@@ -41,6 +41,8 @@ pub(crate) struct StableUses {
     /// bodies change no Stable fact's subject (`keeps_stable_facts`): their blocks hold every
     /// Stable fact, which a change made elsewhere retires before the loop is entered again.
     pub(crate) stable_loops: Vec<(usize, usize)>,
+    /// Loops, likewise, whose entering edges proved the run's stores specialized (`hold_specialized`).
+    specialized_loops: Vec<(usize, usize)>,
     /// The PC a run of the body starts at.
     pub(crate) start: usize,
 }
@@ -253,7 +255,7 @@ impl Lowering<'_, '_> {
     /// yet: a guard leaving through `exit` where the run does not. The loop's entering edge makes
     /// this proof once for a loop whose stores all hold it (`hoist_stable`).
     pub(crate) fn hold_specialized(&mut self, state: &mut State, exit: ir::Block) {
-        if state.proofs.specialized { return; }
+        if state.proofs.specialized || self.stable.specialized_loops.iter().any(|(header, end)| (*header..=*end).contains(&self.at)) { return; }
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
         let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
         emit_js_guard(&mut self.builder, specialized, exit);
@@ -351,6 +353,8 @@ impl Lowering<'_, '_> {
             _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
             _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })) => true,
             _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) => self.store_keeps_facts(pc, instruction),
+            // A held slot's store leaves where its admission or the slot's type fails (`global_cell`, `global_write`).
+            _ if self.stores_global_slot(pc, instruction) => self.division().folds(BindingTime::Stable),
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) => true,
             _ => reads_only(&self.program.constants, instruction),
@@ -358,8 +362,9 @@ impl Lowering<'_, '_> {
     }
 
     /// Notes loop `header..=end` as holding the proofs hoisted to its entry edges.
-    pub(crate) fn hold_in_loop(&mut self, header: usize, end: usize, stable: bool, realm: bool) {
+    pub(crate) fn hold_in_loop(&mut self, header: usize, end: usize, stable: bool, realm: bool, specialized: bool) {
         if stable { self.stable.stable_loops.push((header, end)); }
+        if specialized { self.stable.specialized_loops.push((header, end)); }
         if realm { self.stable.realm_loops.push((header, end)); }
     }
 }

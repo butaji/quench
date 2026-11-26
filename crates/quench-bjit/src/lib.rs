@@ -367,10 +367,32 @@ pub mod rustc {
         safe static QUENCH_STENCILS_V3: &'static RawLibrary;
     }
 
-    /// The library this process's stencils come from, chosen once at first use.
+    thread_local! {
+        /// The library an ahead compile on this thread takes its stencils from (`with_library`), in
+        /// place of this CPU's.
+        static TARGET_V3: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    }
+
+    /// Whether stencils come from the x86-64-v3 library: the ahead compile's target's choice
+    /// (`with_library`), else this CPU's, probed once at first use.
+    pub(crate) fn uses_v3() -> bool {
+        static HOST_V3: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        TARGET_V3.get().unwrap_or_else(|| *HOST_V3.get_or_init(super::runs_x86_64_v3))
+    }
+
+    /// The library stencils come from (`uses_v3`).
     fn library() -> &'static RawLibrary {
-        static CHOSEN: std::sync::OnceLock<&'static RawLibrary> = std::sync::OnceLock::new();
-        CHOSEN.get_or_init(|| if super::runs_x86_64_v3() { QUENCH_STENCILS_V3 } else { QUENCH_STENCILS_BASELINE })
+        if uses_v3() { QUENCH_STENCILS_V3 } else { QUENCH_STENCILS_BASELINE }
+    }
+
+    /// Runs `f` with this thread's stencils from the x86-64-v3 library (`v3`) or the baseline one
+    /// instead of this CPU's: an AOT image's base bodies are stencils for the CPU the image targets,
+    /// which is not the compiling CPU's (`aot_image::base`). Memoized stencils are kept per library.
+    pub fn with_library<R>(v3: bool, f: impl FnOnce() -> R) -> R {
+        let previous = TARGET_V3.replace(Some(v3));
+        let result = f();
+        TARGET_V3.set(previous);
+        result
     }
 
     /// Rows of the chosen library that keep a stack frame.
@@ -409,12 +431,14 @@ pub mod rustc {
         Some(Stencil { code: code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len })
     }
 
-    /// Stencils memoized by key (`memoized`): each is built once and leaked, so it lives for the life of the process.
-    pub type Memo<K> = std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<K, &'static Stencil>>>;
+    /// Stencils memoized by library (`uses_v3`) and key (`memoized`): each is built once and leaked, so it
+    /// lives for the life of the process.
+    pub type Memo<K> = std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(bool, K), &'static Stencil>>>;
 
     /// The stencil memoized under `key` in `memo`, built by `build` on the key's first use; a build that
     /// fails is an error, and the next use builds again.
     pub fn memoized<K: std::hash::Hash + Eq + Copy>(memo: &'static Memo<K>, key: K, build: impl FnOnce() -> Result<Stencil, String>) -> Result<&'static Stencil, String> {
+        let key = (uses_v3(), key);
         let mut table = memo.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
         if let Some(&found) = table.get(&key) {
             return Ok(found);

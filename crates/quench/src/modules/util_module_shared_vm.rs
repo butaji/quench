@@ -897,7 +897,7 @@ pub(crate) fn disposed_promise(c: &mut Context<'_>) -> Result<RootId, RootedErro
 
 /// `util.log(...args)`: `console.log('%s - %s', timestamp(), format(...args))`.
 pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const MONTHS: [&str; 12] = quench_runtime::units::MONTH_ABBREVIATIONS;
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut local = unsafe { std::mem::zeroed::<libc::tm>() };
     unsafe { libc::localtime_r(&now, &mut local) };

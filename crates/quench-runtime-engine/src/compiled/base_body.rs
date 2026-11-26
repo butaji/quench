@@ -240,7 +240,7 @@ impl LaneMethod {
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::compiled::admission::Tier::Base) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
+            direct, proven_calls: false, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
     }
 }
@@ -259,7 +259,7 @@ impl LaneMethod {
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&[]).reaching(scratch), fault_poll: false,
             names_shapes: false, exits: ExitTable::default(), scratch_width: 0, framed: true,
             caller_registers: registers, frame_reach: scratch, amortizes: true,
-            direct: Box::new([]), closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
+            direct: Box::new([]), proven_calls: false, closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
         }
     }
 }

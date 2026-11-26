@@ -421,11 +421,21 @@ pub fn integral_remainder(left: f64, right: f64) -> Option<f64> {
     Some(if remainder == 0 { f64::from_bits(left.to_bits() & (1 << 63)) } else { remainder as f64 })
 }
 
-/// Number remainder after operand conversion. Also callable by the shared native
-/// emitter: no VM state, allocation, collection, guest effects, or integer traps.
-/// Floating remainder preserves negative zero and the Number NaN/infinity rules.
-#[inline]
+/// Number remainder after operand conversion, the slow path compiled code calls
+/// (`RuntimeSlowPath::NumberRemainder`): no VM state, allocation, collection, guest effects, or
+/// integer traps. Never inlined, so it is one symbol, and its address is the same wherever it is
+/// taken: an image names a slow path by matching that address against the lane helpers'
+/// (`compiled::slow_path_symbol`), which an inlined function's per-unit copies defeat. Rust
+/// callers take `remainder`, which inlines.
+#[inline(never)]
 pub extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+    remainder(left, right)
+}
+
+/// `number_remainder`'s value, inlined into its Rust callers. Floating remainder preserves
+/// negative zero and the Number NaN/infinity rules.
+#[inline]
+pub fn remainder(left: f64, right: f64) -> f64 {
     // Integral operands take the integer remainder (`integral_remainder`, ~15 instructions where
     // `fmod` costs ~170); everything else the float remainder.
     integral_remainder(left, right).unwrap_or_else(#[inline(always)] || left % right)
