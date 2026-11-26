@@ -56,6 +56,10 @@ impl NativeKind {
         }
     }
 
+    /// Whether this kind stores an int32 by its low bytes (ToInt32 modulo its width, which is the int32's
+    /// own bits): every integer kind but the clamped byte (`typed_write_int`).
+    #[inline] pub const fn wraps_int32(self) -> bool { matches!(self.element, Element::Integer(integer) if !matches!(integer, Integer::Clamped8)) }
+
     /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one): every integer kind but Uint32.
     #[inline] pub const fn is_int32(self) -> bool { matches!(self.element, Element::Integer(integer) if !matches!(integer, Integer::Unsigned32)) }
 }
@@ -290,6 +294,19 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
             &#[inline(always)] |stage, native| write_element(stage, access, native, miss), miss),
     }
     .map(|_| ())
+}
+
+/// Stores the int32 `int` at element `index` of `view`, whose kind the proof fixed to one that
+/// wraps an int32 (`NativeKind::wraps_int32`): its low bytes are the element, with no Number made
+/// of it. Past the elements leaves at `miss`; another view is `typed_write`'s (nothing emitted).
+#[inline(always)]
+pub(crate) fn typed_write_int<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+    int: S::Word, miss: S::Miss) -> Option<()> {
+    let ViewKind::Static(NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
+    bounded(stage, view, index, miss)?;
+    let address = element_address(stage, view.values, index, kind);
+    store_integer(stage, integer, address, int);
+    Some(())
 }
 
 /// The runtime's own element conversions over bytes (byte order, Float16, the Concrete

@@ -32,22 +32,6 @@ macro_rules! wrapping_int32_arithmetic {
 }
 crate::vm::operations::number_arithmetic_rows!(wrapping_int32_arithmetic);
 
-/// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN. `cvttsd2si` (SSE2, the x86-64
-/// baseline) is one instruction with no constant pool, so a stencil may hold it, as it may not a saturating `as`.
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-fn truncate_i64(value: f64) -> i64 {
-    // SAFETY: SSE2 is the x86-64 baseline; the conversion touches no memory.
-    unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(value)) }
-}
-
-/// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN (the portable form).
-#[cfg(not(target_arch = "x86_64"))]
-#[inline(always)]
-fn truncate_i64(value: f64) -> i64 {
-    if value.is_nan() || value.abs() >= 9.2e18 { i64::MIN } else { value as i64 }
-}
-
 /// The sign bit of a binary64 word.
 const F64_SIGN_BIT: u64 = 1 << (u64::BITS - 1);
 
@@ -96,13 +80,11 @@ impl NumericStage for super::super::Concrete {
     }
     #[inline(always)]
     fn integral_remainder(&mut self, left: u64, right: u64) -> (u64, bool) {
-        let (x, y) = (f64::from_bits(left), f64::from_bits(right));
-        let (a, b) = (truncate_i64(x), truncate_i64(y));
-        let exact = |value: i64, number: f64| value != i64::MIN && value as f64 == number && value.unsigned_abs() < 1 << 53;
-        if !(exact(a, x) && exact(b, y)) || b == 0 || (a % b == 0 && x.is_sign_negative()) {
-            return (0, true);
+        // A match rather than `map_or`, whose closure instance stays out of line across crates.
+        match crate::vm::operations::integral_remainder(f64::from_bits(left), f64::from_bits(right)) {
+            Some(remainder) => (remainder.to_bits(), false),
+            None => (0, true),
         }
-        (((a % b) as f64).to_bits(), false)
     }
     #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {

@@ -14,7 +14,7 @@
 
 use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
-use super::typed_elements::{typed_read, typed_read_value, typed_write, TypedView};
+use super::typed_elements::{typed_read, typed_read_value, typed_write, typed_write_int, TypedView};
 use super::{Concrete, ElementFrame, NumericFrame, NumericStage, Operation, Stage, Step};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
@@ -121,6 +121,15 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
 fn write_typed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, view: TypedView<S::Word>,
     (value, key): (Register, Register)) -> Option<S::Word> {
     let miss = frame.miss();
+    // A value the frame holds as an int32 (its facts prove it) stores its low bytes into a
+    // wrapping integer kind as they are (`typed_write_int`), with no Number made and truncated.
+    if let super::typed_elements::ViewKind::Static(native) = view.kind && native.wraps_int32()
+        && let Some(int) = frame.held_int(stage, Operand::register(value)).map(super::Int32::word) {
+        let index = frame.index_key(stage, Operand::register(key), miss)?;
+        let index = stage.uextend32(index);
+        typed_write_int(stage, view, index, int, miss)?;
+        return Some(int);
+    }
     let number = frame.number_operand(stage, Operand::register(value), miss).map(super::Float64::word)?;
     let index = frame.index_key(stage, Operand::register(key), miss)?;
     let index = stage.uextend32(index);

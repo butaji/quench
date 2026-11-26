@@ -68,6 +68,16 @@ fn truncate_to_i64(value: f64) -> i64 {
     value as i64
 }
 
+/// The int32 the Number `value` is exactly, other than `-0`: its truncation converted back has its
+/// very bits, which a fraction, a magnitude past `i32`, NaN and `-0` (whose bits differ from `+0`'s)
+/// all fail. The one home of the rule `Value::number` boxes by (an int32 word) and every caller
+/// that asks whether a Number is an int32 (the AOT lattice, small strings, the serializer's Smi).
+#[inline(always)]
+pub(crate) fn exact_int32(value: f64) -> Option<i32> {
+    let integer = truncate_to_i32(value);
+    (f64::from(integer).to_bits() == value.to_bits()).then_some(integer)
+}
+
 /// ToUint32 of `value` when `value` truncates exactly into an `i64`: below 2^63 in magnitude,
 /// where the truncation's low 32 bits are the value modulo 2^32. `None` for NaN, the infinities
 /// and magnitudes from 2^63 up (-2^63 included), which take `number_to_u32_wide`. The test reads
