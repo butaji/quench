@@ -411,8 +411,13 @@ fn execute_shared_on_worker(
         // Workers' modules are not hot-replaced: their edits restart nothing.
         if worker.is_none() && crate::host::hmr::requested(&exec_argv) {
             if let Some(entry) = &entry_file {
-                shared_state.borrow_mut().hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+                let mut state = shared_state.borrow_mut();
+                state.hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+                state.poll_on(crate::host::node_host::PollSlot::Hmr, |runtime, program, _| crate::host::hmr::poll(runtime, program));
             }
+        }
+        if worker.is_some() {
+            shared_state.borrow_mut().poll_on(crate::host::node_host::PollSlot::Worker, crate::modules::worker_shared_vm::poll);
         }
         shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();

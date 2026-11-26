@@ -146,6 +146,7 @@ impl SharedNodeState {
             net_socket_option_keys,
             net_handle_identities,
             net_handle_close_callbacks,
+            poll_sources: _,
             error_event_name,
             stream_intrinsics,
             stream_high_water_marks,

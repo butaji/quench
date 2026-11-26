@@ -331,6 +331,7 @@ fn register(c: &mut Context<'_>, request: RootId, channel: u64) -> Result<(u64, 
     let mut shared = shared.borrow_mut();
     let id = shared.dns_channels.allocate();
     shared.dns_channels.pending.insert(id, Pending { request, channel });
+    shared.poll_on(crate::host::node_host::PollSlot::Dns, poll);
     Ok((id, shared.dns_channels.completions.clone()))
 }
 

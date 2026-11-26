@@ -8,6 +8,7 @@ use quench_runtime::{
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
+use crate::host::node_host::PollSlot;
 
 pub(crate) fn collect_garbage(
     context: &mut NativeContext<'_>,
@@ -2651,13 +2652,11 @@ fn poll_io(
     settle(runtime, ran)?;
     let ran = crate::modules::pipe_binding::poll(runtime, program)?;
     settle(runtime, ran)?;
-    let ran = crate::modules::child_process_ipc_shared_vm::poll(runtime, program)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::child_process_shared_vm::poll(runtime, program, shared_state)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::cares_binding::poll(runtime, program)?;
-    settle(runtime, ran)?;
-    let udp_progress = crate::modules::udp_binding::poll(runtime, shared_state)?;
+    for slot in [PollSlot::ChildIpc, PollSlot::Child, PollSlot::Cares] {
+        let ran = poll_source(runtime, program, shared_state, slot)?;
+        settle(runtime, ran)?;
+    }
+    let udp_progress = poll_source(runtime, program, shared_state, PollSlot::Udp)?;
     let transport_progress = crate::modules::net_shared_vm::transport_poll::poll(runtime, program, shared_state)?;
     // Each turn of the loop is a collection safepoint, once its network writes have gone
     // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
@@ -2665,12 +2664,10 @@ fn poll_io(
     // and every value is a root.
     runtime.collect_if_due(program).map_err(|error| error.to_string())?;
     settle(runtime, transport_progress || udp_progress)?;
-    let ran = crate::modules::napi::poll(runtime, program)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::worker_shared_vm::poll(runtime, program, shared_state)?;
-    settle(runtime, ran)?;
-    let ran = crate::modules::dns_shared_vm::poll(runtime, program, shared_state)?;
-    settle(runtime, ran)?;
+    for slot in [PollSlot::Napi, PollSlot::Worker, PollSlot::Dns] {
+        let ran = poll_source(runtime, program, shared_state, slot)?;
+        settle(runtime, ran)?;
+    }
     if has_referenced_shared_work(shared_state) {
         let ran = super::fs_watch_shared_vm::poll(runtime, program)?;
         settle(runtime, ran)?;
@@ -2679,11 +2676,20 @@ fn poll_io(
         let ran = super::fs_stat_watch_shared_vm::poll(runtime, program)?;
         settle(runtime, ran)?;
     }
-    if shared_state.borrow().hmr.is_some() {
-        let ran = crate::host::hmr::poll(runtime, program)?;
-        settle(runtime, ran)?;
-    }
+    let ran = poll_source(runtime, program, shared_state, PollSlot::Hmr)?;
+    settle(runtime, ran)?;
     Ok(progressed)
+}
+
+/// Polls the source its module set in `slot` (`SharedNodeState::poll_on`); `false` for none.
+fn poll_source(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    slot: PollSlot,
+) -> Result<bool, String> {
+    let source = shared_state.borrow().poll_source(slot);
+    source.map_or(Ok(false), |poll| poll(runtime, program, shared_state))
 }
 
 /// The timers phase: every timer due when it begins, in due order; whether any ran.
