@@ -48,10 +48,9 @@ impl ElementFrame<Concrete> for Places {
     /// and the u-jit's `store_gate`. Any other store is the VM's.
     #[inline(always)]
     fn array_store_gate(&mut self, stage: &mut Concrete, base: u64, value: u64, miss: ()) -> Option<()> {
-        value::is_direct_array(stage, base).then_some(())?;
         let list = MarkList { blocks: JS_STEP_ARRAY_MARK_BLOCKS, count: JS_STEP_ARRAY_MARK_BLOCK_COUNT };
         counted_store_unlogged(stage, payload(&self.s) as u64, (JS_STEP_STORE_WATCH, STORE_WATCH_COUNTS), list,
-            base & u64::from(u32::MAX), value, miss)
+            base, value, miss)
     }
 
     /// The VM's store where no replacement answers it, as far as a row takes it: a hole of a direct
@@ -59,6 +58,7 @@ impl ElementFrame<Concrete> for Places {
     /// array's prototype and the write barrier admits `value` unlogged. Any other store leaves.
     #[inline(always)]
     fn index_set_host(&mut self, stage: &mut Concrete, base: u64, key: u64, value: u64, miss: ()) -> Option<()> {
+        value::is_direct_array(stage, base).then_some(())?;
         self.array_store_gate(stage, base, value, miss)?;
         let payload = payload(&self.s);
         let records = record_table(payload)?;

@@ -31,19 +31,16 @@ pub(crate) enum Held {
 /// The barrier gate of a store of `value` into the direct array `base`, read from the dispatch
 /// `payload`: `barrier::counted_store_unlogged` over the array records' mark list, the rule of
 /// `Heap::array_store_unlogged` (a heap value needs the record unmarked, an immediate only while old
-/// records keep counts). A base that is no direct array, or a store that logs, leaves at `miss`: the
+/// records keep counts; only those test the base a direct array). A store that logs leaves at `miss`: the
 /// general store logs it, which clears the mark, so the next store of the loop passes here.
 pub(crate) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
     miss: ir::Block) -> Option<()> {
-    let direct = quench_runtime::staged::value::is_direct_array(stage, base);
-    stage.guard(direct, miss)?;
-    let record = stage.and_imm(base, u64::from(u32::MAX));
     let list = MarkList {
         blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
         count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
     };
     let watch = (std::mem::offset_of!(JsStepDispatch, head.store_watch), quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS);
-    quench_runtime::staged::barrier::counted_store_unlogged(stage, payload, watch, list, record, value, miss)
+    quench_runtime::staged::barrier::counted_store_unlogged(stage, payload, watch, list, base, value, miss)
 }
 
 /// The VM's element read of the tagged `base` and `key` (`JsStepDispatch::element_get`): the
