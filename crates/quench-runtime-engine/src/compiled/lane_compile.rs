@@ -474,7 +474,12 @@ impl Vm {
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
         // The element reads observed, and the direct calls whose results their callees' summaries type.
         let mut number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
-        number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions)); number_reads.sort_by_key(|read| read.pc);
+        number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions));
+        // A typed element read the interpreter's record observed types its result by the kind (`body_views::typed_reads`).
+        let typed = super::body_views::typed_reads(self, function, unit);
+        let typed: Vec<_> = typed.into_iter().filter(|read| number_reads.iter().all(|seen| seen.pc != read.pc)).collect();
+        number_reads.extend(typed);
+        number_reads.sort_by_key(|read| read.pc);
         LoweringJob { views: super::body_views::body_views(self, function, unit), function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
             helpers: Self::process_helpers(), facts: self.vm_facts(), method_cache_atoms: self.method_cache_atoms.bits().clone(),
             invalidation, constants, tables, leaves, number_reads, entry, program }
