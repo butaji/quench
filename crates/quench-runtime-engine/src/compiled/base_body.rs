@@ -122,6 +122,18 @@ pub(super) unsafe extern "C" fn define_element_step(vm: u64, residual: u64, cont
     unsafe { crate::dispatch_fast::body_general_step(vm, residual, context, call_pc) }
 }
 
+/// The staged call-out of the record at `call_pc` of the running body (`LaneHelper::CallOutStep`), made by the VM in place
+/// over the running frame (`dispatch_fast::vm_operation_step`). Beside lane activations the call-out's owner would be the
+/// caller's frame, so the general step makes the activations frames first.
+pub(super) unsafe extern "C" fn call_out_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
+    // SAFETY: the running lane's context; the caller's contract, which both steps share.
+    unsafe {
+        if (*(*cx).vm).lane_stack.has_frames() { crate::dispatch_fast::body_general_step(vm, residual, context, call_pc) }
+        else { crate::dispatch_fast::vm_operation_step(vm, residual, context, call_pc) }
+    }
+}
+
 /// The value the allocating record at `call_pc` of the running body defines (`LaneHelper::AllocationStep`: an array,
 /// constant array, template or string concatenation, `staged::Allocation`), made by the lane's allocator into its
 /// destination (`dispatch_fast::lane_allocate_step`); where the allocator declines before any effect, the general step.
