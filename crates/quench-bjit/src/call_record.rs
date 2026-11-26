@@ -17,9 +17,9 @@ pub use lane_protocol::{
     NATIVE_JS_STOPPED, RETURN_PC_MASK, TERMINATED_STATUS,
 };
 
-/// The most arguments a direct-call row passes (`call_direct_a0` .. `call_direct_a3`); a call
+/// The most arguments a direct-call row passes (`call_direct_a0` .. `call_direct_a6`); a call
 /// with more takes the helper row.
-pub const MAX_DIRECT_ARGC: usize = 3;
+pub const MAX_DIRECT_ARGC: usize = 6;
 
 /// The leading arguments a direct-call row may take from a pinned register rather than the caller's
 /// window slot (`CallRecord::argument_places`); the rest are always read from the window.
