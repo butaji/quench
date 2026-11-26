@@ -80,10 +80,10 @@ impl super::LoopSite {
         if !self.enclosed.get() { return false; }
         let inside = self.enclosing.get().is_some_and(|enclosing| {
             enclosing.iter().any(|outer| {
-                // SAFETY: the sites are boxed with the lane view, which outlives the lane run (`install_loop_sites`).
-                // An inner trip warms the outer site too: an outer loop of few trips around a hot inner one reaches its region.
+                // SAFETY: the sites are boxed with the lane view, which outlives the lane run that reads them
+                // (`install_loop_sites`), and an enclosing site is another of them.
                 let outer = unsafe { &**outer };
-                outer.is_admitted() && outer.enters() && { outer.warm_backedge(); true }
+                outer.is_admitted() && outer.enters()
             })
         });
         self.enclosed.set(inside);
