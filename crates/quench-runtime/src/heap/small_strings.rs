@@ -65,13 +65,6 @@ pub struct SmallParts {
 }
 const _: () = assert!(size_of::<SmallParts>() == 12);
 
-/// A Number's int32 when it is exactly one (not -0).
-#[inline(always)]
-fn exact_int(number: f64) -> Option<i32> {
-    let int = number as i32;
-    (f64::from(int).to_bits() == number.to_bits()).then_some(int)
-}
-
 impl SmallParts {
     /// The record of the parts of a `Parts` string: its string ids in order, the first `texts`
     /// of `ids`, and its Number with the Number's position, if it has one; `None` when an id
@@ -86,7 +79,7 @@ impl SmallParts {
         let Some((number, at)) = number else {
             return Some(Self { head: SHAPE_TEXTS << SHAPE_SHIFT | id(0), tail: id(1), extra: id(2) });
         };
-        let Some(int) = exact_int(number) else {
+        let Some(int) = crate::value::exact_int32(number) else {
             if texts != 1 {
                 return None;
             }

@@ -38,6 +38,11 @@ pub const UNARY_ADD_OPERAND_STRING: u32 = UNARY_TYPEOF_INDEX + 1;
 /// this plus `n - 1`, for `n` up to `ARRAY_PATTERN_MAX_ELEMENTS` (`Vm::array_pattern_fits`).
 pub(crate) const UNARY_ARRAY_PATTERN: u32 = UNARY_ADD_OPERAND_STRING + 1;
 pub(crate) const ARRAY_PATTERN_MAX_ELEMENTS: u32 = 16;
+/// The `Unary` operator testing whether an array pattern of at most `ARRAY_PATTERN_MAX_ELEMENTS` and no
+/// rest, assigned an array literal of at least as many plain elements, may take the literal's values with
+/// no array made (`FunctionCompiler::literal_array_pattern`): the array the literal would make iterates
+/// intact and its close calls nothing (`Vm::fresh_array_pattern_fits`). Its operand is ignored.
+pub const UNARY_FRESH_ARRAY_PATTERN: u32 = UNARY_ARRAY_PATTERN + ARRAY_PATTERN_MAX_ELEMENTS;
 
 /// The element count a `UNARY_ARRAY_PATTERN` operator tests.
 #[inline(always)]

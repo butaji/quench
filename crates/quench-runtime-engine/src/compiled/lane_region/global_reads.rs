@@ -77,7 +77,8 @@ impl Lowering<'_, '_> {
         let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
         if !self.division().folds(BindingTime::Stable) { return None; }
         let fact = self.hold_global_slot(state, exit, slot);
-        if let quench_runtime::staged::Operation::GlobalWrite { atom, .. } = *row {
+        // Online, the admission is a block proof the loop's entering edge may make once (`online_store_held`).
+        if let quench_runtime::staged::Operation::GlobalWrite { atom, .. } = *row && self.online_store_held(state, atom, exit).is_none() {
             let admitted = self.emit_store_atom_admitted(atom);
             emit_js_guard(&mut self.builder, admitted, exit);
         }
@@ -95,18 +96,22 @@ impl Lowering<'_, '_> {
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
         let stores = self.loop_holds_stores(header, end);
-        let reads = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. })));
+        // A store of a held global slot (`global_cell`) writes a `Mutable` cell that no code folds, of a global object
+        // no object inherits from: it neither stores nor reads a fact a field store could retire.
+        let slots = self.loop_global_slots(header, end);
+        let reads = matches!(global, Some((_, false))) || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. })));
         // A store may write a prototype's field that a read's folded holder value names, which the inline
         // store does not retire; a loop that both stores and reads a Stable fact holds none.
-        let folds = reads || stores;
+        let folds = reads || stores || slots;
         let stable = folds && !(stores && reads) && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
         let exit = self.guard_exit_for(state, header as u32, ExitFact::Global);
         if stable && !state.proofs.stable { self.read_invalidation(state, exit); }
         // A loop whose stores all leave on a miss runs no store that could unset `stores_specialized`.
-        if stable && stores { self.hold_specialized(state, exit); }
-        if let Some(realm) = global.filter(|_| !state.proofs.realm) { self.test_realm(state, exit, realm); }
-        self.hold_in_loop(header, end, stable, global.is_some());
+        let specialized = stable && (stores || slots);
+        if specialized { self.hold_specialized(state, exit); }
+        if let Some((realm, _)) = global.filter(|_| !state.proofs.realm) { self.test_realm(state, exit, realm); }
+        self.hold_in_loop(header, end, stable, global.is_some(), specialized);
     }
 
     /// Whether loop `header..=end` holds a field store that leaves on a miss (`store_keeps_facts`),
@@ -125,11 +130,30 @@ impl Lowering<'_, '_> {
             matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Jump)) && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }
 
-    /// The realm a Stable global read in `header..=end` was compiled against, if any.
-    fn loop_realm(&self, header: usize, end: usize) -> Option<(Value, i32)> {
-        self.global_reads.range(header..=end).find_map(|(_, read)| match *read {
-            GlobalRead::Stable { global, realm_offset, .. } => Some((global, realm_offset)),
-            _ => None,
-        })
+    /// The realm a Stable global read, or a held global slot or lexical binding, in `header..=end` was compiled
+    /// against, if any, and whether only slots and bindings name it (no Stable read).
+    fn loop_realm(&self, header: usize, end: usize) -> Option<((Value, i32), bool)> {
+        let folds = self.division().folds(BindingTime::Stable);
+        let mut held = None;
+        for (_, read) in self.global_reads.range(header..=end) {
+            match *read {
+                GlobalRead::Stable { global, realm_offset, .. } => return Some(((global, realm_offset), false)),
+                GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } if folds => { held.get_or_insert(((slot.global, slot.realm_offset), true)); }
+                GlobalRead::Lexical(slot) if folds => { held.get_or_insert(((slot.global, slot.realm_offset), true)); }
+                _ => {}
+            }
+        }
+        held
+    }
+
+    /// Whether loop `header..=end` stores a held global slot (`global_cell`).
+    fn loop_global_slots(&self, header: usize, end: usize) -> bool {
+        (header..=end).any(|pc| self.stores_global_slot(pc, self.unit.instructions[pc]))
+    }
+
+    /// Whether `instruction` at `pc` is a `StoreName` of a global slot this lowering holds (`global_cell`).
+    pub(crate) fn stores_global_slot(&self, pc: usize, instruction: WideInstruction) -> bool {
+        matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::GlobalWrite { initialize: false, .. }))
+            && matches!(self.global_reads.get(&pc), Some(GlobalRead::Slot(_)))
     }
 }
