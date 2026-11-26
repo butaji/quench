@@ -1742,6 +1742,11 @@ unsafe fn environment_slot_write(cx: *mut (), slot: u16, value: Value) -> bool {
         return false;
     }
     let frame = &vm.frames[unsafe { (*cx).frame() }];
+    // Only an activation that owns its environment keeps its slots there: an uncaptured frame's
+    // `env` is its closure's, whose slot of the same index is another function's binding.
+    if !frame.captured || frame.function == quench_runtime::vm::ROOT_FUNCTION_ID {
+        return false;
+    }
     let function = unsafe { &*(*cx).code }.function(frame.function as usize);
     if !function.local_slot_uses_environment(usize::from(slot)) || aliases_arguments(function)
         || function.is_self_binding_slot(usize::from(slot)) {
