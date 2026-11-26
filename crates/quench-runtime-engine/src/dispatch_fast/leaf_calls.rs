@@ -21,8 +21,8 @@ script_handler! {
     /// The proved form (leaf-keeping-c.md, as link-proofs.md's `script_call_miss`): the entry
     /// the link names, masked to the cache, is tested whole by one admission compare (the
     /// generation, the program, the run's conditions, `DIAGNOSED`, and the proof `UNPROVEN`,
-    /// which `script_call_leaf_prove_miss` clears for a leaf entry whose cell body is
-    /// unpublished), the callee's identity, the entry's form and the site's argument count
+    /// which `script_call_leaf_prove_miss` clears for a leaf entry, its cell body published
+    /// or not), the callee's identity, the entry's form and the site's argument count
     /// against its parameters. The room is one compare (`LaneStack::plain_room`). Anything
     /// else takes `script_call_leaf_prove_miss`, which makes the call as before.
     pub(crate) fn script_call_leaf_miss<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
@@ -41,8 +41,6 @@ script_handler! {
         {
             sibling!(script_call_leaf_prove_miss::<LEAF, ARGC>, r, ip, Carried::script(cx))
         }
-        // SAFETY: the target's view lives with its program.
-        debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
         debug_assert!(!crosses_in_lane::<true>(cx, target));
         debug_assert!(!vm.with_scope_entered);
         let receiver = r.get(i.c);
@@ -70,8 +68,8 @@ script_handler! {
 
 script_handler! {
     /// `script_call_leaf_miss` of a site whose link is not proved: the target it links, whose
-    /// entry, where it is this form's leaf, is proved (`Admission::UNPROVEN` cleared) unless its
-    /// cell holds a body; then the call as the unproved
+    /// entry, where it is this form's leaf, is proved (`Admission::UNPROVEN` cleared), its cell
+    /// body published or not; then the call as the unproved
     /// leaf call always made it. A plain activation's entry takes it in place, another leaf
     /// form's call its handler, any other the full form.
     #[cold]
@@ -97,10 +95,11 @@ script_handler! {
             }
             sibling!(other_leaf_form::<ARGC>(target.entry), r, ip, Carried::script(cx))
         }
-        // The proof: a leaf entry activates as `Activates` (`CallEntry::activates`), so a proved
-        // plain call that lands on it may activate it too; neither proves a published body's.
-        // SAFETY: the target's view lives with its program.
-        if !unsafe { (*target.view).entry_published() } {
+        // The proof: a leaf call runs its leaf here whether its cell holds a body or not, so the
+        // proved form makes the same call; a leaf entry activates as `Activates` from a plain
+        // call (`CallEntry::activates`), which tests the cell (`lane_plain_activation!`) or,
+        // proved in a row (`plain_call_activation`), runs the leaf's records as this call does.
+        {
             let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
             let entry = &mut vm.lane_stack.script_targets.entries[index];
             debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
