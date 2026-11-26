@@ -271,25 +271,30 @@ pub fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S:
         let (truthy, undecided) = (stage.constant(TRUTHY), stage.constant(UNDECIDED));
         stage.select(record, truthy, undecided)
     }, #[inline(always)] |stage| {
+        // An int32 is decided by its payload alone, so its arm runs no immediate or Number test.
         let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
-        let payload = stage.and_imm(bits, u64::from(u32::MAX));
-        let integer_truthy = stage.ne_imm(payload, 0u32);
-        let past = is_double(stage, bits);
-        let tagged = stage.not(past);
-        // Written out, not an iterator fold: a stencil inlines every step (no call to `reduce` or `expect`).
-        let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
-        let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
-        let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
-        let false_word = stage.eq_imm(bits, crate::Value::FALSE.to_bits());
-        let nullish = stage.any(null, undefined);
-        let absent = stage.any(deleted, false_word);
-        let falsy = stage.any(nullish, absent);
-        let immediate_truthy = stage.not(falsy);
-        let double_truthy = stage.number_truthy(bits);
-        let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
-        let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
-        let (yes, no) = (stage.constant(TRUTHY), stage.constant(FALSY));
-        stage.select(unheaped_truthy, yes, no)
+        stage.choose(integer, #[inline(always)] |stage| {
+            let payload = stage.and_imm(bits, u64::from(u32::MAX));
+            let integer_truthy = stage.ne_imm(payload, 0u32);
+            let (yes, no) = (stage.constant(TRUTHY), stage.constant(FALSY));
+            stage.select(integer_truthy, yes, no)
+        }, #[inline(always)] |stage| {
+            let past = is_double(stage, bits);
+            let tagged = stage.not(past);
+            // Written out, not an iterator fold: a stencil inlines every step (no call to `reduce` or `expect`).
+            let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+            let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+            let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
+            let false_word = stage.eq_imm(bits, crate::Value::FALSE.to_bits());
+            let nullish = stage.any(null, undefined);
+            let absent = stage.any(deleted, false_word);
+            let falsy = stage.any(nullish, absent);
+            let immediate_truthy = stage.not(falsy);
+            let double_truthy = stage.number_truthy(bits);
+            let unheaped_truthy = stage.pick(tagged, immediate_truthy, double_truthy);
+            let (yes, no) = (stage.constant(TRUTHY), stage.constant(FALSY));
+            stage.select(unheaped_truthy, yes, no)
+        })
     });
     (stage.eq_imm(state, UNDECIDED), stage.eq_imm(state, TRUTHY))
 }
@@ -382,22 +387,28 @@ impl TypeofKind {
 /// at `miss`.
 #[inline(always)]
 pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let (number, boolean, null) = typeof_classes(stage, bits);
-    // Spelled out, not as array `map`s: the interpreter's row ran each closure as a call.
-    let undefined_value = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
-    let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
-    let decided = stage.any(number, boolean);
-    let decided = stage.any(decided, null);
-    let decided = stage.any(decided, undefined_value);
-    let decided = stage.any(decided, deleted);
-    stage.guard(decided, miss)?;
-    let undefined = stage.constant(TYPEOF_UNDEFINED);
-    let object = stage.constant(TYPEOF_OBJECT);
-    let boolean_name = stage.constant(TYPEOF_BOOLEAN);
-    let number_name = stage.constant(TYPEOF_NUMBER);
-    let word = stage.select(boolean, boolean_name, undefined);
-    let word = stage.select(null, object, word);
-    Some(stage.select(number, number_name, word))
+    // A Number is the first test: its arm runs no boolean, `null`, `undefined` or deleted compare. The
+    // other arm is the same ladder as before, its guard left at `miss` where no class decides the word.
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
+    let double = is_double(stage, bits);
+    let number = stage.any(integer, double);
+    stage.choose_leaving(number, #[inline(always)] |stage| Some(stage.constant(TYPEOF_NUMBER)), #[inline(always)] |stage| {
+        let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
+        let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+        // Spelled out, not as array `map`s: the interpreter's row ran each closure as a call.
+        let undefined_value = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+        let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
+        let decided = stage.any(boolean, null);
+        let decided = stage.any(decided, undefined_value);
+        let decided = stage.any(decided, deleted);
+        stage.guard(decided, miss)?;
+        let undefined = stage.constant(TYPEOF_UNDEFINED);
+        let object = stage.constant(TYPEOF_OBJECT);
+        let boolean_name = stage.constant(TYPEOF_BOOLEAN);
+        let word = stage.select(boolean, boolean_name, undefined);
+        Some(stage.select(null, object, word))
+    })
 }
 
 /// The `typeof` result string of the value `bits` where its tag alone decides it: the entry of `names`,

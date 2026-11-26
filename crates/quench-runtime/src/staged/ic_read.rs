@@ -98,8 +98,7 @@ pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, va
 /// on `Number.prototype`'s values no longer holds.
 #[inline(always)]
 pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
-    let integer = super::value::is_int(stage, word);
-    let double = super::value::is_double(stage, word);
+    let (double, integer) = super::value::number_classes(stage, word);
     let number = stage.any(integer, double);
     stage.guard(number, miss)?;
     let watch = stage.site(watch);
