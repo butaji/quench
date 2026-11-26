@@ -369,7 +369,7 @@ pub(crate) fn loop_compile_in_lane(
     // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
     let base = compiles_base(machine.programs.tiers(), site, region, tier);
     tier.base = base && !crate::compiled::admission::stencil_regions();
-    let _mark = quench_runtime::trace::CompileMark::begin(if base { "b-jit" } else { "u-jit" }, "region", site.function(), u32::from(region.header));
+    let _mark = quench_runtime::trace::CompileMark::begin(if base { "b-jit" } else { "u-jit" }, "region", site.function(), u32::from(region.header), || site.span() as usize);
     tier.promote_at = promotion_at(machine.programs.tiers(), site, region, tier);
     let program = machine.programs.get(machine.active_program);
     let function = site.function();

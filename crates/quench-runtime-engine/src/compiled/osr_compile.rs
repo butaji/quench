@@ -468,7 +468,7 @@ pub(crate) fn start_osr_region(
     // The job reads the plans' direct callees by pointer (`directs`), which the pending region keeps: guarded.
     let code = quench_runtime::vm::jit_backend::OffThread::guarded(job, |job: LoopJob| {
         let header = job.plans.first().map_or(0, |plan| plan.span.0 as u32);
-        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "region", job.function_id, header);
+        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "region", job.function_id, header, || job.plans.iter().map(|plan| plan.span.1 + 1 - plan.span.0).sum());
         job.run()
     });
     let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));

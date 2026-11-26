@@ -563,7 +563,7 @@ impl Vm {
         if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
-        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0));
+        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
         // A function that calls itself back through other functions runs a call tree per entry,
@@ -637,8 +637,8 @@ impl Vm {
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
-        let code = super::jit_backend::OffThread::guarded((job, census, replans, level, (function, entry.unwrap_or(0))), |(job, census, replans, level, (function, pc))| {
-            let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "body", function, pc);
+        let code = super::jit_backend::OffThread::guarded((job, census, replans, level, (function, entry.unwrap_or(0), plan.unit.instructions.len())), |(job, census, replans, level, (function, pc, bytecodes))| {
+            let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "body", function, pc, || bytecodes);
             Lowered::of(&job, census, replans, level)
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());

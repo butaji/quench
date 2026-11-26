@@ -215,7 +215,7 @@ pub extern "C" fn quench_compile_mark() {
 /// One compile bracketed by `quench_compile_mark` (`QUENCH_DEV=ir-mark`): begins where it is made,
 /// ends where it drops. Without the setting it holds nothing and marks nothing.
 #[must_use = "the mark ends where it drops"]
-pub struct CompileMark(Option<(&'static str, &'static str, u32, u32)>);
+pub struct CompileMark(Option<(&'static str, &'static str, u32, u32, usize)>);
 
 /// The compiles begun in the process (`CompileMark::begin`): a timed run across which it moved shared the machine
 /// with a compile, and measures the compile as much as its code (`LoopTier::weigh_time`).
@@ -228,11 +228,12 @@ pub fn compiles_begun() -> u64 {
 
 impl CompileMark {
     /// Begins the mark of a `tier` (`b-jit`, `u-jit`) compile of a `kind` (`region`, `body`,
-    /// `plan`) unit of `function` at `pc` (a loop header, or 0 for a whole body).
-    pub fn begin(tier: &'static str, kind: &'static str, function: u32, pc: u32) -> Self {
+    /// `plan`) unit of `function` at `pc` (a loop header, or 0 for a whole body), `bytecodes` long
+    /// (asked only under the setting), so a compile's cost fits against its size.
+    pub fn begin(tier: &'static str, kind: &'static str, function: u32, pc: u32, bytecodes: impl FnOnce() -> usize) -> Self {
         COMPILES_BEGUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !Dev::IrMark.on() { return Self(None); }
-        let tag = (tier, kind, function, pc);
+        let tag = (tier, kind, function, pc, bytecodes());
         print_compile_mark("begin", tag);
         quench_compile_mark();
         Self(Some(tag))
@@ -248,7 +249,7 @@ impl Drop for CompileMark {
     }
 }
 
-fn print_compile_mark(edge: &str, (tier, kind, function, pc): (&str, &str, u32, u32)) {
-    eprintln!("QUENCH_COMPILE_MARK {{\"edge\":\"{edge}\",\"tier\":\"{tier}\",\"kind\":\"{kind}\",\"function\":{function},\"pc\":{pc},\"thread\":\"{:?}\"}}",
+fn print_compile_mark(edge: &str, (tier, kind, function, pc, bytecodes): (&str, &str, u32, u32, usize)) {
+    eprintln!("QUENCH_COMPILE_MARK {{\"edge\":\"{edge}\",\"tier\":\"{tier}\",\"kind\":\"{kind}\",\"function\":{function},\"pc\":{pc},\"bytecodes\":{bytecodes},\"thread\":\"{:?}\"}}",
         std::thread::current().id());
 }

@@ -360,7 +360,7 @@ impl Vm {
             return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
         }
         let _ = unit;
-        let _mark = quench_runtime::trace::CompileMark::begin("b-jit", "body", function, 0);
+        let _mark = quench_runtime::trace::CompileMark::begin("b-jit", "body", function, 0, || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, 0);
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
