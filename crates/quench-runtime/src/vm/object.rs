@@ -2279,6 +2279,16 @@ impl Vm {
         if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
             return;
         }
+        // Where slot observation closed the gate but the after-shape's slot already holds the value's
+        // type, the observation sees nothing: the same row, gated by the barrier's log alone.
+        if self.heap.add_observation_holds(transition.after, usize::from(transition.slot), value)
+            // SAFETY: as above.
+            && unsafe { concrete_add_property_held(&mut self.heap, record_id, transition, value) }
+        {
+            // The departure from the before-shape, which code holding that shape stable reads (`Object::set_shape`).
+            self.heap.note_shape_departure(transition.before, transition.after);
+            return;
+        }
         let (slot, shape) = (usize::from(transition.slot), transition.after);
         if self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
             && self.heap.record_property_append_plain(record_id, slot, value, shape)

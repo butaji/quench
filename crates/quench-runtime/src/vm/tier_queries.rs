@@ -38,6 +38,18 @@ impl Vm {
     #[inline(always)]
     pub fn write_barrier(&mut self, cell: Value) { self.heap.remember_cell(cell) }
 
+    /// `Heap::environment_slot_ordinary`: slot `slot` of `environment`, through a shared slot's owner.
+    #[inline(always)]
+    pub fn environment_slot_ordinary(&self, environment: Value, slot: usize) -> Option<Value> {
+        self.heap.environment_slot_ordinary(environment, slot)
+    }
+
+    /// `Heap::store_environment_slot_ordinary`: the store to slot `slot` of `environment`, through a shared slot's owner.
+    #[inline(always)]
+    pub fn store_environment_slot_ordinary(&mut self, environment: Value, slot: usize, value: Value) -> bool {
+        self.heap.store_environment_slot_ordinary(environment, slot, value)
+    }
+
     /// A new object of record `object` (`Heap::alloc_object`).
     #[inline(always)]
     pub fn allocate_object(&mut self, object: Object) -> Value { self.heap.alloc_object(object) }

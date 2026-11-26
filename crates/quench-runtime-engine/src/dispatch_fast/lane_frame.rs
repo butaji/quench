@@ -609,6 +609,8 @@ struct EnvironmentReads {
     /// The value of one slot where `read` declines the whole storage (`environment_slot_read`): a
     /// function that captures selectively reads each slot its environment holds.
     slot_read: unsafe fn(*mut (), u16) -> Option<Value>,
+    /// The store of one slot where `write` declines the whole storage (`environment_slot_write`).
+    slot_write: unsafe fn(*mut (), u16, Value) -> bool,
 }
 
 /// The lane context's iterator cleanup stack for an `IteratorCleanupPush`/`Pop` row (`iterator_push_in_lane`,
@@ -1372,6 +1374,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
                 // SAFETY: the running lane's context, live for the row's step.
                 unsafe { slot_read(context, slot) }.map(|value| (value.to_bits(), Boxing::Value))
             }
+            // A non-initializing store to a slot the frame's whole-storage write declines (`environment_slot_write`).
+            CallOut::StoreEnvLocal { source, slot, initialize: false } if self.scope.is_none() => {
+                let EnvironmentReads { context, slot_write, .. } = self.environment?;
+                let value = self.registers.get(source);
+                // SAFETY: the running lane's context, live for the row's step.
+                unsafe { slot_write(context, slot, value) }.then_some((value.to_bits(), Boxing::Value))
+            }
             // The clone defines no register; its word is a placeholder the row does not write.
             CallOut::CloneEnv { plan } => {
                 let EnvironmentClones { context, window, run } = self.clones?;
@@ -1706,7 +1715,44 @@ unsafe fn environment_slot_read(cx: *mut (), slot: u16) -> Option<Value> {
         return None;
     }
     let mut stage = Concrete::new(std::ptr::null());
-    quench_runtime::staged::environment::environment_slot(&mut stage, std::ptr::from_mut(storage) as u64, slot, ()).map(Value::from_bits)
+    if let Some(value) = quench_runtime::staged::environment::environment_slot(&mut stage, std::ptr::from_mut(storage) as u64, slot, ()) {
+        return Some(Value::from_bits(value));
+    }
+    // A per-iteration copy shares every slot it does not renew with the slot's owner, which holds it
+    // (`EnvironmentSlots::iteration_copy`): one hop, not the general path's binding search.
+    vm.environment_slot_ordinary(frame.env, usize::from(slot))
+}
+
+/// `EnvironmentReads::slot_write`: the store to slot `slot` of the frame's environment where its function
+/// keeps that slot there, as `environment_slot_read` reads it, through the owner of a shared slot past the
+/// owner's barrier; `false` (the general path's binding rules) at a binding in its dead zone, the function's
+/// own name, or any function `environment_slot_read` declines.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(never)]
+unsafe fn environment_slot_write(cx: *mut (), slot: u16, value: Value) -> bool {
+    let cx = cx.cast::<LaneContext>();
+    if !unsafe { (*cx).registers }.env().is_deleted() {
+        return false;
+    }
+    let vm = unsafe { vm(cx) };
+    if vm.with_scope_entered {
+        return false;
+    }
+    let frame = &vm.frames[unsafe { (*cx).frame() }];
+    // Only an activation that owns its environment keeps its slots there: an uncaptured frame's
+    // `env` is its closure's, whose slot of the same index is another function's binding.
+    if !frame.captured || frame.function == quench_runtime::vm::ROOT_FUNCTION_ID {
+        return false;
+    }
+    let function = unsafe { &*(*cx).code }.function(frame.function as usize);
+    if !function.local_slot_uses_environment(usize::from(slot)) || aliases_arguments(function)
+        || function.is_self_binding_slot(usize::from(slot)) {
+        return false;
+    }
+    let env = frame.env;
+    vm.store_environment_slot_ordinary(env, usize::from(slot), value)
 }
 
 /// `EnvironmentReads::read`: the storage `environment_of` finds for a read.
@@ -2406,7 +2452,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             |context, slot| unsafe { super::arguments_count::<false>(context.cast(), slot) }
         };
         let environment = EnvironmentReads { context: cx.cast(), read: environment_read, write: environment_write_storage,
-            slot_read: environment_slot_read };
+            slot_read: environment_slot_read, slot_write: environment_slot_write };
         // A global-name store writes through the record's own hint (`global_name_store`), which a window's
         // store does not take: its scope answers the name (`ScopeReads::store`).
         let global_store = if const { OP == quench_runtime::staged::GLOBAL_WRITE_ROW } && FLAG != FLAG_SCOPE {
