@@ -226,14 +226,7 @@ impl PropertyBuffer {
         // SAFETY: an anonymous, inaccessible mapping reserves addresses without
         // touching existing mappings or allocating resident property values.
         let base = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                bytes,
-                libc::PROT_NONE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                -1,
-                0,
-            )
+            quench_alloc::map_anonymous(bytes, libc::PROT_NONE, libc::MAP_NORESERVE)
         };
         if base == libc::MAP_FAILED {
             return false;

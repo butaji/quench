@@ -27,8 +27,10 @@
 //! the next new thread adopts it. Allocation on a thread whose heap is already gone (late
 //! thread-exit destructors) uses one shared heap behind a lock.
 
+mod fixed_space;
 mod large;
 mod scratch;
+pub use fixed_space::{fixed_layout_held, map_anonymous};
 pub use scratch::{adopt as adopt_scratch_thread, leave as leave_scratch_thread, release as release_scratch, release_phase as release_scratch_phase};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
@@ -317,16 +319,7 @@ fn reserve_region() {
     let mut length = REGION_BYTES;
     loop {
         // SAFETY: a fresh inaccessible anonymous reservation; nothing else uses its addresses.
-        let reserved = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                length,
-                libc::PROT_NONE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                -1,
-                0,
-            )
-        };
+        let reserved = unsafe { map_anonymous(length, libc::PROT_NONE, libc::MAP_NORESERVE) };
         if reserved != libc::MAP_FAILED {
             REGION_LEN.store(length, Ordering::Relaxed);
             REGION_BASE.store(reserved as usize, Ordering::Release);
