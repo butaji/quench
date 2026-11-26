@@ -104,9 +104,8 @@ impl FactTables {
         use quench_runtime::vm::global_facts::GlobalRead;
         let mut tables = Self::default();
         let read_values = (0..unit.instructions.len()).filter_map(|pc| match global_reads.get(&pc)? {
-            GlobalRead::Constant(value) | GlobalRead::Stable { value, .. } | GlobalRead::Frozen { value, .. }
-                | GlobalRead::NativeMember { value, .. } => Some(*value),
-            _ => None,
+            GlobalRead::NativeMember { value, .. } => Some(*value),
+            read => read.folded_value(),
         });
         let frame_values = unit.frames.iter().filter_map(|frame| frame.target.identity());
         for value in read_values.chain(frame_values) {
