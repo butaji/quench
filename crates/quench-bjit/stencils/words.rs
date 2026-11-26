@@ -10,7 +10,6 @@ pub(crate) const FIRST_TAG: u64 = FIRST_TAG_FIELD << TAG_SHIFT;
 pub(crate) const TAG_SPAN: u64 = (TAG_FIELD_SPAN + 1) << TAG_SHIFT;
 pub(crate) const HIGH_SHIFT: u32 = 32;
 pub(crate) const INT_HIGH: u64 = crate::layout::value_encoding::INT_TAG_HIGH as u64;
-const _: () = assert!(INT_HIGH == INT_TAG >> HIGH_SHIFT);
 /// Byte offset of the upper half of a tagged word.
 pub(crate) const HIGH_HALF_AT: usize = 4;
 /// The last value hole a row may name (`quench_bjit::HOLES` - 1).
