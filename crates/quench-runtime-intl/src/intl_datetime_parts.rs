@@ -605,6 +605,4 @@ const MONTH_NAMES: [&str; MONTHS_PER_YEAR] = [
     "November",
     "December",
 ];
-const MONTH_ABBREVIATIONS: [&str; MONTHS_PER_YEAR] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
+const MONTH_ABBREVIATIONS: [&str; MONTHS_PER_YEAR] = quench_runtime::units::MONTH_ABBREVIATIONS;

@@ -560,7 +560,7 @@ impl Vm {
                             let position = vm.get_property(p, result, atom)?;
                             let position = vm.to_primitive(p, position, "number")?;
                             let position =
-                                regexp_to_integer_or_infinity(vm.to_number(p, position)?);
+                                crate::integer_conversion::to_integer_or_infinity(vm.to_number(p, position)?);
                             let position =
                                 position.max(0.0).min(input.units().len() as f64) as usize;
                             let mut captures = Vec::new();
@@ -2949,16 +2949,6 @@ pub(super) fn advance_string_index_units(
         index + 2
     } else {
         index + 1
-    }
-}
-
-fn regexp_to_integer_or_infinity(value: f64) -> f64 {
-    if value.is_nan() || value == 0.0 {
-        0.0
-    } else if value.is_infinite() {
-        value
-    } else {
-        value.trunc()
     }
 }
 
