@@ -218,6 +218,23 @@ fn every_staged_opcode_decodes_to_one_operation() {
     }
 }
 
+/// A window record carries its register count above its slot (`window_base`); every local access
+/// decodes the slot below it (`window_slot`). The plain load and store read the whole immediate as
+/// the slot, so in a function with a window plan each took the general step.
+#[test]
+fn a_window_records_local_access_decodes_its_slot() {
+    use crate::bytecode::{Op, WideInstruction};
+    let imm = 3 | 40 << u16::BITS;
+    let slot = |operation| match operation {
+        Some(Operation::LoadLocalPlain { slot, .. } | Operation::StoreLocalPlain { slot, .. } | Operation::LoadLocalChecked { slot, .. }
+            | Operation::StoreLocalChecked { slot, .. } | Operation::InitializeLocal { slot }) => slot,
+        _ => panic!("a local access decodes"),
+    };
+    for op in [Op::LoadLocalPlain, Op::StoreLocalPlain, Op::LoadLocal, Op::StoreLocal, Op::InitializeTdz] {
+        assert_eq!(slot(Operation::<u64, ()>::decode_local(WideInstruction::new(op, 1, 0, 0, imm))), 3, "{op:?}");
+    }
+}
+
 /// `await`, `yield` and `yield*` decode to their suspension rows, with the registers the general
 /// step reads (`b` the value, `c` the delegate's iterator, the immediate's pair its state and `next`
 /// method) and resumes into (`a`), and a frame that answers none of the call-outs leaves the row to
