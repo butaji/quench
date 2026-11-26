@@ -1336,7 +1336,7 @@ impl LaneHelpers {
     }
 
     /// Whether helpers are symbols a loader resolves, not table entries.
-    fn names_symbols(self) -> bool {
+    pub(crate) fn names_symbols(self) -> bool {
         matches!(self, Self::Numeric | Self::Ahead)
     }
 
