@@ -66,13 +66,9 @@ impl Vm {
         let outer_locals = unsafe { let dispatch = &(*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) };
         let context = unsafe { self.bind_body_entry(frame, run) };
         let captures = entry_cell::capture_word(capture_values, capture_len, stores);
-        // A stencil body (`entry_body`) reads its captures word from its window's header, which whoever
-        // enters it writes; a Cranelift body takes it as the entry's word. The activation's receiver is in
-        // the header already (an arrow's lexical one included), which the entry's receiver word is not.
-        if run.method.framed() {
-            // SAFETY: a framed body runs in a lane window, whose context words precede register 0.
-            unsafe { crate::dispatch_fast::set_frame_word(run.registers, quench_runtime::staged::frame::CONTEXT_BODY, captures) };
-        }
+        // Every body takes the captures word as the entry's word; a stencil body's entry writes it to its
+        // window's header (`entry_body`). The activation's receiver is in the header already (an arrow's
+        // lexical one included), which the entry's receiver word is not.
         let descriptor = EntryDescriptor { kind: EntryKind::Body, receiver: run.receiver.to_bits(), captures, registers: run.registers.cast_const().cast(), entry: run.method.entry };
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.

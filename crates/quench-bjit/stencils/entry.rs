@@ -13,13 +13,13 @@
 //! (rdi = context, rsi = receiver, rdx = captures, rcx = the register file) and returns the
 //! status in eax and its result word in rdx. Its receiver and captures words are the header of its
 //! own window (`CONTEXT_THIS`, `CONTEXT_BODY`), written by whoever enters it (the call row's push, or
-//! the lane's own entry), so the entry saves and restores nothing: a callee's words never replace its
+//! the lane's own entry; the entry writes the captures word it is passed too), so the entry saves and restores nothing: a callee's words never replace its
 //! caller's. Its leave routines put the word in rax and the status in rdx, which the thunk swaps on
 //! the way out: `leave_stop` (hole 0 the word, hole 1 the status), `leave_stop_pop` (the word an exit
 //! stub pushed) and `leave_returned` (the activation completes with the register slot at hole 0; hole 1
 //! the status, hole 2 the record that completes it, which the lane reads from the dispatch payload).
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CONTEXT_BODY, JS_STEP_RETURNED_PC};
 use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::words::HOLE_V0;
 
@@ -90,13 +90,14 @@ pub unsafe extern "C" fn leave_pop() {
     core::arch::naked_asm!("pop rax", "mov edx, {stopped}", "ret", stopped = const NATIVE_JS_STOPPED)
 }
 
-/// The body entry (the lane body ABI): calls the first row. The receiver and captures words it is
-/// entered with are in the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by the
-/// caller, so nothing is saved or restored here.
+/// The body entry (the lane body ABI): calls the first row. The receiver is in the window's header
+/// already (`CONTEXT_THIS`, an arrow's lexical one included). The captures word the entry is passed
+/// (rdx) is written to the header (`CONTEXT_BODY`) here, so a caller of the Cranelift body ABI, which
+/// passes it but writes no header, enters a stencil body that took its function over as well.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    thunk!(["sub rsp, 8"], "call {first}", ["add rsp, 8"], first = sym HOLE_NEXT)
+    thunk!(["sub rsp, 8", "mov [r12 - {body}], rdx"], "call {first}", ["add rsp, 8"], first = sym HOLE_NEXT, body = const CONTEXT_BODY * 8)
 }
 
 /// The body's row entry (`EntryCell::rows`): a b-jit direct call row (`rust-preserve-none`: window r12,
