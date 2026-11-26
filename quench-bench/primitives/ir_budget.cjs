@@ -10,6 +10,8 @@ const mark = process.__irMark;
 const collect = typeof gc === "function" ? gc : () => {};
 if (typeof mark !== "function") { console.error("run with QUENCH_DEV=ir-mark"); process.exit(2); }
 const argv = process.argv.slice(2);
+// `--list`: the op names, one `IRBUDGET <op>` line each (the gate runs each op in its own process).
+if (argv[0] === "--list") { for (const name of Object.keys(PRIMITIVE_OPS)) console.log("IRBUDGET " + name); process.exit(0); }
 const n = +argv[0] || 20000;
 const warmup = +process.env.IRBUDGET_WARMUP || 3;
 const pairs = +process.env.IRBUDGET_PAIRS || 1;

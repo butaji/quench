@@ -242,10 +242,41 @@ fn split(shorter: &Dump, longer: &Dump) -> Split {
     shares
 }
 
-/// Instructions per iteration of each op the runner measured, in run order.
+/// Instructions per iteration of each op, in `ops` order (every op of ops.js when empty). Each op
+/// runs in its own callgrind process, `config.jobs` at a time: in one shared process a JIT op's
+/// count depended on the ops before it (TOD-2178 at 1f3cf0c878: b-jit alone vs shared geomean
+/// 1.075, 71 of 311 rows off by more than 5%; default v_nullish 20 alone, 466 shared), so the
+/// tier-order verdicts and the measured tier costs followed run order, not the op.
 fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<Measured>, String> {
+    let names = if ops.is_empty() { listed(config)? } else { ops.to_vec() };
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: std::sync::Mutex<Vec<Option<Result<Measured, String>>>> = std::sync::Mutex::new((0..names.len()).map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for _ in 0..config.jobs.max(1) {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(name) = names.get(index) else { break };
+                let scratch = config.target.join("ir-budget").join(format!("{}-{name}", mode.trim_start_matches('-')));
+                let one = measure_in(config, mode, std::slice::from_ref(name), &scratch)
+                    .and_then(|mut measured| measured.pop().ok_or_else(|| format!("{name}: not measured")));
+                results.lock().unwrap()[index] = Some(one);
+            });
+        }
+    });
+    results.into_inner().unwrap().into_iter().map(|one| one.unwrap_or_else(|| Err("op not run".to_owned()))).collect()
+}
+
+/// Every op of ops.js, in its order (the runner's `--list`).
+fn listed(config: &Config) -> Result<Vec<String>, String> {
+    let run = process::run(config.command(config.binary(NODE)?).arg("--no-jit").arg(RUNNER).arg("--list").env("QUENCH_DEV", "ir-mark"))?;
+    let names: Vec<String> = run.stdout.lines().filter_map(|line| line.strip_prefix(LINE_PREFIX)).map(str::to_owned).collect();
+    if run.success && !names.is_empty() { Ok(names) } else { Err(format!("{RUNNER} --list failed\n{}", run.excerpt())) }
+}
+
+/// Instructions per iteration of each op one runner process measured, in run order.
+fn measure_in(config: &Config, mode: &str, ops: &[String], scratch: &Path) -> Result<Vec<Measured>, String> {
     let host = config.binary(NODE)?;
-    let scratch = config.target.join("ir-budget");
+    let scratch = scratch.to_path_buf();
     let _ = fs::remove_dir_all(&scratch);
     fs::create_dir_all(&scratch).map_err(|error| format!("{}: {error}", scratch.display()))?;
     let mut command = config.command("valgrind");
