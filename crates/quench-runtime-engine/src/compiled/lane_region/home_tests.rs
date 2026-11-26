@@ -11,9 +11,7 @@ pub(crate) fn lower_loop(source: &str, file: &str) -> ir::Function {
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "run")).unwrap();
     let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
         &|_, _| Vec::new(), &|id| program.function_get(id as usize)).unwrap();
-    let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
-        instruction.op().control_flow_layout().jumps()
-            .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
+    let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),

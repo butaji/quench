@@ -77,7 +77,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
         || (local_name_requires_environment(name) && declared_in_environment())
 }
 #[allow(unused_imports)]
-pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, may_repeat, reachable_from};
+pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, jump_edge, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
 pub use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
@@ -1366,10 +1366,7 @@ impl HotDecoding {
 /// of a loop's back edge; handler edges are not jumps and are not listed here.
 pub fn back_edges_of(instructions: impl Iterator<Item = WideInstruction>) -> impl Iterator<Item = (usize, usize)> {
     instructions.enumerate().filter_map(|(pc, instruction)| {
-        instruction.op().control_flow_layout().jumps()
-            .then(|| instruction.jump_target() as usize)
-            .filter(|&target| target <= pc)
-            .map(|target| (pc, target))
+        control_flow::jump_edge(instruction).filter(|&target| target <= pc).map(|target| (pc, target))
     })
 }
 
