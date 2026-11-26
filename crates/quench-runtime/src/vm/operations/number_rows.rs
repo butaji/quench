@@ -373,25 +373,52 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     }
 }
 
+/// The largest magnitude an operand of the integral remainder (`integral_remainder`) may have: 2^53,
+/// past which a binary64 no longer holds every integer. Every tier's integral remainder takes this
+/// bound (Emit's `number_machine::integral_remainder` too), so they admit the same operands.
+pub const INTEGRAL_REMAINDER_LIMIT: i64 = 1 << 53;
+
+/// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN. `cvttsd2si` (SSE2, the x86-64
+/// baseline) is one instruction with no constant pool, so a stencil may hold it, as it may not a saturating `as`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) fn truncate_i64(value: f64) -> i64 {
+    // SAFETY: SSE2 is the x86-64 baseline; the conversion touches no memory.
+    unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(value)) }
+}
+
+/// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN (the portable form).
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+pub(crate) fn truncate_i64(value: f64) -> i64 {
+    if value.is_nan() || value.abs() >= 9.2e18 { i64::MIN } else { value as i64 }
+}
+
+/// The remainder of two integral Numbers of magnitude at most `INTEGRAL_REMAINDER_LIMIT`, the
+/// divisor nonzero: the exact i64 remainder, which has the dividend's sign, and a zero with the
+/// dividend's sign (`-0` for a negative one). `None` for any other pair (fractions, larger
+/// magnitudes, NaN, infinities, a zero divisor), which only the float remainder answers. Integer
+/// tests and one truncation only, no float constant, so a stencil of the Concrete stage holds it.
+#[inline(always)]
+pub fn integral_remainder(left: f64, right: f64) -> Option<f64> {
+    let (dividend, divisor) = (truncate_i64(left), truncate_i64(right));
+    // `i64::MIN` (out of range, NaN) has a magnitude past the limit, so it is never exact.
+    let exact = |value: i64, number: f64| value as f64 == number && value.unsigned_abs() <= INTEGRAL_REMAINDER_LIMIT as u64;
+    if !(exact(dividend, left) && exact(divisor, right)) || divisor == 0 {
+        return None;
+    }
+    let remainder = dividend % divisor;
+    Some(if remainder == 0 { f64::from_bits(left.to_bits() & (1 << 63)) } else { remainder as f64 })
+}
+
 /// Number remainder after operand conversion. Also callable by the shared native
 /// emitter: no VM state, allocation, collection, guest effects, or integer traps.
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.
 #[inline]
 pub extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
-    // Integral operands inside i64 (the common `(a * k) % m` past int32) take the integer
-    // remainder, which is exact: a double remainder is always representable and has the
-    // dividend's sign, as `%` on i64 does. `fmod` costs ~170 instructions; this ~15. A zero
-    // remainder keeps the dividend's sign (`-0`). Everything else (fractions, magnitudes
-    // past 2^63, NaN, infinities, a zero divisor) is the float remainder.
-    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
-    if left.abs() < LIMIT && right.abs() < LIMIT {
-        let (dividend, divisor) = (left as i64, right as i64);
-        if dividend as f64 == left && divisor as f64 == right && divisor != 0 {
-            let remainder = dividend % divisor;
-            return if remainder == 0 { if left.is_sign_negative() { -0.0 } else { 0.0 } } else { remainder as f64 };
-        }
-    }
-    left % right
+    // Integral operands take the integer remainder (`integral_remainder`, ~15 instructions where
+    // `fmod` costs ~170); everything else the float remainder.
+    integral_remainder(left, right).unwrap_or_else(#[inline(always)] || left % right)
 }
 
 /// The parser's binary and unary operator codes, as an instruction's operator field holds them

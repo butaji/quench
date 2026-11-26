@@ -69,8 +69,7 @@ impl Fact {
 
     /// The fact of the Number `value`: an int32 unless it is not one, or is `-0`.
     pub(super) fn number(value: f64) -> Self {
-        let int = value as i32;
-        Self::of(if f64::from(int) == value && (int != 0 || value.is_sign_positive()) { Type::INT32 } else { Type::NUMBER })
+        Self::of(if crate::value::exact_int32(value).is_some() { Type::INT32 } else { Type::NUMBER })
     }
 
     /// The representation a register holding this fact at every point has.
