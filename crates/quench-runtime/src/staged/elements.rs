@@ -174,7 +174,7 @@ fn wide_read<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, 
 /// (`replace_double`); any other value leaves, for the VM's store to convert or make the
 /// backing generic (`ArrayElements::replace_in_place`).
 #[inline(always)]
-pub(crate) fn replace_present<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
+pub(crate) fn replace_present<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
     miss: S::Miss) -> Option<()> {
     let Some(flag) = view.double else { return replace_wide(stage, view, index, value, miss) };
     let double = stage.ne_imm(flag, 0u32);
@@ -197,19 +197,25 @@ fn replace_wide<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Wor
 
 /// `replace_present` of a view whose backing is double (`heap::DOUBLE_LEN`): a Number that is
 /// no int32 (`value::is_double`) is its double's bits, NaN canonical, which is the very word the
-/// backing holds for it (`array_elements::double_word`), so the store writes the value's word.
-/// A present element is replaced, so the backing's count (of holes) stays. An int32 or any
-/// other value leaves at `miss`.
+/// backing holds for it (`array_elements::double_word`), so the store writes the value's word; an
+/// int32 writes its binary64, as the VM's store does (`ArrayElements::replace_encoded_in_place`),
+/// so a whole Number (`i * 0.5` at an even `i`) stays in the compiled store. A present element is
+/// replaced, so the backing's count (of holes) stays. Any other value leaves at `miss`.
 #[inline(always)]
-fn replace_double<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
+fn replace_double<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
     miss: S::Miss) -> Option<()> {
-    let number = super::value::is_double(stage, value);
+    let (double, int) = super::value::number_classes(stage, value);
+    let number = stage.either(double, int);
     stage.guard(number, miss)?;
     bounded(stage, view.within, view.length, index, miss)?;
     let (address, old) = loaded_element(stage, view.values, index);
     let present = stage.ne_imm(old, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
-    stage.store_u64(Region::Elements.mutable(), address, 0, value);
+    stage.effect_if(int, #[inline(always)] |stage| {
+        let integer = stage.narrow(value);
+        let number = stage.i32_to_f64(integer);
+        stage.store_f64(Region::Elements.mutable(), address, 0, number);
+    }, #[inline(always)] |stage| stage.store_u64(Region::Elements.mutable(), address, 0, value));
     Some(())
 }
 

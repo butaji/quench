@@ -338,12 +338,20 @@ fn construct_admitted(cx: *mut LaneContext, vm: &Vm) -> Result<(), u64> {
 }
 
 /// The receiver `callee`'s plan finishes (`planned_construction`, or a forwarding constructor's
-/// fields), else, for `new Array()` of the realm's own `Array`, ArrayCreate(0), an empty array of
-/// `Array.prototype`, which calls nothing.
+/// fields), else, for `new Array(...)` of the realm's own `Array`, the array the lane's own
+/// construction makes (`Vm::intrinsic_array_construction`: `new Array(n)`'s holes, or the
+/// values), which calls nothing; an invalid length is a miss, whose RangeError the VM throws.
 fn constructed_in_place(vm: &mut Vm, call: &BodyCall, callee: Value) -> Option<Value> {
     let this = planned_construction(vm, callee, call.argument())
         .or_else(|| forwarded_fields_in_lane(vm, callee, call.argument()))
-        .or_else(|| (call.argc() == 0 && vm.realm_array_constructor(callee)).then(|| vm.hole_array(0)))?;
+        .or_else(|| {
+            if !vm.realm_array_constructor(callee) { return None; }
+            if call.argc() == 0 { return Some(vm.hole_array(0)); }
+            // SAFETY: the registers do not move while the values are read; the array is made after.
+            let values = unsafe { call.values() };
+            let values: smallvec::SmallVec<[Value; 4]> = values.iter().copied().collect();
+            vm.intrinsic_array_construction(callee, &values)
+        })?;
     note_allocation(vm);
     Some(this)
 }
