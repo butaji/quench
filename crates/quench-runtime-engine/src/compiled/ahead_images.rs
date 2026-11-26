@@ -13,7 +13,6 @@ use crate::aot_image::{LaneImage, base::BaseImage, symbols::SymbolTable};
 #[cfg(feature = "jit")]
 use crate::aot_image::symbols::Symbol;
 use quench_runtime::compile::aot_facts::AotFacts;
-#[cfg(feature = "jit")]
 use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, file::Words, live::{self, LiveImage}};
 #[cfg(feature = "jit")]
