@@ -1791,6 +1791,10 @@ pub struct LoopTier {
     pub demoted: bool,
     /// Whether BaseJIT declined the site's b-jit region in the default mode: the site compiles u-jit regions only.
     pub stencil_declined: bool,
+    /// The current code's timed runs (ns, iterations), and the b-jit region's ns per iteration when a promotion
+    /// replaced it (TOD-2295, `LoopTier::weigh_time`).
+    pub native: (u64, u64),
+    pub base_ns_per_iteration: Option<u64>,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
