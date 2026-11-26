@@ -78,6 +78,19 @@ impl Vm {
         self.prove_array_iterator_lacks(key)
     }
 
+    /// Whether an array pattern reads the elements of an array literal of at least as many plain elements
+    /// with no observable step (`UNARY_FRESH_ARRAY_PATTERN`): the array the literal makes is an ordinary
+    /// array of present data elements on the realm's `Array.prototype` with no own `@@iterator`, so
+    /// `array_pattern_fits` of it holds where the realm's array iteration is intact and its close calls nothing.
+    pub fn fresh_array_pattern_fits(&mut self) -> bool {
+        if !self.fresh_array_iteration_intact() {
+            return false;
+        }
+        let key = PropertyKey::string(self.runtime_atoms.iterator_return);
+        let proto = self.array_iterator_proto;
+        self.iterator_absence_proved(proto, key) || self.prove_array_iterator_lacks(key)
+    }
+
     /// `array_pattern_fits`'s proof that the realm's array iterator prototype chain lacks
     /// `key`, kept for the next ask as `iterator_lacks_property_proving` keeps it.
     #[cold]

@@ -228,6 +228,9 @@ struct LocalProofs {
     readable: BitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
+    /// The projection of the realm's global object a held slot's access proved (`call_out::global_layout`),
+    /// until an effect that may move the property arena retires it, as `layouts`.
+    global: Option<(CheckedObject, usize)>,
     /// The exact shape a register's object had before a call (`kept_shapes.rs`), which the code
     /// holds again at the register's next use where the VM holds the shape stable.
     kept_shapes: BTreeMap<Register, u32>,
@@ -303,7 +306,7 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: BitSet::with_capacity(registers + 1),
-            layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
+            layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
     }
@@ -337,6 +340,7 @@ impl State {
         self.proofs.headers.fill(None);
         self.proofs.readable.clear();
         self.proofs.layouts.clear();
+        self.proofs.global = None;
         self.proofs.stable = false;
         for fact in &mut self.values {
             let unshaped = fact.value.ty.without_object_shape();
@@ -1026,6 +1030,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
         state.proofs.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
+        state.proofs.global = first.global.filter(|kept| rest.iter().all(|other| other.global == Some(*kept)));
         state.proofs.receivers = first.receivers.iter().filter(|register| rest.iter()
             .all(|other| other.receivers.contains(register))).copied().collect();
         state.proofs.fields = first.fields.iter().copied().filter(|field| rest.iter()
@@ -3276,6 +3281,7 @@ impl Lowering<'_, '_> {
     /// into it retire and its base reloads.
     fn allocated(&mut self, state: &mut State) {
         state.proofs.layouts.clear();
+        state.proofs.global = None;
         self.reload_property_arena();
     }
 
