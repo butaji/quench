@@ -3116,6 +3116,11 @@ script_handler! {
             (!left.as_number().is_some_and(f64::is_nan)).then_some(true)
         } else if left.as_int().is_some() && right.as_int().is_some() {
             Some(false)
+        } else if !left.is_heap() && !right.is_heap() && !left.is_internal_marker() && !right.is_internal_marker() {
+            // Two unequal words outside the heap (`v === undefined` of a Number, `x === null` of a
+            // Boolean): only two Numbers may still be equal (an int32 and its double, `0` and `-0`);
+            // any other pair differs in type or value, so no heap cell need decide it.
+            Some(left.as_number().zip(right.as_number()).is_some_and(|(left, right)| left == right))
         } else {
             None
         };
@@ -3387,6 +3392,12 @@ unsafe fn binary_values_classified(
 ) -> Option<Value> {
     match unsafe { vm(cx) }.number_binary_classified(operator, left, right, pair) {
         Some(value) => Some(value),
+        // Two strings ordered (`a < b` over string keys, a sort's comparator): their texts decide it
+        // before the BigInt, immediate and relation probes, which would only decline them.
+        None if left.is_heap() && right.is_heap()
+            && (STRICT_INEQUALITY_OPERATOR + 1..=quench_runtime::vm::operations::LAST_COMPARISON_OPERATOR).contains(&operator)
+            && let Some(holds) = unsafe { vm(cx) }.string_relation(operator, left, right) =>
+            Some(if holds { Value::TRUE } else { Value::FALSE }),
         // Two BigInts ordered (`a < b` over BigInt keys): their cells decide it before the string and
         // immediate probes, which would only decline them.
         None if left.is_heap() && right.is_heap() && let Some(holds) = unsafe { vm(cx) }.bigint_relation(operator, left, right) =>
@@ -3741,7 +3752,7 @@ fn requicken_typed(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
     // SAFETY: `ip` is a live element record of the view; an element record's operand holds no
     // loop site or call target, so its immediate is free for the kind.
     unsafe { (*ip.cast_mut()).operand.imm = index };
-    let handler = if read { element_typed_read_row() } else { element_typed_write_row() };
+    let handler = element_typed_row(read, index);
     requicken(ip, handler);
 }
 
@@ -3849,6 +3860,7 @@ fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Value, value: V
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_host_private_symbol_set(object, key, value)
         && !row_typed_store(ip, vm, object, key, value)
+        && !vm.array_index_key(key).is_some_and(|index| vm.typed_array_set_bigint(object, index as usize, value))
         && !vm.try_plain_string_key_set(object, key, value)
         && !key
             .as_int()
@@ -4443,11 +4455,49 @@ const FIELD_LEAF_READ: u16 = {
 // merge: HEAD's typed element rows are restored: the shared `requicken_typed` and `row_typed_element` use them.
 pub(crate) const TYPED_SITE: u8 = own_site(false, OWN_FORMS.len() + 26);
 
+/// The typed sites whose rows fix the element kind when compiled: the first three native kinds
+/// (`typed_elements::native_kind_at` 0, 1, 2: Float64, Int32, Uint8), the kinds most code indexes. Their
+/// rows read and store with no dispatch on the kind; any other kind's record keeps `TYPED_SITE`, whose
+/// row reads the kind from its immediate.
+pub(crate) const TYPED_FLOAT64_SITE: u8 = own_site(false, OWN_FORMS.len() + 27);
+pub(crate) const TYPED_INT32_SITE: u8 = own_site(false, OWN_FORMS.len() + 28);
+pub(crate) const TYPED_UINT8_SITE: u8 = own_site(false, OWN_FORMS.len() + 29);
+
+/// The native kind index a typed site fixes (`TYPED_FLOAT64_SITE`..), `None` for any other site.
+pub(crate) const fn typed_site_kind(site: u8) -> Option<u32> {
+    match site {
+        TYPED_FLOAT64_SITE => Some(0),
+        TYPED_INT32_SITE => Some(1),
+        TYPED_UINT8_SITE => Some(2),
+        _ => None,
+    }
+}
+
 /// The generated typed keyed read (`generated_row` of `ELEMENT_READ`, `TYPED_SITE`).
 pub(crate) const fn element_typed_read_row() -> Handler { generated_row!(ELEMENT_READ, ACC_NONE, TYPED_SITE) }
 
 /// The generated typed keyed write (`generated_row` of `ELEMENT_WRITE`, `TYPED_SITE`).
 pub(crate) const fn element_typed_write_row() -> Handler { generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_SITE) }
+
+/// The typed keyed read or write row of the native kind at `index`: a fixed kind's own row
+/// (`typed_site_kind`), else the row that reads the kind from the record.
+pub(crate) const fn element_typed_row(read: bool, index: u32) -> Handler {
+    match (read, index) {
+        (true, 0) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_FLOAT64_SITE),
+        (true, 1) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_INT32_SITE),
+        (true, 2) => generated_row!(ELEMENT_READ, ACC_NONE, TYPED_UINT8_SITE),
+        (true, _) => element_typed_read_row(),
+        (false, 0) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_FLOAT64_SITE),
+        (false, 1) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_INT32_SITE),
+        (false, 2) => generated_row!(ELEMENT_WRITE, ACC_NONE, TYPED_UINT8_SITE),
+        (false, _) => element_typed_write_row(),
+    }
+}
+
+/// Whether `handler` is a typed keyed read row (`read`) or write row, of any kind (`element_typed_row`).
+pub(crate) fn is_typed_element_row(handler: *const (), read: bool) -> bool {
+    (0..4).any(|index| element_typed_row(read, index) as *const () == handler)
+}
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
 /// whose generated row (`generated_row`) a store record runs: its hint as a layout store.

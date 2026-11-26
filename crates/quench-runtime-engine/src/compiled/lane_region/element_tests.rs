@@ -23,7 +23,7 @@ fn region_over(source: &str, observed: bool, left: bool, views: ElementViews) ->
     let at = |class: Class| -> Vec<usize> { unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().class().eq(&class)).map(|(pc, _)| pc).collect() };
     let reads: Vec<_> = at(Class::GetIndex).into_iter().filter(|_| observed)
-        .map(|pc| super::super::facts::ObservedRead { pc, ty: Type::NUMBER }).collect();
+        .map(|pc| super::super::facts::ObservedRead { pc, ty: Type::NUMBER, kind: None }).collect();
     let generic = if left { at(Class::SetIndex) } else { Vec::new() };
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();

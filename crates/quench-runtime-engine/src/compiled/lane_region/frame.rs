@@ -430,6 +430,7 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     state.proofs.receivers.remove(&register);
     state.proofs.kept_shapes.remove(&register);
     state.proofs.fields.retain(|field| field.owner != Some(register));
+    state.proofs.typed.retain(|view| view.register != register);
 }
 
 /// `source`'s value into `destination`, with every fact proved of it.
@@ -449,6 +450,8 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
         .filter(|field| field.owner == Some(source))
         .map(|field| FieldValue { owner: Some(destination), ..*field }).collect();
+    let typed: smallvec::SmallVec<[_; 2]> = state.proofs.typed.iter().filter(|view| view.register == source)
+        .map(|view| super::TypedProof { register: destination, ..*view }).collect();
     register_define(builder, registers, written, state, destination, value, fact);
     if let Some(bits) = tagged {
         builder.def_var(registers.tagged[usize::from(destination)], bits);
@@ -460,6 +463,7 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     if receiver { state.proofs.receivers.insert(destination); }
     if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
     state.proofs.fields.extend(fields);
+    state.proofs.typed.extend(typed);
     value
 }
 

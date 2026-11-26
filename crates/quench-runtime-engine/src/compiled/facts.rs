@@ -440,6 +440,9 @@ pub(crate) fn proves_numbers(instruction: WideInstruction, registers: usize, con
 pub(crate) struct ObservedRead {
     pub(crate) pc: usize,
     pub(crate) ty: Type,
+    /// The typed array kind the interpreter's element record at `pc` was switched to (`requicken_typed`):
+    /// the access proves its view for that kind alone (`Observed::kind_at`). A write's entry types nothing (`Type::ANY`).
+    pub(crate) kind: Option<quench_runtime::tier_surface::TypedArrayKind>,
 }
 
 /// The element reads an entry observed to yield Numbers or int32s (sorted by PC).
@@ -451,7 +454,12 @@ impl Observed<'_> {
 
     /// The type the element read at `pc` was observed to yield.
     pub(crate) fn at(&self, pc: usize) -> Option<Type> {
-        self.0.binary_search_by_key(&pc, |read| read.pc).ok().map(|at| self.0[at].ty)
+        self.0.binary_search_by_key(&pc, |read| read.pc).ok().map(|at| self.0[at].ty).filter(|ty| *ty != Type::ANY)
+    }
+
+    /// The typed array kind the element access at `pc` was observed to take (`ObservedRead::kind`).
+    pub(crate) fn kind_at(&self, pc: usize) -> Option<quench_runtime::tier_surface::TypedArrayKind> {
+        self.0.binary_search_by_key(&pc, |read| read.pc).ok().and_then(|at| self.0[at].kind)
     }
 }
 
