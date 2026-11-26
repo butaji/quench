@@ -3561,9 +3561,10 @@ lane_handler! {
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
+            .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
             .or_else(|| vm.absent_array_element(base, key))
-            .or_else(|| vm.plain_keyed_get(base, key)).or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
+            .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
@@ -3644,16 +3645,16 @@ fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) -> Option<V
         return Some(value);
     }
     let key = vm.canonical_index_key(key);
-    // A typed array answers every index read itself, never its prototype chain, and a string
-    // every index inside its length, so their reads come before the ordinary array probes,
-    // which would only decline them.
+    // A typed array answers every index read itself, never its prototype chain (a BigInt kind's
+    // element too, which allocates), and a string every index inside its length, so their reads
+    // come before the ordinary array probes, which would only decline them.
     vm.dense_array_element(base, key)
         .or_else(|| named_key_element(vm, base, key))
         .or_else(|| row_typed_element(ip, vm, base, key))
+        .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| site_keyed_get_in_lane(vm, ip, base, key))
-        .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
         .or_else(|| vm.keyed_array_length(base, key))
 }
 
