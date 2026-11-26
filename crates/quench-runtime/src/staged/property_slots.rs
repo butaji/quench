@@ -19,7 +19,7 @@ pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &
     // The word the receiver's header read, where it read one.
     let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
         crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset));
-    let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
+    let same = { let shape = stage.shape_site(shape); stage.eq_imm(word, shape) };
     stage.guard(same, miss)?;
     let shaped = super::super::Shaped::of_guard(at.record);
     frame.prove_shape(stage, owner, (shape, shaped), direct);

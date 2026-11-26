@@ -13,7 +13,7 @@ use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, Ex
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x06";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x07";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
@@ -124,6 +124,7 @@ fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
 
 fn put_shape(out: &mut Vec<u8>, shape: &ShapeRecipe) {
     out.extend(shape.prototype.unwrap_or(NO_PROTOTYPE).to_le_bytes());
+    out.extend(shape.constructor.unwrap_or(NO_PROTOTYPE).to_le_bytes());
     put_count(out, shape.fields.len());
     for (atom, attributes) in shape.fields.iter() {
         out.extend(atom.to_le_bytes());
@@ -255,8 +256,9 @@ fn read_recipes(words: &mut Words<'_>) -> Result<Recipes, String> {
 
 fn read_shape(words: &mut Words<'_>) -> Result<ShapeRecipe, String> {
     let prototype = words.half()?;
+    let constructor = words.half()?;
     let fields = (0..words.half()?).map(|_| Ok((words.half()?, words.byte()?))).collect::<Result<_, String>>()?;
-    Ok(ShapeRecipe { prototype: (prototype != NO_PROTOTYPE).then_some(prototype), fields })
+    Ok(ShapeRecipe { prototype: (prototype != NO_PROTOTYPE).then_some(prototype), constructor: (constructor != NO_PROTOTYPE).then_some(constructor), fields })
 }
 
 fn read_heap_value(words: &mut Words<'_>) -> Result<HeapValueRecipe, String> {

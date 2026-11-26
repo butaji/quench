@@ -1961,6 +1961,16 @@ impl Vm {
         (!raw_double || (holder.is_none() && depended)).then_some((ty, raw_double))
     }
 
+    /// The type `slot` of `shape` holds where a reader may take its words as tagged values, which
+    /// an ahead image's guessed field read is (`aot_image::symbols::guarded_shape`): `None` where
+    /// its words are raw doubles, or where no store has typed the slot yet, so a first Number
+    /// store could make them raw. A type within Number may still widen to raw doubles, so a
+    /// reader depends on it (`SlotDependency`); any other type stays tagged.
+    pub fn tagged_slot_type(&self, shape: u32, slot: u16) -> Option<crate::typed_ir::Type> {
+        let ty = self.heap.slot_type(shape, usize::from(slot));
+        (!self.heap.slot_holds_raw_doubles(shape, usize::from(slot)) && ty != crate::typed_ir::Type::NEVER).then_some(ty)
+    }
+
     /// The global object's own data field a by-name load's hint (an own entry) names, its
     /// values flat or behind extras (`Heap::global_field_hit`).
     #[inline(always)]

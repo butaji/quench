@@ -33,6 +33,9 @@ pub(crate) struct Emit<'a, 'b> {
 #[derive(Clone, Copy)]
 pub(crate) enum EmitImm {
     Const(u64),
+    /// Shape recipe `key` of an ahead image (`ic::SYMBOLIC_SHAPE`): the symbol its loader resolves
+    /// to the shape's id in the VM it links to, or to an id no record has where it builds none.
+    Shape(u32),
 }
 
 impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
@@ -49,13 +52,23 @@ impl Emit<'_, '_> {
 
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
     fn word(&mut self, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.constant(bits) }
+        match imm {
+            EmitImm::Const(bits) => self.constant(bits),
+            EmitImm::Shape(key) => crate::symbol_words::symbol_address(self.builder, crate::compiled::lane_region::relocs::RelocKind::GuardShape as u32, key),
+        }
     }
     fn compare(&mut self, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_compare(relation, a, b) }
     /// `a` against an immediate at `a`'s own width (`icmp_imm`): a record's 32-bit shape word
     /// against a shape id is a 32-bit test, where an `i64` constant would not verify.
     fn compare_imm(&mut self, relation: Relation, a: ir::Value, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64) }
+        match imm {
+            EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64),
+            EmitImm::Shape(_) => {
+                let symbol = self.word(imm);
+                let b = if self.builder.func.dfg.value_type(a) == ir::types::I32 { self.narrow(symbol) } else { symbol };
+                self.raw_compare(relation, a, b)
+            }
+        }
     }
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
@@ -71,9 +84,14 @@ impl Stage for Emit<'_, '_> {
     type Imm = EmitImm;
 
     fn site(&mut self, v: u64) -> EmitImm { EmitImm::Const(v) }
+    fn shape_site(&mut self, shape: u32) -> EmitImm {
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        if shape & tag != 0 { EmitImm::Shape(shape & !tag) } else { EmitImm::Const(u64::from(shape)) }
+    }
     fn load_site(&mut self, at: Access, base: ir::Value, offset: EmitImm) -> ir::Value {
         match offset {
             EmitImm::Const(bits) => self.load_u64(at, base, bits as i32),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }

@@ -89,6 +89,10 @@ pub trait Stage: crate::projection::Sealed {
     /// A per-site operand `v` as this stage's `Imm`: every operand of the bytecode or of an IC
     /// site reaches the stage through here.
     fn site(&mut self, v: u64) -> Self::Imm;
+    /// A shape id operand as this stage's `Imm`: a site operand (`site`), but in an ahead image's
+    /// lowering a shape id tagged `ic::SYMBOLIC_SHAPE` names the image's shape recipe of that
+    /// number, which the Cranelift stage emits as the symbol its loader resolves.
+    fn shape_site(&mut self, shape: u32) -> Self::Imm { self.site(u64::from(shape)) }
     fn constant(&mut self, bits: u64) -> Self::Word;
     /// The loads and stores say which alias region they touch and whether it can change while
     /// code runs (`Access`): a specializer tags the access so Cranelift may reorder and hoist
