@@ -17305,11 +17305,12 @@ fn arithmetic_binary(instruction: WideInstruction) -> bool {
 /// Where the registers' int32 kinds (`kinds`) prove every register operand of a record with no
 /// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
 /// which reads them with no tag test; one that reads a speculative register is listed in
-/// `speculating` with its checked form (`LaneView::retire_int_speculation`).
+/// `speculating` with its checked form (`LaneView::retire_int_speculation`). Where the kinds prove no such
+/// operand, a register pair takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
 fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
     kinds: Option<&int_kinds::IntKinds>, speculating: &mut Vec<(u32, *const (), *const ())>) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
         ($acc:expr) => {
             generated_row!(quench_runtime::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
@@ -17383,6 +17384,16 @@ fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], 
                     speculating.push((pc as u32, proven_handler as *const (), handler as *const ()));
                 }
                 records[pc].handler = proven_handler as *const ();
+            }
+            // The guarded form, where the kinds prove neither register of a register pair: the same operator's
+            // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Not listed in
+            // `speculating`: its guard is the check, and its general form is the record's requicken target. A
+            // register and an int32 constant keep their int32 form, which tests one tag already.
+            macro_rules! guarded_at {
+                ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
+            }
+            if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && let Some(guarded_handler) = arithmetic_operators!(instruction.binary_operator(), guarded_at) {
+                records[pc].handler = guarded_handler as *const ();
             }
         } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
             records[pc].handler = strict_equality_row::<false> as Handler as *const ();
