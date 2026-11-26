@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://quench.run/</loc><lastmod>2026-11-25</lastmod></url>
-  <url><loc>https://quench.run/benchmarks/</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://quench.run/fastest-javascript-runtime-in-rust/</loc><lastmod>2026-11-20</lastmod></url>
+  <url><loc>https://quench.run/</loc><lastmod>2026-11-26</lastmod></url>
+  <url><loc>https://quench.run/benchmarks/</loc><lastmod>2026-11-26</lastmod></url>
+  <url><loc>https://quench.run/fastest-javascript-runtime-in-rust/</loc><lastmod>2026-11-26</lastmod></url>
   <url><loc>https://quench.run/low-memory-nodejs-alternative/</loc><lastmod>2026-11-20</lastmod></url>
   <url><loc>https://quench.run/compile-javascript-to-native-executable/</loc><lastmod>2026-11-25</lastmod></url>
   <url><loc>https://quench.run/test262-compliant-javascript-engine/</loc><lastmod>2026-11-20</lastmod></url>
-  <url><loc>https://quench.run/javascript-engine-for-ai-agents/</loc><lastmod>2026-11-20</lastmod></url>
-  <url><loc>https://quench.run/blog/</loc><lastmod>2026-11-25</lastmod></url>
+  <url><loc>https://quench.run/javascript-engine-for-ai-agents/</loc><lastmod>2026-11-26</lastmod></url>
+  <url><loc>https://quench.run/blog/</loc><lastmod>2026-11-26</lastmod></url>
+  <url><loc>https://quench.run/blog/progress-2026-11-26-a-gate-for-tier-order/</loc><lastmod>2026-11-26</lastmod></url>
   <url><loc>https://quench.run/blog/progress-2026-11-25-calls-allocation-and-polls-become-rows/</loc><lastmod>2026-11-25</lastmod></url>
   <url><loc>https://quench.run/blog/hello-world-in-4896-bytes/</loc><lastmod>2026-11-25</lastmod></url>
   <url><loc>https://quench.run/blog/strict-aot-refuses-and-names-the-input/</loc><lastmod>2026-11-25</lastmod></url>

@@ -40,7 +40,7 @@ def part_ir(path):
 
 def measure(engine, ds, case, n, reps, warmup, quench):
     out = Path(tempfile.mkdtemp(prefix=f"ir-{ds}-{case}-{engine}-"))
-    base = ["valgrind", "--tool=callgrind", f"--callgrind-out-file={out}/cg.out"]
+    base = ["valgrind", "--tool=callgrind", "--smc-check=all", "--fair-sched=yes", f"--callgrind-out-file={out}/cg.out"]
     env = dict(os.environ)
     if engine == "c":
         cwd = SUITE / ds / "c"
