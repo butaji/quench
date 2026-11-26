@@ -169,6 +169,13 @@ impl LaneView {
         true
     }
 
+    /// Whether the default mode starts this function's body on b-jit (`LaneBodyHistory::base_first`): one not promoted
+    /// past it, whose loops never ran. A function whose loops ran keeps them on their own regions, which tier up by their
+    /// measured runs; a stencil body around a loop never would (c_i32_indirect: 263 Ir/iter in it, 13 in the loop's u-jit region).
+    pub(crate) fn starts_on_base(&self, history: LaneBodyHistory) -> bool {
+        !history.promoted && !self.loops.iter().any(|site| site.taken.get() > 0 || { let tier = site.tier.borrow(); tier.code.is_some() || tier.iterations() > 0 })
+    }
+
     /// Retires the b-jit body the default mode started its function on once its `completions` repay the u-jit
     /// compile over it (`lane_facts::promotes_base_body`): its next entry compiles the u-jit body.
     fn promote_base_body(&self, completions: u32) -> bool {
