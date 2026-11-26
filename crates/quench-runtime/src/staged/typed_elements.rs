@@ -184,22 +184,14 @@ fn element_address<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, kin
 }
 
 /// What `access` makes of the element the kind word `kind` names, one arm per kind of `ELEMENTS`
-/// in order; a kind no arm names leaves at `miss`. Unrolled (no recursion, no kind table), so a
-/// stencil instantiates every arm with its kind fixed and holds no data but its holes.
+/// in order; a kind no arm names leaves at `miss`. Unrolled: a stencil holds no kind table, only its holes.
 #[inline(always)]
 fn by_word<S: Stage>(stage: &mut S, kind: S::Word, access: &impl Fn(&mut S, NativeKind) -> Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     macro_rules! arms {
-        ($stage:ident; $last:literal) => {{
-            let named = $stage.eq_imm(kind, ELEMENTS[$last].kind as u64);
-            $stage.guard(named, miss)?;
-            access($stage, ELEMENTS[$last])
-        }};
-        ($stage:ident; $first:literal $(, $rest:literal)+) => {{
-            let named = $stage.eq_imm(kind, ELEMENTS[$first].kind as u64);
-            $stage.choose_leaving(named, #[inline(always)] |stage| access(stage, ELEMENTS[$first]),
-                #[inline(always)] |stage| arms!(stage; $($rest),+))
-        }};
+        ($stage:ident; $last:literal) => {{ let named = $stage.eq_imm(kind, ELEMENTS[$last].kind as u64); $stage.guard(named, miss)?; access($stage, ELEMENTS[$last]) }};
+        ($stage:ident; $first:literal $(, $rest:literal)+) => {{ let named = $stage.eq_imm(kind, ELEMENTS[$first].kind as u64);
+            $stage.choose_leaving(named, #[inline(always)] |stage| access(stage, ELEMENTS[$first]), #[inline(always)] |stage| arms!(stage; $($rest),+)) }};
     }
     const { assert!(ELEMENTS.len() == 9, "one arm per native kind") };
     arms!(stage; 0, 1, 2, 3, 4, 5, 6, 7, 8)
