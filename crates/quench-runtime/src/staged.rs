@@ -74,7 +74,7 @@ pub(crate) mod int_math;
 mod names;
 pub mod protocol_literals;
 pub mod protocol_classes;
-pub(crate) mod protocol_values;
+pub(crate) mod protocol_values; #[cfg(not(stencil_build))] pub use protocol_values::strict_reference_step;
 pub mod protocol_owned;
 pub(crate) mod protocol_wasm;
 mod callout;
@@ -108,7 +108,7 @@ pub use callout::{CallOut, OperandValues};
 pub use spread::Passing;
 pub use decode::{DecodeContext, Fields};
 #[allow(unused_imports)]
-pub use compare::{nullish_of, Comparison}; pub use generic::decide as equality_decided;
+pub use compare::{nullish_of, Comparison}; pub use generic::{decide as equality_decided, number_strict_equal};
 pub use concrete::Concrete;
 #[allow(unused_imports)]
 pub use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};

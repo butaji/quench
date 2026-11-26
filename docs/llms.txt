@@ -17,7 +17,7 @@ Key measured facts (interpreter only in every engine: quench --no-jit, node --ji
 
 ## Built for agent Code Mode
 Quench targets agent harnesses that run model-written code in-process (Code Mode), often hundreds of agents per machine:
-- The QuickJS slot, with more speed: small, embedded, interpreter only. With the JIT off, V8-v7 scores 1.49x to 2.57x the best of node --jitless and Bun; five of eight benchmarks peak at 6.4 to 8.2 MB RSS (Node 43 to 50 MB, Bun 16 to 26 MB). Not yet benchmarked against QuickJS; that is a positioning goal, not a result.
+- The QuickJS slot, with more speed: small, embedded, interpreter only. With the JIT off, V8-v7 scores 1.49x to 2.57x (14 Nov 2026) the best of node --jitless and Bun; five of eight benchmarks peak at 6.4 to 8.2 MB RSS (Node 43 to 50 MB, Bun 16 to 26 MB). Not yet benchmarked against QuickJS; that is a positioning goal, not a result.
 - Embeddable and Rust-native: quench-runtime is a Rust library (Runtime with a Host, host functions for tools, execution interrupt to stop runaway code). Not on crates.io yet; API unstable.
 - No JIT required: --no-jit (the library default) runs the interpreter only, WebAssembly included; no machine code is generated at run time, removing JIT-compiler bugs from the attack surface. Not a sandbox by itself; isolation comes from the host.
 - Full JavaScript and TypeScript: Test262 53,353 passing, 0 failing; TypeScript runs without a build step; node: APIs.

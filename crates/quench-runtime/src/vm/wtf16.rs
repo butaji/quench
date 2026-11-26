@@ -912,6 +912,8 @@ const ROPE_WALK_READS: u8 = 8;
 
 /// The largest reused buffer `JsString::with_ascii_rope_bytes` keeps between reads.
 const ROPE_BYTES_KEPT: usize = 64 << 10;
+/// The reads `JsString::with_ascii_rope_bytes` gathers a rope's bytes for before making it flat (TOD-2313).
+const ROPE_GATHER_READS: u8 = 32;
 
 /// Concatenation copies a piece at most this long into its flat neighbor instead of making a
 /// rope node: a node and the separate halves it keeps alive cost more than copying a short
@@ -1277,12 +1279,11 @@ impl JsString {
     /// that keeps only positions in the units (a search's match ranges) or text it copies out
     /// reads a rope the program keeps (V8-v7 RegExp's input variants) with no allocation.
     pub(crate) fn with_ascii_rope_bytes<R>(&self, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
-        let Repr::Shared(inner) = &self.repr else {
-            return None;
-        };
-        if !inner.ascii || inner.flat.get().is_some() {
-            return None;
-        }
+        let Repr::Shared(inner) = &self.repr else { return None };
+        if !inner.ascii || inner.flat.get().is_some() { return None; }
+        // Read again and again (a loop of `exec` over one subject), a rope is made flat once, not gathered per read.
+        if inner.rope_reads.get() >= ROPE_GATHER_READS { Self::flatten_shared(inner); return None; }
+        inner.rope_reads.set(inner.rope_reads.get() + 1);
         thread_local! {
             static ROPE_BYTES: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
         }
@@ -1290,11 +1291,7 @@ impl JsString {
         let mut bytes = ROPE_BYTES.with(std::cell::Cell::take);
         bytes.clear();
         bytes.reserve(inner.length as usize);
-        inner.for_each_run(|run| {
-            if let Units::Ascii(run) = run {
-                bytes.extend_from_slice(run);
-            }
-        });
+        inner.for_each_run(|run| if let Units::Ascii(run) = run { bytes.extend_from_slice(run) });
         debug_assert_eq!(bytes.len(), inner.length as usize);
         let result = read(&bytes);
         // A buffer past this size is not kept for the next read.

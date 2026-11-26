@@ -305,7 +305,8 @@ fn webs(
     // The node of each live-in register at each pc.
     let mut live_in: Vec<Vec<Option<u32>>> = Vec::with_capacity(count);
     for set in &live[..count] {
-        let row = (0..registers).map(|register| set.contains(register).then(|| classes.add())).collect();
+        let mut row = vec![None; registers];
+        for register in set.members().take_while(|&register| register < registers) { row[register] = Some(classes.add()); }
         live_in.push(row);
         if classes.len() > NODE_BUDGET {
             return RawWebs::default();
@@ -319,12 +320,13 @@ fn webs(
     }
     let successors = Successors::of_code(function);
     let mut wide_group: Vec<Option<u32>> = vec![None; count];
+    // Each definition's node by register, for the instruction at hand: cleared after it, so a pc costs its members alone.
+    let mut defined: Vec<Option<u32>> = vec![None; registers];
     for (pc, instruction) in instructions.iter().enumerate() {
         let (uses, definitions) = transfers[pc];
         let roles = roles(*instruction, constant_neutral, returns_wide, rewritten);
         // Each definition is a node, flowing into the successors where its register is live.
-        let mut defined = vec![None; registers];
-        for register in (0..registers).filter(|register| definitions.contains(*register)) {
+        for register in definitions.members().take_while(|&register| register < registers) {
             let node = classes.add();
             defined[register] = Some(node);
             for (successor, _) in successors.at(pc) {
@@ -334,7 +336,7 @@ fn webs(
             }
         }
         // A register live across the instruction, not defined by it, carries its value on.
-        for register in 0..registers {
+        for register in live[pc].members().take_while(|&register| register < registers) {
             if defined[register].is_some() {
                 continue;
             }
@@ -384,7 +386,7 @@ fn webs(
             None => {}
         }
         // Every other register the instruction touches, it touches boxed.
-        for register in 0..registers {
+        for register in (uses | definitions).members().take_while(|&register| register < registers) {
             if uses.contains(register) && !covered_uses.contains(register) {
                 let node = use_node(&mut classes, register as u16);
                 classes.mark_boxed(node);
@@ -395,20 +397,18 @@ fn webs(
                 }
             }
         }
+        for register in definitions.members().take_while(|&register| register < registers) { defined[register] = None; }
     }
     let raw_ops = wide_group.iter().map(|group| group.is_some_and(|group| !classes.is_boxed(group))).collect();
     let raw_live = live_in
         .iter()
-        .map(|row| {
-            let mut set = RegisterSet::default();
-            for (register, node) in row.iter().enumerate() {
-                if let Some(node) = node
-                    && !classes.is_boxed(*node)
-                {
-                    set.insert(register);
-                }
+        .zip(live)
+        .map(|(row, set)| {
+            let mut raw = RegisterSet::default();
+            for register in set.members().take_while(|&register| register < registers) {
+                if row[register].is_some_and(|node| !classes.is_boxed(node)) { raw.insert(register); }
             }
-            set
+            raw
         })
         .collect();
     RawWebs { raw_ops, raw_live }

@@ -23,12 +23,19 @@ pub(super) enum Origin {
     Member(u32),
     /// A property-key constant, by the atom its text interns to.
     Atom(u32),
-    /// The prototype of class `function` (`Class.prototype`).
-    Prototype(u32),
+    /// The `prototype` property of a function (`PrototypeBase`): the object its methods are stored on.
+    Prototype(PrototypeBase),
     /// An instance of class `function` (`new`).
     Instance(u32),
     /// A method `atom` read on class `function`'s static object (`instance: false`) or prototype.
     MemberOn { class: u32, instance: bool, atom: u32 },
+}
+
+/// What a `prototype` read was read off: a closure, or a binding the census resolves to one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PrototypeBase {
+    Closure(u32),
+    Binding(Key),
 }
 
 /// What a register is known to hold at a point: its type in the one fact lattice
@@ -64,9 +71,9 @@ impl Fact {
         Self::from(Origin::Atom(atom))
     }
 
-    /// The prototype of class `class` (`Class.prototype`).
+    /// The prototype of closure `class` (`Class.prototype`).
     pub(super) const fn prototype(class: u32) -> Self {
-        Self::from(Origin::Prototype(class))
+        Self::from(Origin::Prototype(PrototypeBase::Closure(class)))
     }
 
     /// An instance of class `class` (`new`).
@@ -86,7 +93,7 @@ impl Fact {
             return Some((class, false));
         }
         match self.origin? {
-            Origin::Prototype(class) | Origin::Instance(class) => Some((class, true)),
+            Origin::Prototype(PrototypeBase::Closure(class)) | Origin::Instance(class) => Some((class, true)),
             _ => None,
         }
     }
@@ -110,8 +117,7 @@ impl Fact {
 
     /// The fact of the Number `value`: an int32 unless it is not one, or is `-0`.
     pub(super) fn number(value: f64) -> Self {
-        let int = value as i32;
-        Self::of(if f64::from(int) == value && (int != 0 || value.is_sign_positive()) { Type::INT32 } else { Type::NUMBER })
+        Self::of(if crate::value::exact_int32(value).is_some() { Type::INT32 } else { Type::NUMBER })
     }
 
     /// The representation a register holding this fact at every point has.

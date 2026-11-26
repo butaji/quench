@@ -157,8 +157,10 @@ impl Vm {
     /// Records `function`, a closure of a non-module program's top level, as found again by plan
     /// (`cached_functions`): Wasm functions, which have no parent, and a script's top-level
     /// functions. A module's closures are not recorded: its hoisted declarations are its instance's
-    /// (`ModuleFunctions`), and any other closure is made fresh each evaluation. A nested closure
-    /// is never looked up, so it is not recorded either.
+    /// (`ModuleFunctions`), and any other closure is made fresh each evaluation. A function the top
+    /// level declares inside a function of its own (a CommonJS module's wrapper, an outer IIFE) is
+    /// recorded too: an ahead image finds its one closure there (`aot_image::symbols::closure_of`).
+    /// A closure nested deeper is never looked up, so it is not recorded.
     fn record_top_level_closure(&mut self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32, function: Value) {
         if self.records_closure(p, plan, id) {
             let handle = self.heap.weak_handle(function).expect("new closure is live");
@@ -170,8 +172,13 @@ impl Vm {
     /// the loaded image's value table names (`ClosureOf`). The image's table is read at a body's
     /// link, so a closure it names must be found whether or not a body has been installed yet.
     pub(super) fn records_closure(&self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32) -> bool {
+        let root = |parent: u32| parent == crate::vm::ROOT_FUNCTION_ID;
+        // A top-level closure, one a function of the top level declares (a CommonJS module's
+        // wrapper, an outer IIFE), or one the loaded image's value table names (`ClosureOf`).
+        let top_level = plan.parent.is_none_or(|parent| root(parent)
+            || p.functions.get(parent as usize).is_some_and(|outer| outer.header().parent.is_none_or(root)));
         let named = self.programs.ahead_images(self.active_program, p).is_some_and(|images| images.names_closure(id));
-        !p.is_module() && (plan.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID) || named)
+        !p.is_module() && (top_level || named)
     }
 
     /// Adds the `constructor` of a recorded closure's prototype, and for a plain-scope closure of

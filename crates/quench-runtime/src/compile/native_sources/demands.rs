@@ -187,16 +187,21 @@ impl Engine {
         crate::compile::source_routes::routes().is_none_or(|routes| (routes.requires_dynamic_source)(source, kind))
     }
 
-    pub(crate) fn source_requires_dynamic_source_parsed(source: &str, kind: crate::SourceKind) -> bool {
+    /// The demands (`source_demands`) of a standalone Script or Module; `None` where it does not parse.
+    pub fn standalone_source_demands(source: &str, kind: crate::SourceKind) -> Option<SourceDemands> {
         let allocator = oxc_allocator::Allocator::default();
         let source_type = match kind {
             crate::SourceKind::Module => oxc_span::SourceType::mjs(),
             crate::SourceKind::Script | crate::SourceKind::Eval => oxc_span::SourceType::script(),
         };
         let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
-        if !parsed.diagnostics.is_empty() { return true; }
+        if !parsed.diagnostics.is_empty() { return None; }
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        Self::source_demands(&parsed.program, semantic.semantic.scoping(), true).requires_dynamic_source()
+        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping(), true))
+    }
+
+    pub(crate) fn source_requires_dynamic_source_parsed(source: &str, kind: crate::SourceKind) -> bool {
+        Self::standalone_source_demands(source, kind).is_none_or(|demands| demands.requires_dynamic_source())
     }
 }
 

@@ -11,7 +11,7 @@ use crate::layout::{
 };
 use crate::staged::barrier::{store_unlogged, MarkList};
 use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
-use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
+use crate::words::{hole, HOLE_FIFTH, HOLE_FOURTH, HOLE_SEVENTH, HOLE_SIXTH, HOLE_THIRD, MAX_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
 
@@ -20,7 +20,6 @@ use crate::staged::region::{Access, Region};
 // over static data (an IC's ops) whose unrolled form never reaches it.
 unsafe extern "C" {
     static UNSUPPORTED_assumption: u8;
-    static UNSUPPORTED_number_operator: u8;
     static UNSUPPORTED_shape_in: u8;
     static UNSUPPORTED_site: u8;
 }
@@ -129,7 +128,10 @@ impl Stage for StencilStage {
                 1 => hole::<1>() as u64,
                 HOLE_THIRD => hole::<HOLE_THIRD>() as u64,
                 HOLE_FOURTH => hole::<HOLE_FOURTH>() as u64,
-                LAST_HOLE => hole::<LAST_HOLE>() as u64,
+                HOLE_FIFTH => hole::<HOLE_FIFTH>() as u64,
+                HOLE_SIXTH => hole::<HOLE_SIXTH>() as u64,
+                HOLE_SEVENTH => hole::<HOLE_SEVENTH>() as u64,
+                MAX_HOLE => hole::<MAX_HOLE>() as u64,
                 _ => unsupported!(UNSUPPORTED_site),
             }
         }
@@ -274,11 +276,6 @@ impl Stage for StencilStage {
     fn assumption(&mut self, watch: u64) -> bool {
         let _ = watch;
         unsupported!(UNSUPPORTED_assumption) != 0
-    }
-    #[inline(always)]
-    fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
-        let _ = (operator, passed, constant);
-        (unsupported!(UNSUPPORTED_number_operator), false)
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {

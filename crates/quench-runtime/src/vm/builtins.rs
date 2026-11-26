@@ -805,7 +805,7 @@ impl Vm {
         function: Value,
         name: &str,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("name");
+        let atom = self.runtime_atoms.name;
         let current = self.own_property(function, atom);
         if current.is_some_and(|value| {
             !self.heap.string(value).is_some_and(|text| text.units().is_empty())
@@ -820,12 +820,13 @@ impl Vm {
         function: Value,
         name: &str,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("name");
+        let atom = self.runtime_atoms.name;
         let property = PropertyKey::string(atom);
         // An existing `name` is made writable so the store below replaces it. A function
         // without one (a fresh bound function) gets it from the store; recording attributes
         // for an absent key would leave a stale descriptor and flush every field cache.
-        if self.object_property_slot(function, property).is_some() {
+        let existing = self.object_property_slot(function, property).is_some();
+        if existing {
             self.set_property_attributes(
                 function,
                 property,
@@ -843,22 +844,25 @@ impl Vm {
         // string the name then shares instead of copying the text for every function.
         let name_atom = self.intern_atom(name);
         let value = self.heap.alloc_string(self.atom_value(name_atom));
-        self.set_property(function, atom, value)?;
-        self.set_property_attributes(
-            function,
-            property,
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
+        let attributes = PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            accessor: false,
+            getter: None,
+            setter: None,
+        };
+        if existing {
+            self.set_property(function, atom, value)?;
+            self.set_property_attributes(function, property, attributes);
+        } else {
+            // A fresh function (every builtin at startup) adds `name` with its final attributes
+            // in one transition, not as a writable property made read-only after.
+            self.set_property_with_attributes(function, atom, value, attributes)?;
+        }
         // A native function's source text derives from this name when requested
         // (`function_source_value`), so creating one records no source string.
-        self.capture_function_name(function, value);
+        self.capture_function_name_for_atom(function, name_atom);
         Ok(())
     }
 

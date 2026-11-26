@@ -215,7 +215,12 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
     let mut symbol = None;
     let code = lane.code.link_through(address, |namespace, key| {
         symbol = SymbolTable::decode(image, namespace, key);
-        let word = resolve(image, &places, namespace, key)?;
+        // A guard reads the shape the VM's caches built for its slot, or `NO_SHAPE` where none.
+        let word = match symbol {
+            Some(Symbol::GuardShape(guard)) => u64::from(symbols::guarded_shape(image, vm, guard)
+                .map_or(symbols::NO_SHAPE, |(shape, _, _)| shape)),
+            _ => resolve(image, &places, namespace, key)?,
+        };
         if let Some(Symbol::HeapValue(heap)) = symbol {
             roots.embed_heap_identity(quench_runtime::Value::from_bits(heap_values[heap as usize]));
         }
@@ -347,7 +352,9 @@ fn resolve(image: &AotImage, places: &Places<'_>, namespace: u32, key: u32) -> O
         Symbol::NarrowUpperWords => Some(quench_runtime::value::NarrowLayout::upper_words() as u64),
         Symbol::Attention => Some(quench_runtime::execution_interrupt::attention_address()),
         Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
-        Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
+        // A guard names the shape the VM built for the field's slot (`link_lane_at`, which has the
+        // VM); a placement without one leaves the body unlinked (`require_placed`).
+        Symbol::GuardShape(_) | Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
 }
 

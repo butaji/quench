@@ -38,10 +38,8 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &quench_runtime::dat
 /// `forward_edges` does not see.
 fn rotated_bodies(instructions: &[WideInstruction]) -> quench_runtime::dataflow::BitSet {
     let mut bodies = quench_runtime::dataflow::BitSet::with_capacity(instructions.len() + 1);
-    for (pc, instruction) in instructions.iter().enumerate() {
-        let target = instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
-        if let Some(header) = target.filter(|target| *target <= pc)
-            && instructions.get(header).is_some_and(|test| quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump)) {
+    for (_, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
+        if instructions.get(header).is_some_and(|test| quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump)) {
             bodies.insert(header + 1);
         }
     }

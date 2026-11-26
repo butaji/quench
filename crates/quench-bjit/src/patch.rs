@@ -5,8 +5,9 @@
 use crate::class::{ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, MOVW_GROUPS, REL32};
 
 /// Value holes a stencil row may name: the destination, the first and the second operand, then
-/// the two or three operands an inline-cache entry patches (`stencils/ic_rows.rs`).
-pub const HOLES: usize = 5;
+/// the operands an inline-cache entry or a loop-entry view patches (`stencils/ic_rows.rs`,
+/// `stencils/places_view.rs`), and the Wasm shuffle's two words.
+pub const HOLES: usize = 8;
 
 /// A row's holes from the first ones it names, the rest zero.
 pub const fn padded_holes<const N: usize>(named: [u64; N]) -> [u64; HOLES] {

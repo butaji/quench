@@ -19,20 +19,22 @@ pub(crate) struct LoopArray {
     pub(crate) writable: bool,
 }
 
-/// Where a loop's array comes from: a register the loop never writes, or a capture read the
-/// loop's entry hoisted (`hoisted_reads`), whose register the body may reuse.
+/// Where a loop's array comes from: a register the loop never writes, a capture read the
+/// loop's entry hoisted (`hoisted_reads`), whose register the body may reuse, or a field read an
+/// OSR region answers from its entry record (`entry_fields`), the value the loop never stores.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArraySource {
     Register(Register),
     Capture(usize),
+    Field(usize),
 }
 
 /// The source whose value `register` holds at `pc` by a copy earlier in its block (`Move`,
 /// the copy not written again before `pc`) or by a hoisted capture read (`captured`), else
 /// `register` itself: an access through a copy of a loop's array indexes the array the loop
-/// hoisted.
+/// hoisted. A field read the entry record answers (`held`) is that field's source.
 fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool, captured: impl Fn(usize) -> bool,
-    pc: usize, register: Register) -> ArraySource {
+    held: impl Fn(usize) -> bool, pc: usize, register: Register) -> ArraySource {
     let mut at = pc;
     while at > 0 && !leader(at) {
         at -= 1;
@@ -41,6 +43,7 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
             return match instruction.op() {
                 _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Move { .. })) => ArraySource::Register(instruction.register_b()),
                 _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. })) && captured(at) => ArraySource::Capture(at),
+                _ if held(at) => ArraySource::Field(at),
                 _ => ArraySource::Register(register),
             };
         }
@@ -51,11 +54,12 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
 /// A loop's array source at `pc`: a register the loop does not redefine, or a hoisted capture
 /// read (`captured`) of a typed array when compiled (`typed_capture`).
 fn array_source(unit: &super::super::lane_unit::Unit, leaders: &quench_runtime::dataflow::BitSet, written: &BTreeSet<Register>,
-    captured: impl Fn(usize) -> bool, typed_capture: impl Fn(u16) -> bool, pc: usize, base: Register) -> Option<ArraySource> {
+    (captured, held): (impl Fn(usize) -> bool, impl Fn(usize) -> bool), typed_capture: impl Fn(u16) -> bool, pc: usize, base: Register) -> Option<ArraySource> {
     // The loop's sole entering edge proves the view of any base its body does not
     // redefine, an inlined frame's argument as well as the caller's own register.
-    match copied_from(&unit.instructions, |at| leaders.contains(at), captured, pc, base) {
+    match copied_from(&unit.instructions, |at| leaders.contains(at), captured, held, pc, base) {
         ArraySource::Register(register) => (!written.contains(&register)).then_some(ArraySource::Register(register)),
+        ArraySource::Field(read) => Some(ArraySource::Field(read)),
         ArraySource::Capture(read) => typed_capture(quench_runtime::bytecode::ImmediateLayout::capture_slot(unit.instructions[read].imm()))
             .then_some(ArraySource::Capture(read)),
     }
@@ -69,7 +73,7 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &quench_runtime::
 /// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
 /// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
 pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &quench_runtime::dataflow::BitSet,
-    captured: impl Fn(usize, usize) -> bool, views: ElementViews,
+    captured: impl Fn(usize, usize) -> bool, held: impl Fn(usize) -> bool, views: ElementViews,
     typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)], typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
@@ -87,14 +91,14 @@ pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             };
             // The kind the array held at entry is keyed by the instruction's operand register and,
             // where the access reads a copy, by the register it resolves to.
-            let resolved = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
+            let resolved = base.and_then(|base| array_source(unit, leaders, &written, (|at| captured(header, at), &held),
                 |slot| typed_captures.contains(&slot), pc, base));
             let Some(source) = resolved else { continue };
             let kind = base.filter(|base| !written.contains(base))
                 .and_then(|base| typed_kinds.iter().find(|(own, _)| *own == base).map(|(_, kind)| *kind))
                 .or_else(|| match source {
                     ArraySource::Register(register) => typed_kinds.iter().find(|(own, _)| *own == register).map(|(_, kind)| *kind),
-                    ArraySource::Capture(_) => None,
+                    ArraySource::Capture(_) | ArraySource::Field(_) => None,
                 });
             // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
             // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
@@ -110,7 +114,7 @@ pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
                     // observation saw no kind for takes the region's view.
                     let views = match source {
                         ArraySource::Capture(_) => ElementViews::Typed(None),
-                        ArraySource::Register(_) => kind.map_or(views, |kind| ElementViews::Typed(Some(kind))),
+                        ArraySource::Register(_) | ArraySource::Field(_) => kind.map_or(views, |kind| ElementViews::Typed(Some(kind))),
                     };
                     arrays.push(LoopArray { header, back, source, views, writable: stores });
                 }
@@ -131,7 +135,8 @@ impl Lowering<'_, '_> {
     /// around `pc` that proved it (the outermost lowered one: `loop_arrays`), if any.
     pub(crate) fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
         let source = copied_from(&self.unit.instructions, |at| self.blocks[at].is_some(),
-            |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && matches!(crate::compiled::performed(self.unit.instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })), pc, register?);
+            |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && matches!(crate::compiled::performed(self.unit.instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })),
+            |at| self.held_field(at), pc, register?);
         self.loop_arrays.iter().copied()
             .filter(|array| array.source == source && (array.header..=array.back).contains(&pc))
             .min_by_key(|array| array.back - array.header)
@@ -174,5 +179,24 @@ impl Lowering<'_, '_> {
             TypedAccess::Store => matches!(array.views, ElementViews::Typed(_) | ElementViews::Double) && array.writable,
         };
         typed.then_some(access)
+    }
+}
+
+impl Lowering<'_, '_> {
+    /// Whether the read at `pc` is a field read the loop's entry record answers (`field_read`'s held read), where the
+    /// region's arrays are typed arrays: a string or record array read through a field keeps its rows.
+    pub(crate) fn held_field(&self, pc: usize) -> bool {
+        matches!(self.views, ElementViews::Typed(Some(_))) && self.entry_fields.get(pc).copied().flatten().is_some()
+            && matches!(crate::compiled::performed(self.unit.instructions[pc]), Some(quench_runtime::staged::Operation::GetField { .. }))
+    }
+
+    /// The payload's typed view records (`JsStepHead::typed_view_directory`), which a view proof reads.
+    pub(crate) fn typed_records(&mut self) -> quench_runtime::staged::typed_view::TypedRecords<ir::Value> {
+        let mut word = |offset| emit_js_payload_word(&mut self.builder, self.payload, offset);
+        quench_runtime::staged::typed_view::TypedRecords {
+            directory: word(std::mem::offset_of!(JsStepDispatch, head.typed_view_directory)),
+            pages: word(std::mem::offset_of!(JsStepDispatch, head.typed_view_pages)),
+            relocations: word(std::mem::offset_of!(JsStepDispatch, head.buffer_relocations)),
+        }
     }
 }

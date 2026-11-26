@@ -29,6 +29,14 @@ impl RegisterSet {
         set
     }
 
+    /// The registers in the set, ascending: one step per member, however wide the set.
+    #[inline]
+    pub fn members(self) -> impl Iterator<Item = usize> {
+        self.0.into_iter().enumerate().flat_map(|(index, mut word)| std::iter::from_fn(move || {
+            (word != 0).then(|| { let bit = word.trailing_zeros() as usize; word &= word - 1; index * u64::BITS as usize + bit })
+        }))
+    }
+
     /// Whether `register` is in the set.
     #[inline(always)]
     pub fn contains(self, register: usize) -> bool {

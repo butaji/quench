@@ -7,8 +7,10 @@ impl Vm {
         a: Value,
         b: Value,
     ) -> Result<bool, JsError> {
-        if a.as_number().is_some() && b.as_number().is_some() {
-            return Ok(self.strict_equal(a, b));
+        // Two primitives that convert without guest code or a BigInt decide by the one primitive
+        // table (`primitive_loose_equality`), which the fast path reads too.
+        if !a.is_deleted() && !b.is_deleted() && let Some(equal) = self.primitive_loose_equality(a, b) {
+            return Ok(equal);
         }
         if a == b {
             return Ok(true);
@@ -18,25 +20,16 @@ impl Vm {
         {
             return Ok(true);
         }
-        if a.is_null() && b.is_undefined() || a.is_undefined() && b.is_null() {
-            return Ok(true);
-        }
         if a.is_null() || a.is_undefined() || b.is_null() || b.is_undefined() {
             return Ok(false);
         }
         let (a_string, b_string) = (self.heap.is_string(a), self.heap.is_string(b));
-        if a_string || b_string {
-            if a_string && b_string {
-                return Ok(self.heap.string(a) == self.heap.string(b));
-            }
+        if a_string != b_string {
             let (string, other) = if a_string { (a, b) } else { (b, a) };
             if let Some(Cell::BigInt(bigint)) = self.heap.get(other) {
                 let text = self.heap.string(string).expect("a string operand");
                 return Ok(crate::bigint::parse_string(text.host_string())
                     .is_some_and(|value| crate::bigint::JsBigInt::from(&value) == *bigint));
-            }
-            if let Some(number) = other.as_number() {
-                return Ok(self.to_number(p, string)? == number);
             }
         }
         match (self.heap.get(a), self.heap.get(b)) {

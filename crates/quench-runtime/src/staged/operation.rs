@@ -814,10 +814,10 @@ impl<W, P> Operation<W, P> {
         Some(match instruction.op() {
             Op::LoadLocalPlain => Self::LoadLocalPlain {
                 destination: instruction.result_register(),
-                slot: u16::try_from(instruction.local_slot()).ok()? },
+                slot: window_slot(instruction.imm()) },
             Op::StoreLocalPlain => Self::StoreLocalPlain {
                 source: instruction.register_a(),
-                slot: u16::try_from(instruction.local_slot()).ok()?,
+                slot: window_slot(instruction.imm()),
                 result: instruction.optional_register_b() },
             Op::LoadLocal => Self::LoadLocalChecked {
                 destination: instruction.result_register(),

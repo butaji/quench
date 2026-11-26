@@ -1203,6 +1203,20 @@ lane_helper_inventory! {
     /// The runtime's Number remainder leaf (`RuntimeSlowPath::NumberRemainder`), which a body naming
     /// its helpers by symbol calls by this one (`slow_path_symbol`).
     NumberRemainder => quench_runtime::vm::operations::number_remainder,
+    /// A local, capture or name access's step over the running window or frame (`dispatch_fast::owner_step`): the owner
+    /// step alone, which a helper row or slow arm of such an instruction makes in place of the general step.
+    OwnerStep => crate::dispatch_fast::owner_step,
+    /// A constant's load into its register (`base_body::constant_step`): the running program's materialized constant,
+    /// which an image body cannot fold (a string's address is the run's), in place of the general step.
+    ConstantStep => base_body::constant_step,
+    /// An operator or comparison jump over registers and constants (`base_body::value_step`): the VM's operator on their
+    /// values, in place of the general step.
+    ValueStep => base_body::value_step,
+    ClosureStep => base_body::closure_step,
+    AllocationStep => base_body::allocation_step,
+    ThrowStep => base_body::throw_step,
+    DefineElementStep => base_body::define_element_step,
+    CallOutStep => base_body::call_out_step,
 }
 
 thread_local! {
@@ -4183,6 +4197,7 @@ impl JsStepDispatch {
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
                 array_mark_blocks: 0, array_mark_block_count: 0,
+                typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
                 object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
@@ -4198,7 +4213,6 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
             call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
             outcome: None,
@@ -7926,6 +7940,7 @@ impl Vm {
             return None; // no run-time compile without the JIT: only image bodies run natively
         }
         let residual = self.programs.get(program_id)?;
+        self.keep_slot_representations();
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter

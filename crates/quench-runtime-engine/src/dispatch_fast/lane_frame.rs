@@ -2091,18 +2091,12 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         prototype(context, self.read_value(constructor)).map(u64::from)
     }
 
-    /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
-    /// is read as an int and never converted to binary64.
+    /// ToInt32 of an operand, as the bitwise operators read it: the staged `Int32::guard_truncating`, so the
+    /// lane computes no conversion of its own (an int32 is its own, a Boolean its 0 or 1, a Number truncates).
     #[inline(always)]
-    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Int32<u64>> {
-        let value = Value::from_bits(self.operand_word(stage, operand)?);
-        if let Some(int) = Int32::checked(value) {
-            return Some(int);
-        }
-        // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
-        // computes no conversion of its own.
-        let number = Float64::checked(value)?;
-        Int32::truncating(stage, number, ())
+    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<Int32<u64>> {
+        let word = self.operand_word(stage, operand)?;
+        Int32::guard_truncating(stage, word, miss)
     }
 
     #[inline(always)]
@@ -2175,7 +2169,7 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
     #[inline(always)]
     fn wide(self) -> WideInstruction {
         // SAFETY: registers fit (`fields_fit_in_lane`); flagged records are stripped here or missed first.
-        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
+        let a = if const { FLAG == super::SINK_SITE || FLAG == FLAG_COMPLETING || local_result_site(OP, FLAG) || (OP == super::FIELD_LEAF_READ && super::returning_field_site(FLAG)) } {
             self.0.a & quench_runtime::bytecode::REGISTER_MASK
         } else { self.0.a };
         unsafe {
@@ -2269,6 +2263,11 @@ pub(crate) const FLAG_KEPT_OBJECT: u8 = 18;
 pub(crate) const FLAG_REGISTERS: u8 = 19;
 /// `LaneFields`' `FLAG` for a record whose row completes its result itself (`returning_row`).
 pub(crate) const FLAG_COMPLETING: u8 = 20;
+/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`) whose `a` names a numeric local target's
+/// frame slot: the row computes into that register number, moves the value to the slot and puts the register
+/// back (`numeric_local_slot`, as `Vm::run_row_completed`). Other rows' `FLAG`s are site facts (21 is `HELD_OTHER_THIS`).
+pub(crate) const FLAG_LOCAL_RESULT: u8 = 21;
+pub(crate) const fn local_result_site(op: u16, flag: u8) -> bool { flag == FLAG_LOCAL_RESULT && (op == quench_runtime::staged::BINARY_ROW || op == quench_runtime::staged::NUMERIC_ADD_ROW) }
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2595,6 +2594,10 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 /// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
 /// (`store_name_first_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
+    // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
+    if local_result_site(op as u16, FLAG) {
+        return general_step_in_lane;
+    }
     // A `Binary` the row leaves tries the lane's pure operation before the general step.
     if quench_runtime::staged::computes_binary(op) && matches!(quench_runtime::staged::miss(op), quench_runtime::staged::Miss::General) {
         return super::binary_miss_in_lane;
@@ -3579,7 +3582,8 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     // SAFETY: the function's contract.
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
     debug_assert!(target.entry.activates() && !target.settles());
-    debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+    // A leaf entry's own call form proves it published or not (`script_call_leaf_prove_miss`).
+    debug_assert!(target.entry != super::CallEntry::Activates || !unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };

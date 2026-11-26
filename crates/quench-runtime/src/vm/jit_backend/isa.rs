@@ -12,7 +12,7 @@ use target_lexicon::{Architecture, Triple};
 pub enum IsaBaseline {
     /// x86-64-v2: SSE4.2, POPCNT, CMPXCHG16B. The x86-64 default.
     X86V2,
-    /// x86-64-v3: adds AVX, AVX2, FMA, BMI1/2 and LZCNT.
+    /// x86-64-v3: adds the level's features (`quench_bjit::X86_64_V3_FEATURES`).
     X86V3,
     /// Armv8.0-A. The AArch64 default.
     Armv8,
@@ -32,10 +32,6 @@ const BASELINE_NAMES: &[(&str, IsaBaseline)] = &[
 ];
 
 const X86_V2_FLAGS: &[&str] = &["has_sse3", "has_ssse3", "has_sse41", "has_sse42", "has_popcnt", "has_cmpxchg16b"];
-const X86_V3_FLAGS: &[&str] = &[
-    "has_sse3", "has_ssse3", "has_sse41", "has_sse42", "has_popcnt", "has_cmpxchg16b",
-    "has_avx", "has_avx2", "has_fma", "has_bmi1", "has_bmi2", "has_lzcnt",
-];
 const ARMV82_FLAGS: &[&str] = &["has_lse", "has_fp16", "has_dotprod"];
 
 impl IsaBaseline {
@@ -61,13 +57,14 @@ impl IsaBaseline {
         }
     }
 
-    /// The Cranelift ISA flags this baseline enables.
-    fn flags(self) -> &'static [&'static str] {
+    /// The Cranelift ISA flags this baseline enables: x86-64-v3's are x86-64-v2's and those of the
+    /// level's features Cranelift has a flag for (`quench_bjit::X86_64_V3_FEATURES`).
+    fn flags(self) -> Vec<&'static str> {
         match self {
-            Self::X86V2 => X86_V2_FLAGS,
-            Self::X86V3 => X86_V3_FLAGS,
-            Self::Armv8 | Self::Native => &[],
-            Self::Armv82 => ARMV82_FLAGS,
+            Self::X86V2 => X86_V2_FLAGS.to_vec(),
+            Self::X86V3 => X86_V2_FLAGS.iter().copied().chain(quench_bjit::X86_64_V3_FEATURES.iter().filter_map(|(_, flag)| *flag)).collect(),
+            Self::Armv8 | Self::Native => Vec::new(),
+            Self::Armv82 => ARMV82_FLAGS.to_vec(),
         }
     }
 }

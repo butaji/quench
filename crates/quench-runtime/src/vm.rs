@@ -3545,8 +3545,6 @@ impl Vm {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
-        // A host's bootstrap may run the entry itself, so its realm keeps them from here.
-        self.keep_slot_representations();
         self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
@@ -3588,12 +3586,11 @@ impl Vm {
         }
     }
 
-    #[quench_macros::test_visible]
     /// Only native code (Cranelift's or `--b-jit`'s stencils) reads slot representations, so only a runtime that
-    /// runs lane bodies keeps them, from its shape table and what its live objects hold: once its builtins
-    /// exist or its realm is restored.
-    pub(super) fn keep_slot_representations(&mut self) {
-        if self.programs.js_jit_lane_methods_enabled() && (crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) || crate::jit_mode::base_only()) {
+    /// runs lane bodies keeps them, from its shape table and what its live objects hold: from its first compile
+    /// on (each compile entry asks; the first call starts them), so a run that never compiles never pays for them.
+    pub fn keep_slot_representations(&mut self) {
+        if !self.heap.tracks_slot_representations() && self.programs.js_jit_lane_methods_enabled() && (crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) || crate::jit_mode::base_only()) {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }

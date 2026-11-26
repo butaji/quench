@@ -7,18 +7,21 @@ use crate::ext_traits::*;
 use super::*;
 #[cfg(feature = "jit")]
 use std::collections::BTreeMap;
-#[cfg(feature = "jit")]
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::aot_image::{LaneImage, base::BaseImage, symbols::SymbolTable};
 #[cfg(feature = "jit")]
 use crate::aot_image::symbols::Symbol;
 use quench_runtime::compile::aot_facts::AotFacts;
+use quench_runtime::vm::engine_types::ExitTable;
 #[cfg(feature = "jit")]
 use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, file::Words, live::{self, LiveImage}};
 #[cfg(feature = "jit")]
 #[path = "ahead_images/constructions.rs"]
 pub(crate) mod constructions;
+#[cfg(feature = "jit")]
+#[path = "ahead_images/fields.rs"]
+pub(crate) mod fields;
 
 /// This build of the engine and the core (`build.rs`): the only build an ahead image runs on.
 pub const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_ENGINE_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
@@ -90,12 +93,12 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
 #[cfg(feature = "jit")]
-fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads))
-    -> Result<(RelocatableCode, bool), &'static str> {
+fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &quench_runtime::vm::global_facts::GlobalReads),
+    fields: &lane_region::FieldSites) -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
-    let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
+    let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, fields,
         global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
@@ -106,7 +109,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
             NativeCompileRejection::Relocations
         })
     }).map_err(|rejection| rejection_reason(function, rejection))?;
-    Ok((code, lowered.region.fault_poll))
+    Ok((code, lowered.region.fault_poll, std::mem::take(&mut lowered.region.exits)))
 }
 
 /// The message a rejected image body is refused with, printing the structured rejection under
@@ -132,16 +135,16 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Result<LaneImage, &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
-    // A VM installs no lane body that inlines a frame (`ahead_lane_method`): its leaves inside one have no store list.
-    if !unit.frames.is_empty() { return Err("inlines a call (not installable)"); }
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
     let strings = string_constants(program, &unit, symbols);
+    let fields = fields::guessed_fields(program, &unit, facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
-    let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
+    let crosses = crosses_bodies(&unit);
+    let (code, fault_poll, exits) = lowered_code(program, &unit, function, (facts, &global_reads), &fields)?;
     // A lane body's call through the VM's call helper steps its callee's records, where the base
     // body binds and enters the callee's body: richards' IdleTask.run (`this.scheduler.release(packet)`)
     // cost 5x the whole run as a lane.
@@ -150,8 +153,8 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     // A lane body that polls and calls enters its callee's body through the VM's call helper, where
     // the base body binds its callee directly: deltablue's drivers cost 3x the base body as lanes
     // (4.0G -> 12.9G Ir). Until compiled bodies call each other directly, the base body runs them.
-    if fault_poll && crosses_bodies(&unit) { return Err("polls and calls through the VM's helper"); }
-    Ok(LaneImage { code, fault_poll })
+    if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
+    Ok(LaneImage { code, fault_poll, exits })
 }
 
 
@@ -162,11 +165,35 @@ pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &Clo
     Err("ahead image lowering requires the jit feature")
 }
 
-/// Whether `unit` may enter another body: a call of any form or a construction.
+/// The slot observations the guessed field reads of `code` depend on (`fields`): each guard its
+/// loader resolved to a shape whose slot holds a type within Number, which a widening may recode to
+/// raw doubles, where float slots are on; under tagged slots no word is raw.
+fn guard_dependencies(image: &AotImage, vm: &mut Vm, code: &RelocatableCode) -> Box<[quench_runtime::code_dependencies::SlotDependency]> {
+    if !quench_runtime::vm::switches::float_slots() { return Box::new([]); }
+    let mut keys: Vec<u32> = code.relocations.iter().filter(|relocation| relocation.namespace == super::lane_region::relocs::RelocKind::GuardShape as u32)
+        .map(|relocation| relocation.key).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter().filter_map(|key| aot_image::symbols::guarded_shape(image, vm, key))
+        .filter(|(_, _, ty)| *ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER))
+        .map(|(shape, slot, ty)| quench_runtime::code_dependencies::SlotDependency { shape, slot, ty }).collect()
+}
+
+/// Whether `unit` may enter another body: a call of any form or a construction that it does not inline (a call whose
+/// frame the unit holds runs in the body; its alternatives' last leaves at the call, as any guard does).
 #[cfg(feature = "jit")]
 fn crosses_bodies(unit: &lane_unit::Unit) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
-    unit.instructions.iter().any(|instruction| [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
+    let inlined = |unit_pc: usize| {
+        let site = match unit.origins.get(unit_pc) {
+            Some(Origin::Caller(pc)) => (None, *pc),
+            Some(Origin::Inlined { frame, pc }) => (Some(*frame), *pc),
+            None => return false,
+        };
+        unit.frames.iter().any(|frame| (frame.parent, frame.call) == site)
+    };
+    unit.instructions.iter().enumerate().any(|(unit_pc, instruction)| !inlined(unit_pc)
+        && [Meaning::Call, Meaning::MethodCall, Meaning::Construct].into_iter().any(|meaning| means(*instruction, meaning)))
 }
 
 /// Whether `unit` makes a call `proven` does not name whose callee may be a script function: any
@@ -317,6 +344,8 @@ impl Vm {
     pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
         let _ = unit;
+        // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         let traced = quench_runtime::trace::Channel::AotLanes.on();
         if entry.is_some() || !generic.is_empty() {
             if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
@@ -355,11 +384,9 @@ impl Vm {
             refused("the image holds no lane body for it"); return None;
         };
         let fault_poll = lane.fault_poll;
-        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.closed))) else {
+        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.world))) else {
             refused("no unit"); return None;
         };
-        // An image has no lowering to ask which registers a leave inside an inlined frame stores.
-        if !unit.frames.is_empty() { refuse_lane(function, "inlined frames"); return None; }
         // The body is linked where it will run: its page- and displacement-relative fields are its
         // address's, so the placement comes first (`live::link_lane_at`). The value table follows
         // the code in the same block.
@@ -377,10 +404,15 @@ impl Vm {
             Err(error) => { refuse_lane(function, &format!("link_lane_at: {error}")); return None; }
         };
         let roots = roots.unwrap_or_default();
-        // The heap values the code names are its roots, which its publication keeps alive.
-        let exits = ExitTable::of_unit(&unit, |_, _| Vec::new(), |_| None);
+        // The heap values the code names are its roots, which its publication keeps alive; the
+        // Number slots its guessed field reads read as tagged words retire it where they widen to
+        // raw doubles (`fields`).
+        let slots = guard_dependencies(&images.image, self, &lane.code);
+        // The leaves the image's lowering laid out, each inlined one with the values it stores.
+        let exits = ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone(),
+            crossings: (0..lane.exits.sites.len()).map(|_| std::cell::Cell::new(0)).collect() };
         let facts = lane_compile::LaneMethodFacts {
-            unit, stable: lane_region::StableFacts { roots, ..Default::default() }, fields: Vec::new(),
+            unit, stable: lane_region::StableFacts { roots, slots, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(),
             tiers: self.programs.tiers(), fault_poll, exits, summary: None, clif: None,
         };
@@ -416,7 +448,7 @@ impl Vm {
         let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
         let Some(live) = images.linked.as_ref() else { return "unlinked" };
         let Some(key) = live.calls.key((function, pc)) else { return "unproven-site" };
-        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.closed));
+        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.world));
         if facts.function_facts(function).call_target(pc) != Some(target.function) { return "other-function" }
         let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
         let Some(view) = views.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return "no-view" };

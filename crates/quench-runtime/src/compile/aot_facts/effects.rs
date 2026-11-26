@@ -1,10 +1,10 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Fact, Key, Origin};
+use super::value::{Fact, Key, Origin, PrototypeBase};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
-use crate::staged::protocol_literals::LiteralStep;
 use crate::typed_ir::Type;
+use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
@@ -30,6 +30,8 @@ pub(super) struct Events {
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) wild_member: bool,
+    /// The named property a store writes into a function's `prototype` (`Origin::Prototype`).
+    pub(super) prototype_write: Option<(PrototypeBase, u32)>,
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -79,13 +81,15 @@ fn value_of(
         && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
     {
         let owner = base.register_index().map(|register| state[usize::from(register)]);
-        return match owner.and_then(|fact| fact.ty.body_index()) {
-            // `Class.prototype`: the class's prototype object.
-            Some(class) if ctx.scope.prototype == Some(atom) => Fact::prototype(class),
-            _ => match owner.and_then(Fact::class_site) {
-                Some((class, instance)) => Fact::member_on(class, instance, atom),
-                None => Fact::from(Origin::Member(atom)),
-            },
+        if ctx.scope.prototype == Some(atom) {
+            return Fact::from(match owner.and_then(prototype_base) {
+                Some(prototype) => Origin::Prototype(prototype),
+                None => Origin::Member(atom),
+            });
+        }
+        return match owner.and_then(Fact::class_site) {
+            Some((class, instance)) => Fact::member_on(class, instance, atom),
+            None => Fact::from(Origin::Member(atom)),
         };
     }
     if instruction.op() == crate::bytecode::Op::Construct {
@@ -96,6 +100,10 @@ fn value_of(
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
         return resolved(ctx, Key::Global(atom));
+    }
+    // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
+    if let Some((_, crate::staged::Allocation::Closure { function })) = crate::staged::Allocation::decode(instruction, &[]) {
+        return Fact::closure(function);
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
@@ -112,6 +120,15 @@ fn value_of(
         Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::Closure { function }), .. }) => Fact::closure(function),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
         _ => Fact::UNKNOWN,
+    }
+}
+
+/// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
+fn prototype_base(base: Fact) -> Option<PrototypeBase> {
+    if let Some(function) = base.ty.body_index() { return Some(PrototypeBase::Closure(function)); }
+    match base.origin? {
+        Origin::Binding(key) => Some(PrototypeBase::Binding(key)),
+        _ => None,
     }
 }
 
@@ -180,7 +197,12 @@ fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), (
         }
     }
     match operation {
-        Some(Operation::SetField { value, atom, .. }) => events.writes.push((Key::Member(atom), state[usize::from(value)])),
+        Some(Operation::SetField { value, atom, base, .. }) => {
+            events.writes.push((Key::Member(atom), state[usize::from(value)]));
+            if let Some(Origin::Prototype(prototype)) = base.and_then(|base| state[usize::from(base)].origin) {
+                events.prototype_write = Some((prototype, atom));
+            }
+        }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Fact::UNKNOWN));
         }

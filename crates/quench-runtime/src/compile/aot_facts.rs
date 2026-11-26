@@ -20,6 +20,7 @@ mod scope;
 mod value;
 #[cfg(test)]
 mod tests;
+pub use gate::World;
 
 use std::collections::BTreeMap;
 
@@ -38,11 +39,25 @@ pub struct AotFacts {
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
     /// Function id → register → the Number representation it always holds.
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
+    /// Per function, the names its `prototype` is given, in code order (`prototype_fields`).
+    pub(crate) prototype_fields: BTreeMap<u32, Vec<u32>>,
 }
 
 impl AotFacts {
+    /// The names stored into `function`'s `prototype`, each once, in the order the program's code
+    /// first stores them (`AotFacts::prototype_fields`): a guess of its prototype's layout after
+    /// `constructor`, which a loader checks against the object it finds (`aot_image::symbols`).
+    pub fn prototype_fields(&self, function: u32) -> &[u32] {
+        self.prototype_fields.get(&function).map_or(&[], |fields| fields.as_slice())
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.call_targets.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
+    }
+
+    /// The functions some construction (`new`) always constructs.
+    pub fn constructed_functions(&self) -> std::collections::BTreeSet<u32> {
+        self.construct_targets.values().copied().collect()
     }
 
     /// The facts of function `function`, for its lowering.
@@ -76,19 +91,19 @@ impl<'a> FunctionFacts<'a> {
 
 /// The facts of `program`, or none where the program can add code at run time.
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
-    analyze_as(program, closed_world(program))
+    analyze_as(program, world(program))
 }
 
-/// Whether `program` adds no code at run time, as its source says (`gate`): an image keeps the
-/// answer its compile found (`AotImage::closed`), so a binary without the source frontend
-/// derives the same facts again (`analyze_as`).
-pub fn closed_world(program: &ResidualProgram) -> bool {
-    gate::closed_world(program)
+/// How closed `program` is, as its source says (`gate`): an image keeps this answer, so a binary
+/// without the source frontend derives the same facts again (`analyze_as`).
+pub fn world(program: &ResidualProgram) -> World {
+    gate::world(program)
 }
 
-/// The facts of `program`, or none where it is not `closed`.
-pub fn analyze_as(program: &ResidualProgram, closed: bool) -> AotFacts {
-    if !closed {
+/// The facts of `program` under the `world` its compile found (`AotImage::world`): an image keeps
+/// that answer, so a binary without the source frontend derives the same facts again.
+pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
+    if world == World::Open {
         return AotFacts::default();
     }
     let scope = Scope::of(program);
@@ -99,11 +114,21 @@ pub fn analyze_as(program: &ResidualProgram, closed: bool) -> AotFacts {
     };
     // The first pass finds the bindings that hold one closure; the second reads their loads as
     // that closure, so a class object or prototype reached through a binding keeps its identity
-    // and its methods prove per class, not per property name.
+    // and its methods prove per class, not per property name. Code the world admits only as
+    // global code may write any global or member, so no such binding resolves.
     let first = analyze(&std::collections::BTreeMap::new());
-    let resolved = Census::of(&first).singles();
+    let mut singles = Census::of(&first);
+    if world == World::Locals { singles.open_to_global_code(); }
+    let resolved = singles.singles();
     let flows = analyze(&resolved);
-    let census = Census::of(&flows);
+    let mut census = Census::of(&flows);
+    if world == World::Locals { census.open_to_global_code(); }
+    collect_facts(&flows, &census)
+}
+
+/// The facts of the analyzed `flows` under `census`: each proven call and construction target, each
+/// function's `prototype` names in code order, and the registers that hold one Number representation.
+fn collect_facts(flows: &[FunctionFlow], census: &Census) -> AotFacts {
     let mut facts = AotFacts::default();
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
@@ -114,6 +139,11 @@ pub fn analyze_as(program: &ResidualProgram, closed: bool) -> AotFacts {
             } else {
                 facts.call_targets.insert((id, call.pc), target);
             }
+        }
+        for &(base, atom) in &flow.prototype_writes {
+            let Some(owner) = census.prototype_owner(base) else { continue };
+            let fields = facts.prototype_fields.entry(owner).or_default();
+            if !fields.contains(&atom) { fields.push(atom); }
         }
         if flow.numbers.iter().any(Option::is_some) {
             facts.numbers.insert(id, flow.numbers.clone());

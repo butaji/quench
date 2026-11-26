@@ -21,6 +21,12 @@ use super::lane_region::StableFacts;
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::typed_ir::Type;
 
+/// The stencil rows' call-outs that are not the general step: the constant, throw, element define,
+/// call-out, allocation, closure and value steps of a running body (`compiled::base_body::{constant_step,...}`).
+#[path = "base_body/steps.rs"]
+mod steps;
+pub(crate) use steps::*;
+
 /// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
 /// that is neither an int32 nor a Number is `Type::immediate`'s own type, which no unboxed row accepts).
 fn observed(parameters: &[Value]) -> Vec<Type> {
@@ -200,6 +206,8 @@ impl Vm {
     /// `NotAmortized`), or indexing a typed parameter.
     pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+        // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         // An execution-only build (no `jit`) runs no stencil tier.
         #[cfg(not(feature = "jit"))]
         {

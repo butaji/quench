@@ -123,12 +123,8 @@ pub(crate) fn finish_array_iteration(cx: *mut LaneContext, resume: Ip) -> u64 {
 /// caches is the one the interpreter would call. Any other callee or case is a miss, which leaves
 /// the body at the call, before any effect.
 pub(crate) unsafe extern "C" fn body_call_helper(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    let cx = context as usize as *mut LaneContext;
-    // SAFETY: the caller's contract.
-    let bound = unsafe { vm(cx) }.lane_stack.plain_depth_limit.get();
     // SAFETY: the caller's contract.
     let (status, _) = unsafe { body_call_status(context, call_pc) };
-    crate::compiled::region_lend::rebind_after_call(cx, bound);
     status
 }
 

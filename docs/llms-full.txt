@@ -16,7 +16,7 @@ quench.run / updated 17 November 2026
 
 Every number Quench publishes, with its date, configuration and the tests where Quench loses.
 
-With the JIT off in every engine, Quench scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at 0.28x to 0.55x their peak memory on 7 of 8. On the broader JetStream 3 suite it scores 34.3 against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB. The JIT tiers and AOT have no published compute speed numbers yet. AOT startup: a strict AOT hello world is a 4,896-byte executable that starts in 0.96 ms with 1.3 MB peak RSS (25 November 2026).
+With the JIT off in every engine, Quench scores 1.49x to 2.57x (14 Nov 2026) the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at 0.28x to 0.55x their peak memory on 7 of 8. On the broader JetStream 3 suite it scores 34.3 against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB. The JIT tiers and AOT have no published compute speed numbers yet. AOT startup: a strict AOT hello world is a 4,896-byte executable that starts in 0.96 ms with 1.3 MB peak RSS (25 November 2026).
 
 ## V8-v7, JIT off (14 November 2026)
 
@@ -107,7 +107,7 @@ quench.run / updated 20 November 2026
 
 What Quench is, how fast it is today, and where it is still slower.
 
-Quench is a JavaScript, TypeScript and WebAssembly runtime whose whole engine is written in Rust. With JIT turned off in every engine, it scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at a fraction of their memory. On JetStream 3 with JIT off it sits between them (34.3 vs Node 39.7 and Bun 32.2). Its JIT tiers are not yet competitive with Node or Bun with their JITs on.
+Quench is a JavaScript, TypeScript and WebAssembly runtime whose whole engine is written in Rust. With JIT turned off in every engine, it scores 1.49x to 2.57x (14 Nov 2026) the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks, at a fraction of their memory. On JetStream 3 with JIT off it sits between them (34.3 vs Node 39.7 and Bun 32.2). Its JIT tiers are not yet competitive with Node or Bun with their JITs on.
 
 ## Quench vs Node.js, Bun and Deno
 
@@ -368,7 +368,7 @@ quench.run / updated 20 November 2026
 
 Running model-written code inside the harness: embedded, small, no JIT, full JavaScript and TypeScript.
 
-Quench is a JavaScript and TypeScript engine written in Rust that embeds in an agent harness as a library and runs interpreter only, with no JIT. With the JIT off it scores 1.49x to 2.57x the best of Node --jitless and Bun on all 8 V8-v7 benchmarks, and five of them peak at 6.4 to 8.2 MB. Test262: 53,353 passing, 0 failing.
+Quench is a JavaScript and TypeScript engine written in Rust that embeds in an agent harness as a library and runs interpreter only, with no JIT. With the JIT off it scores 1.49x to 2.57x (14 Nov 2026) the best of Node --jitless and Bun on all 8 V8-v7 benchmarks, and five of them peak at 6.4 to 8.2 MB. Test262: 53,353 passing, 0 failing.
 
 ## What Code Mode needs
 
@@ -406,7 +406,7 @@ Quench is early: no packaged releases, Linux, built from source with Cargo. The 
 ## Questions
 
 ### What is a good JavaScript engine for AI agent Code Mode?
-Code Mode needs an engine that embeds in the harness, stays small per instance, can run without a JIT, and runs full JavaScript and TypeScript. Quench is built for that: a Rust library, interpreter only by default, Test262 53,353 passing and 0 failing. With the JIT off it scores 1.49x to 2.57x the best of Node --jitless and Bun on V8-v7.
+Code Mode needs an engine that embeds in the harness, stays small per instance, can run without a JIT, and runs full JavaScript and TypeScript. Quench is built for that: a Rust library, interpreter only by default, Test262 53,353 passing and 0 failing. With the JIT off it scores 1.49x to 2.57x (14 Nov 2026) the best of Node --jitless and Bun on V8-v7.
 
 ### Is Quench faster than QuickJS?
 Not measured yet. Quench aims at the slot QuickJS fills (small, embedded, interpreter only) with more speed, and its interpreter already beats the interpreters in V8 and JavaScriptCore on all 8 V8-v7 benchmarks. A QuickJS comparison is next and will be published either way.

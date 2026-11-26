@@ -10,7 +10,7 @@ mod distinct_heap;
 pub(crate) use distinct_heap::DistinctHeapPair;
 mod number_conversion;
 pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
-pub(crate) use number_conversion::exact_uint32;
+pub(crate) use number_conversion::{exact_int32, exact_uint32};
 #[quench_macros::test_visible]
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
@@ -265,7 +265,9 @@ impl Value {
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
     #[inline] pub fn number(value: f64) -> Self { Self::number_inline(value) }
 
-    /// `number`, inlined where it is the hot path's own boxing (a typed or double element read).
+    /// `number`, inlined where it is the hot path's own boxing (a typed or double element read). Its int32
+    /// rule is `exact_int32`'s (truncation that converts back to the same bits), ordered for the boxing's
+    /// branches: a fraction leaves first, then NaN, then `-0`.
     #[inline(always)] pub(crate) fn number_inline(value: f64) -> Self {
         let integer = truncate_to_i32(value);
         let back = f64::from(integer);

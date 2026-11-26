@@ -9,11 +9,11 @@
 use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
-use quench_runtime::vm::engine_types::WasmRows;
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
+use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
+use quench_runtime::vm::jit_backend::relocatable_code::{PATCHABLE, RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x04";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x09";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
@@ -23,13 +23,6 @@ const RECIPE_GLOBAL: u8 = 1;
 const RECIPE_STRING: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
 const RECIPE_CLOSURE_OF: u8 = 4;
-const RELOC_ABS8: u8 = 0;
-const RELOC_X86_PC_REL4: u8 = 1;
-const RELOC_X86_CALL_PC_REL4: u8 = 2;
-const RELOC_X86_CALL_PLT_REL4: u8 = 3;
-const RELOC_ARM64_CALL: u8 = 4;
-const RELOC_ARM64_PAGE21: u8 = 5;
-const RELOC_ARM64_PAGEOFF12: u8 = 6;
 /// A relocation kind `RelocatableCode` never holds; the reader rejects it.
 const RELOC_UNPATCHABLE: u8 = u8::MAX;
 
@@ -38,7 +31,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     let mut out = MAGIC.to_vec();
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
-    out.push(u8::from(image.closed));
+    out.push(image.world as u8);
     put_recipes(&mut out, image);
     put_sites(&mut out, image);
     put_count(&mut out, image.functions.len());
@@ -58,7 +51,11 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
         return Err("images from another quench-node build".into());
     }
     let fingerprint = words.quad()?;
-    let closed = words.byte()? != 0;
+    let world = match words.byte()? {
+        0 => quench_runtime::compile::aot_facts::World::Open,
+        1 => quench_runtime::compile::aot_facts::World::Locals,
+        _ => quench_runtime::compile::aot_facts::World::Closed,
+    };
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
     let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
     let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
@@ -66,7 +63,7 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
     let wasm = read_wasm(&mut words)?;
     let regexps = read_regexps(&mut words)?;
-    Ok(AotImage { fingerprint, build_id, closed, functions, shapes, heap_values, atoms, labels, calls, wasm, regexps })
+    Ok(AotImage { fingerprint, build_id, world, functions, shapes, heap_values, atoms, labels, calls, wasm, regexps })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -128,6 +125,7 @@ fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
 
 fn put_shape(out: &mut Vec<u8>, shape: &ShapeRecipe) {
     out.extend(shape.prototype.unwrap_or(NO_PROTOTYPE).to_le_bytes());
+    out.extend(shape.constructor.unwrap_or(NO_PROTOTYPE).to_le_bytes());
     put_count(out, shape.fields.len());
     for (atom, attributes) in shape.fields.iter() {
         out.extend(atom.to_le_bytes());
@@ -155,9 +153,47 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
             out.push(1);
             out.push(u8::from(lane.fault_poll));
             put_code(out, &lane.code);
+            put_exits(out, &lane.exits);
         }
         None => out.push(0),
     }
+}
+
+/// A lane body's exit table: its sigs (kind, then each stored value's unit register and scratch slot), then its sites.
+fn put_exits(out: &mut Vec<u8>, exits: &ExitTable) {
+    put_count(out, exits.sigs.len());
+    for sig in &exits.sigs {
+        out.push(sig.kind as u8);
+        put_count(out, sig.live.len());
+        for LiveValue { slot, source: Source::Scratch(at) } in sig.live.iter().copied() {
+            out.extend(slot.to_le_bytes());
+            out.extend(at.to_le_bytes());
+        }
+    }
+    put_count(out, exits.sites.len());
+    for site in &exits.sites {
+        out.extend(site.word.to_le_bytes());
+        for word in [site.sig, site.id, site.unit_pc] { out.extend(word.to_le_bytes()); }
+        out.push(site.fact as u8);
+    }
+}
+
+fn read_exits(words: &mut Words<'_>) -> Result<ExitTable, String> {
+    const KINDS: [ExitKind; 4] = [ExitKind::At, ExitKind::Inlined, ExitKind::Callee, ExitKind::Entry];
+    const FACTS: [ExitFact; 6] = [ExitFact::NumberKind, ExitFact::Shape, ExitFact::Callee, ExitFact::Element, ExitFact::Global, ExitFact::Unclassified];
+    let sigs = (0..words.half()?).map(|_| {
+        let kind = *KINDS.get(usize::from(words.byte()?)).ok_or("an exit kind the image cannot name")?;
+        let live = (0..words.half()?).map(|_| Ok(LiveValue { slot: words.pair()?, source: Source::Scratch(words.pair()?) })).collect::<Result<_, String>>()?;
+        Ok(ExitSig { kind, live })
+    }).collect::<Result<Vec<_>, String>>()?;
+    let sites = (0..words.half()?).map(|_| {
+        let word = words.quad()?;
+        let (sig, id, unit_pc) = (words.half()?, words.half()?, words.half()?);
+        let fact = *FACTS.get(usize::from(words.byte()?)).ok_or("an exit fact the image cannot name")?;
+        Ok(ExitSite { word, sig, id, unit_pc, fact })
+    }).collect::<Result<Vec<_>, String>>()?;
+    let crossings = (0..sites.len()).map(|_| std::cell::Cell::new(0)).collect();
+    Ok(ExitTable { sigs, sites, crossings })
 }
 
 fn put_base(out: &mut Vec<u8>, base: &BaseImage) {
@@ -188,30 +224,13 @@ fn put_code(out: &mut Vec<u8>, code: &RelocatableCode) {
     }
 }
 
+/// A relocation kind's tag: its index among the kinds the linker fills (`PATCHABLE`).
 fn reloc_tag(kind: Reloc) -> u8 {
-    match kind {
-        Reloc::Abs8 => RELOC_ABS8,
-        Reloc::X86PCRel4 => RELOC_X86_PC_REL4,
-        Reloc::X86CallPCRel4 => RELOC_X86_CALL_PC_REL4,
-        Reloc::X86CallPLTRel4 => RELOC_X86_CALL_PLT_REL4,
-        Reloc::Arm64Call => RELOC_ARM64_CALL,
-        Reloc::Arm64Page21 => RELOC_ARM64_PAGE21,
-        Reloc::Arm64PageOff12 => RELOC_ARM64_PAGEOFF12,
-        _ => RELOC_UNPATCHABLE,
-    }
+    PATCHABLE.iter().position(|patchable| *patchable == kind).map_or(RELOC_UNPATCHABLE, |index| index as u8)
 }
 
 fn reloc_of(tag: u8) -> Result<Reloc, String> {
-    Ok(match tag {
-        RELOC_ABS8 => Reloc::Abs8,
-        RELOC_X86_PC_REL4 => Reloc::X86PCRel4,
-        RELOC_X86_CALL_PC_REL4 => Reloc::X86CallPCRel4,
-        RELOC_X86_CALL_PLT_REL4 => Reloc::X86CallPLTRel4,
-        RELOC_ARM64_CALL => Reloc::Arm64Call,
-        RELOC_ARM64_PAGE21 => Reloc::Arm64Page21,
-        RELOC_ARM64_PAGEOFF12 => Reloc::Arm64PageOff12,
-        _ => return Err("an AOT image relocation has an unknown kind".into()),
-    })
+    PATCHABLE.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
 }
 
 type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>);
@@ -225,8 +244,9 @@ fn read_recipes(words: &mut Words<'_>) -> Result<Recipes, String> {
 
 fn read_shape(words: &mut Words<'_>) -> Result<ShapeRecipe, String> {
     let prototype = words.half()?;
+    let constructor = words.half()?;
     let fields = (0..words.half()?).map(|_| Ok((words.half()?, words.byte()?))).collect::<Result<_, String>>()?;
-    Ok(ShapeRecipe { prototype: (prototype != NO_PROTOTYPE).then_some(prototype), fields })
+    Ok(ShapeRecipe { prototype: (prototype != NO_PROTOTYPE).then_some(prototype), constructor: (constructor != NO_PROTOTYPE).then_some(constructor), fields })
 }
 
 fn read_heap_value(words: &mut Words<'_>) -> Result<HeapValueRecipe, String> {
@@ -255,7 +275,8 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
         0 => None,
         _ => {
             let fault_poll = words.byte()? != 0;
-            Some(LaneImage { code: read_code(words)?, fault_poll })
+            let code = read_code(words)?;
+            Some(LaneImage { code, fault_poll, exits: read_exits(words)? })
         }
     };
     Ok(AotFunction { id, base, lane })

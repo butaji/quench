@@ -33,6 +33,9 @@ pub(crate) struct Emit<'a, 'b> {
 #[derive(Clone, Copy)]
 pub(crate) enum EmitImm {
     Const(u64),
+    /// Shape recipe `key` of an ahead image (`ic::SYMBOLIC_SHAPE`): the symbol its loader resolves
+    /// to the shape's id in the VM it links to, or to an id no record has where it builds none.
+    Shape(u32),
 }
 
 impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
@@ -49,13 +52,23 @@ impl Emit<'_, '_> {
 
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
     fn word(&mut self, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.constant(bits) }
+        match imm {
+            EmitImm::Const(bits) => self.constant(bits),
+            EmitImm::Shape(key) => crate::symbol_words::symbol_address(self.builder, crate::compiled::lane_region::relocs::RelocKind::GuardShape as u32, key),
+        }
     }
     fn compare(&mut self, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_compare(relation, a, b) }
     /// `a` against an immediate at `a`'s own width (`icmp_imm`): a record's 32-bit shape word
     /// against a shape id is a 32-bit test, where an `i64` constant would not verify.
     fn compare_imm(&mut self, relation: Relation, a: ir::Value, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64) }
+        match imm {
+            EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64),
+            EmitImm::Shape(_) => {
+                let symbol = self.word(imm);
+                let b = if self.builder.func.dfg.value_type(a) == ir::types::I32 { self.narrow(symbol) } else { symbol };
+                self.raw_compare(relation, a, b)
+            }
+        }
     }
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
@@ -71,9 +84,14 @@ impl Stage for Emit<'_, '_> {
     type Imm = EmitImm;
 
     fn site(&mut self, v: u64) -> EmitImm { EmitImm::Const(v) }
+    fn shape_site(&mut self, shape: u32) -> EmitImm {
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        if shape & tag != 0 { EmitImm::Shape(shape & !tag) } else { EmitImm::Const(u64::from(shape)) }
+    }
     fn load_site(&mut self, at: Access, base: ir::Value, offset: EmitImm) -> ir::Value {
         match offset {
             EmitImm::Const(bits) => self.load_u64(at, base, bits as i32),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
@@ -113,6 +131,7 @@ impl Stage for Emit<'_, '_> {
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         match imm.into() {
             EmitImm::Const(bits) => self.builder.ins().iadd_imm_s(a, bits as i64),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
@@ -125,6 +144,7 @@ impl Stage for Emit<'_, '_> {
                 self.builder.ins().ishl_imm_s(a, bits.trailing_zeros() as i64)
             }
             (EmitImm::Const(bits), Lane::I64) => self.builder.ins().imul_imm_s(a, bits as i64),
+            (EmitImm::Shape(_), _) => unreachable!("a shape is never an offset"),
             (imm, _) => {
                 let v = self.word(imm);
                 self.raw_binary(Binary::Mul, a, v)
@@ -134,16 +154,19 @@ impl Stage for Emit<'_, '_> {
     fn and_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         match imm.into() {
             EmitImm::Const(bits) => self.builder.ins().band_imm_s(a, bits as i64),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         match imm.into() {
             EmitImm::Const(bits) => self.builder.ins().bor_imm_s(a, bits as i64),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
         match shift.into() {
             EmitImm::Const(bits) => self.builder.ins().ushr_imm_s(a, bits as i64),
+            EmitImm::Shape(_) => unreachable!("a shape is never an offset"),
         }
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
@@ -200,6 +223,28 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         open
     }
+    /// Whether a store of a value the slot's type holds needs no barrier log
+    /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
+    /// the gate word is not asked; old records keep no counts (`counts_clear`), and a heap value's
+    /// owner is unmarked (`barrier::value_unlogged`). A stage with no payload answers no, and the
+    /// store leaves at its miss.
+    fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
+        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(logged);
+        let open = self.builder.append_block_param(join, types::I8);
+        let clear = self.counts_clear(payload);
+        emit_js_guard(self.builder, clear, logged);
+        quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged)
+            .expect("an Emit guard always continues");
+        let yes = self.raw_const(Lane::I8, 1);
+        self.goto(join, &[yes]);
+        self.builder.switch_to_block(logged);
+        let no = self.raw_const(Lane::I8, 0);
+        self.goto(join, &[no]);
+        self.builder.switch_to_block(join);
+        open
+    }
     /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
     /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
     /// without counts, else closed, and the store leaves at its miss.
@@ -210,12 +255,6 @@ impl Stage for Emit<'_, '_> {
             return self.raw_compare_imm(Relation::Equal, counted, 0);
         };
         self.counts_clear(payload)
-    }
-    fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
-        // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
-        let zero = self.constant(0);
-        let never = self.ne_imm(zero, 0u32);
-        (zero, never)
     }
     fn assumption(&mut self, _watch: EmitImm) -> ir::Value {
         // A watched op never reaches emitted code: the specializer holds the watch's subject as a
@@ -302,9 +341,20 @@ impl Stage for Emit<'_, '_> {
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.raw_select(cond, then, otherwise)
     }
+    /// An ahead image's guessed shapes (`ic::SYMBOLIC_SHAPE`) are each compared with their
+    /// symbol; the others form the set (`shape_in_set`).
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
         let word = if self.raw_lane(shape) == Lane::I32 { shape } else { self.narrow(shape) };
-        super::shape_in_set(self.builder, word, shapes)
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        let (guessed, known): (Vec<u32>, Vec<u32>) = shapes.iter().partition(|shape| *shape & tag != 0);
+        let mut member = (!known.is_empty()).then(|| super::shape_in_set(self.builder, word, &known));
+        for shape in guessed {
+            let symbol = self.word(EmitImm::Shape(shape & !tag));
+            let symbol = self.narrow(symbol);
+            let same = self.raw_compare(Relation::Equal, word, symbol);
+            member = Some(match member { Some(member) => self.or(member, same), None => same });
+        }
+        member.expect("a shape set is non-empty")
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
         let number = self.raw_unary(Unary::Bitcast(Lane::F64), bits);
@@ -391,21 +441,6 @@ impl Emit<'_, '_> {
     }
 }
 
-impl Emit<'_, '_> {
-    /// The i64 word of the binary64 `value` and whether it is an integer of magnitude at most 2^53 (`value` converted
-    /// and converted back is itself, and the saturated conversion stays inside that range; NaN fails both).
-    fn integral_below_2_53(&mut self, value: ir::Value) -> (ir::Value, ir::Value) {
-        let integer = self.raw_unary(Unary::ToSignedSaturating(Lane::I64), value);
-        let back = self.raw_unary(Unary::FromSigned(Lane::F64), integer);
-        let exact = self.raw_compare(Relation::FloatEqual, back, value);
-        let bias = self.raw_const(Lane::I64, 1 << 53);
-        let shifted = self.raw_binary(Binary::Add, integer, bias);
-        let width = self.raw_const(Lane::I64, 1 << 54);
-        let small = self.raw_compare(Relation::UnsignedLessEqual, shifted, width);
-        (integer, self.raw_binary(Binary::And, exact, small))
-    }
-}
-
 impl NumericStage for Emit<'_, '_> {
     const ORDERED_FIRST: bool = true;
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
@@ -429,20 +464,14 @@ impl NumericStage for Emit<'_, '_> {
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         numbers::checked_int32_arithmetic(self, operation, left, right)
     }
-    /// The remainder of two binary64 words: where both are integers below 2^53 and the divisor is nonzero, the i64
-    /// remainder (exact, and the dividend's sign), copied onto the dividend's sign for a zero result (`-0`); else
-    /// the shared leaf (`numbers::float_remainder`).
+    /// The remainder of two binary64 words: where the integral remainder admits them (`number_machine::
+    /// integral_remainder_operands`, the interpreter's bound and rule), its exact i64 form; else the shared leaf
+    /// (`numbers::float_remainder`).
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        let (dividend, dividend_ok) = self.integral_below_2_53(left);
-        let (divisor, divisor_ok) = self.integral_below_2_53(right);
-        let nonzero = self.raw_compare_imm(Relation::NotEqual, divisor, 0);
-        let both = self.raw_binary(Binary::And, dividend_ok, divisor_ok);
-        let integral = self.raw_binary(Binary::And, both, nonzero);
-        self.choose_arms(integral, |stage| {
-            let remainder = stage.raw_binary(Binary::RemainderSigned, dividend, divisor);
-            let magnitude = stage.raw_unary(Unary::FromSigned(Lane::F64), remainder);
-            stage.raw_binary(Binary::FloatCopySign, magnitude, left)
-        }, |stage| numbers::float_remainder(stage, left, right), false)
+        let (dividend, divisor, integral) = quench_runtime::staged::number_machine::integral_remainder_operands(self, left, right);
+        self.choose_arms(integral,
+            |stage| quench_runtime::staged::number_machine::integral_remainder_value(stage, (dividend, divisor), left),
+            |stage| numbers::float_remainder(stage, left, right), false)
     }
     fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.

@@ -56,8 +56,12 @@ impl NativeKind {
         }
     }
 
-    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one).
-    pub fn is_int32(self) -> bool { self.element_type().is_int32() }
+    /// Whether this kind stores an int32 by its low bytes (ToInt32 modulo its width, which is the int32's
+    /// own bits): every integer kind but the clamped byte (`typed_write_int`).
+    #[inline] pub const fn wraps_int32(self) -> bool { matches!(self.element, Element::Integer(integer) if !matches!(integer, Integer::Clamped8)) }
+
+    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one): every integer kind but Uint32.
+    #[inline] pub const fn is_int32(self) -> bool { matches!(self.element, Element::Integer(integer) if !matches!(integer, Integer::Unsigned32)) }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.
@@ -183,19 +187,18 @@ fn element_address<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, kin
     stage.add(values, offset)
 }
 
-/// What `access` makes of the element the kind word `kind` names, one arm per kind of `kinds`
-/// from the first; a kind no arm names leaves at `miss`.
-fn by_word<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): (NativeKind, &[NativeKind]),
-    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
-    let named = stage.eq_imm(kind, first.kind as u64);
-    match rest.split_first() {
-        None => {
-            stage.guard(named, miss)?;
-            access(stage, first)
-        }
-        Some((next, rest)) => stage.choose_leaving(named, #[inline(always)] |stage| access(stage, first),
-            #[inline(always)] |stage| by_word(stage, kind, (*next, rest), access, miss)),
+/// What `access` makes of the element the kind word `kind` names, one arm per kind of `ELEMENTS`
+/// in order; a kind no arm names leaves at `miss`. Unrolled: a stencil holds no kind table, only its holes.
+#[inline(always)]
+fn by_word<S: Stage>(stage: &mut S, kind: S::Word, access: &impl Fn(&mut S, NativeKind) -> Option<S::Word>,
+    miss: S::Miss) -> Option<S::Word> {
+    macro_rules! arms {
+        ($stage:ident; $last:literal) => {{ let named = $stage.eq_imm(kind, ELEMENTS[$last].kind as u64); $stage.guard(named, miss)?; access($stage, ELEMENTS[$last]) }};
+        ($stage:ident; $first:literal $(, $rest:literal)+) => {{ let named = $stage.eq_imm(kind, ELEMENTS[$first].kind as u64);
+            $stage.choose_leaving(named, #[inline(always)] |stage| access(stage, ELEMENTS[$first]), #[inline(always)] |stage| arms!(stage; $($rest),+)) }};
     }
+    const { assert!(ELEMENTS.len() == 9, "one arm per native kind") };
+    arms!(stage; 0, 1, 2, 3, 4, 5, 6, 7, 8)
 }
 
 /// The Number at element `index` of `values` for `native`.
@@ -246,8 +249,8 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
     bounded(stage, view, index, miss)?;
     match view.kind {
         ViewKind::Static(native) => read_element(stage, view.values, index, native),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
-            &|stage, native| read_element(stage, view.values, index, native), miss),
+        ViewKind::Dynamic(word) => by_word(stage, word,
+            &#[inline(always)] |stage, native| read_element(stage, view.values, index, native), miss),
     }
 }
 
@@ -260,8 +263,8 @@ pub(crate) fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S
     bounded(stage, view, index, miss)?;
     match view.kind {
         ViewKind::Static(native) => read_element_value(stage, view.values, index, native),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
-            &|stage, native| read_element_value(stage, view.values, index, native), miss),
+        ViewKind::Dynamic(word) => by_word(stage, word,
+            &#[inline(always)] |stage, native| read_element_value(stage, view.values, index, native), miss),
     }
 }
 
@@ -287,10 +290,23 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
     let access = (view.values, index, number);
     match view.kind {
         ViewKind::Static(native) => write_element(stage, access, native, miss),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
-            &|stage, native| write_element(stage, access, native, miss), miss),
+        ViewKind::Dynamic(word) => by_word(stage, word,
+            &#[inline(always)] |stage, native| write_element(stage, access, native, miss), miss),
     }
     .map(|_| ())
+}
+
+/// Stores the int32 `int` at element `index` of `view`, whose kind the proof fixed to one that
+/// wraps an int32 (`NativeKind::wraps_int32`): its low bytes are the element, with no Number made
+/// of it. Past the elements leaves at `miss`; another view is `typed_write`'s (nothing emitted).
+#[inline(always)]
+pub(crate) fn typed_write_int<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+    int: S::Word, miss: S::Miss) -> Option<()> {
+    let ViewKind::Static(NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
+    bounded(stage, view, index, miss)?;
+    let address = element_address(stage, view.values, index, kind);
+    store_integer(stage, integer, address, int);
+    Some(())
 }
 
 /// The runtime's own element conversions over bytes (byte order, Float16, the Concrete

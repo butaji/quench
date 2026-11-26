@@ -19,9 +19,7 @@ fn region(source: &str, observed: bool, left: bool) -> ir::Function {
 fn region_over(source: &str, observed: bool, left: bool, views: ElementViews) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-    let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
-        instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize).filter(|target| *target <= pc))
-        .min().unwrap();
+    let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let at = |class: Class| -> Vec<usize> { unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().class().eq(&class)).map(|(pc, _)| pc).collect() };
     let reads: Vec<_> = at(Class::GetIndex).into_iter().filter(|_| observed)
@@ -257,9 +255,7 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
 fn region_with_feedback(source: &str, views: ElementViews, left_header: bool, entry_bounds: bool) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-    let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
-        instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize).filter(|target| *target <= pc))
-        .min().unwrap();
+    let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     let generic = if left_header { vec![header] } else { Vec::new() };

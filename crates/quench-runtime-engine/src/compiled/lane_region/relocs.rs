@@ -29,6 +29,10 @@ pub(crate) enum RelocKind {
     HeapValue,
     /// The shape numbered `key` of the image's recipes, interned in the VM that loads the code.
     Shape,
+    /// The shape numbered `key` of the image's recipes as a field read guards it
+    /// (`ic::SYMBOLIC_SHAPE`): where the VM that loads the code builds no such shape yet, an id no
+    /// record has (`symbols::NO_SHAPE`), so the guard misses and the read asks the VM's caches.
+    GuardShape,
 }
 
 impl RelocKind {

@@ -5,7 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::lane_unit::Origin;
-use quench_runtime::vm::global_facts::GlobalSlot;
+use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot};
 
 impl Lowering<'_, '_> {
     /// The call-out row (`Operation::call_out`) of `instruction` where this lowering makes it: in a
@@ -44,6 +44,11 @@ impl Lowering<'_, '_> {
             return false;
         };
         let row = quench_runtime::staged::Operation::decode(instruction, quench_runtime::staged::DecodeContext::of(self.program)).expect("a call-out record decodes");
+        let row = match self.strict_reference(state, pc, instruction) {
+            Some(StrictReference::Resolved) => return true,
+            Some(StrictReference::Store(store)) => store,
+            None => row,
+        };
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         self.canonicalize(state, pc);
         let cell = self.global_cell(state, pc, &row, miss);
@@ -121,4 +126,36 @@ fn returned_call(instruction: WideInstruction, row: &quench_runtime::staged::Ope
 /// Whether `row` is a `Binary` of two registers, equality or any other operator.
 fn is_binary(row: &quench_runtime::staged::Operation<ir::Value, EmitProof>) -> bool {
     matches!(row, quench_runtime::staged::Operation::Equality { .. } | quench_runtime::staged::Operation::Binary { .. })
+}
+
+/// A strict code's reference to a global slot the lowering holds (`Lowering::strict_reference`).
+pub(crate) enum StrictReference {
+    /// The `ResolveName`: its base, the global object, is defined.
+    Resolved,
+    /// The `StoreResolvedName`, as the slot's `GlobalWrite`.
+    Store(quench_runtime::staged::Operation<ir::Value, EmitProof>),
+}
+
+impl Lowering<'_, '_> {
+    /// `x = e` of a global `x` in strict code (`strict_reference_step`) where the lowering holds `x`'s slot
+    /// (`Vm::global_reads_in_lane`): the resolution defines its base as the global object under the slot's
+    /// layout, which only an own data property `x` keeps, and the store, whose base is that object, is the
+    /// slot's `GlobalWrite`. Its miss is the record's own call-out (`vm_operation_step`), which raises as
+    /// strict code does where `x` went away. Any other reference stays the call-out it is.
+    fn strict_reference(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<StrictReference> {
+        if !quench_runtime::staged::strict_reference_step(instruction) || !self.division().folds(BindingTime::Stable) { return None; }
+        let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
+        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Global);
+        self.hold_global_slot(state, exit, slot);
+        let global = self.raw_const(Lane::I64, slot.global.to_bits() as i64);
+        if let Some(base) = instruction.written_registers().next() {
+            self.set_tagged(state, base, global);
+            return Some(StrictReference::Resolved);
+        }
+        let base = self.tagged(state, instruction.register_b());
+        let same = self.raw_compare(Relation::Equal, base, global);
+        emit_js_guard(&mut self.builder, same, exit);
+        Some(StrictReference::Store(quench_runtime::staged::Operation::GlobalWrite { source: instruction.register_a(),
+            atom: instruction.atom_index(), site: 0, initialize: false }))
+    }
 }

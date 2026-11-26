@@ -12,14 +12,21 @@ pub(crate) const HIGH_SHIFT: u32 = 32;
 pub(crate) const INT_HIGH: u64 = INT_TAG >> HIGH_SHIFT;
 /// Byte offset of the upper half of a tagged word.
 pub(crate) const HIGH_HALF_AT: usize = 4;
-/// The last value hole a row may name (`quench_bjit::HOLES` - 1).
+/// The last value hole the Wasm SIMD rows name for their shuffle bytes (holes 4 and 5 hold the
+/// sixteen indices as two 64-bit words).
 pub(crate) const LAST_HOLE: u8 = 4;
+/// The last value hole a row may name (`quench_bjit::HOLES` - 1): the a-jit rows' sites number
+/// past the Wasm shuffle's pair (`LAST_HOLE`).
+pub(crate) const MAX_HOLE: u8 = 7;
 /// The holes of the first and second operand.
 pub(crate) const HOLE_A: u8 = 1;
 pub(crate) const HOLE_B: u8 = 2;
-/// The value holes after the operands' (`HOLE_V0`..`HOLE_V4` are 0..=`LAST_HOLE`).
+/// The value holes after the operands' (`HOLE_V0`..`HOLE_V7` are 0..=`MAX_HOLE`).
 pub(crate) const HOLE_THIRD: u8 = 2;
 pub(crate) const HOLE_FOURTH: u8 = 3;
+pub(crate) const HOLE_FIFTH: u8 = 4;
+pub(crate) const HOLE_SIXTH: u8 = 5;
+pub(crate) const HOLE_SEVENTH: u8 = 6;
 
 unsafe extern "C" {
     pub(crate) static HOLE_V0: u8;
@@ -27,6 +34,9 @@ unsafe extern "C" {
     static HOLE_V2: u8;
     static HOLE_V3: u8;
     static HOLE_V4: u8;
+    static HOLE_V5: u8;
+    static HOLE_V6: u8;
+    static HOLE_V7: u8;
 }
 
 /// The frame, the context and the pinned registers: ints and doubles.
@@ -89,7 +99,7 @@ macro_rules! hole_word {
 /// The value of hole `H` as a 64-bit constant (a tagged word).
 #[inline(always)]
 pub(crate) fn hole64<const H: u8>() -> u64 {
-    const { assert!(H <= LAST_HOLE) };
+    const { assert!(H <= MAX_HOLE) };
     // SAFETY: the template only materializes a symbol's value in a register.
     unsafe {
         match H {
@@ -97,7 +107,10 @@ pub(crate) fn hole64<const H: u8>() -> u64 {
             1 => hole_word!(HOLE_V1),
             HOLE_THIRD => hole_word!(HOLE_V2),
             HOLE_FOURTH => hole_word!(HOLE_V3),
-            _ => hole_word!(HOLE_V4),
+            HOLE_FIFTH => hole_word!(HOLE_V4),
+            HOLE_SIXTH => hole_word!(HOLE_V5),
+            HOLE_SEVENTH => hole_word!(HOLE_V6),
+            _ => hole_word!(HOLE_V7),
         }
     }
 }
@@ -108,13 +121,16 @@ pub(crate) fn hole64<const H: u8>() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn hole<const H: u8>() -> usize {
-    const { assert!(H <= LAST_HOLE) };
+    const { assert!(H <= MAX_HOLE) };
     match H {
         0 => &raw const HOLE_V0 as usize,
         1 => &raw const HOLE_V1 as usize,
         HOLE_THIRD => &raw const HOLE_V2 as usize,
         HOLE_FOURTH => &raw const HOLE_V3 as usize,
-        _ => &raw const HOLE_V4 as usize,
+        HOLE_FIFTH => &raw const HOLE_V4 as usize,
+        HOLE_SIXTH => &raw const HOLE_V5 as usize,
+        HOLE_SEVENTH => &raw const HOLE_V6 as usize,
+        _ => &raw const HOLE_V7 as usize,
     }
 }
 #[cfg(target_arch = "aarch64")]

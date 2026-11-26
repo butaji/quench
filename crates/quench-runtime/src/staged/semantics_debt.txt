@@ -12,7 +12,6 @@ ecma_whitespace quench-runtime/src/vm/eval.rs:&& (character == '\u{feff}' || cha
 ecma_whitespace quench-runtime/src/vm/regexp.rs:} else if character.is_control() || character.is_whitespace() || character == '\u{FEFF}' {
 equality quench-runtime-engine/src/compiled/lane_region.rs:fn number_strict_equality(&mut self, state: &mut State, pc: u32, number: Operand, other: Operand) -> Option<ir::Value> {
 equality quench-runtime-engine/src/compiled/lane_region.rs:fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
-equality quench-runtime-engine/src/compiled/lane_region.rs:let both_short = self.raw_compare_imm(Relation::Equal, either, i64::from(quench_runtime::vm::wtf16::native_string::TAG_SHORT));
 exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
 exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:pub(crate) fn exact_int32(x: f64) -> Option<i32> {
 exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
