@@ -459,10 +459,6 @@ mod rustc_tests {
 
     /// The routines around a region's rows (`stencils/entry.rs`).
     const ROUTINES: [&str; 4] = ["entry_thunk", "entry_resume", "leave_word", "leave_pop"];
-    /// The routines around a wasm function's rows (`wasm_entry.rs`, x86-64): its entry and the leaves with a word,
-    /// with none, and with a trap's status.
-    #[allow(dead_code)] // named for the reader; no test checks the Wasm routines yet
-    const WASM_ROUTINES: [&str; 4] = ["entry_wasm", "leave_wasm_word", "leave_wasm_void", "leave_wasm_trap"];
 
     /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]

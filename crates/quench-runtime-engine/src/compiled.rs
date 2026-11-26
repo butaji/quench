@@ -891,16 +891,6 @@ fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_r
     }
 }
 
-/// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier log. Verified Numbers are immediate and discharge the test at
-/// compilation. Otherwise the caller must perform the logged store, which `fallback` takes.
-fn emit_unlogged_property_store_guard(
-    stage: &mut object_slots::Emit<'_, '_>, list: quench_runtime::staged::barrier::MarkList, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, fallback: ir::Block,
-) {
-    quench_runtime::staged::barrier::value_unlogged(stage, payload, list, record_id, value, fallback).expect("an Emit guard always continues");
-}
-
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
 /// storage mode found at entry, which only an adding store changes, after which the body reads
 /// them again (`Lowering::reload_receiver`); and the property arena's base, which an

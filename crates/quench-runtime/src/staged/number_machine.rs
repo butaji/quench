@@ -98,10 +98,10 @@ pub fn number_bitwise<M: MachineScalar>(machine: &mut M, operation: NumberBitwis
 
 /// The i64 words of two binary64 operands and whether the integral remainder admits them
 /// (`vm::operations::integral_remainder`, the interpreter's): both integers of magnitude at most
-/// `INTEGRAL_REMAINDER_LIMIT` (converted and converted back each is itself, and the saturated
+/// `SAFE_INTEGER_LIMIT` (converted and converted back each is itself, and the saturated
 /// conversion stays inside the limit; NaN fails both) and the divisor nonzero.
 pub fn integral_remainder_operands<M: MachineScalar>(machine: &mut M, left: M::Word, right: M::Word) -> (M::Word, M::Word, M::Word) {
-    let limit = crate::vm::operations::INTEGRAL_REMAINDER_LIMIT;
+    let limit = crate::vm::operations::SAFE_INTEGER_LIMIT;
     let integral = |machine: &mut M, value: M::Word| {
         let integer = machine.raw_unary(Unary::ToSignedSaturating(Lane::I64), value);
         let back = machine.raw_unary(Unary::FromSigned(Lane::F64), integer);

@@ -484,6 +484,38 @@ pub fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word,
     Some(grown)
 }
 
+/// Fills the hole at the int32 `key` (a value word) of the direct array `base` among the array
+/// records at `record_base` with `value`, whose store the caller proved passes the write barrier
+/// unlogged: OrdinarySet then defines a plain data element in the hole, one write in place, where
+/// the backing is wide, the array's own, extensible and plain (`resizable_backing`) and its
+/// prototype's link is `chain`, the held index-free chain proof's (`heap::index_free_chain_link_address`,
+/// zero while none is held). The hole counted among the backing's others, so the count is
+/// `replace_element`'s. `None` (leaving at `miss`, before any write) for any other store.
+#[inline(always)]
+pub fn fill_hole<S: Stage>(stage: &mut S, record_base: S::Word, chain: S::Word, (base, key, value): (S::Word, S::Word, S::Word),
+    miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let index = stage.add_imm(key, crate::value::ValueLayout::INT_TAG.wrapping_neg());
+    let over = stage.ugt_imm(index, u64::from(i32::MAX as u32));
+    let within_int = stage.not(over);
+    stage.guard(within_int, miss)?;
+    let backing = array_backing(stage, record_base, base, miss)?;
+    resizable_backing(stage, backing, miss)?;
+    let held = stage.ne_imm(chain, 0u32);
+    stage.guard(held, miss)?;
+    let object = stage.add_imm(backing.record, ARRAY.object_offset as u64);
+    let link = super::object::proto_link(stage, object);
+    let linked = stage.eq(link, chain);
+    stage.guard(linked, miss)?;
+    let in_bounds = stage.ult(index, backing.length);
+    stage.guard(in_bounds, miss)?;
+    let (address, old) = loaded_element(stage, backing.values, index);
+    let hole = stage.eq_imm(old, crate::Value::DELETED.to_bits());
+    stage.guard(hole, miss)?;
+    replace_element(stage, backing.values, address, old, value);
+    Some(())
+}
+
 /// Appends `value`, a Number word whose store passes the write barrier unlogged, at the length
 /// of the writable `backing` (`writable_backing`) while its capacity word proves a slot past the
 /// length; `None` (leaving at `miss`, before any write) for a full backing, which the VM grows.
