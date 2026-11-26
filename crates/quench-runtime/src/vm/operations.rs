@@ -1880,12 +1880,11 @@ impl Vm {
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
+    #[inline]
     pub fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        if !(self.is_bigint(left) && self.is_bigint(right)) {
-            return None;
-        }
-        let ordering = super::finalization::compare_bigint_values(&self.heap, left, right)??;
-        NumberRelation::from_operator(op)?.of_ordering(ordering)
+        // One cell read per operand: the pair's own digits order it (`JsBigInt::cmp`).
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) = (self.heap.get(left), self.heap.get(right)) else { return None };
+        NumberRelation::from_operator(op)?.of_ordering(left.cmp(right))
     }
 
     #[inline(never)]

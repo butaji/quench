@@ -186,10 +186,27 @@ impl Stage for Emit<'_, '_> {
     fn store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
         self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged))
     }
-    /// `store_gate` of a value the slot's type holds: the barrier's log alone (`barrier::held_unlogged`).
+    /// Whether a store of a value the slot's type holds needs no barrier log
+    /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
+    /// the gate word is not asked; old records keep no counts (`counts_clear`), and a heap value's
+    /// owner is unmarked (`barrier::value_unlogged`). A stage with no payload answers no, and the
+    /// store leaves at its miss.
     fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
-        let counts = quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS;
-        self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::held_unlogged(stage, payload, (watch, counts), super::super::store_mark_list(space), record_id, value, logged))
+        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
+        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(logged);
+        let open = self.builder.append_block_param(join, types::I8);
+        let clear = self.counts_clear(payload);
+        emit_js_guard(self.builder, clear, logged);
+        quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged)
+            .expect("an Emit guard always continues");
+        let yes = self.raw_const(Lane::I8, 1);
+        self.goto(join, &[yes]);
+        self.builder.switch_to_block(logged);
+        let no = self.raw_const(Lane::I8, 0);
+        self.goto(join, &[no]);
+        self.builder.switch_to_block(join);
+        open
     }
     /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
     /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
@@ -387,21 +404,6 @@ impl Emit<'_, '_> {
     }
 }
 
-impl Emit<'_, '_> {
-    /// The i64 word of the binary64 `value` and whether it is an integer of magnitude at most 2^53 (`value` converted
-    /// and converted back is itself, and the saturated conversion stays inside that range; NaN fails both).
-    fn integral_below_2_53(&mut self, value: ir::Value) -> (ir::Value, ir::Value) {
-        let integer = self.raw_unary(Unary::ToSignedSaturating(Lane::I64), value);
-        let back = self.raw_unary(Unary::FromSigned(Lane::F64), integer);
-        let exact = self.raw_compare(Relation::FloatEqual, back, value);
-        let bias = self.raw_const(Lane::I64, 1 << 53);
-        let shifted = self.raw_binary(Binary::Add, integer, bias);
-        let width = self.raw_const(Lane::I64, 1 << 54);
-        let small = self.raw_compare(Relation::UnsignedLessEqual, shifted, width);
-        (integer, self.raw_binary(Binary::And, exact, small))
-    }
-}
-
 impl NumericStage for Emit<'_, '_> {
     const ORDERED_FIRST: bool = true;
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
@@ -425,20 +427,14 @@ impl NumericStage for Emit<'_, '_> {
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         numbers::checked_int32_arithmetic(self, operation, left, right)
     }
-    /// The remainder of two binary64 words: where both are integers below 2^53 and the divisor is nonzero, the i64
-    /// remainder (exact, and the dividend's sign), copied onto the dividend's sign for a zero result (`-0`); else
-    /// the shared leaf (`numbers::float_remainder`).
+    /// The remainder of two binary64 words: where the integral remainder admits them (`number_machine::
+    /// integral_remainder_operands`, the interpreter's bound and rule), its exact i64 form; else the shared leaf
+    /// (`numbers::float_remainder`).
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        let (dividend, dividend_ok) = self.integral_below_2_53(left);
-        let (divisor, divisor_ok) = self.integral_below_2_53(right);
-        let nonzero = self.raw_compare_imm(Relation::NotEqual, divisor, 0);
-        let both = self.raw_binary(Binary::And, dividend_ok, divisor_ok);
-        let integral = self.raw_binary(Binary::And, both, nonzero);
-        self.choose_arms(integral, |stage| {
-            let remainder = stage.raw_binary(Binary::RemainderSigned, dividend, divisor);
-            let magnitude = stage.raw_unary(Unary::FromSigned(Lane::F64), remainder);
-            stage.raw_binary(Binary::FloatCopySign, magnitude, left)
-        }, |stage| numbers::float_remainder(stage, left, right), false)
+        let (dividend, divisor, integral) = quench_runtime::staged::number_machine::integral_remainder_operands(self, left, right);
+        self.choose_arms(integral,
+            |stage| quench_runtime::staged::number_machine::integral_remainder_value(stage, (dividend, divisor), left),
+            |stage| numbers::float_remainder(stage, left, right), false)
     }
     fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.

@@ -25,7 +25,6 @@ use crate::ext_traits::*;
 use quench_runtime::bytecode::{ImmediateRole, OperandKind, WideInstruction};
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::value::Value;
-use quench_runtime::vm::operations::binary_operator as code;
 
 pub(crate) use quench_runtime::vm::engine_types::Kind;
 
@@ -134,9 +133,10 @@ fn kind_of(instruction: WideInstruction, constants: &[Value], kinds: &[Kind], sp
             }
         }
         _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) && instruction.numeric_local_target().is_none() => {
-            let operator = instruction.binary_operator();
-            let bitwise = matches!(operator, code::BitwiseOR | code::BitwiseXOR | code::BitwiseAnd | code::ShiftLeft | code::ShiftRight);
-            if !bitwise {
+            // A bitwise operator whose result is an int32 whatever its operands (not `>>>`).
+            let int32 = matches!(quench_runtime::staged::BinaryClass::of_operator(instruction.binary_operator()),
+                quench_runtime::staged::BinaryClass::Bitwise(operation) if operation.result_is_int32(None));
+            if !int32 {
                 return Kind::Tagged;
             }
             // A Number operand: a register of an int32 kind (a speculative one is a Number too),

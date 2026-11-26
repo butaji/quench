@@ -9,9 +9,15 @@ use std::cmp::Ordering;
 use std::ptr::NonNull;
 
 /// Digits held in the cell: what fits beside the length and sign in the largest cell
-/// payload, an array's, so a BigInt never widens a heap slot (`cells_stay_compact`).
-pub(crate) const INLINE_DIGITS: usize =
-    (std::mem::size_of::<crate::heap::ArrayObject>() - HEADER_BYTES) / std::mem::size_of::<Digit>();
+/// payload, an array's, so a BigInt never widens a heap slot (`cells_stay_compact`), and at
+/// least the digits the spilled pointer's own room holds, which cost no width at all. A
+/// 12-byte array record left room for none, so every nonzero BigInt (each `BigInt64Array`
+/// read) spilled one digit to its own allocation.
+pub(crate) const INLINE_DIGITS: usize = {
+    let beside = (std::mem::size_of::<crate::heap::ArrayObject>() - HEADER_BYTES) / std::mem::size_of::<Digit>();
+    let pointer = std::mem::size_of::<NonNull<Digit>>() / std::mem::size_of::<Digit>();
+    if beside > pointer { beside } else { pointer }
+};
 /// The length and sign, padded to a digit's alignment.
 const HEADER_BYTES: usize = std::mem::align_of::<Digit>();
 
@@ -23,6 +29,9 @@ const MAX_DIGITS: usize = MAX_BITS / DIGIT_BITS as usize;
 /// Multiplications whose shorter operand reaches this many digits leave schoolbook for
 /// `num-bigint`'s Karatsuba and Toom-3, at its own Karatsuba threshold.
 const SCHOOLBOOK_DIGITS: usize = 32;
+
+// The pointer's room holds the inline digits: the union is no wider than the spilled pointer.
+const _: () = assert!(INLINE_DIGITS >= 1);
 
 union Storage {
     inline: [Digit; INLINE_DIGITS],

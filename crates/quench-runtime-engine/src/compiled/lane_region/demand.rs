@@ -287,8 +287,9 @@ impl Lowering<'_, '_> {
             demand = demand.union(reads(self.unit, at, instruction, uses.contains(register), register,
                 (&|pc, register| self.is_live(pc, register), &after)));
             if defs.contains(register) { return demand; }
-            if !instruction.op().control_flow_layout().falls_through() || instruction.op().control_flow_layout().jumps() {
-                return successors(at, instruction).into_iter().filter_map(|target| self.demands.row(target))
+            let next = successors(at, instruction);
+            if next.as_slice() != [at + 1] {
+                return next.into_iter().filter_map(|target| self.demands.row(target))
                     .fold(demand, |demand, row| demand.union(row[register]));
             }
         }

@@ -1385,6 +1385,19 @@ struct ModuleBindings<'a> {
 }
 
 impl ModuleBindings<'_> {
+    /// The layout of an instance's environment (`WasmLayout`): its one constructor, which
+    /// `WasmModule::layout` and each lowering read.
+    fn layout(&self) -> WasmLayout {
+        WasmLayout {
+            globals: self.globals.len(),
+            memories: self.memories.len(),
+            data: self.data.len(),
+            tables: self.tables.len(),
+            elements: self.elements.len(),
+            tags: self.tags.len(),
+        }
+    }
+
     /// The record of defined function `position`, streamed, inlined, from its source as
     /// `plan` inlines it, its constants interned into `constants`.
     fn lower_defined<'s, I: inline::Operators<'s>>(
@@ -1395,6 +1408,7 @@ impl ModuleBindings<'_> {
         constants: &mut ConstantPool,
         settled: &[Constant],
     ) -> Result<Function, Diagnostic> {
+        let layout = self.layout();
         let Self { name, globals, memories, data, tables, elements, tags } = *self;
         // The body is streamed, inlined, from its source.
         let form = plan.lowered(position)?;
@@ -1451,6 +1465,7 @@ impl ModuleBindings<'_> {
             tables,
             elements,
             tags,
+            layout,
             handlers: vec![],
             depth: reserved,
             // The function base register always exists: it carries a void result.
@@ -1473,7 +1488,7 @@ impl ModuleBindings<'_> {
         }
         let global_slots = lowering.global_registers.iter().map(|&(global, register)| (global as usize, register));
         let memory_slots = lowering.memory_registers.iter().enumerate()
-            .filter_map(|(memory, register)| Some((lowering.layout().slot(WasmBinding::Memory(memory)), (*register)?)));
+            .filter_map(|(memory, register)| Some((lowering.layout.slot(WasmBinding::Memory(memory)), (*register)?)));
         let bindings: Vec<_> = global_slots.chain(memory_slots).collect();
         for (slot, register) in bindings {
             lowering.emit_emission(wasm_emit::instance_binding(register, slot as u32))?;
@@ -1608,6 +1623,8 @@ struct Lowering<'a> {
     tables: &'a [WasmTable],
     elements: &'a [WasmElement],
     tags: &'a [WasmTag],
+    /// The layout of the instance environment the lowered code reads (`ModuleBindings::layout`).
+    layout: WasmLayout,
     handlers: Vec<crate::bytecode::Handler>,
     name: &'a str,
     locals: u16,
@@ -1689,18 +1706,6 @@ enum WasmCallTarget {
 }
 
 impl Lowering<'_> {
-    /// The layout of the instance environment the lowered code reads (`WasmLayout`).
-    fn layout(&self) -> WasmLayout {
-        WasmLayout {
-            globals: self.globals.len(),
-            memories: self.memories.len(),
-            data: self.data.len(),
-            tables: self.tables.len(),
-            elements: self.elements.len(),
-            tags: self.tags.len(),
-        }
-    }
-
     /// The register the prologue loads `global`'s binding into, if the body accesses it.
     fn global_register(&self, global: u32) -> Option<Register> {
         let at = self.global_registers.binary_search_by_key(&global, |&(used, _)| used).ok()?;

@@ -237,6 +237,7 @@ impl Lowering<'_, '_> {
             let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
             self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
             state.proofs.layouts.clear();
+            state.proofs.global = None;
             self.reload_property_arena_if_entered();
             // The allocation may make a collection due: a later construction tests again.
             self.unready_constructions();

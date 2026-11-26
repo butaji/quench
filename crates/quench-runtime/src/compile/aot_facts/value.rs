@@ -19,6 +19,15 @@ pub(super) enum Origin {
     Binding(Key),
     /// The value of a named property `atom` read off some object (a method read before its call).
     Member(u32),
+    /// The `prototype` property of a function (`PrototypeBase`): the object its methods are stored on.
+    Prototype(PrototypeBase),
+}
+
+/// What a `prototype` read was read off: a closure, or a binding the census resolves to one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PrototypeBase {
+    Closure(u32),
+    Binding(Key),
 }
 
 /// What a register is known to hold at a point: its type in the one fact lattice
@@ -60,8 +69,7 @@ impl Fact {
 
     /// The fact of the Number `value`: an int32 unless it is not one, or is `-0`.
     pub(super) fn number(value: f64) -> Self {
-        let int = value as i32;
-        Self::of(if f64::from(int) == value && (int != 0 || value.is_sign_positive()) { Type::INT32 } else { Type::NUMBER })
+        Self::of(if crate::value::exact_int32(value).is_some() { Type::INT32 } else { Type::NUMBER })
     }
 
     /// The representation a register holding this fact at every point has.

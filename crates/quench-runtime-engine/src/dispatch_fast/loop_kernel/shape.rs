@@ -273,10 +273,10 @@ impl<'a> Graph<'a> {
     }
 
     fn binary(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
-        let (op, operator) = (instruction.op(), instruction.binary_operator());
-        let kind = match NumberArithmetic::from_js_instruction(op, operator) {
-            Some(arith) => SymOp::Arith(arith),
-            None => SymOp::Bits(NumberBitwise::from_js_instruction(op, operator)?),
+        let kind = match quench_runtime::staged::BinaryClass::of_operator(instruction.binary_operator()) {
+            quench_runtime::staged::BinaryClass::Arithmetic(arith) => SymOp::Arith(arith),
+            quench_runtime::staged::BinaryClass::Bitwise(bits) => SymOp::Bits(bits),
+            _ => return None,
         };
         let a = self.operand(file, instruction.operand_b())?;
         let b = self.operand(file, instruction.operand_c())?;

@@ -196,8 +196,7 @@ pub fn write_raw_bytes(output: &WireOutput, bytes: &[u8]) {
 /// Numbers V8 keeps as Smis (any int32 on the 64-bit builds Node ships) serialize as
 /// zigzag integers; every other number as a double.
 fn smi(value: f64) -> Option<i32> {
-    let integer = value as i32;
-    (f64::from(integer) == value && !(value == 0.0 && value.is_sign_negative())).then_some(integer)
+    crate::value::exact_int32(value)
 }
 
 fn put_number(output: &WireOutput, value: f64) {

@@ -150,10 +150,11 @@ impl SymbolTable {
         Symbol::Shape(self.shapes.key(recipe))
     }
 
-    /// The key of the guard of a read of `slot` of an object of `recipe` (`Symbol::GuardShape`):
-    /// the recipe's number in the same table as `shape`, and the slot, in one key (`guard_key`).
-    pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16) -> Option<u32> {
-        guard_key(self.shapes.key(recipe), slot)
+    /// The key of the guard of `access` of `slot` of an object of `recipe` (`Symbol::GuardShape`):
+    /// the recipe's number in the same table as `shape`, the access and the slot, in one key
+    /// (`guard_key`).
+    pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16, access: GuardAccess) -> Option<u32> {
+        guard_key(self.shapes.key(recipe), slot, access)
     }
 
     /// The symbol `(namespace, key)` names in `image`, the inverse of `intern`.
@@ -293,26 +294,99 @@ fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     Some(shape)
 }
 
-/// The bits of a guard key that hold its slot (`guard_key`).
+/// The bits of a guard key below its recipe (`guard_key`): the access, then the slot.
 const GUARD_SLOT_BITS: u32 = 12;
+/// The bits of a guard key below its access (`GuardAccess`): the slot.
+const GUARD_ACCESS_SHIFT: u32 = GUARD_SLOT_BITS - GuardAccess::BITS;
 
-/// The key of the guard of a read of `slot` of shape recipe `recipe`: the recipe above the slot's
-/// bits. `None` where either does not fit.
-fn guard_key(recipe: u32, slot: u16) -> Option<u32> {
-    (u32::from(slot) < 1 << GUARD_SLOT_BITS && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS)).then_some(recipe << GUARD_SLOT_BITS | u32::from(slot))
+/// What the access a shape guard admits needs of its slot (`guarded_shape`): a read reads any
+/// tagged word; a store writes in place, with no join of the slot's type, only the values of one
+/// class (`StoreArm::of` of the slot typed `GuardAccess::stored`), so its guard resolves only where
+/// the slot's type holds every value of that class. A prototype read guards two shapes: its
+/// receiver's (`Inherited`), which owns no field of the name, and its holder's (`Holder`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GuardAccess {
+    Read,
+    /// A store of an int32.
+    StoreInt32,
+    /// A store of a direct object or `null`.
+    StoreReference,
+    /// The receiver of a read its prototype answers: the recipe's shape, whatever its slots hold.
+    Inherited,
+    /// The holder of a prototype read: the shape the object the recipe's `prototype` names has
+    /// now, where the slot holds the recipe's one field, the name read, as a plain data field
+    /// (`Vm::holder_data_field`). The recipe names no shape of its own: it carries the holder and
+    /// the name.
+    Holder,
 }
 
-/// The shape guard key `key` names in `vm`, its slot and the type a reader of the slot depends on
-/// (`Vm::tagged_slot_type`): `None` where `vm` builds no such shape, or where the slot's words are
-/// not tagged values, which the read compiled for (`ahead_images::fields`) does not decode.
+impl GuardAccess {
+    /// The bits of the access in a guard key.
+    const BITS: u32 = 3;
+    const ALL: [Self; 5] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::Inherited, Self::Holder];
+
+    /// The type the slot's type must hold for the access: `None` for a read.
+    pub(crate) fn stored(self) -> Option<quench_runtime::typed_ir::Type> {
+        use quench_runtime::typed_ir::Type;
+        match self {
+            Self::Read | Self::Inherited | Self::Holder => None,
+            Self::StoreInt32 => Some(Type::INT32),
+            Self::StoreReference => Some(Type::DIRECT_OBJECT_FAMILY.join(Type::language(quench_runtime::ValueType::Null))),
+        }
+    }
+}
+
+/// The key of the guard of `access` of `slot` of shape recipe `recipe`: the recipe above the
+/// access and the slot. `None` where either does not fit.
+fn guard_key(recipe: u32, slot: u16, access: GuardAccess) -> Option<u32> {
+    (u32::from(slot) < 1 << GUARD_ACCESS_SHIFT && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS))
+        .then_some(recipe << GUARD_SLOT_BITS | (access as u32) << GUARD_ACCESS_SHIFT | u32::from(slot))
+}
+
+/// The shape guard key `key` names in `vm`, its slot and the type an access of the slot depends on
+/// (`Vm::tagged_slot_type`), a store's class joined in: `None` where `vm` builds no such shape,
+/// where the slot's words are not tagged values, which the access compiled for
+/// (`ahead_images::fields`) does not decode, or for a store's guard where the slot's type does not
+/// hold every value the store writes with no join of its type (`GuardAccess::stored`).
 pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
-    let slot = (key & ((1 << GUARD_SLOT_BITS) - 1)) as u16;
-    let shape = shape(image, vm, key >> GUARD_SLOT_BITS);
+    let slot = (key & ((1 << GUARD_ACCESS_SHIFT) - 1)) as u16;
+    let access = *GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?;
+    let recipe = key >> GUARD_SLOT_BITS;
+    match access {
+        GuardAccess::Holder => return holder_shape(image, vm, recipe, slot),
+        // The receiver's shape owns no field of the name it reads (`ahead_images::fields`).
+        GuardAccess::Inherited => return shape(image, vm, recipe).map(|shape| (shape, slot, quench_runtime::typed_ir::Type::ANY)),
+        _ => {}
+    }
+    let shape = shape(image, vm, recipe);
     if quench_runtime::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: guard {key:#x} resolves to shape {shape:?}, slot {slot} type {:?}", shape.map(|shape| vm.tagged_slot_type(shape, slot)));
+        eprintln!("aot-lanes: guard {key:#x} ({access:?}) resolves to shape {shape:?}, slot {slot} type {:?}", shape.map(|shape| vm.tagged_slot_type(shape, slot)));
     }
     let shape = shape?;
-    Some((shape, slot, vm.tagged_slot_type(shape, slot)?))
+    // A store's class joins the slot's type before the store is exposed (`Vm::admit_slot_writes_as`),
+    // as a JIT body's writer's domain does: a field the construction made `null` holds objects
+    // once the run stores one, which the image's store does in place from its first run. A
+    // widening retires the slot's readers; one that would make the words raw refuses below.
+    if let Some(stored) = access.stored() { vm.admit_slot_writes_as(shape, usize::from(slot), stored, false); }
+    let ty = vm.tagged_slot_type(shape, slot)?;
+    access.stored().is_none_or(|stored| stored.is_subtype(ty)).then_some((shape, slot, ty))
+}
+
+/// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its
+/// `prototype` names has now, where that shape holds its one field's name at `slot` as a plain
+/// data field of tagged words; `None` otherwise, so the guard resolves to `NO_SHAPE`.
+fn holder_shape(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u16) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
+    let recipe = image.shapes.get(recipe as usize)?;
+    let (Some(holder), [(atom, _)]) = (recipe.prototype, &recipe.fields[..]) else { return None };
+    let holder = heap_value(image, vm, holder)?;
+    let atom = vm.intern_atom(image.atoms.get(*atom as usize)?);
+    let found = vm.holder_data_field(holder, atom);
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: holder guard of slot {slot} finds {found:?}");
+    }
+    let (shape, at) = found?;
+    let ty = vm.tagged_slot_type(shape, slot)?;
+    (at == usize::from(slot)).then_some((shape, slot, ty))
 }
 
 /// The data attributes of a field's attribute bits.

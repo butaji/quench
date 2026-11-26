@@ -33,6 +33,19 @@ pub fn branch_table_entries(
     pc + 1..=pc + 1 + instruction.imm() as usize
 }
 
+/// The jump target of an instruction whose layout may continue there (`Jump`,
+/// `ConditionalJump`); `None` for every other layout, branch tables included.
+pub fn jump_edge(instruction: WideInstruction) -> Option<usize> {
+    instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize)
+}
+
+/// Whether control may continue from `pc` to `pc + 1` by an ordinary successor.
+pub fn falls_into_next(pc: usize, instruction: WideInstruction) -> bool {
+    let mut falls = false;
+    for_each_instruction_successor(pc, instruction, |successor| falls |= successor == pc + 1);
+    falls
+}
+
 /// Visit the ordinary instruction successors from the opcode's generated control-flow
 /// layout. Exception handlers are separate edges owned by `Function::for_each_successor`.
 pub fn for_each_instruction_successor(
