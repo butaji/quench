@@ -3935,6 +3935,9 @@ pub(crate) const OPERANDS_INT32: u8 = 4;
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
 /// A register the view's int32 kinds prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
+/// Two registers the view did not prove: their int32 tags are tested once per execution, and a pair of
+/// int32s runs the `OPERANDS_PROVEN` instance; any other pair requickens the record to `OPERANDS_REGISTERS` for good.
+pub(crate) const OPERANDS_GUARDED: u8 = 7;
 
 script_handler! {
     /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
@@ -3948,15 +3951,28 @@ script_handler! {
         let generic: Handler = generated_row!(OP, ACC, FLAG_UNREAD);
         // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
         unsafe {
-            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 || FORM == OPERANDS_GUARDED } {
                 std::hint::assert_unchecked(Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register));
             }
-            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_PROVEN } {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_PROVEN || FORM == OPERANDS_GUARDED } {
                 std::hint::assert_unchecked(Operand(i.c).kind() == Some(quench_runtime::bytecode::OperandKind::Register));
             }
             if const { FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
                 std::hint::assert_unchecked(Operand(i.c).kind() == Some(quench_runtime::bytecode::OperandKind::Constant));
             }
+        }
+        // The guarded form: each register's int32 tag is tested here, once per execution; an int32 pair runs the
+        // proven instance over the same record, and any other pair requickens the record to its general form for
+        // good. The register kinds are asserted above.
+        if const { FORM == OPERANDS_GUARDED } {
+            // SAFETY: both operands are registers (asserted above).
+            let (left, right) = unsafe { (Operand(i.b).register_index().unwrap_unchecked(), Operand(i.c).register_index().unwrap_unchecked()) };
+            if r.int(left).is_some() && r.int(right).is_some() {
+                sibling!(operator_row::<OP, ACC, OPERATOR, OPERANDS_PROVEN> as Handler, r, ip, view)
+            }
+            let general: Handler = operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS>;
+            requicken(ip, general);
+            sibling!(general, r, ip, view)
         }
         let (left, right) = (Operand(i.b), Operand(i.c));
         let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
