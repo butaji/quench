@@ -405,8 +405,8 @@ fn compile(options: Options) -> Result<(), String> {
         opcodes
     });
     fs::OpenOptions::new().append(true).open(inputs.catalog())
-        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\nconst RESTORED: bool = {restored};\n",
-            resumes_at_rest(&saved_waits, lane_opcodes.as_deref()), makes_code(&graph), runs_wasm(&graph)).as_bytes())).map_err(|error| error.to_string())?;
+        .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\nconst RESTORED: bool = {restored};\nconst REACHES_INTL: bool = {};\n",
+            resumes_at_rest(&saved_waits, lane_opcodes.as_deref()), makes_code(&graph), runs_wasm(&graph), reaches_intl(&graph)).as_bytes())).map_err(|error| error.to_string())?;
     // An image that only resumes saved runs starts from the operations their heaps hold, and
     // the builders of the builtins its program may name only as it runs (`require`, a lazy
     // global's module): every one the graph names.
@@ -735,6 +735,18 @@ fn makes_code(graph: &super::graph::DependencyGraph) -> bool {
 /// implies) or imports a `.wasm` module.
 fn runs_wasm(graph: &super::graph::DependencyGraph) -> bool {
     makes_code(graph) || graph.requirements.iter().any(|requirement| matches!(requirement, super::GraphRequirement::Wasm { .. }))
+}
+
+/// Whether the program can reach Intl or Temporal, so its image links that layer
+/// (`quench_runtime::install_intl`): it makes code (`makes_code`), names either global, or its
+/// source holds `ocale` (`toLocaleString`, `localeCompare` and the rest, which reach the layer
+/// from Number, BigInt, Date and String, or a piece of a key spelling one). Host code calls none
+/// of them. A key built from no such piece, such as one read from input, reaches an entry the
+/// image did not install, which throws a TypeError naming the missing layer.
+fn reaches_intl(graph: &super::graph::DependencyGraph) -> bool {
+    const INTL_NAMES: &[&str] = &["Intl", "Temporal", "ocale"];
+    makes_code(graph) || ["Intl", "Temporal"].iter().any(|name| graph.global_names.contains(*name))
+        || graph.files.values().any(|file| INTL_NAMES.iter().any(|name| file.bytes.windows(name.len()).any(|window| window == name.as_bytes())))
 }
 
 /// The modules whose host operations an image links only when its program imports them by

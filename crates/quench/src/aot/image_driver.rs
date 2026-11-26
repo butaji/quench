@@ -46,6 +46,10 @@ fn run() -> Result<std::process::ExitCode, String> {
     if MAKES_CODE || !(RESUME_ONLY || RESTORED) {
         quench::host::enable_dynamic_source();
     }
+    // The Intl and Temporal layer links only where the program can reach it (`REACHES_INTL`).
+    if REACHES_INTL {
+        quench_runtime::install_intl();
+    }
     // The WebAssembly frontend links only where the program can reach it (`RUNS_WASM`).
     if RUNS_WASM || !(RESUME_ONLY || RESTORED) {
         quench::host::enable_wasm();
