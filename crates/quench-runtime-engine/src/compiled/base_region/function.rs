@@ -381,7 +381,7 @@ fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fiel
 fn report_steps(layout: &Layout, program: &ResidualProgram, singles: &[Planned]) {
     fn steps(row: &Planned) -> Option<&'static str> {
         let named = row.symbolic.iter().flatten().find_map(|(_, symbol)| match symbol {
-            crate::aot_image::Symbol::Helper(helper) => crate::compiled::LaneHelper::name(*helper as usize).filter(|name| matches!(*name, "Step" | "VmStep")),
+            crate::aot_image::Symbol::Helper(helper) => crate::compiled::LaneHelper::name(*helper as usize).filter(|name| matches!(*name, "Step" | "VmStep" | "StepPacked")),
             _ => None,
         });
         named.or_else(|| row.pre.iter().chain(row.post.iter()).find_map(steps))
