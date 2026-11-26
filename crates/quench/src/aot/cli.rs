@@ -738,15 +738,17 @@ fn runs_wasm(graph: &super::graph::DependencyGraph) -> bool {
 }
 
 /// Whether the program can reach Intl or Temporal, so its image links that layer
-/// (`quench_runtime::install_intl`): it makes code (`makes_code`), names either global, or its
-/// source holds `ocale` (`toLocaleString`, `localeCompare` and the rest, which reach the layer
-/// from Number, BigInt, Date and String, or a piece of a key spelling one). Host code calls none
-/// of them. A key built from no such piece, such as one read from input, reaches an entry the
-/// image did not install, which throws a TypeError naming the missing layer.
+/// (`quench_runtime::install_intl`). Their entries are reached only through the `Intl` and
+/// `Temporal` globals and the locale-sensitive methods (`toLocale*` on every prototype and
+/// `localeCompare`), by name. Host code calls none of them. So the layer links where the program
+/// makes code (`makes_code`), names either global, spells a locale method's name anywhere in its
+/// source, reads a member by a non-literal key (`dynamic_reflective_sites`: the key may be any
+/// name), or writes an escape that could spell a name the text does not show.
 fn reaches_intl(graph: &super::graph::DependencyGraph) -> bool {
-    const INTL_NAMES: &[&str] = &["Intl", "Temporal", "ocale"];
-    makes_code(graph) || ["Intl", "Temporal"].iter().any(|name| graph.global_names.contains(*name))
-        || graph.files.values().any(|file| INTL_NAMES.iter().any(|name| file.bytes.windows(name.len()).any(|window| window == name.as_bytes())))
+    const SPELLINGS: &[&[u8]] = &[b"Intl", b"Temporal", b"toLocale", b"localeCompare", b"\\u", b"\\x"];
+    makes_code(graph) || !graph.dynamic_reflective_sites.is_empty()
+        || ["Intl", "Temporal"].iter().any(|name| graph.global_names.contains(*name))
+        || graph.files.values().any(|file| SPELLINGS.iter().any(|spelling| file.bytes.windows(spelling.len()).any(|window| window == *spelling)))
 }
 
 /// The modules whose host operations an image links only when its program imports them by
