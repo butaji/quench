@@ -44,11 +44,18 @@ impl Census {
     }
 
     /// Code added at run time as global code may write any global and any object's named
-    /// properties (`gate::World::Locals`): no binding of either names one closure.
+    /// properties (`gate::World::Locals`): no binding of either names one closure. Its method reads'
+    /// guesses go too: kept, richards' image ran 5% fewer instructions but deltablue's 8% more, its
+    /// guessed calls reaching callees that take the VM's call anyway (TOD-2222, 2026-11-26).
     pub(super) fn open_to_global_code(&mut self) {
         self.global_wild = true;
         self.member_wild = true;
         self.members.clear();
+    }
+
+    /// Whether `target(callee)` is a method read's guess rather than a proof.
+    pub(super) fn guessed(&self, callee: Fact) -> bool {
+        callee.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_)))
     }
 
     /// The closure `key` holds, when it is written once, with a closure, and no write the
