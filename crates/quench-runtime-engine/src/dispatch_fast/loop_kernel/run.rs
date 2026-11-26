@@ -199,17 +199,11 @@ fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
     })
 }
 
-/// The int32 a Number that is an integer of magnitude below 2^51 wraps to (its ToInt32),
-/// `None` for any other Number: adding 1.5 * 2^52 puts such an integer in the low bits of the
-/// binary64 word exactly, and subtracting it back gives the Number again only for an integer
-/// (a fraction rounds, a NaN never compares equal). A magnitude of 2^51 or more is tested
-/// apart: one past 2^53 absorbs the constant and round-trips with other low bits.
+/// The int32 a Number that is a safe integer wraps to (its ToInt32), `None` for any other Number
+/// (`operations::safe_integer`, the one rule; `-0` as `0`).
 #[inline(always)]
 pub(crate) fn exact_int32(x: f64) -> Option<i32> {
-    const MAGIC: f64 = 6755399441055744.0;
-    const LIMIT: f64 = 2251799813685248.0;
-    let shifted = x + MAGIC;
-    (x.abs() < LIMIT && shifted - MAGIC == x).then_some(shifted.to_bits() as u32 as i32)
+    quench_runtime::vm::operations::safe_integer(x).map(|integer| integer as i32)
 }
 
 /// `relation` of two Numbers as 1 or 0, as the staged relation row decides it (a NaN operand

@@ -22,7 +22,7 @@ impl Lowering<'_, '_> {
         let Some(closed) = self.vm.closed else { return false };
         let call = self.unit.frames[frame];
         let caller = call.parent.map_or(self.function_id, |parent| self.unit.frames[parent].target.function);
-        call.target.callee == CalleeBinding::Function && closed.function_facts(caller).call_target(call.call) == Some(call.target.function)
+        call.target.callee == CalleeBinding::Function && closed.function_facts(caller).proven_call_target(call.call) == Some(call.target.function)
     }
 
     pub(crate) fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {

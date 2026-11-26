@@ -689,7 +689,7 @@ impl Value {
 
     /// Whether this is any `TAG_DELETED` marker: `DELETED`, a shared environment slot, an
     /// environment index or unmaterialized arguments. None is a value a program observes.
-    #[inline(always)] pub(crate) fn is_internal_marker(self) -> bool {
+    #[inline(always)] pub fn is_internal_marker(self) -> bool {
         self.0 & TAG_MASK == TAG_DELETED
     }
 

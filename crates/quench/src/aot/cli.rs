@@ -250,7 +250,7 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });
-    if graph.requirements.iter().any(|requirement| variant::blocks(variant, requirement)) {
+    if graph.requirements.iter().any(|requirement| variant::blocks(support, requirement)) {
         report["status"] = json!("unsupported_requirements");
         write_report(report_path.as_deref(), &report)?;
         return Err(format!(

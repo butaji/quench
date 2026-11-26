@@ -15,7 +15,7 @@ use quench_runtime::staged::elements::DenseView;
 use quench_runtime::staged::typed_elements::TypedView;
 use quench_runtime::staged::{ElementFrame, Region, Stage};
 use quench_runtime::staged::barrier::MarkList;
-use crate::compiled::{emit_js_guard, emit_unlogged_property_store_guard};
+use crate::compiled::emit_js_guard;
 
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
@@ -28,26 +28,19 @@ pub(crate) enum Held {
     TypedValues(TypedView<ir::Value>),
 }
 
-/// The barrier gate of a store of the reference `value` into the direct array `base`, read from the
-/// dispatch `payload`: continues where the array's record mark bit is clear
-/// (`emit_unlogged_property_store_guard` over the array records' mark list, the test `Heap::store_logs`
-/// makes), and leaves at `miss` for a base that is no direct array or a marked record. An immediate
-/// `value` passes the test inline, as `emit_unlogged_property_store_guard` decides it, while old
-/// records keep no counts; under counts every store into a marked record logs, so the gate word's
-/// counts bit leaves at `miss` first.
+/// The barrier gate of a store of `value` into the direct array `base`, read from the dispatch
+/// `payload`: `barrier::counted_store_unlogged` over the array records' mark list, the rule of
+/// `Heap::array_store_unlogged` (a heap value needs the record unmarked, an immediate only while old
+/// records keep counts; only those test the base a direct array). A store that logs leaves at `miss`: the
+/// general store logs it, which clears the mark, so the next store of the loop passes here.
 pub(crate) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
     miss: ir::Block) -> Option<()> {
-    let uncounted = stage.counts_clear(payload);
-    emit_js_guard(stage.builder, uncounted, miss);
-    let direct = quench_runtime::staged::value::is_direct_array(stage, base);
-    stage.guard(direct, miss)?;
-    let record = stage.and_imm(base, u64::from(u32::MAX));
     let list = MarkList {
         blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
         count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
     };
-    emit_unlogged_property_store_guard(stage, list, payload, record, value, miss);
-    Some(())
+    let watch = (std::mem::offset_of!(JsStepDispatch, head.store_watch), quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS);
+    quench_runtime::staged::barrier::counted_store_unlogged(stage, payload, watch, list, base, value, miss)
 }
 
 /// The VM's element read of the tagged `base` and `key` (`JsStepDispatch::element_get`): the
@@ -79,7 +72,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     /// Continues where a store of the reference `value` into the direct array `base` passes the write
-    /// barrier unlogged: the array's record mark bit is clear (`emit_unlogged_property_store_guard` over
+    /// barrier unlogged: the array's record mark bit is clear (`barrier::counted_store_unlogged` over
     /// the array records' mark list, the same test `Heap::store_logs` makes). A base that is no direct
     /// array, or a marked one, leaves at `miss`: the general store logs it, which clears the mark, so
     /// the next store of the loop passes here without a call.

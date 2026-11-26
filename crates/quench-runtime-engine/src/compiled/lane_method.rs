@@ -44,7 +44,7 @@ pub(crate) fn finish_lane_method(memory: CodeMemory, scalar: Option<usize>, prov
         fault_poll: fault_poll || direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
         // A body that names a callee's body retires with it (`DirectCallee::method`).
         names_shapes, exits, inlined: unit.frames, scratch_width, caller_registers, frame_reach: 0,
-        amortizes, direct, closed, framed: false, _records: Vec::new(), constructors: Box::default(),
+        amortizes, direct, proven_calls: false, closed, framed: false, _records: Vec::new(), constructors: Box::default(),
         realm_bound: false, summary, withdrawn: Default::default(),
     })
 }

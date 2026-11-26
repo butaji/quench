@@ -1152,23 +1152,51 @@ impl Vm {
             .unwrap_or(self.array_proto)
     }
 
-    pub(super) fn regexp_prototype_from_new_target(
+    /// GetPrototypeFromConstructor (ECMA-262 10.1.14): `new_target`'s `prototype` where it is an
+    /// object, else `intrinsic` of `new_target`'s function realm (each constructor's own default
+    /// prototype for that realm). The one copy of the steps every builtin constructor runs.
+    pub(super) fn prototype_from_new_target(
         &mut self,
         p: &ResidualProgram,
         new_target: Value,
+        intrinsic: impl FnOnce(&mut Self, &ResidualProgram, Value) -> Result<Value, JsError>,
     ) -> Result<Value, JsError> {
         let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        Ok(self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&realm)
-            .map(|intrinsics| intrinsics.prototype)
-            .unwrap_or(self.regexp_proto))
+        intrinsic(self, p, realm)
+    }
+
+    /// The default prototype a constructor named `name` gives in `realm` by reading that realm's
+    /// global `name` and its `prototype` (the Map, Set, Weak* and ShadowRealm constructors' form):
+    /// where `intrinsic` is given, a `prototype` that is not an object falls back to it.
+    pub(super) fn realm_constructor_prototype(
+        &mut self,
+        p: &ResidualProgram,
+        realm: Value,
+        name: &str,
+        intrinsic: Option<Value>,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.prototype_atom();
+        let name_atom = self.intern_atom(name);
+        let constructor = self.get_property(p, realm, name_atom)?;
+        let prototype = self.get_property(p, constructor, prototype_atom)?;
+        Ok(match intrinsic {
+            Some(intrinsic) if self.object_data(prototype).is_none() => intrinsic,
+            _ => prototype,
+        })
+    }
+
+    pub(super) fn regexp_prototype_from_new_target(
+        &mut self,
+        p: &ResidualProgram,
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        self.prototype_from_new_target(p, new_target, |vm, _, realm| {
+            Ok(vm.realm.intrinsics.regexp_intrinsics.get(&realm).map(|intrinsics| intrinsics.prototype).unwrap_or(vm.regexp_proto))
+        })
     }
 
     pub(super) fn set_constructed_prototype(

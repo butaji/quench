@@ -6,6 +6,19 @@ use super::*;
 use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
 
+/// `result`'s value, or `None` with its error kept in `raised`: how a VM frame's row (`HostFrame`,
+/// `InterpreterFrame`) answers a VM check that may raise, which the row's runner then throws.
+#[inline(always)]
+pub(super) fn stash_raise<T>(raised: &mut Option<JsError>, result: Result<T, JsError>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            *raised = Some(error);
+            None
+        }
+    }
+}
+
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
 #[cfg(any(test, feature = "test-support"))]
@@ -450,19 +463,12 @@ impl Frame<Concrete> for HostFrame<'_> {
     /// The running activation's `this`, where bound; an unbound `this` (a TDZ read) raises, which the
     /// row's caller throws.
     fn this_value(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> {
-        let frame = self.vm.owner_frame(self.site.owner).expect("a this read names its frame");
-        match self.vm.checked_this_binding(self.program, frame) {
-            Ok(this) => Some((this.to_bits(), ())),
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
+        let this = self.vm.owner_this(self.program, self.site.owner).expect("a this read names its frame");
+        stash_raise(&mut self.raised, this).map(|this| (this.to_bits(), ()))
     }
 
     fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> {
-        let frame = self.vm.owner_frame(self.site.owner).expect("a callee read names its frame");
-        Some((self.vm.frames[frame].context.callee().unwrap_or(Value::UNDEFINED).to_bits(), ()))
+        Some((self.vm.owner_callee(self.site.owner).expect("a callee read names its frame").to_bits(), ()))
     }
 
     fn define_this(&mut self, stage: &mut Concrete, destination: Register, this: u64) {
@@ -485,31 +491,20 @@ impl Frame<Concrete> for HostFrame<'_> {
 
     /// `RequireIteratorResult`'s object test: the VM's own check, which raises the iterator-result TypeError.
     fn object_like(&mut self, _stage: &mut Concrete, word: u64) -> Option<()> {
-        match self.vm.require_iterator_result(self.program, Value::from_bits(word)) {
-            Ok(()) => Some(()),
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
+        let result = self.vm.require_iterator_result(self.program, Value::from_bits(word));
+        stash_raise(&mut self.raised, result)
     }
 
     /// `RequireObjectCoercible`'s miss: the VM's own check, which raises for a `null` or `undefined` word.
     fn object_coercion_failed(&mut self, _stage: &mut Concrete, word: u64) {
-        if let Err(error) = self.vm.require_object_coercible(self.program, Value::from_bits(word)) {
-            self.raised = Some(error);
-        }
+        let result = self.vm.require_object_coercible(self.program, Value::from_bits(word));
+        stash_raise(&mut self.raised, result);
     }
 
     /// `SetFunctionName` of `function` to the program atom `name` at cache `site`: the VM's naming.
     fn set_function_name(&mut self, _stage: &mut Concrete, function: u64, name: u32, site: u16) -> Option<()> {
-        match self.vm.set_function_name(self.program, Value::from_bits(function), (name, site)) {
-            Ok(()) => Some(()),
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
+        let result = self.vm.set_function_name(self.program, Value::from_bits(function), (name, site));
+        stash_raise(&mut self.raised, result)
     }
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {

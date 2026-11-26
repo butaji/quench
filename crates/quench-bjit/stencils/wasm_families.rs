@@ -11,6 +11,11 @@ use crate::wasm_kinds::row_kind_table;
 #[path = "../../quench-runtime/src/staged/wasm_lists.rs"]
 mod wasm_lists;
 
+/// The runtime's const string equality (`quench_runtime::property_names::same_text`).
+#[path = "../../quench-runtime/src/const_text.rs"]
+mod const_text;
+use const_text::same_text;
+
 /// A SIMD operator's family, the list's column: the row kind its operator runs in.
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -103,7 +108,7 @@ pub const STORAGE_BITS64: u32 = StorageCode::Bits64 as u32;
 const fn position_of(names: &[&str], name: &str) -> u32 {
     let mut index = 0;
     while index < names.len() {
-        if str_eq(names[index], name) {
+        if same_text(names[index], name) {
             return index as u32;
         }
         index += 1;
@@ -111,21 +116,6 @@ const fn position_of(names: &[&str], name: &str) -> u32 {
     panic!("the named operator is not in its list")
 }
 
-/// Whether two strings are equal, in a constant.
-const fn str_eq(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut index = 0;
-    while index < left.len() {
-        if left[index] != right[index] {
-            return false;
-        }
-        index += 1;
-    }
-    true
-}
 
 // The counts and bounds of the operator lists (`wasm_lists.rs`), counted from the list's entries:
 // the runtime's families expand the same lists, and `wasm_codes_check.rs` asserts each count equals

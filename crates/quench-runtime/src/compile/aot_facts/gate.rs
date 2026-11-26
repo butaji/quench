@@ -1,8 +1,8 @@
 //! The closed-world gate: which facts hold of a program that may receive code at run time.
 
-#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
+#[cfg_attr(not(feature = "source"), allow(unused_imports))]
 use crate::bytecode::{ProgramKind, ResidualProgram};
-#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
+#[cfg_attr(not(feature = "source"), allow(unused_imports))]
 use crate::{Engine, SourceKind};
 
 /// The global name a dynamic `import()` calls (`compile::ast::expression`), a host hook that loads code.

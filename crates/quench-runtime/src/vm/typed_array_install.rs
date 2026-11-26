@@ -70,20 +70,8 @@ impl Vm {
         let proto = self
             .heap
             .alloc_object(Self::empty_object(self.typed_array_proto));
-        match kind {
-            TypedArrayKind::Uint8Clamped => self.uint8_clamped_array_proto = proto,
-            TypedArrayKind::Uint16 => self.uint16_array_proto = proto,
-            TypedArrayKind::Uint32 => self.uint32_array_proto = proto,
-            TypedArrayKind::Int8 => self.int8_array_proto = proto,
-            TypedArrayKind::Int16 => self.int16_array_proto = proto,
-            TypedArrayKind::Int32 => self.int32_array_proto = proto,
-            TypedArrayKind::BigInt64 => self.bigint64_array_proto = proto,
-            TypedArrayKind::BigUint64 => self.biguint64_array_proto = proto,
-            TypedArrayKind::Float16 => self.float16_array_proto = proto,
-            TypedArrayKind::Float32 => self.float32_array_proto = proto,
-            TypedArrayKind::Float64 => self.float64_array_proto = proto,
-            TypedArrayKind::Uint8 => unreachable!(),
-        }
+        debug_assert!(kind != TypedArrayKind::Uint8, "Uint8Array's prototype is installed first (`install_uint8_array`)");
+        self.typed_array_protos[kind as usize] = proto;
         self.realm
             .intrinsics
             .builtin_prototypes

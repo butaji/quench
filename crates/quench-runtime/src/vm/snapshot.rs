@@ -19,10 +19,7 @@ macro_rules! builtin_prototypes {
     ($apply:ident) => {
         $apply!(
             object_proto, function_proto, array_proto, string_proto, number_proto, array_buffer_proto,
-            shared_array_buffer_proto, array_iterator_proto, typed_array_proto, uint8_array_proto,
-            uint8_clamped_array_proto, uint16_array_proto, uint32_array_proto, int8_array_proto,
-            int16_array_proto, int32_array_proto, bigint64_array_proto, biguint64_array_proto,
-            float16_array_proto, float32_array_proto, float64_array_proto, data_view_proto,
+            shared_array_buffer_proto, array_iterator_proto, typed_array_proto, data_view_proto,
             map_proto, set_proto, shadow_realm_proto, map_iterator_proto, set_iterator_proto,
             weak_map_proto, weak_set_proto, weak_ref_proto, finalization_registry_proto,
             iterator_proto, string_iterator_proto, regexp_string_iterator_proto, generator_proto,
@@ -68,11 +65,7 @@ impl Vm {
             object_proto: _, function_proto: _, array_proto: _, string_proto: _, number_proto: _,
             promise_proto: _, promise_constructor: _,
             array_buffer_proto: _, shared_array_buffer_proto: _, array_iterator_proto: _,
-            typed_array_proto: _, uint8_array_proto: _, uint8_clamped_array_proto: _,
-            uint16_array_proto: _, uint32_array_proto: _, int8_array_proto: _,
-            int16_array_proto: _, int32_array_proto: _, bigint64_array_proto: _,
-            biguint64_array_proto: _, float16_array_proto: _, float32_array_proto: _,
-            float64_array_proto: _, data_view_proto: _, map_proto: _, set_proto: _,
+            typed_array_proto: _, typed_array_protos: _, data_view_proto: _, map_proto: _, set_proto: _,
             shadow_realm_proto: _, map_iterator_proto: _, set_iterator_proto: _,
             weak_map_proto: _, weak_set_proto: _, weak_ref_proto: _, kept_alive: _,
             finalization_registry_proto: _, iterator_proto: _, string_iterator_proto: _,
@@ -292,6 +285,7 @@ impl Vm {
             ($($field:ident),*) => { $( writer.value(self.$field); )* };
         }
         builtin_prototypes!(write_prototypes);
+        self.typed_array_protos.iter().for_each(|proto| writer.value(*proto));
         natives.snap(&mut writer)?;
         self.heap.kept_atom_strings().collect::<Vec<_>>().snap(&mut writer)?;
         startup_intrinsics.write_snapshot(&mut writer)?;
@@ -433,6 +427,9 @@ impl Vm {
             ($($field:ident),*) => { $( self.$field = reader.value()?; )* };
         }
         builtin_prototypes!(read_prototypes);
+        for proto in &mut self.typed_array_protos {
+            *proto = reader.value()?;
+        }
         // The promise fields follow the restored active realm from its intrinsics.
         let intrinsics = &self.realm.intrinsics;
         self.promise_proto =

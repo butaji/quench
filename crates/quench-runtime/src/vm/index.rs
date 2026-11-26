@@ -276,6 +276,14 @@ impl Vm {
         crate::staged::elements::concrete_record_element(self.heap.array_record_base()?, base, index)
     }
 
+    /// `absent_array_element` of an array base only: `None` at once for any other base, so a
+    /// read that asks it before the typed and string probes costs those bases one heap read.
+    #[inline]
+    pub fn array_hole_element(&self, base: Value, key: Value) -> Option<Value> {
+        self.heap.array(base)?;
+        self.absent_array_element(base, key)
+    }
+
     /// `base[key]` for a non-negative integer key that neither an ordinary object or array
     /// `base` nor anything on its prototype chain holds: `undefined`, as [[Get]] finds it. An
     /// object on the chain holds the index as an element of an array, as a property keyed by

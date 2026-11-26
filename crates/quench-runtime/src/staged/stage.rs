@@ -114,17 +114,49 @@ pub trait Stage: crate::projection::Sealed {
     fn and(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     /// Logical shift right of `a` by `b`, where `b` is below 64.
     fn shr(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
-    fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
+    /// An immediate operand as a word: the one rule the `*_imm` operations derive from, each the
+    /// word operation on it (a stage overrides one only where its immediate form differs, as an
+    /// Emit comparison at the operand's own width).
+    fn imm_word(&mut self, imm: Self::Imm) -> Self::Word;
+    #[inline(always)]
+    fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word {
+        let b = self.imm_word(imm.into());
+        self.add(a, b)
+    }
     fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
-    fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
-    fn or_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
-    fn shr_imm(&mut self, a: Self::Word, shift: impl Into<Self::Imm>) -> Self::Word;
+    #[inline(always)]
+    fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word {
+        let b = self.imm_word(imm.into());
+        self.and(a, b)
+    }
+    #[inline(always)]
+    fn or_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word {
+        let b = self.imm_word(imm.into());
+        self.or(a, b)
+    }
+    #[inline(always)]
+    fn shr_imm(&mut self, a: Self::Word, shift: impl Into<Self::Imm>) -> Self::Word {
+        let b = self.imm_word(shift.into());
+        self.shr(a, b)
+    }
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
-    fn eq_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
-    fn ne_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
+    #[inline(always)]
+    fn eq_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond {
+        let b = self.imm_word(imm.into());
+        self.eq(a, b)
+    }
+    #[inline(always)]
+    fn ne_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond {
+        let equal = self.eq_imm(a, imm);
+        self.not(equal)
+    }
     /// Whether `a` exceeds `imm`, both unsigned.
-    fn ugt_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
+    #[inline(always)]
+    fn ugt_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond {
+        let b = self.imm_word(imm.into());
+        self.ult(b, a)
+    }
     /// Whether `a` is below `b`, both unsigned and of one width.
     fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// Whether the words `a` and `b` are equal, bit for bit.

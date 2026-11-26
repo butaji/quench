@@ -55,7 +55,7 @@ pub(super) fn numeric_number_result(operator: BinaryOperator, left: f64, right: 
         return number_bitwise_f64_result(operation, left, right);
     }
     match operator {
-        BinaryOperator::Remainder => number_remainder(left, right),
+        BinaryOperator::Remainder => remainder(left, right),
         BinaryOperator::Exponential => exponentiate(left, right),
         _ => unreachable!("numeric operator table only contains numeric operators"),
     }

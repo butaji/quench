@@ -46,28 +46,7 @@ pub(crate) enum ModuleReexportKind {
     Namespace,
 }
 
-impl ModuleReexportKind {
-    const NAMED_BINARY_TAG: u8 = 0;
-    const STAR_BINARY_TAG: u8 = 1;
-    const NAMESPACE_BINARY_TAG: u8 = 2;
-
-    pub(crate) const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Named => Self::NAMED_BINARY_TAG,
-            Self::Star => Self::STAR_BINARY_TAG,
-            Self::Namespace => Self::NAMESPACE_BINARY_TAG,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            Self::NAMED_BINARY_TAG => Some(Self::Named),
-            Self::STAR_BINARY_TAG => Some(Self::Star),
-            Self::NAMESPACE_BINARY_TAG => Some(Self::Namespace),
-            _ => None,
-        }
-    }
-}
+binary_tags!(ModuleReexportKind { Named = 0, Star = 1, Namespace = 2 });
 
 impl ModuleReexport {
     pub(crate) const fn kind(&self) -> ModuleReexportKind {
@@ -100,22 +79,7 @@ pub(crate) enum ModuleImportNameKind {
     Named,
 }
 
-impl ModuleImportNameKind {
-    const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Namespace => 0,
-            Self::Named => 1,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Namespace),
-            1 => Some(Self::Named),
-            _ => None,
-        }
-    }
-}
+binary_tags!(ModuleImportNameKind { Namespace = 0, Named = 1 });
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModuleRequestPhase {
@@ -124,28 +88,9 @@ pub enum ModuleRequestPhase {
     Source,
 }
 
+binary_tags!(ModuleRequestPhase { Evaluation = 0, Defer = 1, Source = 2 });
+
 impl ModuleRequestPhase {
-    const EVALUATION_BINARY_TAG: u8 = 0;
-    const DEFER_BINARY_TAG: u8 = 1;
-    const SOURCE_BINARY_TAG: u8 = 2;
-
-    pub(crate) const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Evaluation => Self::EVALUATION_BINARY_TAG,
-            Self::Defer => Self::DEFER_BINARY_TAG,
-            Self::Source => Self::SOURCE_BINARY_TAG,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            Self::EVALUATION_BINARY_TAG => Some(Self::Evaluation),
-            Self::DEFER_BINARY_TAG => Some(Self::Defer),
-            Self::SOURCE_BINARY_TAG => Some(Self::Source),
-            _ => None,
-        }
-    }
-
     pub(crate) const fn runtime_value(self) -> f64 {
         self.binary_tag() as f64
     }

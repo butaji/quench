@@ -158,6 +158,8 @@ pub fn release_read_only_pages_now() {
 /// heap passed three times the code.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages_at_boundary() {
+    // A run that never collected and keeps its code ends here: the release would only refault teardown's pages.
+    if !COLLECTED.load(std::sync::atomic::Ordering::Relaxed) && run_code_stays() { return }
     release_read_only_pages_weighed(false);
 }
 
@@ -207,6 +209,8 @@ fn release_read_only_pages_weighed(weighed: bool) {
 /// earley-boyer's CPU time fell 8% with no peak-RSS change on earley-boyer, raytrace or splay
 /// (V8-v7, JIT, x86_64, 2026-11-12; ~5,700 of its ~7,500 `madvise` calls).
 pub fn release_at_collection(returns_pages: bool) {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    COLLECTED.store(true, std::sync::atomic::Ordering::Relaxed);
     release_before_first_collection();
     if returns_pages {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -276,7 +280,7 @@ pub fn at_record_built() {
     static BUILT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let built = BUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if built % RECORDS_PER_NEW_HIGH_CHECK == 0
-        && CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed)
+        && code_stays_resident()
         && NEW_HIGH.release_due()
     {
         release_read_only_pages_weighed(false);
@@ -313,7 +317,7 @@ pub fn release_before_first_collection() {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         static FIRST: std::sync::Once = std::sync::Once::new();
-        if CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed) {
+        if code_stays_resident() {
             FIRST.call_once(|| release_read_only_pages_weighed(false));
         }
     }
@@ -738,21 +742,31 @@ pub fn release_before_entry_compile() {
     ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The main entry is compiled; the default policy keeps the code its run touches (`CODE_STAYS_RESIDENT`).
+/// The main entry is compiled: the parser's and compiler's pages leave unless the run keeps its code (`run_code_stays`).
 pub fn release_after_entry_compile() {
     release_read_only_code_and_data();
     release_main_text_at_phase_boundary();
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst)
-        || quench_runtime::memory_mix_has("code");
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    CODE_STAYS_RESIDENT.store(!memory_first, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Set once the main entry has compiled under the default policy: start-up's releases drop the bootstrap's code
-/// (about 5 MB), and the run's own, which refaulted what it runs again, wait for `RUN_CODE_BUDGET_BYTES`.
+/// Whether the process keeps the code it touches resident up to `RUN_CODE_BUDGET_BYTES`: the default policy, from
+/// start-up on. Memory-first releases at every boundary.
+///
+/// Start-up's own releases used to drop the bootstrap's code (about 5 MB) before the entry compiled, at about seven
+/// boundaries of even a trivial run, each refaulting the same hot host and runtime pages the next phase runs: `quench
+/// zero.js` took 4.6K minor faults and 9.6 ms, of which those releases and refaults were 2.9K faults and about 3 ms
+/// (x86_64, best of 9, 2026-11-26, TOD-2228). Kept, a run that ends before the budget peaks with that code resident
+/// (about 10 MB, well under half Node's 35 MB), and a longer one releases it at its first collection
+/// (`release_before_first_collection`) or once its file pages pass the budget.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static CODE_STAYS_RESIDENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn code_stays_resident() -> bool {
+    static STAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STAYS.get_or_init(|| crate::shared_run::select_memory_policy() != quench_runtime::MemoryPolicy::MemoryFirst
+        && !quench_runtime::memory_mix_has("code"))
+}
+
+/// Whether a collection boundary has come (`release_at_collection`, `note_collection`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static COLLECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Resident file bytes a run keeps before releasing them (x86_64, 2026-11-08, minor faults and max RSS against
 /// releasing throughout: richards 11.9K -> 5.2K, 12 MB both; Air 23.6K -> 9.3K, 21 MB; octane-code-load 15K ->
@@ -763,7 +777,7 @@ const RUN_CODE_BUDGET_BYTES: usize = 12 << 20;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn run_code_stays() -> bool {
-    CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed) && resident_file_bytes().is_some_and(|bytes| bytes < RUN_CODE_BUDGET_BYTES)
+    code_stays_resident() && resident_file_bytes().is_some_and(|bytes| bytes < RUN_CODE_BUDGET_BYTES)
 }
 
 /// Retire the previous phase's resident main-image translations. Code needed by
@@ -1023,6 +1037,8 @@ fn page_size() -> usize {
 /// octane-code-load 1,682 minor faults per extra iteration, prismjs-startup +31.6% and
 /// octane-code-load +21.6% score without it, max RSS within 1 MB, inspector code-load 2 MB lower).
 pub fn note_collection() {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    COLLECTED.store(true, std::sync::atomic::Ordering::Relaxed);
     static FIRST: std::sync::Once = std::sync::Once::new();
     FIRST.call_once(|| phase_peak("run to collection"));
 }

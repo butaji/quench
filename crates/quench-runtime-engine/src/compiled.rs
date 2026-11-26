@@ -894,16 +894,6 @@ fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_r
     }
 }
 
-/// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier log. Verified Numbers are immediate and discharge the test at
-/// compilation. Otherwise the caller must perform the logged store, which `fallback` takes.
-fn emit_unlogged_property_store_guard(
-    stage: &mut object_slots::Emit<'_, '_>, list: quench_runtime::staged::barrier::MarkList, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, fallback: ir::Block,
-) {
-    quench_runtime::staged::barrier::value_unlogged(stage, payload, list, record_id, value, fallback).expect("an Emit guard always continues");
-}
-
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
 /// storage mode found at entry, which only an adding store changes, after which the body reads
 /// them again (`Lowering::reload_receiver`); and the property arena's base, which an
@@ -1581,14 +1571,6 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
-}
-
-/// `lowered_lane_body`'s code with the atoms it stores without a method-cache test.
-pub(crate) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
-) -> Option<(ir::Function, Box<[Atom]>)> {
-    lowered_lane_body(program, function_id, isa, helpers, facts, global_reads)
-        .map(|region| (region.function, region.stable.atoms))
 }
 
 pub use quench_runtime::vm::engine_types::ExecutionMode;
@@ -5089,7 +5071,6 @@ impl CompiledJsFunction {
             _code: code,
             result: artifact.result,
             params: artifact.params,
-            #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
     }
@@ -8560,9 +8541,7 @@ impl Vm {
                     entry,
                     params: plan.params,
                     result: plan.result,
-                    #[cfg(test)]
                     native_entries: std::cell::Cell::new(0),
-                    #[cfg(test)]
                     direct_reference_entries: std::cell::Cell::new(0),
                 }
             })

@@ -63,6 +63,30 @@ pub fn value_unlogged<S: Stage>(stage: &mut S, payload: S::Word, list: MarkList,
         #[inline(always)] |_| Some(zero)).map(drop)
 }
 
+/// Continues where storing `value` into the direct array `base` logs nothing, the whole rule of
+/// `RecordSpace::store_logs`: a heap value needs its owner a direct array and `unmarked`; an
+/// immediate needs that too only while old records keep counts (the `counts` bit of the payload's
+/// store-watch word at byte `watch`), when overwriting a reference deletes an edge. An immediate
+/// with counts clear logs nothing whatever `base` is, so that path reads no base (an entry view's
+/// row holds none). Otherwise leaves at `miss`.
+#[inline(always)]
+pub fn counted_store_unlogged<S: Stage>(stage: &mut S, payload: S::Word, (watch, counts): (usize, u64), list: MarkList,
+    base: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+    let word = stage.load_u64(Region::Dispatch.mutable(), payload, watch as i32);
+    let counted_bit = stage.and_imm(word, counts);
+    let counted = stage.ne_imm(counted_bit, 0_u64);
+    let tested = stage.any(heap, counted);
+    let zero = stage.constant(0);
+    stage.choose_leaving(tested, #[inline(always)] |stage| {
+        let direct = super::value::is_direct_array(stage, base);
+        stage.guard(direct, miss)?;
+        let record_id = stage.and_imm(base, u64::from(u32::MAX));
+        unmarked(stage, payload, list, record_id, miss).map(|()| zero)
+    }, #[inline(always)] |_| Some(zero)).map(drop)
+}
+
 /// The store gate every tier shares: the dispatch `payload`'s store-watch word (at byte `watch`)
 /// is clear, so nothing observes the store, and `value_unlogged` holds. Otherwise leaves at `miss`.
 #[inline(always)]

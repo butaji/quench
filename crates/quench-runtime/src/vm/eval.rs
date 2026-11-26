@@ -300,7 +300,7 @@ impl Vm {
         p: &ResidualProgram,
         source: &str,
         strict: bool,
-        #[cfg_attr(not(feature = "jit"), allow(unused_variables))]
+        #[cfg_attr(not(feature = "source"), allow(unused_variables))]
         source_name: &str,
         mut cache_source: Option<eval_source::EvalSource>,
         shared_text: Option<eval_source::SharedText>,
@@ -330,7 +330,7 @@ impl Vm {
         }
         // The eval string's own ASCII storage, which the program keeps when it compiled exactly
         // that text, so no copy of the text is made for it.
-        #[cfg_attr(not(feature = "jit"), allow(unused_variables))]
+        #[cfg_attr(not(feature = "source"), allow(unused_variables))]
         let provided_text = shared_text.as_ref().and_then(eval_source::SharedText::whole_ascii).map(crate::bytecode::SourceText::Local);
         #[cfg(feature = "source")]
         let residual = crate::Engine::specialize_eval_with_context(

@@ -50,7 +50,7 @@ pub mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_add_property_held, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
@@ -2103,18 +2103,9 @@ pub struct Vm {
     shared_array_buffer_proto: Value,
     array_iterator_proto: Value,
     typed_array_proto: Value,
-    uint8_array_proto: Value,
-    uint8_clamped_array_proto: Value,
-    uint16_array_proto: Value,
-    uint32_array_proto: Value,
-    int8_array_proto: Value,
-    int16_array_proto: Value,
-    int32_array_proto: Value,
-    bigint64_array_proto: Value,
-    biguint64_array_proto: Value,
-    float16_array_proto: Value,
-    float32_array_proto: Value,
-    float64_array_proto: Value,
+    /// Each typed-array kind's prototype in the active realm, by discriminant (`TypedArrayKind as usize`):
+    /// one list that construction, installation, GC roots and the snapshot all read.
+    typed_array_protos: [Value; crate::heap::TypedArrayKind::COUNT],
     pub data_view_proto: Value,
     pub map_proto: Value,
     pub set_proto: Value,

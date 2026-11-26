@@ -64,10 +64,8 @@ const DATE_OFFSET_FIELD_WIDTH: usize = 2;
 const DATE_MINUTES_PER_HOUR: u32 = 60;
 const ISO_YEAR_MAX: i64 = 9_999;
 const ISO_EXTENDED_YEAR_WIDTH: usize = 6;
-const DATE_WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const DATE_MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
+const DATE_WEEKDAYS: [&str; 7] = crate::units::WEEKDAY_ABBREVIATIONS;
+const DATE_MONTHS: [&str; 12] = crate::units::MONTH_ABBREVIATIONS;
 const DEFAULT_DATE_COMPONENTS: [f64; DATE_COMPONENT_COUNT] =
     [0.0, 0.0, FIRST_DAY_OF_MONTH, 0.0, 0.0, 0.0, 0.0];
 

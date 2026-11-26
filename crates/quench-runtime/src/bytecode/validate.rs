@@ -434,6 +434,7 @@ fn immediate_domains_in_bounds(
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
                 || super::array_pattern_test(instruction.unary_operator()).is_some()
+                || instruction.unary_operator() == super::UNARY_FRESH_ARRAY_PATTERN
         }
         super::ImmediateRole::FunctionNamePrefix => {
             instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER

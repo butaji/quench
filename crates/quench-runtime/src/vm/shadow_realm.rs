@@ -353,16 +353,8 @@ impl Vm {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            let constructor_atom = self.intern_atom("ShadowRealm");
-            let constructor = self.get_property(p, realm, constructor_atom)?;
-            self.get_property(p, constructor, prototype_atom)?
-        };
+        let prototype =
+            self.prototype_from_new_target(p, new_target, |vm, p, realm| vm.realm_constructor_prototype(p, realm, "ShadowRealm", None))?;
         let prototype_root = self.heap.root(prototype);
         let caller_root = self.heap.root(self.realm.globals);
         let result = (|| {

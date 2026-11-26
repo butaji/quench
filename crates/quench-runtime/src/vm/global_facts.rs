@@ -88,6 +88,17 @@ pub enum GlobalRead {
     NativeSlot { slot: GlobalSlot, value: Value, native: super::Native, holder: u32 },
 }
 
+impl GlobalRead {
+    /// The value a folded read stands for: a constant, or a Stable or frozen cell's value under its
+    /// dependency. The one list of the kinds that fold to a compile-time value.
+    pub fn folded_value(&self) -> Option<Value> {
+        match self {
+            GlobalRead::Constant(value) | GlobalRead::Stable { value, .. } | GlobalRead::Frozen { value, .. } => Some(*value),
+            _ => None,
+        }
+    }
+}
+
 /// The natives whose call a loop or body runs in place on scalar arguments and whose result allocates nothing: they
 /// run no guest code, change no array and observe no frame (`dispatch_fast::in_place_natives::primitive_leaf`, with a
 /// Number or Boolean result), and the Math functions of Numbers (`number::math_call`), which a loop calling one

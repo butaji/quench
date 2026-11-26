@@ -124,6 +124,7 @@ impl Stage for Emit<'_, '_> {
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
     fn shr(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftRightUnsigned, a, b) }
+    fn imm_word(&mut self, imm: EmitImm) -> ir::Value { self.word(imm) }
     /// The immediate forms (`iadd_imm_s`, `imul_imm_s`, ...): a constant an operand of the
     /// instruction, not a register holding it. An element's address is then an index scaled in
     /// the load itself (`[values, index, lsl #3]`) where a `mov` of 8 and a `mul` left two

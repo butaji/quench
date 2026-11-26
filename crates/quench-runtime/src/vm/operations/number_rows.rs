@@ -373,10 +373,10 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     }
 }
 
-/// The largest magnitude an operand of the integral remainder (`integral_remainder`) may have: 2^53,
-/// past which a binary64 no longer holds every integer. Every tier's integral remainder takes this
-/// bound (Emit's `number_machine::integral_remainder` too), so they admit the same operands.
-pub const INTEGRAL_REMAINDER_LIMIT: i64 = 1 << 53;
+/// The magnitude up to which every integer is a binary64 exactly: 2^53. The integral remainder
+/// takes this bound in every tier (Emit's `number_machine::integral_remainder_operands` too), so
+/// they admit the same operands.
+pub const SAFE_INTEGER_LIMIT: i64 = 1 << 53;
 
 /// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN. `cvttsd2si` (SSE2, the x86-64
 /// baseline) is one instruction with no constant pool, so a stencil may hold it, as it may not a saturating `as`.
@@ -394,28 +394,48 @@ pub(crate) fn truncate_i64(value: f64) -> i64 {
     if value.is_nan() || value.abs() >= 9.2e18 { i64::MIN } else { value as i64 }
 }
 
-/// The remainder of two integral Numbers of magnitude at most `INTEGRAL_REMAINDER_LIMIT`, the
+/// The integer the Number `value` is, of magnitude at most `SAFE_INTEGER_LIMIT` (`-0` as `0`): its
+/// truncation converts back equal, which a fraction, NaN and the infinities fail, and a larger
+/// magnitude is tested apart (`i64::MIN`, the truncation of what is out of range, is past it).
+/// Integer tests and one truncation, no float constant, so a stencil may hold it. The one home of
+/// "this Number is a safe integer": the remainder row, the loop kernel's int32 columns and the
+/// TypeScript enum folder read it.
+#[inline(always)]
+pub fn safe_integer(value: f64) -> Option<i64> {
+    let integer = truncate_i64(value);
+    (integer as f64 == value && integer.unsigned_abs() <= SAFE_INTEGER_LIMIT as u64).then_some(integer)
+}
+
+/// The remainder of two integral Numbers of magnitude at most `SAFE_INTEGER_LIMIT`, the
 /// divisor nonzero: the exact i64 remainder, which has the dividend's sign, and a zero with the
 /// dividend's sign (`-0` for a negative one). `None` for any other pair (fractions, larger
 /// magnitudes, NaN, infinities, a zero divisor), which only the float remainder answers. Integer
 /// tests and one truncation only, no float constant, so a stencil of the Concrete stage holds it.
 #[inline(always)]
 pub fn integral_remainder(left: f64, right: f64) -> Option<f64> {
-    let (dividend, divisor) = (truncate_i64(left), truncate_i64(right));
-    // `i64::MIN` (out of range, NaN) has a magnitude past the limit, so it is never exact.
-    let exact = |value: i64, number: f64| value as f64 == number && value.unsigned_abs() <= INTEGRAL_REMAINDER_LIMIT as u64;
-    if !(exact(dividend, left) && exact(divisor, right)) || divisor == 0 {
+    let (dividend, divisor) = (safe_integer(left)?, safe_integer(right)?);
+    if divisor == 0 {
         return None;
     }
     let remainder = dividend % divisor;
     Some(if remainder == 0 { f64::from_bits(left.to_bits() & (1 << 63)) } else { remainder as f64 })
 }
 
-/// Number remainder after operand conversion. Also callable by the shared native
-/// emitter: no VM state, allocation, collection, guest effects, or integer traps.
-/// Floating remainder preserves negative zero and the Number NaN/infinity rules.
-#[inline]
+/// Number remainder after operand conversion, the slow path compiled code calls
+/// (`RuntimeSlowPath::NumberRemainder`): no VM state, allocation, collection, guest effects, or
+/// integer traps. Never inlined, so it is one symbol, and its address is the same wherever it is
+/// taken: an image names a slow path by matching that address against the lane helpers'
+/// (`compiled::slow_path_symbol`), which an inlined function's per-unit copies defeat. Rust
+/// callers take `remainder`, which inlines.
+#[inline(never)]
 pub extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+    remainder(left, right)
+}
+
+/// `number_remainder`'s value, inlined into its Rust callers. Floating remainder preserves
+/// negative zero and the Number NaN/infinity rules.
+#[inline]
+pub fn remainder(left: f64, right: f64) -> f64 {
     // Integral operands take the integer remainder (`integral_remainder`, ~15 instructions where
     // `fmod` costs ~170); everything else the float remainder.
     integral_remainder(left, right).unwrap_or_else(#[inline(always)] || left % right)

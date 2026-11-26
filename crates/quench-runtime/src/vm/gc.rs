@@ -517,6 +517,7 @@ impl Vm {
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend(self.native_roots.live().iter().copied());
+        roots.extend(self.typed_array_protos);
         roots.extend([
             self.realm.globals,
             self.object_proto,
@@ -528,18 +529,6 @@ impl Vm {
             self.shared_array_buffer_proto,
             self.array_iterator_proto,
             self.typed_array_proto,
-            self.uint8_array_proto,
-            self.uint8_clamped_array_proto,
-            self.uint16_array_proto,
-            self.uint32_array_proto,
-            self.int8_array_proto,
-            self.int16_array_proto,
-            self.int32_array_proto,
-            self.bigint64_array_proto,
-            self.biguint64_array_proto,
-            self.float16_array_proto,
-            self.float32_array_proto,
-            self.float64_array_proto,
             self.data_view_proto,
             self.map_proto,
             self.set_proto,

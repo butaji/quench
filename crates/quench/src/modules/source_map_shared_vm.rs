@@ -120,10 +120,22 @@ pub(crate) fn install(c: &mut Context<'_>, target: RootId, with_class: bool) -> 
         put(c, target, name, function)?;
     }
     if with_class {
-        let class = source_map_class(c)?;
-        put(c, target, "SourceMap", class)?;
+        // The class is built on its first read: `module` holds it, and nearly no run reads it, while building it
+        // was about 207K instructions of every start-up's 11.6M (hello.js, x86_64, 2026-11-26).
+        let data = c.record_rooted(false, &["target"], &[target])?;
+        let initializer = c.host_function_named_with_data(crate::host::shared_vm::operation!("sourceMapClassExport"), "", data)?;
+        c.define_lazy_data_properties_rooted(target, &["SourceMap"], true, initializer)?;
     }
     Ok(())
+}
+
+/// The lazy `SourceMap` export's initializer (`install`): builds the class and puts it on its holder.
+pub(crate) fn class_export(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let target = get(c, data, "target")?;
+    let class = source_map_class(c)?;
+    put(c, target, "SourceMap", class)?;
+    Ok(c.undefined())
 }
 
 /// `internal/source_map/source_map_cache`.

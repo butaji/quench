@@ -7,7 +7,8 @@ use crate::staged::typed_elements::{
 const MAX_TYPED_ARRAY_ELEMENT_WIDTH: usize = std::mem::size_of::<u64>();
 
 pub(super) enum TypedArrayElement {
-    BigInt(num_bigint::BigInt),
+    /// A BigInt element's value modulo 2^64, two's complement (ToBigInt64 / ToBigUint64).
+    BigInt(u64),
     Number(f64),
 }
 
@@ -628,6 +629,21 @@ impl Vm {
         }
     }
 
+    /// A store of a BigInt primitive at an index of a BigInt64Array or BigUint64Array: the
+    /// value's low 64 bits (ToBigInt64 / ToBigUint64), which run no guest code. False leaves
+    /// any other store to the general write.
+    pub fn typed_array_set_bigint(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(Cell::BigInt(integer)) = self.heap.get(value) else { return false };
+        let bits = integer.wrapping_u64();
+        match self.typed_array_view(object) {
+            Some(view) if view.kind.is_bigint() => {
+                self.typed_array_write_view(view, index, &TypedArrayElement::BigInt(bits));
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// `typed_array_set_number` of an integer into an integer typed array whose buffer the
     /// view owns alone (`BufferBytes::mut_in_lane`): an integer's ToInt8 through ToUint32 is its low
     /// bytes, and Uint8Clamped clamps it. False leaves the store to the general write.
@@ -741,14 +757,7 @@ impl Vm {
                 let TypedArrayElement::BigInt(value) = value else {
                     unreachable!("BigInt content type was validated");
                 };
-                bytes.fill(if value.sign() == num_bigint::Sign::Minus {
-                    u8::MAX
-                } else {
-                    0
-                });
-                for (target, source) in bytes.iter_mut().zip(value.to_signed_bytes_le()) {
-                    *target = source;
-                }
+                bytes = value.to_le_bytes();
             }
             _ => store_element_number(kind, number, &mut bytes[..kind.width()], NATIVE_LITTLE_ENDIAN),
         }
@@ -940,7 +949,14 @@ impl Vm {
     ) -> Result<TypedArrayElement, JsError> {
         match kind {
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                self.to_bigint(p, value).map(TypedArrayElement::BigInt)
+                // A BigInt primitive needs no ToPrimitive and no num_bigint copy.
+                if let Some(Cell::BigInt(value)) = self.heap.get(value) {
+                    return Ok(TypedArrayElement::BigInt(value.wrapping_u64()));
+                }
+                let value = self.to_bigint(p, value)?;
+                let low = value.iter_u64_digits().next().unwrap_or(0);
+                let bits = if value.sign() == num_bigint::Sign::Minus { low.wrapping_neg() } else { low };
+                Ok(TypedArrayElement::BigInt(bits))
             }
             _ => self.to_number(p, value).map(TypedArrayElement::Number),
         }

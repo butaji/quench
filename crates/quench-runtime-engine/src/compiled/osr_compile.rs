@@ -325,14 +325,14 @@ pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
             // hold nothing at entry that the sample could have seen. So is a read that left
             // once: an int32 observation it outgrew widens to Numbers before it is dropped.
             let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { quench_runtime::typed_ir::Type::NUMBER };
-            Some(super::facts::ObservedRead { pc, ty })
+            Some(super::facts::ObservedRead { pc, ty, kind: None })
         }).collect();
     // A register's `length` read defines an int32: the region reads it as one
     // (`Lowering::array_length`), leaving where it is not.
     reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
         && instruction.result_flags() == 0
         && matches!(instruction.field_lookup(), Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
-        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32 }));
+        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32, kind: None }));
     reads.sort_by_key(|read| read.pc);
     reads
 }

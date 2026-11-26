@@ -1,5 +1,24 @@
 use smallvec::SmallVec;
 
+/// An enum's residual-binary tags, one list for both directions: `binary_tag` writes a variant's
+/// tag and `from_binary_tag` reads it back, so the two cannot disagree (a tag given twice is an
+/// unreachable pattern, which the build rejects).
+macro_rules! binary_tags {
+    ($ty:ident { $($variant:ident = $tag:literal),* $(,)? }) => {
+        impl $ty {
+            /// This variant's tag in the residual binary (`from_binary_tag` reads it back).
+            pub(crate) const fn binary_tag(self) -> u8 {
+                match self { $(Self::$variant => $tag),* }
+            }
+
+            /// The variant tagged `tag` (`binary_tag`), if any.
+            pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
+                match tag { $($tag => Some(Self::$variant),)* _ => None }
+            }
+        }
+    };
+}
+
 mod internal_bindings;
 mod module_records;
 mod declared_types;
@@ -3831,26 +3850,7 @@ pub enum ProgramKind {
     Wasm,
 }
 
-impl ProgramKind {
-    pub(crate) const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Script => 0,
-            Self::Module => 1,
-            Self::Eval => 2,
-            Self::Wasm => 3,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Script),
-            1 => Some(Self::Module),
-            2 => Some(Self::Eval),
-            3 => Some(Self::Wasm),
-            _ => None,
-        }
-    }
-}
+binary_tags!(ProgramKind { Script = 0, Module = 1, Eval = 2, Wasm = 3 });
 
 /// The source text a program retains for diagnostics and `Function.prototype.toString`: its
 /// own copy, static host text (an embedded library) the compiled source wrapped, or the text

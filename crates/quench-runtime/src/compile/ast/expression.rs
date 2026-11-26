@@ -921,6 +921,7 @@ impl FunctionCompiler<'_, '_> {
     pub(in crate::compile) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::UpdateExpression(value) => self.update(value, false),
+            Expression::AssignmentExpression(value) if let Some(register) = self.literal_array_pattern(value) => register,
             _ => self.expression(expression),
         }
     }
@@ -938,7 +939,8 @@ impl FunctionCompiler<'_, '_> {
                 value.operator.as_str().chars().next().expect("update operator"))
         };
         let last_operand = std::mem::take(&mut self.last_operand);
-        let reference = self.prepare_assignment_reference(&value.argument);
+        // An update reads the name at once, so its reference is settled.
+        let reference = self.prepare_assignment_reference_settled(&value.argument, true);
         if let AssignmentReference::Abrupt(result) = reference {
             return result;
         }

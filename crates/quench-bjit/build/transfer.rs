@@ -2,7 +2,7 @@
 //! through a successor relocation, return only from the routines that return, and fill a value
 //! hole only through the instruction the patcher rewrites.
 
-use crate::checks::CALL_ROW_PREFIX;
+use crate::checks::{CALL_ROW_PREFIX, ENTRY_PREFIX, LEAVE_PREFIX};
 use crate::class::{ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32_BYTES};
 use iced_x86::{Code, Decoder, DecoderOptions, Instruction};
 
@@ -14,10 +14,10 @@ pub enum Arch {
 
 /// Rows named so may `call` (the entry thunk) or return (the leave routines).
 pub fn may_call(row: &str) -> bool {
-    row.starts_with("entry_")
+    row.starts_with(ENTRY_PREFIX)
 }
 pub fn may_return(row: &str) -> bool {
-    row.starts_with("leave_") || may_call(row)
+    row.starts_with(LEAVE_PREFIX) || may_call(row)
 }
 
 const X86_BITNESS: u32 = 64;

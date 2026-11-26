@@ -112,7 +112,7 @@ impl LaneMethod {
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::compiled::admission::Tier::Base) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
+            direct, proven_calls: false, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
     }
 }
@@ -131,7 +131,7 @@ impl LaneMethod {
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&[]).reaching(scratch), fault_poll: false,
             names_shapes: false, exits: ExitTable::default(), scratch_width: 0, framed: true,
             caller_registers: registers, frame_reach: scratch, amortizes: true,
-            direct: Box::new([]), closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
+            direct: Box::new([]), proven_calls: false, closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
         }
     }
 }
@@ -361,7 +361,7 @@ pub(crate) struct ImageBody {
 }
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
-pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<ImageBody, String> {
+pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quench_runtime::compile::aot_facts::AotFacts) -> Result<ImageBody, String> {
     let _focus = quench_runtime::fallback::focus(program, function, 0);
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
@@ -372,10 +372,7 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<Ima
     if let Some(wasm) = code.iter().find(|instruction| !planned(instruction)) {
         return Err(format!("function {function}: the wasm instruction {:?} has no base row", wasm.op()));
     }
-    // The base body takes no proven call: its direct rows' image records are not wired (see
-    // `image_calls`), and the lane body inlines the calls it proves itself. The base body is the
-    // lane body's join target, which needs no call of its own.
-    let callees = Callees::default();
+    let callees = Callees::proven(program, function, &code, facts);
     let (length, live) = (code.len(), program.shared_register_root_masks(function));
     let reason = if length == 0 { "an empty function" } else { "no liveness masks" };
     let region = LoopRegion::of_whole_function(code, &[], live).ok_or_else(|| format!("function {function} ({length} instructions) has no base span: {reason}"))?;
@@ -389,15 +386,22 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<Ima
     let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
-    let calls = image_calls(&built)?;
+    let calls = image_calls(&built, facts.function_facts(function))?;
     Ok(ImageBody { scratch: built.scratch, code: built.code, symbols: built.symbols, entries: built.entries, generic: built.generic, calls })
 }
 
 /// Each direct row's record with its site and callee: the rows' `Symbol::CallRecord`s in code order are
 /// the records in row order (`Body::records`; an image body has no builtin row, whose record names none).
-fn image_calls(built: &Body) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
-    if !built.records.is_empty() { return Err("a base body planned a direct row".into()); }
-    Ok(Box::default())
+fn image_calls(built: &Body, facts: quench_runtime::compile::aot_facts::FunctionFacts<'_>) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
+    let sites: Vec<u32> = built.symbols.iter().filter_map(|site| match site.symbol {
+        crate::aot_image::Symbol::CallRecord { pc, .. } => Some(pc),
+        _ => None,
+    }).collect();
+    if sites.len() != built.records.len() { return Err("a direct row names no call record".into()); }
+    sites.into_iter().zip(&built.records).map(|(pc, record)| {
+        let callee = facts.call_target(pc).ok_or("a direct row of an unproven call")?;
+        Ok((pc, callee, **record))
+    }).collect()
 }
 
 #[cfg(test)]

@@ -39,6 +39,14 @@ pub struct Edge<W> {
 #[inline(always)]
 pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
+    admitted_gated::<S, false>(stage, space, record, record_id, before, value, miss)
+}
+
+/// `admitted`, gated by the barrier's log alone where `HELD` (`Stage::held_store_gate`): the
+/// slot's observed type already holds the value, so slot observation would see nothing of it.
+#[inline(always)]
+fn admitted_gated<S: Stage, const HELD: bool>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
+    value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let layout = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32);
     let moved = stage.sub(layout, before);
     let same = stage.eq_imm(moved, 0u32);
@@ -46,7 +54,7 @@ pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    let gate = stage.store_gate(space, record_id, value);
+    let gate = if HELD { stage.held_store_gate(space, record_id, value) } else { stage.store_gate(space, record_id, value) };
     stage.guard(gate, miss)?;
     Some(payload)
 }
@@ -61,6 +69,17 @@ pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record
 pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
+    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
+    Some(())
+}
+
+/// `add_property` of a value the after-shape's slot observation already holds
+/// (`Heap::add_observation_holds`): the barrier's log alone gates the write (`admitted_gated`).
+#[inline(always)]
+pub(crate) fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
+    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
+    let payload = admitted_gated::<S, true>(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
     store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
     stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
     Some(())

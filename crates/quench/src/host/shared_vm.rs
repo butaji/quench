@@ -2492,6 +2492,7 @@ node_bindings! {
         method "sourceMapsSupportGet" (0) => crate::modules::source_map_shared_vm::get_support,
         method "sourceMapsSupportSet" (1) => crate::modules::source_map_shared_vm::set_support_operation,
         method "sourceMapConstruct" (1) => crate::modules::source_map_shared_vm::construct,
+        method "sourceMapClassExport" (0) => crate::modules::source_map_shared_vm::class_export,
         method "sourceMapPayload" (0) => crate::modules::source_map_shared_vm::payload,
         method "sourceMapLineLengths" (0) => crate::modules::source_map_shared_vm::line_lengths_getter,
         method "sourceMapFindEntry" (2) => crate::modules::source_map_shared_vm::find_entry,

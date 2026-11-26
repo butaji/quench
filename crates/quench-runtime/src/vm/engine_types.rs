@@ -479,7 +479,8 @@ pub struct CompiledJsFunction {
     pub result: NativeNumberResult,
     pub params: usize,
     pub mapped_bytes: usize,
-    #[cfg(any(test, feature = "test-support"))]
+    /// Test counter, kept in every build: quench-runtime's `test-support` feature unifies on in a
+    /// workspace check while the engine crate that builds this struct is not `cfg(test)`.
     pub native_entries: std::cell::Cell<u64>,
 }
 
@@ -792,9 +793,9 @@ pub struct CompiledFunction {
     pub entry: WasmEntry,
     pub params: Vec<crate::WasmType>,
     pub result: Option<crate::WasmType>,
-    #[cfg(any(test, feature = "test-support"))]
+    /// Test counter, kept in every build: quench-runtime's `test-support` feature unifies on in a
+    /// workspace check while the engine crate that builds this struct is not `cfg(test)`.
     pub native_entries: std::cell::Cell<u64>,
-    #[cfg(any(test, feature = "test-support"))]
     pub direct_reference_entries: std::cell::Cell<u64>,
 }
 
@@ -949,6 +950,10 @@ pub struct LaneMethod {
     pub amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     pub direct: Box<[DirectCallee]>,
+    /// Whether its code calls callees by their entries through an AOT image's call records
+    /// (`DirectSite::Proven`, `AotImage::calls`), which name no `direct` callee: its runs bind the
+    /// shadow frames those calls push, as a body with `direct` callees does (`Vm::stack_words_in_lane`).
+    pub proven_calls: bool,
     /// Whether every call of it that has run is inlined or direct: under a direct caller's native
     /// frames the lane's helper call misses (`dispatch_fast::body_call_helper`), so only such
     /// a body is called directly.
@@ -1569,7 +1574,7 @@ pub struct ExitTable {
 /// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
 /// then one per lean row.
 /// An upper bound the engine checks (`native_calls`): the builtin, Math and lean rows it derives.
-pub const IDENTITY_SLOTS: usize = 221;
+pub const IDENTITY_SLOTS: usize = 224;
 
 /// An inlined call. Its registers are the unit's: the caller's are its first, and each
 /// callee's start at its `base`.

@@ -113,7 +113,7 @@ pub fn native_kind_index(kind: TypedArrayKind) -> Option<u32> {
 
 /// The native kind at `index` (`native_kind_index`).
 #[inline(always)]
-pub fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
+pub const fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
 
 /// The int32 word of the `integer` element at `address`.
 #[inline(always)]

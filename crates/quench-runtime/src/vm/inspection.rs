@@ -113,25 +113,16 @@ impl Vm {
                 _ => "Object",
             };
         }
+        if self.heap.is_map(value) {
+            return "Map";
+        }
+        if self.heap.is_set(value) {
+            return "Set";
+        }
         match self.heap.get(value) {
-            Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
-            Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
-            Some(Cell::TypedArray { object, .. }) => object.native.kind().name(),
-            Some(Cell::DataView { .. }) => {
-                if uncaptured_factory {
-                    "DataView"
-                } else {
-                    "Object"
-                }
-            }
-            _ if self.heap.is_map(value) => "Map",
-            _ if self.heap.is_set(value) => "Set",
-            Some(Cell::WeakMap { .. }) => "WeakMap",
-            Some(Cell::WeakSet { .. }) => "WeakSet",
-            Some(Cell::Date { .. }) => "Date",
-            Some(Cell::RegExp { .. }) => "RegExp",
-            Some(Cell::Error(_)) => "Error",
-            _ => "Object",
+            // A DataView made by a captured factory shows as a plain object.
+            Some(Cell::DataView { .. }) if !uncaptured_factory => "Object",
+            cell => cell.and_then(Cell::class_name).unwrap_or("Object"),
         }
     }
 

@@ -171,26 +171,6 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     crate::staged::word_ops::word_stage_ops!();
-    #[inline(always)]
-    fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
-    #[inline(always)]
-    #[inline(always)]
-    fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_add(imm.into()) }
-    #[inline(always)]
-    fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_mul(imm.into()) }
-    #[inline(always)]
-    fn and_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a & imm.into() }
-    #[inline(always)]
-    fn or_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a | imm.into() }
-    #[inline(always)]
-    #[inline(always)]
-    fn eq_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a == imm.into() }
-    #[inline(always)]
-    fn ne_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a != imm.into() }
-    #[inline(always)]
-    fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { a > imm.into() }
-    #[inline(always)]
-    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
     /// A plain Rust loop: a stencil holds no call, and the body runs on the state until it says the loop ends.
     #[inline(always)]
     fn loop_words<const N: usize>(&mut self, init: [u64; N], mut body: impl FnMut(&mut Self, [u64; N]) -> (bool, [u64; N]))
