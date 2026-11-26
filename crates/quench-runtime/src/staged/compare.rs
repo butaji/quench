@@ -380,11 +380,16 @@ fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
 #[inline(always)]
 fn loosely_nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, word: S::Word) -> Option<S::Cond> {
     if frame.html_dda_possible() {
+        // Only a heap word can be such a cell, so the record families are tested inside the heap branch alone:
+        // a word that is no heap value runs none of those tests, and its `cell` is 0 (no cell).
         let heap = super::value::is_heap(stage, word);
-        let (object, array) = (is_direct_object(stage, word), is_direct_array(stage, word));
-        let record = stage.either(object, array);
-        let unrecorded = stage.not(record);
-        let cell = stage.both(heap, unrecorded);
+        let cell_word = stage.choose(heap, #[inline(always)] |stage| {
+            let (object, array) = (is_direct_object(stage, word), is_direct_array(stage, word));
+            let record = stage.either(object, array);
+            let (one, zero) = (stage.constant(1), stage.constant(0));
+            stage.select(record, zero, one)
+        }, #[inline(always)] |stage| stage.constant(0));
+        let cell = stage.ne_imm(cell_word, 0u64);
         let miss = frame.miss();
         stage.guard_false(cell, miss)?;
     }
