@@ -127,8 +127,8 @@ pub(crate) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], 
 /// to its value: its read is a slot, a live load that leaves at a miss, or none, and it changes nothing a loop holds.
 pub(crate) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {
     use quench_runtime::vm::global_facts::GlobalRead;
-    // A folded read (a constant, a Stable or frozen cell under its dependency) as `Math` in `Math.imul`.
-    matches!(global_reads.get(&pc), Some(GlobalRead::NativeSlot { .. } | GlobalRead::Constant(_) | GlobalRead::Stable { .. } | GlobalRead::Frozen { .. }))
+    // A folded read (`GlobalRead::folded_value`) as `Math` in `Math.imul`.
+    global_reads.get(&pc).is_some_and(|read| matches!(read, GlobalRead::NativeSlot { .. }) || read.folded_value().is_some())
 }
 
 /// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code
