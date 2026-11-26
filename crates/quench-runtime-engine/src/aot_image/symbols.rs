@@ -150,10 +150,11 @@ impl SymbolTable {
         Symbol::Shape(self.shapes.key(recipe))
     }
 
-    /// The key of the guard of a read of `slot` of an object of `recipe` (`Symbol::GuardShape`):
-    /// the recipe's number in the same table as `shape`, and the slot, in one key (`guard_key`).
-    pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16) -> Option<u32> {
-        guard_key(self.shapes.key(recipe), slot)
+    /// The key of the guard of a read, or an int32 store (`store`), of `slot` of an object of
+    /// `recipe` (`Symbol::GuardShape`): the recipe's number in the same table as `shape`, the
+    /// access and the slot, in one key (`guard_key`).
+    pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16, store: bool) -> Option<u32> {
+        guard_key(self.shapes.key(recipe), slot, store)
     }
 
     /// The symbol `(namespace, key)` names in `image`, the inverse of `intern`.
@@ -293,26 +294,33 @@ fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     Some(shape)
 }
 
-/// The bits of a guard key that hold its slot (`guard_key`).
+/// The bits of a guard key below its recipe (`guard_key`): the access bit, then the slot.
 const GUARD_SLOT_BITS: u32 = 12;
+/// The access bit of a guard key: an int32 store's guard, not a read's.
+const GUARD_STORE: u32 = 1 << (GUARD_SLOT_BITS - 1);
 
-/// The key of the guard of a read of `slot` of shape recipe `recipe`: the recipe above the slot's
-/// bits. `None` where either does not fit.
-fn guard_key(recipe: u32, slot: u16) -> Option<u32> {
-    (u32::from(slot) < 1 << GUARD_SLOT_BITS && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS)).then_some(recipe << GUARD_SLOT_BITS | u32::from(slot))
+/// The key of the guard of a read, or an int32 store, of `slot` of shape recipe `recipe`: the
+/// recipe above the access bit and the slot. `None` where either does not fit.
+fn guard_key(recipe: u32, slot: u16, store: bool) -> Option<u32> {
+    (u32::from(slot) < GUARD_STORE && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS))
+        .then_some(recipe << GUARD_SLOT_BITS | if store { GUARD_STORE } else { 0 } | u32::from(slot))
 }
 
-/// The shape guard key `key` names in `vm`, its slot and the type a reader of the slot depends on
-/// (`Vm::tagged_slot_type`): `None` where `vm` builds no such shape, or where the slot's words are
-/// not tagged values, which the read compiled for (`ahead_images::fields`) does not decode.
+/// The shape guard key `key` names in `vm`, its slot and the type an access of the slot depends on
+/// (`Vm::tagged_slot_type`): `None` where `vm` builds no such shape, where the slot's words are
+/// not tagged values, which the access compiled for (`ahead_images::fields`) does not decode, or
+/// for a store's guard where the slot's type does not hold every int32, which the store writes
+/// with no join of its type.
 pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
-    let slot = (key & ((1 << GUARD_SLOT_BITS) - 1)) as u16;
+    let slot = (key & (GUARD_STORE - 1)) as u16;
+    let store = key & GUARD_STORE != 0;
     let shape = shape(image, vm, key >> GUARD_SLOT_BITS);
     if quench_runtime::trace::Channel::AotLanes.on() {
         eprintln!("aot-lanes: guard {key:#x} resolves to shape {shape:?}, slot {slot} type {:?}", shape.map(|shape| vm.tagged_slot_type(shape, slot)));
     }
     let shape = shape?;
-    Some((shape, slot, vm.tagged_slot_type(shape, slot)?))
+    let ty = vm.tagged_slot_type(shape, slot)?;
+    (!store || quench_runtime::typed_ir::Type::INT32.is_subtype(ty)).then_some((shape, slot, ty))
 }
 
 /// The data attributes of a field's attribute bits.
