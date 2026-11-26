@@ -30,6 +30,15 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, sta
             *slot = if target > pc { slot.map(|count| count + 1) } else { None };
         }
     }
+    // A latch whose loop's header is a test repeats it (`rotated_bodies`): the test's exit past the latch is one more
+    // edge into its target, from before it.
+    for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
+        let Some(&test) = instructions.get(header) else { continue };
+        if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump) { continue; }
+        for target in successors(header, test).into_iter().filter(|&target| target > latch) {
+            if let Some(slot) = edges.get_mut(target) { *slot = slot.map(|count| count + 1); }
+        }
+    }
     edges
 }
 

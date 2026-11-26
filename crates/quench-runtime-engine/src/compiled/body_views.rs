@@ -37,7 +37,7 @@ fn quickened_typed_kind(view: &crate::dispatch_fast::LaneView, pcs: impl Iterato
 pub(crate) fn typed_reads(vm: &Vm, function: u32, unit: &super::lane_unit::Unit) -> Vec<super::facts::ObservedRead> {
     let Some(view) = vm.programs.views_in_lane(vm.active_program).and_then(|views| views.get(function as usize))
         .and_then(quench_runtime::vm::program_store::derived_lane_view) else { return Vec::new() };
-    unit.instructions.iter().zip(&unit.origins).enumerate().filter_map(|(at, (instruction, origin))| {
+    let observed: Vec<super::facts::ObservedRead> = unit.instructions.iter().zip(&unit.origins).enumerate().filter_map(|(at, (instruction, origin))| {
         let super::lane_unit::Origin::Caller(pc) = origin else { return None };
         let reads = match crate::compiled::performed(instruction) {
             Some(quench_runtime::staged::Operation::ElementRead { .. }) => true,
@@ -48,5 +48,45 @@ pub(crate) fn typed_reads(vm: &Vm, function: u32, unit: &super::lane_unit::Unit)
         let record = unsafe { &*view.records.base().add(*pc as usize) };
         crate::dispatch_fast::is_typed_element_row(record.handler, reads).then(|| quench_runtime::staged::typed_elements::native_kind_at(unsafe { record.operand.imm }))
             .map(|native| super::facts::ObservedRead { pc: at, ty: if reads { native.element_type() } else { quench_runtime::typed_ir::Type::ANY }, kind: Some(native.kind) })
-    }).collect()
+    }).collect();
+    same_array_accesses(unit, observed)
+}
+
+/// `observed` and, for each element access no record observed (code the interpreter never ran), the kind of an
+/// observed access whose base is the same array: the same register, or one a `Move` copied it to and nothing else
+/// writes. The kind is a fact of the array, not of the site: its access proves the view for that kind once (or takes
+/// the view an earlier access kept, `Proofs::typed`) and leaves where the base is another value.
+fn same_array_accesses(unit: &super::lane_unit::Unit, mut observed: Vec<super::facts::ObservedRead>) -> Vec<super::facts::ObservedRead> {
+    use quench_runtime::staged::Operation;
+    let base_of = |instruction| match crate::compiled::performed(instruction) {
+        Some(Operation::ElementRead { base, .. }) => Some((base, true)),
+        Some(Operation::ElementWrite { base, .. }) => Some((base, false)),
+        _ => None,
+    };
+    // A register's array: the register a sole `Move` copied into it, followed back (each written once).
+    let mut writes = std::collections::HashMap::<quench_runtime::bytecode::Register, usize>::new();
+    for instruction in &unit.instructions { for register in instruction.written_registers() { *writes.entry(register).or_default() += 1; } }
+    let mut copied = std::collections::HashMap::new();
+    for instruction in &unit.instructions {
+        if let Some(Operation::Move { destination, source }) = crate::compiled::performed(*instruction) {
+            if writes.get(&destination) == Some(&1) { copied.insert(destination, source); }
+        }
+    }
+    let root = |mut register| { for _ in 0..8 { match copied.get(&register) { Some(&source) => register = source, None => break } } register };
+    let kinds: Vec<(quench_runtime::bytecode::Register, quench_runtime::tier_surface::TypedArrayKind)> = observed.iter()
+        .filter_map(|read| Some((root(base_of(unit.instructions[read.pc])?.0), read.kind?))).collect();
+    let mut added = Vec::new();
+    for (pc, instruction) in unit.instructions.iter().enumerate() {
+        if observed.iter().any(|read| read.pc == pc) { continue; }
+        let Some((base, reads)) = base_of(*instruction) else { continue };
+        let base = root(base);
+        let mut same = kinds.iter().filter(|(known, _)| *known == base).map(|(_, kind)| *kind);
+        let Some(kind) = same.next() else { continue };
+        if same.any(|other| other != kind) { continue; }
+        let Some(native) = quench_runtime::staged::typed_elements::NativeKind::new(kind) else { continue };
+        added.push(super::facts::ObservedRead { pc, ty: if reads { native.element_type() } else { quench_runtime::typed_ir::Type::ANY }, kind: Some(kind) });
+    }
+    observed.extend(added);
+    observed.sort_by_key(|read| read.pc);
+    observed
 }
