@@ -629,6 +629,21 @@ impl Vm {
         }
     }
 
+    /// A store of a BigInt primitive at an index of a BigInt64Array or BigUint64Array: the
+    /// value's low 64 bits (ToBigInt64 / ToBigUint64), which run no guest code. False leaves
+    /// any other store to the general write.
+    pub fn typed_array_set_bigint(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(Cell::BigInt(integer)) = self.heap.get(value) else { return false };
+        let bits = integer.wrapping_u64();
+        match self.typed_array_view(object) {
+            Some(view) if view.kind.is_bigint() => {
+                self.typed_array_write_view(view, index, &TypedArrayElement::BigInt(bits));
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// `typed_array_set_number` of an integer into an integer typed array whose buffer the
     /// view owns alone (`BufferBytes::mut_in_lane`): an integer's ToInt8 through ToUint32 is its low
     /// bytes, and Uint8Clamped clamps it. False leaves the store to the general write.
