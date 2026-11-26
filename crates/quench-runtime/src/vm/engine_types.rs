@@ -2931,6 +2931,9 @@ pub struct LaneImage {
     /// Whether its back edges poll by fault (`LoweredRegion::fault_poll`): the runner maps the poll page
     /// for it, as for a JIT lane body, and a fault lands at the entry's termination.
     pub fault_poll: bool,
+    /// The leaves its lowering laid out (`LoweredRegion::exits`): each place, its missing fact, and the values a leave inside
+    /// an inlined frame stores, which the install takes as the body's table, as a JIT lane body keeps its own.
+    pub exits: ExitTable,
 }
 
 /// Where the records live: in the loader's own allocation (`aot_image::live::install`), or in the

@@ -9,11 +9,11 @@
 use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
-use quench_runtime::vm::engine_types::WasmRows;
+use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x05";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x06";
 /// The memory slot of Wasm rows whose entry reads no memory.
 const NO_SLOT: u32 = u32::MAX;
 /// The shape prototype a shape with none names.
@@ -151,9 +151,47 @@ fn put_function(out: &mut Vec<u8>, function: &AotFunction) {
             out.push(1);
             out.push(u8::from(lane.fault_poll));
             put_code(out, &lane.code);
+            put_exits(out, &lane.exits);
         }
         None => out.push(0),
     }
+}
+
+/// A lane body's exit table: its sigs (kind, then each stored value's unit register and scratch slot), then its sites.
+fn put_exits(out: &mut Vec<u8>, exits: &ExitTable) {
+    put_count(out, exits.sigs.len());
+    for sig in &exits.sigs {
+        out.push(sig.kind as u8);
+        put_count(out, sig.live.len());
+        for LiveValue { slot, source: Source::Scratch(at) } in sig.live.iter().copied() {
+            out.extend(slot.to_le_bytes());
+            out.extend(at.to_le_bytes());
+        }
+    }
+    put_count(out, exits.sites.len());
+    for site in &exits.sites {
+        out.extend(site.word.to_le_bytes());
+        for word in [site.sig, site.id, site.unit_pc] { out.extend(word.to_le_bytes()); }
+        out.push(site.fact as u8);
+    }
+}
+
+fn read_exits(words: &mut Words<'_>) -> Result<ExitTable, String> {
+    const KINDS: [ExitKind; 4] = [ExitKind::At, ExitKind::Inlined, ExitKind::Callee, ExitKind::Entry];
+    const FACTS: [ExitFact; 6] = [ExitFact::NumberKind, ExitFact::Shape, ExitFact::Callee, ExitFact::Element, ExitFact::Global, ExitFact::Unclassified];
+    let sigs = (0..words.half()?).map(|_| {
+        let kind = *KINDS.get(usize::from(words.byte()?)).ok_or("an exit kind the image cannot name")?;
+        let live = (0..words.half()?).map(|_| Ok(LiveValue { slot: words.pair()?, source: Source::Scratch(words.pair()?) })).collect::<Result<_, String>>()?;
+        Ok(ExitSig { kind, live })
+    }).collect::<Result<Vec<_>, String>>()?;
+    let sites = (0..words.half()?).map(|_| {
+        let word = words.quad()?;
+        let (sig, id, unit_pc) = (words.half()?, words.half()?, words.half()?);
+        let fact = *FACTS.get(usize::from(words.byte()?)).ok_or("an exit fact the image cannot name")?;
+        Ok(ExitSite { word, sig, id, unit_pc, fact })
+    }).collect::<Result<Vec<_>, String>>()?;
+    let crossings = (0..sites.len()).map(|_| std::cell::Cell::new(0)).collect();
+    Ok(ExitTable { sigs, sites, crossings })
 }
 
 fn put_base(out: &mut Vec<u8>, base: &BaseImage) {
@@ -247,7 +285,8 @@ fn read_function(words: &mut Words<'_>) -> Result<AotFunction, String> {
         0 => None,
         _ => {
             let fault_poll = words.byte()? != 0;
-            Some(LaneImage { code: read_code(words)?, fault_poll })
+            let code = read_code(words)?;
+            Some(LaneImage { code, fault_poll, exits: read_exits(words)? })
         }
     };
     Ok(AotFunction { id, base, lane })
