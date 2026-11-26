@@ -173,10 +173,15 @@ impl Vm {
     /// value table names (`ClosureOf`). The image's table is read at a body's link, so a closure it
     /// names must be found whether or not a body has been installed yet.
     pub(super) fn records_closure(&self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32) -> bool {
+        self.records_closure_of(p, self.active_program, plan, id)
+    }
+
+    /// `records_closure` for a closure of `program`, which need not be the active one (a lane's).
+    pub(in crate::vm) fn records_closure_of(&self, p: &ResidualProgram, program: ProgramId, plan: &crate::bytecode::FunctionHeader, id: u32) -> bool {
         let root = |parent: u32| parent == crate::vm::ROOT_FUNCTION_ID;
         let top_level = || plan.parent.is_none_or(|parent| root(parent)
             || p.functions.get(parent as usize).is_some_and(|outer| outer.header().parent.is_none_or(root)));
-        let named = || self.programs.ahead_images(self.active_program, p).is_some_and(|images| images.names_closure(id));
+        let named = || self.programs.ahead_images(program, p).is_some_and(|images| images.names_closure(id));
         !p.is_module() && (top_level() || named())
     }
 

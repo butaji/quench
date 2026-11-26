@@ -2846,23 +2846,23 @@ fn window_closure_value_in_lane(
     let value = match vm.closure_template_in_lane(function) {
         // A recorded closure is made from its template once: over another environment where
         // it reads nothing of this activation's (`Vm::maker_free_environment`), so the
-        // activation needs none of its own for it, else over the activation's.
+        // activation needs none of its own for it, else over the activation's. A template
+        // bypasses `Vm::closure`'s recording, so a closure that must be findable is recorded here.
         Some(template) => {
             let env = match vm.maker_free_environment(&template, parent, owner) {
                 Some(env) => env,
                 None => window(vm),
             };
-            Some(vm.closure_of_template(template, env))
+            let value = vm.closure_of_template(template, env);
+            // SAFETY: the context's program outlives the lane run.
+            vm.record_lane_closure(code, unsafe { (*cx).program }, function, value);
+            Some(value)
         }
         None => {
             let environment = window(vm);
             closure_in_lane(vm, code, function, environment)
         }
     };
-    if let Some(value) = value {
-        // SAFETY: the context's program outlives the lane run.
-        vm.record_closure(unsafe { (*cx).program }, function, value);
-    }
     note_allocation(vm);
     value
 }
