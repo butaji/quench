@@ -389,6 +389,13 @@ impl Vm {
         )
     }
 
+    /// The shape a construction by `constructor` gives an empty object of `shape` before its body
+    /// runs (`capture_constructed_name`, `new.target` the constructor itself): an ahead image's
+    /// shape recipe of a constructed object starts there (`aot_image::symbols::shape`).
+    pub fn constructed_root_shape(&mut self, shape: u32, constructor: Value) -> u32 {
+        self.constructed_shape(shape, constructor, true)
+    }
+
     pub(super) fn capture_constructed_name(
         &mut self,
         object: &mut Object,

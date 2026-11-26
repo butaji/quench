@@ -45,6 +45,11 @@ impl AotFacts {
         self.call_targets.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
     }
 
+    /// The functions some construction (`new`) always constructs.
+    pub fn constructed_functions(&self) -> std::collections::BTreeSet<u32> {
+        self.construct_targets.values().copied().collect()
+    }
+
     /// The facts of function `function`, for its lowering.
     pub fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
         FunctionFacts { facts: self, function }

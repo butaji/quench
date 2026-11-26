@@ -203,7 +203,7 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
         Symbol::NarrowUpperWords => Some(quench_runtime::value::NarrowLayout::upper_words() as u64),
         Symbol::Attention => Some(quench_runtime::execution_interrupt::attention_address()),
         Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
-        Symbol::HeapValue(_) | Symbol::Shape(_) => symbols::resolve_recipe(symbol, image, vm),
+        Symbol::HeapValue(_) | Symbol::Shape(_) | Symbol::GuardShape(_) => symbols::resolve_recipe(symbol, image, vm),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
 }

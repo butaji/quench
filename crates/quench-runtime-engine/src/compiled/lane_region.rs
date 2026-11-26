@@ -2827,7 +2827,7 @@ impl Lowering<'_, '_> {
     /// Per receiver shape a field site folds, whether the receiver has it.
     fn entry_receiver_shapes(&mut self, receiver: &LaneReceiver) -> BTreeMap<u32, Variable> {
         let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.iter().flatten().flatten() {
+        for field in self.fields.iter().flatten().flatten().filter(|field| !field.guessed()) {
             if receiver_shapes.contains_key(&field.shape) {
                 continue;
             }

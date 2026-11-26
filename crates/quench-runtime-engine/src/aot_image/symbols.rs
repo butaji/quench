@@ -21,13 +21,17 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::Shape as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::GuardShape as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
 const NARROW_WORDS_NAMESPACE: u32 = CALL_RECORD_NAMESPACE + 1;
 /// The namespace of `Symbol::Attention`, one byte keyed 0.
 const ATTENTION_NAMESPACE: u32 = NARROW_WORDS_NAMESPACE + 1;
+
+/// The id a guarded shape resolves to where the VM builds none: no record's shape word holds it
+/// (a shape id is below `ic::SYMBOLIC_SHAPE`, and dictionary storage only adds the top bit).
+pub(crate) const NO_SHAPE: u32 = u32::MAX;
 
 /// The attribute bits of a `ShapeRecipe` field, as `DataAttributes` reads them.
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;
@@ -58,6 +62,9 @@ pub(crate) enum Symbol {
     HeapValue(u32),
     /// Class D: shape number `key` of `AotImage::shapes`.
     Shape(u32),
+    /// The shape of a field read's guard, keyed by its recipe and slot (`guard_key`): `NO_SHAPE`
+    /// where the VM builds none, or where the slot's words are not tagged (`guarded_shape`).
+    GuardShape(u32),
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
@@ -143,6 +150,12 @@ impl SymbolTable {
         Symbol::Shape(self.shapes.key(recipe))
     }
 
+    /// The key of the guard of a read of `slot` of an object of `recipe` (`Symbol::GuardShape`):
+    /// the recipe's number in the same table as `shape`, and the slot, in one key (`guard_key`).
+    pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16) -> Option<u32> {
+        guard_key(self.shapes.key(recipe), slot)
+    }
+
     /// The symbol `(namespace, key)` names in `image`, the inverse of `intern`.
     pub(crate) fn decode(image: &AotImage, namespace: u32, key: u32) -> Option<Symbol> {
         match namespace {
@@ -162,7 +175,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 9] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 10] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -172,6 +185,7 @@ const KEYED: [(u32, fn(u32) -> Symbol); 9] = [
     (RelocKind::Atom as u32, Symbol::Atom),
     (RelocKind::HeapValue as u32, Symbol::HeapValue),
     (RelocKind::Shape as u32, Symbol::Shape),
+    (RelocKind::GuardShape as u32, Symbol::GuardShape),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
@@ -191,6 +205,7 @@ impl Symbol {
             Self::Atom(_) => RelocKind::Atom as u32,
             Self::HeapValue(_) => RelocKind::HeapValue as u32,
             Self::Shape(_) => RelocKind::Shape as u32,
+            Self::GuardShape(_) => RelocKind::GuardShape as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -202,7 +217,7 @@ impl Symbol {
     fn key(self) -> u32 {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
-                | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) => key,
+                | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key) => key,
             Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
@@ -219,6 +234,7 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
     match symbol {
         Symbol::HeapValue(key) => Some(heap_value(image, vm, key)?.to_bits()),
         Symbol::Shape(key) => Some(u64::from(shape(image, vm, key)?)),
+        Symbol::GuardShape(key) => Some(u64::from(guarded_shape(image, vm, key).map_or(NO_SHAPE, |(shape, _, _)| shape))),
         _ => None,
     }
 }
@@ -257,8 +273,8 @@ fn prototype_of(vm: &mut Vm, function: u32) -> Option<Value> {
     vm.own_property(closure, atom).filter(|prototype| prototype.is_heap())
 }
 
-/// The shape of shape recipe `key`: the empty object of its prototype, then each field added
-/// in order, along the VM's transitions.
+/// The shape of shape recipe `key`: the empty object of its prototype, as its constructor's
+/// construction names it, then each field added in order, along the VM's transitions.
 fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     let recipe = image.shapes.get(key as usize)?;
     let prototype = match recipe.prototype {
@@ -266,11 +282,37 @@ fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
         None => Value::NULL,
     };
     let mut shape = Vm::empty_object(prototype).shape();
+    if let Some(constructor) = recipe.constructor {
+        let constructor = heap_value(image, vm, constructor)?;
+        shape = vm.constructed_root_shape(shape, constructor);
+    }
     for &(atom, attributes) in recipe.fields.iter() {
         let atom = vm.intern_atom(image.atoms.get(atom as usize)?);
         shape = vm.transition_data_property_shape(shape, PropertyKey::string(atom), data_attributes(attributes));
     }
     Some(shape)
+}
+
+/// The bits of a guard key that hold its slot (`guard_key`).
+const GUARD_SLOT_BITS: u32 = 12;
+
+/// The key of the guard of a read of `slot` of shape recipe `recipe`: the recipe above the slot's
+/// bits. `None` where either does not fit.
+fn guard_key(recipe: u32, slot: u16) -> Option<u32> {
+    (u32::from(slot) < 1 << GUARD_SLOT_BITS && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS)).then_some(recipe << GUARD_SLOT_BITS | u32::from(slot))
+}
+
+/// The shape guard key `key` names in `vm`, its slot and the type a reader of the slot depends on
+/// (`Vm::tagged_slot_type`): `None` where `vm` builds no such shape, or where the slot's words are
+/// not tagged values, which the read compiled for (`ahead_images::fields`) does not decode.
+pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
+    let slot = (key & ((1 << GUARD_SLOT_BITS) - 1)) as u16;
+    let shape = shape(image, vm, key >> GUARD_SLOT_BITS);
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: guard {key:#x} resolves to shape {shape:?}, slot {slot} type {:?}", shape.map(|shape| vm.tagged_slot_type(shape, slot)));
+    }
+    let shape = shape?;
+    Some((shape, slot, vm.tagged_slot_type(shape, slot)?))
 }
 
 /// The data attributes of a field's attribute bits.
