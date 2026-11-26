@@ -1567,7 +1567,7 @@ pub struct ExitTable {
 /// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
 /// then one per lean row.
 /// An upper bound the engine checks (`native_calls`): the builtin, Math and lean rows it derives.
-pub const IDENTITY_SLOTS: usize = 221;
+pub const IDENTITY_SLOTS: usize = 224;
 
 /// An inlined call. Its registers are the unit's: the caller's are its first, and each
 /// callee's start at its `base`.

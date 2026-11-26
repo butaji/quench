@@ -203,4 +203,19 @@ mod tests {
             assert_eq!(SlotType::of(value), SlotType::from_type(Type::immediate(value)));
         }
     }
+
+    /// `admits` is `join(of(value)) == self` arm by arm (the store fast path skips the join on it):
+    /// every representation against a value of every class, `-0`, NaN and the non-immediate words.
+    #[test]
+    fn admits_is_the_join_of_the_values_class() {
+        let values = [Value::integer(3), Value::integer(i32::MIN), Value::number(0.5), Value::number(-0.0),
+            Value::number(f64::NAN), Value::number(f64::INFINITY), Value::NULL, Value::UNDEFINED, Value::TRUE,
+            Value::FALSE, Value::direct_object(1), Value::direct_array(1), Value::direct_function(1),
+            Value::direct_string(1), Value::heap(1), Value::DELETED];
+        for &slot in SlotType::ALL {
+            for value in values {
+                assert_eq!(slot.admits(value), slot.join(SlotType::of(value)) == slot, "{slot:?} admits {value:?}");
+            }
+        }
+    }
 }

@@ -98,7 +98,7 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
         BinaryOperator::Subtraction => a - b,
         BinaryOperator::Multiplication => a * b,
         BinaryOperator::Division => a / b,
-        BinaryOperator::Remainder => a % b,
+        BinaryOperator::Remainder => crate::vm::operations::number_remainder(a, b),
         BinaryOperator::Exponential => a.powf(b),
         BinaryOperator::BitwiseOR => f64::from(ia | ib),
         BinaryOperator::BitwiseAnd => f64::from(ia & ib),
@@ -114,8 +114,8 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
 /// (safe integers; other numbers keep TypeScript's runtime emit).
 pub(super) fn display(value: &Value) -> Option<String> {
     match value {
-        Value::Number(number) if number.fract() == 0.0 && number.abs() < 9_007_199_254_740_992.0
-            && !(*number == 0.0 && number.is_sign_negative()) => Some(format!("{}", *number as i64)),
+        Value::Number(number) if !(*number == 0.0 && number.is_sign_negative()) =>
+            crate::vm::operations::safe_integer(*number).map(|integer| integer.to_string()),
         Value::Number(_) => None,
         Value::String(text) => Some(text.clone()),
     }

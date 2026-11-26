@@ -64,6 +64,22 @@ impl Vm {
         }
     }
 
+    /// The bound `this` of `owner`'s frame (`checked_this_binding`: an unbound one, a TDZ read, raises); `None`
+    /// where `owner` names no frame. The one body of the `this` row both VM frames run (`HostFrame`,
+    /// `InterpreterFrame`).
+    #[inline(always)]
+    pub(super) fn owner_this(&mut self, program: &ResidualProgram, owner: VarOwner) -> Option<Result<Value, JsError>> {
+        let frame = self.owner_frame(owner)?;
+        Some(self.checked_this_binding(program, frame))
+    }
+
+    /// The callee of `owner`'s frame (`undefined` for one with none); `None` where `owner` names no frame.
+    #[inline(always)]
+    pub(super) fn owner_callee(&self, owner: VarOwner) -> Option<Value> {
+        let frame = self.owner_frame(owner)?;
+        Some(self.frames[frame].context.callee().unwrap_or(Value::UNDEFINED))
+    }
+
     /// The locals of `owner`'s activation.
     pub(super) fn owner_locals(&self, owner: VarOwner) -> &[Value] {
         match self.live_owner(owner) {
