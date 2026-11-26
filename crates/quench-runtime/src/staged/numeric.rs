@@ -342,26 +342,28 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
         return Step::Value(slot);
     }
     let Some(tagged) = frame.operand_word(stage, source) else { return Step::Unresolved };
-    // An int word is read as the double it holds; any other word as the double its bits are.
-    let narrowed = stage.narrow(tagged);
-    let from_int = stage.i32_to_f64(narrowed);
+    // An int32 is its own value: the int32 tag alone decides, and no float work runs for it. Any other word
+    // is read as the double it holds (a Number's value, or the bits of a non-Number, which `integral` rejects).
     let int_tag = super::value::is_int(stage, tagged);
-    let double_tag = super::value::is_double(stage, tagged);
-    let number_tag = stage.either(int_tag, double_tag);
-    let double = stage.f64_from_bits(tagged);
-    let number = stage.select(int_tag, from_int, double);
-    let truncated = stage.float_unary(super::math::FloatUnary::Trunc, number);
-    let exact = stage.relation(NumberRelation::Equal, Domain::Float64, truncated, number);
-    let lowest = stage.f64_constant(f64::from(i32::MIN));
-    let highest = stage.f64_constant(f64::from(i32::MAX));
-    let above = stage.relation(NumberRelation::GreaterEqual, Domain::Float64, truncated, lowest);
-    let below = stage.relation(NumberRelation::LessEqual, Domain::Float64, truncated, highest);
-    let integral = stage.both(exact, above);
-    let integral = stage.both(integral, below);
-    let integral = stage.both(integral, number_tag);
     let miss = frame.miss();
-    let Some(value) = stage.to_int32(number, miss) else { return Step::Unresolved };
-    let slot = int_slot(stage, value, (minimum, maximum), count, Some(integral));
+    let Some(slot) = stage.choose_leaving(int_tag, #[inline(always)] |stage| {
+        let value = stage.narrow(tagged);
+        Some(int_slot(stage, value, (minimum, maximum), count, None))
+    }, #[inline(always)] |stage| {
+        let double_tag = super::value::is_double(stage, tagged);
+        let number = stage.f64_from_bits(tagged);
+        let truncated = stage.float_unary(super::math::FloatUnary::Trunc, number);
+        let exact = stage.relation(NumberRelation::Equal, Domain::Float64, truncated, number);
+        let lowest = stage.f64_constant(f64::from(i32::MIN));
+        let highest = stage.f64_constant(f64::from(i32::MAX));
+        let above = stage.relation(NumberRelation::GreaterEqual, Domain::Float64, truncated, lowest);
+        let below = stage.relation(NumberRelation::LessEqual, Domain::Float64, truncated, highest);
+        let integral = stage.both(exact, above);
+        let integral = stage.both(integral, below);
+        let integral = stage.both(integral, double_tag);
+        let value = stage.to_int32(number, miss)?;
+        Some(int_slot(stage, value, (minimum, maximum), count, Some(integral)))
+    }) else { return Step::Unresolved };
     // The int's word as the frame holds an int (`int_result`: the interpreter's tagged int), as `typeof_index` defines its.
     let slot = frame.int_result(stage, slot);
     let fact = frame.int_fact();
@@ -771,13 +773,15 @@ fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
         frame.write(stage, destination, result, fact);
         return Some(result);
     };
-    let packed = match both_tests(stage, [left_test, right_test]) {
-        Some(tests) => stage.choose(tests,
-            #[inline(always)] |stage| int_fast_result(stage, operation, left_int, right_int),
-            #[inline(always)] |stage| stage.constant(NOT_INT32)),
-        None => int_fast_result(stage, operation, left_int, right_int),
+    // One condition takes the int32 path: both operands are int32 (their tests, where not proven) and the
+    // result fits. The result word is pure integer arithmetic on the narrowed operands, so it is computed
+    // once for the condition; no branch is spent on the tags and again on the fit.
+    let packed = int_fast_result(stage, operation, left_int, right_int);
+    let fits = stage.ne_imm(packed, NOT_INT32);
+    let taken = match both_tests(stage, [left_test, right_test]) {
+        Some(tests) => stage.both(tests, fits),
+        None => fits,
     };
-    let taken = stage.ne_imm(packed, NOT_INT32);
     let boxed_int = frame.int_result(stage, packed);
     let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), #[inline(always)] |stage| {
         let number = float_operation(stage, frame, (left, right), operation)?;

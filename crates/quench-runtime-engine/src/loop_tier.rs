@@ -294,13 +294,15 @@ pub(crate) fn loop_compile_in_lane(
         .chain(region.arrays.iter().filter(|array| array.field.is_none()).map(|array| array.register)).chain(field_bases)
         .filter(|register| machine.heap_reads().is_string(r.get(*register))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
+    let typed_kinds: Vec<_> = (region.header as usize..=region.backedge as usize)
+        .map(|pc| own.and_then(|view| crate::dispatch_fast::typed_element_kind(view, pc))).collect();
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
     // A construction site's plan, where the region may keep its receiver as its field values.
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
     let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
+        entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, typed_kinds: &typed_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap_reads().memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
