@@ -647,22 +647,28 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     Ok(())
 }
 
-/// The timeline classes Node exposes as globals, from `perf_hooks`.
-const PERFORMANCE_GLOBALS: [&str; 6] = [
-    "PerformanceEntry",
-    "PerformanceMark",
-    "PerformanceMeasure",
-    "PerformanceObserver",
-    "PerformanceObserverEntryList",
-    "PerformanceResourceTiming",
+/// Node's replaceable lazy globals (`defineReplaceableLazyAttribute`), each `(property,
+/// module, export, enumerable)`: an accessor that loads the module on first read. The
+/// `performance` global and the timeline classes, from `perf_hooks`.
+const REPLACEABLE_LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
+    ("performance", "perf_hooks", "performance", true),
+    ("PerformanceEntry", "perf_hooks", "PerformanceEntry", false),
+    ("PerformanceMark", "perf_hooks", "PerformanceMark", false),
+    ("PerformanceMeasure", "perf_hooks", "PerformanceMeasure", false),
+    ("PerformanceObserver", "perf_hooks", "PerformanceObserver", false),
+    ("PerformanceObserverEntryList", "perf_hooks", "PerformanceObserverEntryList", false),
+    ("PerformanceResourceTiming", "perf_hooks", "PerformanceResourceTiming", false),
 ];
 
-/// Node's replaceable `performance` global and the timeline classes load `perf_hooks` on
-/// first access.
+/// Each replaceable lazy global and the module it loads: an image links the builder of one
+/// its program can read, which the getter reaches only by name (`aot::cli`).
+pub(crate) fn replaceable_lazy_global_modules() -> impl Iterator<Item = (&'static str, &'static str)> {
+    REPLACEABLE_LAZY_GLOBALS.iter().map(|&(name, module, _, _)| (name, module))
+}
+
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
-    install_lazy_global(context, "performance", "perf_hooks", "performance", true)?;
-    for name in PERFORMANCE_GLOBALS {
-        install_lazy_global(context, name, "perf_hooks", name, false)?;
+    for &(name, module, export, enumerable) in REPLACEABLE_LAZY_GLOBALS {
+        install_lazy_global(context, name, module, export, enumerable)?;
     }
     Ok(())
 }

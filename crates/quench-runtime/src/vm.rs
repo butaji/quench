@@ -3348,10 +3348,12 @@ impl Vm {
 
     /// `Runtime::end_for_process_exit`: drops the host, and the program store when its drop
     /// reports, and leaves every other field to the operating system.
-    pub(crate) fn end_for_process_exit(self) {
-        let vm = std::mem::ManuallyDrop::new(self);
-        // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
-        // exactly once and the rest are never dropped.
+    /// # Safety
+    /// The VM is never used or dropped again, so each field read here is dropped exactly once
+    /// and the rest are never dropped.
+    pub(crate) unsafe fn end_for_process_exit(&mut self) {
+        let vm = self;
+        // SAFETY: per the contract above.
         unsafe {
             if vm.programs.js_jit_diagnostics_enabled() {
                 eprintln!("{}", vm.field_site_report());

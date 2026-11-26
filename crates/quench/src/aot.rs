@@ -145,10 +145,35 @@ pub fn saved_wait(saved: &'static [SavedWait]) -> Option<(usize, &'static SavedW
     saved.iter().enumerate().find(|(_, wait)| wait.answers.iter().all(|&(key, answer)| prefix::Question::of_key(key).is_ok_and(|question| question.holds() == answer)))
 }
 
-/// Starts the image dump the environment asks for (`image_dump`); an image's driver calls it
-/// first in `main`.
-pub fn begin_image_dump() {
-    image_dump::begin()
+/// Runs an image's process, which its driver's C `main` calls in place of std's runtime start,
+/// and exits with its status. Of what std's start does, the process keeps what it relies on:
+/// standard descriptors that are open (a closed one is `/dev/null`, so no file the program
+/// opens takes its number) and SIGPIPE ignored, so a write to a closed pipe is an `EPIPE`
+/// error as in Node. It leaves out the main thread's stack-overflow handler, whose setup reads
+/// the process's whole memory map; the program runs on a thread of its own
+/// (`shared_run::run_node_worker`). The exit flushes std's buffered output as std's does.
+pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'static) -> ! {
+    // SAFETY: plain system calls on the standard descriptors, before any thread starts.
+    unsafe {
+        let mut descriptors = [0, 1, 2].map(|fd| libc::pollfd { fd, events: 0, revents: 0 });
+        if libc::poll(descriptors.as_mut_ptr(), 3, 0) >= 0 {
+            for descriptor in descriptors {
+                if descriptor.revents & libc::POLLNVAL != 0 {
+                    libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                }
+            }
+        }
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+    image_dump::begin();
+    let status = match crate::host::process_start::begin_main().and_then(|()| crate::shared_run::run_node_worker(run)) {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("quench: {error}");
+            1
+        }
+    };
+    std::process::exit(i32::from(status))
 }
 
 /// Continues a linked entry from `wait`, the saved run `index`: its writes before the wait are
@@ -164,14 +189,16 @@ pub fn resume_native_process_entry(
     type Rest = (crate::shared_run::EntryRuntime, quench_runtime::NativeJsProgram);
     if let Some(root) = image_dump::adopt(index) {
         // SAFETY: the dump's root is the `Rest` its run leaked, mapped back at its address.
-        let (mut runtime, entry) = *unsafe { Box::from_raw(root.cast::<Rest>()) };
+        // Kept in place: moving the runtime out of its box would copy it whole.
+        let mut rest = unsafe { Box::from_raw(root.cast::<Rest>()) };
+        let (runtime, entry) = &mut *rest;
         drop(program);
         runtime.host_mut().adopt_process(host);
         runtime.set_memory_policy(crate::shared_run::select_memory_policy());
         crate::host::resident_pages::phase_peak("saved wait mapped");
         let execution = runtime.resume_restored();
         crate::host::resident_pages::phase_peak("saved wait resumed");
-        return crate::shared_run::finish_shared_execution(&mut runtime, entry.residual(), execution);
+        return crate::shared_run::finish_shared_execution(runtime, entry.residual(), execution);
     }
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_at_rest(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());

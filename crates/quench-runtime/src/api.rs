@@ -145,9 +145,14 @@ impl<H: Host> Runtime<H> {
     /// Ends this runtime for a process that exits next. The host is dropped, so its effects
     /// (flushed output, terminated workers, closed handles) happen as on any drop; the heap
     /// and compiled programs, which hold only this process's memory, are left to the
-    /// operating system instead of being freed one allocation at a time.
-    pub fn end_for_process_exit(self) {
-        self.vm.end_for_process_exit();
+    /// operating system instead of being freed one allocation at a time. Ended in place, so
+    /// the runtime is not copied out first.
+    ///
+    /// # Safety
+    /// `runtime` is never used, taken or dropped again.
+    pub unsafe fn end_for_process_exit(runtime: &mut std::mem::ManuallyDrop<Self>) {
+        // SAFETY: the caller never uses the runtime again.
+        unsafe { runtime.vm.end_for_process_exit() };
     }
 
     pub fn host_mut(&mut self) -> &mut H {

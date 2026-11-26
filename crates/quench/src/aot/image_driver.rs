@@ -1,3 +1,5 @@
+#![no_main]
+
 use quench::NodeHost;
 
 #[cfg(quench_native_dynamic_source)]
@@ -8,7 +10,7 @@ const _: () = assert!(SUPPORT.is_available() && (SUPPORT.allows_dynamic_source()
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
 
-fn run() -> Result<std::process::ExitCode, String> {
+fn run() -> Result<u8, String> {
     // The lane handlers this image's programs run.
     install_lanes();
     quench::host::resident_pages::phase_peak("native worker entry");
@@ -68,23 +70,13 @@ fn run() -> Result<std::process::ExitCode, String> {
         #[cfg(not(quench_native_bootstrap))]
         None => quench::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT),
     };
-    result.map(|completion| completion.exit_code())
+    result.map(|completion| completion.exit_status())
 }
 
 quench::install_process_start!();
 
-fn main() -> std::process::ExitCode {
-    quench::aot::begin_image_dump();
-    if let Err(error) = quench::host::process_start::begin_main() {
-        eprintln!("quench: {error}");
-        return std::process::ExitCode::FAILURE;
-    }
-    let result = quench::shared_run::run_node_worker(run);
-    match result {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("quench: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
+/// The process's start: std's runtime start is left out (`quench::aot::run_image_process`).
+#[unsafe(no_mangle)]
+extern "C" fn main(_: std::ffi::c_int, _: *const *const std::ffi::c_char) -> std::ffi::c_int {
+    quench::aot::run_image_process(run)
 }

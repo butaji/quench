@@ -181,8 +181,9 @@ pub const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLa
 };
 
 /// The typed-array view table's page shift: a slot's page is `slot >> TYPED_PAGE_SHIFT`, its entry the
-/// slot's low bits (`heap::typed_view`).
-pub(crate) const TYPED_PAGE_SHIFT: u32 = 12;
+/// slot's low bits (`heap::typed_view`). A page of entries is one 4 KiB memory page, so the first
+/// typed array in a range of slots zeroes and keeps resident no more than that.
+pub(crate) const TYPED_PAGE_SHIFT: u32 = 9;
 
 /// Where a loop entry record keeps an array's element count, after the elements' address (`LoopEntry::push_array`).
 pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;

@@ -31,7 +31,7 @@ mod dump;
 mod fixed_space;
 mod fixed_thread;
 pub use fixed_thread::{run_fixed as run_on_fixed_stack, STACK_BASE as FIXED_STACK_BASE};
-pub use dump::{begin_dump, end_dump, owns_dump, DUMP_BASE};
+pub use dump::{align_dump_phase, begin_dump, end_dump, freed_granules, owns_dump, DUMP_BASE};
 mod large;
 mod scratch;
 pub use fixed_space::{fixed_layout_held, fixed_space_next, fixed_space_range, map_anonymous, resume_fixed_space};
@@ -774,8 +774,9 @@ unsafe impl GlobalAlloc for QuenchAlloc {
             unsafe { free(block) };
             return;
         }
-        // A dump's block is never freed (`dump`).
+        // A dump's block is never freed (`dump`), only noted while dumping.
         if owns_dump(block) {
+            dump::note_free(block, layout.size());
             return;
         }
         // SAFETY: any other block came from the system allocator.

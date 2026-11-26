@@ -351,9 +351,9 @@ fn dumped_symbol(symbol: &str) -> bool {
 
 /// Dumps each saved run of the linked image at `image`, which still has its symbol table
 /// (`image_dump`); none where any cannot be dumped, which `report` names.
-fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut Value) -> Vec<Vec<u8>> {
+fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut Value) -> Vec<super::image_dump::Dump> {
     use object::{Object, ObjectSection, ObjectSymbol};
-    let dumped = (|| -> Result<(Vec<Vec<u8>>, Value), String> {
+    let dumped = (|| -> Result<(Vec<super::image_dump::Dump>, Value), String> {
         let bytes = fs::read(image).map_err(|error| error.to_string())?;
         let file = object::File::parse(&*bytes).map_err(|error| error.to_string())?;
         // The thread-local segment: its initial image and its block's size below the thread pointer.
@@ -406,23 +406,28 @@ fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut
         let mut dumps = Vec::new();
         let mut summary = Vec::new();
         for (index, wait) in saved.iter().enumerate() {
-            let raw_path = work.join(format!("dump-{index}.raw"));
-            let mut run = Command::new(image);
-            crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut run);
-            for name in ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"] {
-                run.env_remove(name);
-            }
-            for (question, answer) in &wait.answers {
-                if let (super::prefix::Question::Environment(name, value), true) = (question, answer) {
-                    run.env(name, value);
+            let dump_run = |raw_path: &Path| -> Result<Vec<u8>, String> {
+                let mut run = Command::new(image);
+                crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut run);
+                for name in ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"] {
+                    run.env_remove(name);
                 }
-            }
-            run.env(super::image_dump::DUMP_VARIABLE, format!("{index}:{}", raw_path.display()))
-                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
-            quench_runtime::native_link::checked_output(&mut run, "image dump")?;
-            let raw = fs::read(&raw_path).map_err(|error| error.to_string())?;
-            let dump = super::image_dump::finish(&raw, &keep_statics, &keep_tls, &initial, &tls_initial)?;
-            summary.push(json!({"raw_bytes": raw.len(), "bytes": dump.len()}));
+                for (question, answer) in &wait.answers {
+                    if let (super::prefix::Question::Environment(name, value), true) = (question, answer) {
+                        run.env(name, value);
+                    }
+                }
+                run.env(super::image_dump::DUMP_VARIABLE, format!("{index}:{}", raw_path.display()))
+                    .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+                quench_runtime::native_link::checked_output(&mut run, "image dump")?;
+                fs::read(raw_path).map_err(|error| error.to_string())
+            };
+            // Twice: a word that differs between the runs is an address of the run's own
+            // (`image_dump::finish`).
+            let raw = dump_run(&work.join(format!("dump-{index}.raw")))?;
+            let again = dump_run(&work.join(format!("dump-{index}.again")))?;
+            let dump = super::image_dump::finish(&raw, &again, &keep_statics, &keep_tls, &initial, &tls_initial)?;
+            summary.push(json!({"raw_bytes": raw.len(), "page_bytes": dump.runs.iter().map(|run| run.1.len()).sum::<usize>()}));
             dumps.push(dump);
         }
         Ok((dumps, json!(summary)))
@@ -585,7 +590,10 @@ fn compile(options: Options) -> Result<(), String> {
         let compresses = names_any || ["CompressionStream", "DecompressionStream"].iter().any(|name| graph.global_names.contains(*name))
             || graph.builtins.iter().chain(&graph.esm_builtins).any(|name| name.trim_start_matches("node:") == "stream/web");
         let named = graph.snapshot_builtins().into_iter().chain(crate::modules::util_lazy_shared_vm::lazy_global_modules().map(str::to_owned))
-            .chain(compresses.then(|| "zlib".to_owned()));
+            .chain(compresses.then(|| "zlib".to_owned()))
+            .chain(crate::host::shared_vm::commonjs::replaceable_lazy_global_modules()
+                .filter(|(name, _)| names_any || graph.global_names.contains(*name) || crate::host::shared_vm::HOST_READ_GLOBALS.contains(name))
+                .map(|(_, module)| module.to_owned()));
         let builders = named.filter_map(|name| crate::host::shared_vm::commonjs::builtin_operation_of(&name)).map(|operation| operation.0);
         // A group is read where the program names one of its globals, or where host code reads
         // one by name as it runs (`shared_vm::HOST_READ_GLOBALS`).

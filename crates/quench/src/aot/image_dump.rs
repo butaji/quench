@@ -59,9 +59,10 @@ fn take(bytes: &[u8], at: &mut usize) -> Result<u64, String> {
 }
 
 impl Dump {
-    /// The dump as bytes: a header holding the statics and thread-local words, then the runs,
-    /// each page aligned so a run maps straight from the file.
-    pub(crate) fn encode(&self) -> Vec<u8> {
+    /// The dump as bytes at file offset `at`: a header holding the statics and thread-local
+    /// words, then the pages no earlier dump in `pool` holds, each page aligned so a run maps
+    /// straight from the file.
+    pub(crate) fn encode(&self, at: u64, pool: &mut std::collections::HashMap<Vec<u8>, u64>) -> Vec<u8> {
         let mut header = Vec::new();
         header.extend_from_slice(&MAGIC);
         // The header's length, filled in below.
@@ -92,26 +93,63 @@ impl Dump {
             header.extend_from_slice(name.as_bytes());
             header.resize(header.len().next_multiple_of(8), 0);
         }
-        // The runs' places follow the header, whose length they depend on: the table is its
-        // fixed-size tail.
-        let table = 8 * (1 + 2 * self.runs.len());
-        let mut at = (header.len() + table).next_multiple_of(PAGE);
-        let mut places = Vec::new();
-        for (_, bytes, _) in &self.runs {
-            places.push(at);
-            at += bytes.len().next_multiple_of(PAGE);
+        // Each page goes where `pool` already holds the same bytes (another saved run's dump
+        // in this image, or this one's), else after this dump's header: runs are cut where
+        // neither address nor file place continues. Places are file offsets, from `at`, this
+        // dump's own.
+        enum Place {
+            Pooled(u64),
+            New(usize),
         }
-        put(&mut header, self.runs.len() as u64);
-        for ((address, bytes, mapped), place) in self.runs.iter().zip(&places) {
+        let mut pages: Vec<(u64, bool, Place)> = Vec::new();
+        let mut fresh: Vec<&[u8]> = Vec::new();
+        let mut seen: std::collections::HashMap<&[u8], usize> = std::collections::HashMap::new();
+        for (address, bytes, mapped) in &self.runs {
+            for (index, page) in bytes.chunks(PAGE).enumerate() {
+                let place = match pool.get(page) {
+                    Some(&place) => Place::Pooled(place),
+                    None => Place::New(*seen.entry(page).or_insert_with(|| {
+                        fresh.push(page);
+                        fresh.len() - 1
+                    })),
+                };
+                pages.push((address + (index * PAGE) as u64, *mapped, place));
+            }
+        }
+        let place_of = |place: &Place, data: u64| match *place {
+            Place::Pooled(place) => place,
+            Place::New(index) => data + (index * PAGE) as u64,
+        };
+        let cut = |data: u64| {
+            let mut runs: Vec<(u64, u64, u64, bool)> = Vec::new();
+            for (address, mapped, place) in &pages {
+                let place = place_of(place, data);
+                match runs.last_mut() {
+                    Some((start, length, at, kind)) if *kind == *mapped && *start + *length == *address && *at + *length == place => *length += PAGE as u64,
+                    _ => runs.push((*address, PAGE as u64, place, *mapped)),
+                }
+            }
+            runs
+        };
+        // A pooled page lies before this dump's header and a new one after it, so neither
+        // continues the other: the run count, which sizes the table and so places the new
+        // pages, does not depend on that place.
+        let count = cut(1 << 62).len();
+        let data = at + (header.len() + 8 * (1 + 2 * count)).next_multiple_of(PAGE) as u64;
+        let runs = cut(data);
+        debug_assert_eq!(runs.len(), count);
+        put(&mut header, runs.len() as u64);
+        for (address, length, place, mapped) in &runs {
             put(&mut header, address | (u64::from(*mapped) << 63));
-            put(&mut header, ((bytes.len() as u64) << 32) | (*place as u64 / PAGE as u64));
+            put(&mut header, (length << 32) | (place / PAGE as u64));
         }
         let length = header.len() as u64;
         header[8..16].copy_from_slice(&length.to_le_bytes());
         let mut out = header;
         out.resize(out.len().next_multiple_of(PAGE), 0);
-        for (_, bytes, _) in &self.runs {
-            out.extend_from_slice(bytes);
+        for (index, page) in fresh.iter().enumerate() {
+            pool.insert(page.to_vec(), data + (index * PAGE) as u64);
+            out.extend_from_slice(page);
             out.resize(out.len().next_multiple_of(PAGE), 0);
         }
         out
@@ -321,6 +359,29 @@ fn thread_pointer() -> u64 {
     pointer
 }
 
+/// Adds `[start, end)`'s pages to `runs`, leaving out what the run freed of the arena
+/// (`quench_alloc::freed_granules`, as zeros) and every page left all zero, which the
+/// region's fresh mapping reads as zero anyway.
+fn push_pages(runs: &mut Vec<(u64, Vec<u8>, bool)>, start: u64, end: u64, mapped: bool) {
+    let mut page = start;
+    while page < end {
+        let mut bytes = bytes_at(page, page + PAGE as u64);
+        let freed = quench_alloc::freed_granules(page as usize);
+        for (index, granule) in bytes.chunks_exact_mut(16).enumerate() {
+            if freed[index / 64] >> (index % 64) & 1 != 0 {
+                granule.fill(0);
+            }
+        }
+        if bytes.iter().any(|&byte| byte != 0) {
+            match runs.last_mut() {
+                Some((at, run, kind)) if *kind == mapped && *at + run.len() as u64 == page => run.extend_from_slice(&bytes),
+                _ => runs.push((page, bytes, mapped)),
+            }
+        }
+        page += PAGE as u64;
+    }
+}
+
 fn bytes_at(start: u64, end: u64) -> Vec<u8> {
     // SAFETY: the caller names memory this process maps readable.
     unsafe { std::slice::from_raw_parts(start as *const u8, (end - start) as usize) }.to_vec()
@@ -348,8 +409,9 @@ pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
         let arena_end = ARENA_BASE + used.next_multiple_of(PAGE) as u64;
         dump.regions.push((ARENA_BASE, arena_end - ARENA_BASE, (libc::PROT_READ | libc::PROT_WRITE) as u64));
         for (start, end) in resident_runs(ARENA_BASE, arena_end) {
-            dump.runs.push((start, bytes_at(start, end), true));
+            push_pages(&mut dump.runs, start, end, true);
         }
+        let image = std::fs::read_link("/proc/self/exe").ok().map(|path| path.to_string_lossy().into_owned());
         let table = quench_runtime::fixed_layout_table_range().map(|(start, length)| (start as u64, (start + length) as u64));
         let arena = ARENA_BASE..ARENA_BASE + (1 << 34);
         for mapping in mappings {
@@ -367,10 +429,11 @@ pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
             }
             if (kept || in_table) && mapping.protection & libc::PROT_READ as u64 != 0 {
                 for (start, end) in resident_runs(mapping.start, mapping.end) {
-                    dump.runs.push((start, bytes_at(start, end), false));
+                    push_pages(&mut dump.runs, start, end, false);
                 }
             }
-            let process = ["[stack]", "[heap]", "[vdso]", "[vvar]"].contains(&mapping.name.as_str());
+            let process = ["[stack]", "[heap]", "[vdso]", "[vvar]"].contains(&mapping.name.as_str())
+                || (mapping.name.starts_with('/') && Some(mapping.name.as_str()) != image.as_deref());
             if process || (mapping.anonymous() && !kept && !ours && !in_table && !in_image) {
                 dump.foreign.push((mapping.start, mapping.end, if mapping.name.is_empty() { format!("anonymous {:#x}", mapping.start) } else { mapping.name.clone() }));
             }
@@ -379,7 +442,7 @@ pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
         for (start, end) in writable {
             dump.statics.push((start, bytes_at(start, end)));
         }
-        std::fs::write(&path, dump.encode()).map_err(|error| format!("{path}: {error}"))
+        std::fs::write(&path, dump.encode(0, &mut Default::default())).map_err(|error| format!("{path}: {error}"))
     })();
     let status = match outcome {
         Ok(()) => 0,
@@ -396,11 +459,47 @@ pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
 /// (address ranges; thread-local ones as distances below the thread pointer) whose words the
 /// run changed from the image's initial bytes (`initial`, the file's view of an address), and
 /// refusing a dump any of whose words points into the dumping process's own memory (its
-/// stack, its C library heap, its vDSO), which the run that maps it does not have.
+/// stack, its C library heap, its vDSO, files it mapped), which the run that maps it does not
+/// have: such a word differs in `again`, a second dumping run's.
 pub(crate) fn finish(
-    raw: &[u8], keep_statics: &[(u64, u64)], keep_tls: &[(u64, u64)], initial: &dyn Fn(u64, usize) -> Vec<u8>, tls_initial: &dyn Fn(u64, usize) -> Vec<u8>,
-) -> Result<Vec<u8>, String> {
+    raw: &[u8], again: &[u8], keep_statics: &[(u64, u64)], keep_tls: &[(u64, u64)], initial: &dyn Fn(u64, usize) -> Vec<u8>, tls_initial: &dyn Fn(u64, usize) -> Vec<u8>,
+) -> Result<Dump, String> {
     let mut dump = Dump::decode(raw)?;
+    // A word that points into the dumping process's own memory differs in a second dumping
+    // run, whose addresses the kernel places elsewhere; an integer that happens to fall in such
+    // a range does not.
+    let second = Dump::decode(again)?;
+    let same_layout = dump.runs.len() == second.runs.len()
+        && dump.runs.iter().zip(&second.runs).all(|(a, b)| a.0 == b.0 && a.1.len() == b.1.len())
+        && dump.statics.iter().zip(&second.statics).all(|(a, b)| a.0 == b.0 && a.1.len() == b.1.len())
+        && dump.tls.iter().zip(&second.tls).all(|(a, b)| a.0 == b.0 && a.1.len() == b.1.len());
+    if !same_layout {
+        return Err("two dumping runs left different memory layouts".into());
+    }
+    let mut stray: Vec<(String, usize)> = dump.foreign.iter().map(|(_, _, name)| (name.clone(), 0)).collect();
+    let in_keep = |address: u64, keep: &[(u64, u64)]| keep.iter().any(|&(start, end)| (start..end).contains(&address));
+    let mut check = |base: u64, a: &[u8], b: &[u8], kept: &dyn Fn(u64) -> bool| {
+        for (index, (x, y)) in a.chunks_exact(8).zip(b.chunks_exact(8)).enumerate() {
+            if x == y || !kept(base + 8 * index as u64) {
+                continue;
+            }
+            let word = u64::from_le_bytes(x.try_into().unwrap_or_default());
+            if let Some(found) = dump.foreign.iter().position(|&(start, end, _)| (start..end).contains(&word)) {
+                stray[found].1 += 1;
+            }
+        }
+    };
+    for (a, b) in dump.runs.iter().zip(&second.runs) {
+        check(a.0, &a.1, &b.1, &|_| true);
+    }
+    for (a, b) in dump.statics.iter().zip(&second.statics) {
+        check(a.0, &a.1, &b.1, &|address| in_keep(address, keep_statics));
+    }
+    for (a, b) in dump.tls.iter().zip(&second.tls) {
+        // Offsets within the block; a kept range is distances below its end.
+        let size = a.0;
+        check(0, &a.1, &b.1, &|offset| keep_tls.iter().any(|&(below, above)| (size - below..size - above).contains(&offset)));
+    }
     let changed = |base: u64, bytes: &[u8], keep: &[(u64, u64)], before: &dyn Fn(u64, usize) -> Vec<u8>| {
         let mut patches: Vec<(u64, Vec<u8>)> = Vec::new();
         let end = base + bytes.len() as u64;
@@ -434,39 +533,30 @@ pub(crate) fn finish(
         changed(0, bytes, &keep, &|start, length| tls_initial(size - start, length))
             .into_iter().map(|(at, patch)| (size - at, patch)).collect::<Vec<_>>()
     }).collect();
-    let mut stray: Vec<(String, usize)> = dump.foreign.iter().map(|(_, _, name)| (name.clone(), 0)).collect();
-    let words = dump.runs.iter().map(|(_, bytes, _)| bytes.as_slice())
-        .chain(dump.statics.iter().chain(&dump.tls).map(|(_, bytes)| bytes.as_slice()));
-    for bytes in words {
-        for word in bytes.chunks_exact(8) {
-            let word = u64::from_le_bytes(word.try_into().unwrap_or_default());
-            if let Some(index) = dump.foreign.iter().position(|&(start, end, _)| (start..end).contains(&word)) {
-                stray[index].1 += 1;
-            }
-        }
-    }
     stray.retain(|(_, count)| *count != 0);
     if !stray.is_empty() {
         return Err(format!("dumped words point into the dumping process's own memory: {stray:?}"));
     }
     dump.foreign.clear();
-    Ok(dump.encode())
+    Ok(dump)
 }
 
 /// Appends `dumps` (`finish`'s, one per saved run) to the image at `path`, with the trailer
 /// `adopt` finds them by.
-pub(crate) fn append(path: &std::path::Path, dumps: &[Vec<u8>]) -> Result<(), String> {
+pub(crate) fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), String> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new().append(true).open(path).map_err(|error| error.to_string())?;
     let mut at = file.metadata().map_err(|error| error.to_string())?.len().next_multiple_of(PAGE as u64);
     file.set_len(at).map_err(|error| error.to_string())?;
     let mut trailer = Vec::new();
     put(&mut trailer, dumps.len() as u64);
+    let mut pool = std::collections::HashMap::new();
     for dump in dumps {
-        file.write_all(dump).map_err(|error| error.to_string())?;
+        let bytes = dump.encode(at, &mut pool);
+        file.write_all(&bytes).map_err(|error| error.to_string())?;
         put(&mut trailer, at);
-        put(&mut trailer, dump.len() as u64);
-        at += dump.len() as u64;
+        put(&mut trailer, bytes.len() as u64);
+        at += bytes.len() as u64;
     }
     let length = trailer.len() as u64 + 16;
     put(&mut trailer, length);
@@ -502,13 +592,21 @@ pub(crate) fn adopt(wait: usize) -> Option<*mut u8> {
     }
     at += wait * 16;
     let offset = take(&trailer, &mut at).ok()?;
-    // The header and its patches lie in the dump's first pages, before its runs.
-    let mut first = vec![0u8; PAGE];
-    image.read_exact_at(&mut first, offset).ok()?;
-    let header_length = u64::from_le_bytes(first[8..16].try_into().ok()?) as usize;
-    if header_length > first.len() {
-        first.resize(header_length, 0);
-        image.read_exact_at(&mut first, offset).ok()?;
+    // The header and its patches lie in the dump's first pages, before its runs; read into
+    // fresh capacity, as zeroing first would cost more than the read.
+    let mut prefix = [0u8; 16];
+    image.read_exact_at(&mut prefix, offset).ok()?;
+    let header_length = u64::from_le_bytes(prefix[8..16].try_into().ok()?) as usize;
+    let mut first = Vec::<u8>::with_capacity(header_length);
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: `pread` writes at most `header_length` bytes into the spare capacity.
+        let read = unsafe { libc::pread(image.as_raw_fd(), first.as_mut_ptr().cast(), header_length, offset as libc::off_t) };
+        if read != header_length as isize {
+            return None;
+        }
+        // SAFETY: `pread` initialized all `header_length` bytes.
+        unsafe { first.set_len(header_length) };
     }
     let header = Header::parse(&first).ok()?;
     if header.wait != wait as u64 {
@@ -539,9 +637,9 @@ pub(crate) fn adopt(wait: usize) -> Option<*mut u8> {
         for &(address, length, place, from_file) in &header.runs {
             let copied = if from_file {
                 libc::mmap(address as *mut libc::c_void, length, libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_FIXED, fd, (offset + place as u64) as libc::off_t) as u64 == address
+                    libc::MAP_PRIVATE | libc::MAP_FIXED, fd, place as libc::off_t) as u64 == address
             } else {
-                image.read_exact_at(std::slice::from_raw_parts_mut(address as *mut u8, length), offset + place as u64).is_ok()
+                image.read_exact_at(std::slice::from_raw_parts_mut(address as *mut u8, length), place as u64).is_ok()
             };
             if !copied {
                 undo(&mapped);

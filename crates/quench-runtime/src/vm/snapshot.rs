@@ -405,14 +405,17 @@ impl Vm {
         if native.is_some_and(|program| program.specialized != self.specialized) {
             return Err(SnapshotError("native script specialization does not match runtime".into()));
         }
+        quench_alloc::align_dump_phase();
         self.read_atoms(&mut reader, native.map(|program| &program.atoms))?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_atoms");
+        quench_alloc::align_dump_phase();
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
         self.forget_learned_receivers();
         self.intern_typeof_names();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_heap");
+        quench_alloc::align_dump_phase();
         self.realm.globals = reader.value()?;
         self.realm_native_proofs.forget();
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
@@ -441,9 +444,11 @@ impl Vm {
         self.refresh_call_refusal();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_realm");
+        quench_alloc::align_dump_phase();
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_programs");
+        quench_alloc::align_dump_phase();
         self.read_shapes(&mut reader)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_shapes");
@@ -455,6 +460,7 @@ impl Vm {
         self.to_precision_atom = reader.u32()?;
         self.runtime_atoms = Snap::unsnap(&mut reader)?;
         self.descriptors = Snap::unsnap(&mut reader)?;
+        quench_alloc::align_dump_phase();
         self.read_function_values(&mut reader)?;
         self.read_module_functions(&mut reader)?;
         self.private_homes = Snap::unsnap(&mut reader)?;
@@ -463,6 +469,7 @@ impl Vm {
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
         self.set_instanceof_has_instance_holder(holder);
+        quench_alloc::align_dump_phase();
         read_host(&mut *self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;

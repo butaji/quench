@@ -130,10 +130,15 @@ pub enum SharedCompletion {
 impl SharedCompletion {
     /// Process status shared by source and native executable entry points.
     pub fn exit_code(self) -> ExitCode {
+        ExitCode::from(self.exit_status())
+    }
+
+    /// The process's exit status (`exit_code`).
+    pub fn exit_status(self) -> u8 {
         match self {
-            Self::Completed => ExitCode::SUCCESS,
-            Self::PendingTopLevelAwait => ExitCode::from(UNSETTLED_TOP_LEVEL_AWAIT_EXIT),
-            Self::GuestExit { code } => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Self::Completed => 0,
+            Self::PendingTopLevelAwait => UNSETTLED_TOP_LEVEL_AWAIT_EXIT,
+            Self::GuestExit { code } => u8::try_from(code).unwrap_or(1),
         }
     }
 }
@@ -215,11 +220,11 @@ impl std::ops::DerefMut for EntryRuntime {
 
 impl Drop for EntryRuntime {
     fn drop(&mut self) {
-        // SAFETY: `runtime` is taken once, here, and never used again.
-        let runtime = unsafe { std::mem::ManuallyDrop::take(&mut self.runtime) };
         match self.teardown {
-            Teardown::Free => drop(runtime),
-            Teardown::ProcessExit => runtime.end_for_process_exit(),
+            // SAFETY: `runtime` is dropped once, here, and never used again.
+            Teardown::Free => unsafe { std::mem::ManuallyDrop::drop(&mut self.runtime) },
+            // SAFETY: `runtime` is ended once, here, and never used again.
+            Teardown::ProcessExit => unsafe { quench_runtime::Runtime::end_for_process_exit(&mut self.runtime) },
         }
     }
 }
