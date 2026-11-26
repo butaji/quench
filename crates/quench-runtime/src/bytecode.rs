@@ -905,7 +905,7 @@ opcodes!($;
     LoadName => READ_THROW; layout Scalar; meaning AtomIndex; class LoadName; staged Proved; step Body; owned LoadName; traits BOXED_RESULT UNIT_REWRITTEN NAME_LEAF NAME_OPERATION GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex; class LoadNameCall; staged Proved; step Body; owned LoadNameCall; traits NAME_OPERATION CALL_LINK GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
     LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; class LoadNameTypeof; staged Names; step Body; owned LoadNameTypeof; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS MAY_ALLOCATE, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
+    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step LaneResult; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
     LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
     DeleteName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_STORE BY_NAME_ACCESS ROW_HANDLER OWNER_ONLY MAY_ALLOCATE LANE_WRITES_RESULT, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
@@ -913,7 +913,7 @@ opcodes!($;
     // falls back to the by-name operation of its atom when the binding is not yet initialized.
     LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits BOXED_RESULT UNIT_REWRITTEN MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
-    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
+    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Lane; traits NAME_OPERATION BINDING_FORM ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; staged Value; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -2630,7 +2630,7 @@ impl Function {
                     || matches!(
                         instruction.op(),
                         Op::DeleteName | Op::StoreResolvedName | Op::StoreVarBinding | Op::InitializeThis | Op::SuperCallCheck
-                    )
+                    ) && !crate::staged::strict_reference_step(instruction)
             })
             // A direct eval beside names resolved through a scope may declare dynamic bindings, which only
             // a frame (or a suspended record) keeps: the scope's other names the window's handlers serve.

@@ -79,3 +79,11 @@ pub(super) fn decode(instruction: WideInstruction) -> Option<(Protocol, Option<R
     };
     Some((Protocol::Value(step), destination, operands))
 }
+
+#[cfg(not(stencil_build))]
+/// Whether `instruction` is a step of a strict code's by-name reference to a global (`ResolveName` and
+/// `StoreResolvedName` with their strict flags, `x = e` of an undeclared `x` in strict code): a call-out
+/// whose own step a loop region makes in place (`Vm::call_out`), as it does a sloppy store's.
+pub fn strict_reference_step(instruction: WideInstruction) -> bool {
+    matches!(decode(instruction), Some((Protocol::Value(ValueStep::ResolveName { strict: true, .. } | ValueStep::StoreResolvedName { strict: true, .. }), ..)))
+}
