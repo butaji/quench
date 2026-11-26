@@ -295,9 +295,20 @@ impl Stage for Emit<'_, '_> {
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.raw_select(cond, then, otherwise)
     }
+    /// An ahead image's guessed shapes (`ic::SYMBOLIC_SHAPE`) are each compared with their
+    /// symbol; the others form the set (`shape_in_set`).
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
         let word = if self.raw_lane(shape) == Lane::I32 { shape } else { self.narrow(shape) };
-        super::shape_in_set(self.builder, word, shapes)
+        let tag = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
+        let (guessed, known): (Vec<u32>, Vec<u32>) = shapes.iter().partition(|shape| *shape & tag != 0);
+        let mut member = (!known.is_empty()).then(|| super::shape_in_set(self.builder, word, &known));
+        for shape in guessed {
+            let symbol = self.word(EmitImm::Shape(shape & !tag));
+            let symbol = self.narrow(symbol);
+            let same = self.raw_compare(Relation::Equal, word, symbol);
+            member = Some(match member { Some(member) => self.or(member, same), None => same });
+        }
+        member.expect("a shape set is non-empty")
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
         let number = self.raw_unary(Unary::Bitcast(Lane::F64), bits);
