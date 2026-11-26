@@ -18,7 +18,9 @@ impl LoopTier {
     pub(crate) fn weigh_run(&mut self, tiers: &Tiers, span: u64, backedges: u64, left: bool, timed_ns: Option<u64>) {
         if let Some(ns) = timed_ns { self.weigh_time(tiers, span, ns, backedges); }
         self.runs = self.runs.saturating_add(1);
-        self.entry_misses = 0;
+        // A run does not clear `entry_misses`: a site whose published code misses its entry guard and then
+        // runs another way (the interpreter or a lower tier) would otherwise reset the count on every outer
+        // iteration and never widen (v_array_push_grow: a fresh array each outer trip, ~2,350 Ir per miss).
         self.iterations = self.iterations.saturating_add(backedges);
         self.fruitless = if left && backedges == 0 { self.fruitless.saturating_add(1) } else { 0 };
         self.tier_runs = self.tier_runs.saturating_add(1);
@@ -107,7 +109,7 @@ impl LoopTier {
         self.promoting && self.pending.is_none()
     }
 
-    /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
+    /// Counts an entry the published code's guards declined: past `widen_after_leaves` over the code's life,
     /// the code goes and the next compilation versions no loop bound on entry, once.
     pub(crate) fn missed_entry(&mut self, tiers: &Tiers) {
         if self.unbounded || self.compilations >= tiers.loops.max_compilations { return; }
