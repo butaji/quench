@@ -242,12 +242,15 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 fn typed_index_row<const KIND: u8, const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let mut places = Places::new::<D, MEM, B>(s);
     // An entry row's view is the loop entry's; any other proves the array's view (hole 1 its slot) for the kind.
+    // A value the proof or the read declines (another kind, an index past the count) takes the
+    // generic element row, as the access did before its kind was observed.
     let view = if ENTRY { entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)) } else { typed_kind::<KIND>(TYPED_INDEX_ROW).and_then(|native| places.proved_typed_view(LEFT, native, false)) };
-    let view = need!(places.s, view);
+    let Some(view) = view else { return if ENTRY { Out::Exit(s) } else { index_row::<false, D, B>(s, payload) } };
     let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
     let mut frame = PlacesView::new(&mut places, LEFT, view);
     let word = match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
         Step::Value(word) => Some(word),
+        _ if !ENTRY => return index_row::<false, D, B>(s, payload),
         _ => None,
     };
     // The entry's view is typed, so the Number is the double its bits hold, delivered canonical.
@@ -263,12 +266,15 @@ fn typed_index_row<const KIND: u8, const ENTRY: bool, const D: u8, const B: u8>(
 fn typed_store_row<const KIND: u8, const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let mut places = Places::new::<MEM, A, B>(s);
     // An entry row's view is the loop entry's; any other proves the array's view (hole 0 its slot) for the kind.
+    // A store the proof or the write declines (another kind, bytes another view shares, an index past
+    // the count) takes the generic element row, which writes nothing before it decides.
     let view = if ENTRY { entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)) } else { typed_kind::<KIND>(TYPED_STORE_ROW).and_then(|native| places.proved_typed_view(DEST, native, true)) };
-    let view = need!(places.s, view);
+    let Some(view) = view else { return if ENTRY { Out::Exit(s) } else { store_row::<false, A, B>(s, payload) } };
     let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
     let mut frame = PlacesView::new(&mut places, DEST, view);
     match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
         Step::Value(_) => Out::Next(places.s),
+        _ if !ENTRY => store_row::<false, A, B>(s, payload),
         _ => Out::Exit(places.s),
     }
 }
