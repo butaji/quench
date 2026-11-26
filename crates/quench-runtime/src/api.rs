@@ -96,6 +96,11 @@ impl<H: Host> Runtime<H> {
     pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
         Self { vm: Vm::new_static_with_builtins(host, builtins), host: std::marker::PhantomData }
     }
+    /// `new` with a core image's reachable intrinsic families: a dynamic-source core keeps the
+    /// interpreter and the source frontend, and installs only `builtins`' families.
+    pub fn new_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
+        Self { vm: Vm::new_with_builtins(host, builtins), host: std::marker::PhantomData }
+    }
     /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
     /// `snapshot_at_rest`): it never installs its host.
     pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }

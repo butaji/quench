@@ -75,6 +75,17 @@ pub struct CompiledSources {
     pub assets: ModuleAssets,
 }
 
+/// The helpers that make a record the general interpreter step. An image that imports none of
+/// them has no `Step` site; its call rows may still leave (`QUENCH_CALL_STATUS`), so the report
+/// records the fact without treating it as a zero-fallback proof.
+const FALLBACK_HELPERS: &[&str] = &["quench_lane_helper_Step", "quench_lane_helper_VmStep", "quench_lane_helper_StepPacked"];
+
+/// The written link inputs, and whether their objects import any general-step helper.
+pub struct EmittedImage {
+    pub inputs: NativeImageInputs,
+    pub zero_fallback: bool,
+}
+
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
@@ -83,8 +94,10 @@ impl CompiledSources {
         super::builtin_families::of(std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)))
     }
 
-    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<NativeImageInputs, String> {
-        let families = if host == ImageHost::Core { self.builtin_families() } else { quench_runtime::BuiltinFamilies::ALL };
+    /// `families` is the realm table a core image installs: the families its closed program
+    /// reaches, or every family where it can make code (`Variant::CoreDynamic`: the source
+    /// frontend may reach any intrinsic). A Node image installs every family.
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost, families: quench_runtime::BuiltinFamilies) -> Result<EmittedImage, String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -175,7 +188,8 @@ impl CompiledSources {
                 .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect(),
             ImageHost::Core => std::collections::BTreeSet::new(),
         };
-        Ok(NativeImageInputs::new(directory, objects, host_exports))
+        let zero_fallback = required_exports.iter().all(|name| !FALLBACK_HELPERS.contains(&name.as_str()));
+        Ok(EmittedImage { inputs: NativeImageInputs::new(directory, objects, host_exports), zero_fallback })
     }
 }
 

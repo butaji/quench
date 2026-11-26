@@ -2,11 +2,20 @@
 //! driver, executed on the runtime's own host. It links `quench_runtime` alone, so the
 //! executable carries no Node host, no bootstrap snapshot and no operation table.
 
-use quench_runtime::{ExecutionMode, MemoryPolicy, NativeProgramNamespace, Runtime, SystemHost};
+use quench_runtime::{ExecutionMode, MemoryPolicy, NativeImageSupport, NativeProgramNamespace, Runtime, SystemHost};
 
 // Every runtime layer (engine, intl, stencils) links through this facade: the core calls their
 // `extern "Rust"` symbols, so a binary that uses the core must name the crate.
 extern crate quench_layers;
+
+#[cfg(quench_native_dynamic_source)]
+const SUPPORT: NativeImageSupport = NativeImageSupport::DynamicSource;
+#[cfg(not(quench_native_dynamic_source))]
+const SUPPORT: NativeImageSupport = NativeImageSupport::Static;
+const _: () = assert!(
+    SUPPORT.is_available() && (SUPPORT.allows_dynamic_source() || quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY),
+    "native image SDK does not provide its selected execution support"
+);
 
 /// The runtime's size-classed small-object allocator (`quench_alloc`), which the Node driver
 /// also installs (`quench::GLOBAL_ALLOCATOR`).
@@ -37,24 +46,43 @@ fn apply_allocator_policy(policy: MemoryPolicy) {
     let _ = policy;
 }
 
+/// Reports a startup phase's elapsed time when `QUENCH_TRACE=rss-phases` is set, as the Node
+/// driver's `resident_pages::phase_peak` does; a core image has no host phase reporter.
+fn phase(started: std::time::Instant, name: &str) {
+    if quench_runtime::trace::Channel::RssPhases.on() {
+        eprintln!("quench: core phase {name:<20} at {:>8} us", started.elapsed().as_micros());
+    }
+}
+
 fn run() -> Result<std::process::ExitCode, String> {
+    let started = std::time::Instant::now();
     // SAFETY: the compiler emits the catalog, metadata and objects together.
     let entry = unsafe { bind_entry() }?;
     let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
+    phase(started, "entry bound");
     let policy = memory_policy();
     apply_allocator_policy(policy);
-    // The Intl and Temporal layer this support links (`support_features` includes `intl` where
-    // the program reaches it): without it the layer's stubs make Intl throw.
-    quench_runtime::install_intl();
-    let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS);
-    runtime.set_execution_mode(ExecutionMode::NativeOnly);
+    // A dynamic-source core (`Variant::CoreDynamic`) keeps the interpreter and the source
+    // frontend but still runs on `SystemHost`: `Vm::new` installs every route. A closed core
+    // runs only its image's code: it installs no JIT or source route and no Intl layer unless
+    // the support carries it (`support_features` includes `intl` where the program reaches it).
+    let mut runtime = if SUPPORT.allows_dynamic_source() {
+        Runtime::new_with_builtins(SystemHost, &BUILTINS)
+    } else {
+        quench_runtime::install_intl();
+        Runtime::new_static_with_builtins(SystemHost, &BUILTINS)
+    };
+    runtime.set_execution_mode(if SUPPORT.allows_dynamic_source() { ExecutionMode::Compiled } else { ExecutionMode::NativeOnly });
     runtime.set_memory_policy(policy);
+    phase(started, "runtime ready");
     runtime.set_native_program_resolver(move |name, parts| {
         // SAFETY: this resolver belongs to the same compiler-owned image.
         unsafe { resolve(&namespace, name, parts) }
     });
     let program = entry.residual();
-    match runtime.execute_native_deferred_jobs(&entry) {
+    let executed = runtime.execute_native_deferred_jobs(&entry);
+    phase(started, "entry ran");
+    match executed {
         Ok(()) => {
             runtime.run_host_jobs(program).map_err(|error| uncaught(&error))?;
             runtime.finish_deferred_execution(program).map_err(|error| uncaught(&error))?;

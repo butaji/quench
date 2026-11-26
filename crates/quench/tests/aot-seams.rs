@@ -57,6 +57,34 @@ fn core_intl_program_enables_the_intl_layer() {
     assert_eq!(String::from_utf8_lossy(&run(&binary).stdout), "1,234\n");
 }
 
+/// A program that makes code (`eval`, `Function`) but touches no host API takes the core host
+/// with the interpreter and the source frontend: it still links only libSystem.
+#[test]
+fn core_dynamic_eval_program_keeps_the_core_host() {
+    let directory = workspace("core-dynamic");
+    let source = "const x = eval('1 + 2');\nconst f = new Function('a', 'return a * 4');\nconsole.log(x, f(3));\n";
+    let entry = directory.join("core-dynamic.js");
+    fs::write(&entry, source).unwrap();
+    let binary = directory.join("core-dynamic");
+    let report = directory.join("core-dynamic.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_quench"))
+        .env("QUENCH_AUDIT_WARN", "1")
+        .args(["compile"]).arg(&entry).arg("-o").arg(&binary)
+        .args(["--profile", "aot-compact", "--report"]).arg(&report)
+        .output().unwrap();
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{diagnostics}");
+    assert!(!diagnostics.contains("retained compilation or interpretation support"), "{diagnostics}");
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(report["support_variant"], "core-dynamic");
+    assert_eq!(report["support_artifacts"]["dynamic_source"], true);
+    assert!(links(&binary).lines().all(|line| line.contains("libSystem.B.dylib")), "{}", links(&binary));
+    let native = run(&binary);
+    let interpreted = Command::new(env!("CARGO_BIN_EXE_quench")).arg(&entry).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, interpreted.stdout);
+}
+
 #[test]
 fn core_date_runs_without_the_time_zone_database() {
     let directory = workspace("date");

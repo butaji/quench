@@ -73,7 +73,7 @@ impl GraphRequirement {
 }
 
 /// The globals that name the global object itself.
-pub(super) const GLOBAL_OBJECT_NAMES: &[&str] = &["globalThis", "global", "self", "window", "frames", "parent", "top"];
+pub(super) const GLOBAL_OBJECT_NAMES: &[&str] = &["globalThis", "global"];
 
 #[derive(Default)]
 pub struct DependencyGraph {

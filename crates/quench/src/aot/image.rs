@@ -49,7 +49,7 @@ pub(super) fn stage_image(
 ) -> Result<(NativeImageInputs, Option<BTreeSet<u32>>, Vec<SavedWait>), String> {
     if core {
         report["unlinked_host_operations"] = json!(0);
-        report["bootstrap"] = json!({"status": "not_required", "reason": "Variant::Core runs on the runtime's own host"});
+        report["bootstrap"] = json!({"status": "not_required", "reason": "a core image runs on the runtime's own host"});
         return Ok((inputs, None, Vec::new()));
     }
     let saved = prepare_saved_waits(waits, work, native_entry, report);

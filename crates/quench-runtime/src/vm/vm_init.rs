@@ -20,6 +20,14 @@ impl Vm {
         vm
     }
 
+    /// `new` with a core image's reachable intrinsic families: a dynamic-source core keeps the
+    /// interpreter and the source frontend, and installs only `builtins`' families.
+    pub(crate) fn new_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
+        let mut vm = Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default());
+        vm.builtins = builtins;
+        vm
+    }
+
     /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
     pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())

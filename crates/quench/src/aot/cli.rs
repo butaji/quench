@@ -182,17 +182,6 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     fs::write(output, bytes).map_err(|error| error.to_string())
 }
 
-/// The features a static image's support is built with: `native-execution`, plus the intl layer
-/// and the WebAssembly frontend only where the program reaches them. A dynamic-source support
-/// links the standard build's default features instead.
-fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport) -> String {
-    if support.allows_dynamic_source() { return "default".into(); }
-    let mut features = String::from("native-execution");
-    if graph.needs_intl() { features.push_str(",intl"); }
-    if graph.needs_wasm() { features.push_str(",wasm"); }
-    features
-}
-
 fn compile(options: Options) -> Result<(), String> {    let entry = options
         .entry
         .canonicalize()
@@ -215,7 +204,7 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     // A strict compile that reads a dynamic input falls back to full support: static support
     // still retains the interpreter, which its link audit refuses (TOD-2196).
     let variant = if options.strict { variant::Variant::Full } else { variant::select(explicit, &graph) };
-    let core = variant == variant::Variant::Core;
+    let core = variant.runs_on_core();
     let support = variant.image_support();
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
@@ -246,7 +235,7 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
         "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
-        "support_features": support_features(&graph, support),
+        "support_features": super::support::features(&graph, support),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -292,18 +281,20 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = super::image::compile_sources(core, &graph, &entry, manifest)?;
+    let families = super::support::builtin_families(core, variant == variant::Variant::CoreDynamic, &compiled);
     if core {
-        report["builtin_families"] = json!(compiled.builtin_families().bits());
+        report["builtin_families"] = json!(families.bits());
     }
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    let emitted = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core), families)?;
+    report["zero_fallback"] = json!(emitted.zero_fallback);
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
-        inputs
+        emitted.inputs
     } else {
-        inputs.self_contained()
+        emitted.inputs.self_contained()
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
@@ -321,7 +312,7 @@ fn compile(options: Options) -> Result<(), String> {    let entry = options
             let mut cargo = Command::new("cargo");
             cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
-                let features = support_features(&graph, support);
+                let features = super::support::features(&graph, support);
                 cargo.args(["--no-default-features", "--features", &features]);
             }
             cargo.args(["--lib", "--message-format=json"]);

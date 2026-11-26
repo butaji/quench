@@ -11,6 +11,7 @@ pub(crate) use assets::ModuleAssetState;
 mod graph;
 mod host_operations;
 mod image;
+mod support;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;

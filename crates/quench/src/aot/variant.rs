@@ -12,8 +12,14 @@ pub enum Variant {
     Full,
     /// No interpreter or JIT; the Wasm frontend and the Node host remain.
     Static,
+    /// Standard ECMAScript on `SystemHost`, with the source frontend for `eval` and the
+    /// `Function` constructor: no Node host, bootstrap snapshot or operation table. A program
+    /// that makes code but touches no host API (a V8-v7 benchmark) takes the core host and keeps
+    /// the interpreter.
+    CoreDynamic,
     /// Standard ECMAScript and the runtime's own `console`, on `SystemHost`: no Node host, no
-    /// bootstrap snapshot, no operation table. The smallest executable an image can be.
+    /// bootstrap snapshot, no operation table, no source frontend. The smallest executable an
+    /// image can be.
     Core,
 }
 
@@ -22,14 +28,20 @@ impl Variant {
         match self {
             Self::Full => "full",
             Self::Static => "static",
+            Self::CoreDynamic => "core-dynamic",
             Self::Core => "core",
         }
+    }
+
+    /// Whether the image executes on the runtime's own host rather than the Node host.
+    pub const fn runs_on_core(self) -> bool {
+        matches!(self, Self::CoreDynamic | Self::Core)
     }
 
     /// The runtime support an image of this variant executes with.
     pub const fn image_support(self) -> NativeImageSupport {
         match self {
-            Self::Full => NativeImageSupport::DynamicSource,
+            Self::Full | Self::CoreDynamic => NativeImageSupport::DynamicSource,
             Self::Static | Self::Core => NativeImageSupport::Static,
         }
     }
@@ -43,10 +55,17 @@ pub fn select(explicit: Option<NativeImageSupport>, graph: &DependencyGraph) -> 
         .requirements
         .iter()
         .any(GraphRequirement::is_dynamic_load);
-    match NativeImageSupport::select(explicit, graph.requires_dynamic_source || dynamic_load) {
-        NativeImageSupport::DynamicSource => Variant::Full,
-        NativeImageSupport::Static if core_eligible(graph) => Variant::Core,
-        NativeImageSupport::Static => Variant::Static,
+    // An explicit choice wins. Without one, a program that makes code keeps the interpreter,
+    // on the Node host only when it can reach one (`process`, a module, a dynamic load).
+    match explicit {
+        Some(NativeImageSupport::DynamicSource) => Variant::Full,
+        Some(NativeImageSupport::Static) if core_static_eligible(graph) => Variant::Core,
+        Some(NativeImageSupport::Static) => Variant::Static,
+        None if graph.requires_dynamic_source || dynamic_load => {
+            if core_eligible(graph) { Variant::CoreDynamic } else { Variant::Full }
+        }
+        None if core_eligible(graph) => Variant::Core,
+        None => Variant::Static,
     }
 }
 
@@ -56,22 +75,24 @@ pub fn core_eligible(graph: &DependencyGraph) -> bool {
     closed(graph) && pure_ecmascript(graph) && single_entry(graph)
 }
 
+/// A closed program that makes no code: the source frontend stays out of its image.
+fn core_static_eligible(graph: &DependencyGraph) -> bool {
+    core_eligible(graph) && !graph.requires_dynamic_source
+}
+
 /// No module, package, addon or dynamic load reaches beyond the entry.
 fn closed(graph: &DependencyGraph) -> bool {
-    !graph.requires_dynamic_source
-        && graph.requirements.is_empty()
+    graph.requirements.is_empty()
         && graph.resolutions.is_empty()
         && graph.builtins.iter().all(|name| name == "node:console")
         && graph.esm_builtins.is_empty()
 }
 
-/// Every global the source reads is ECMAScript or the runtime's own `console`.
+/// Every global the source reads is ECMAScript or the runtime's own `console`. Code the source
+/// makes at run time (`eval`, the `Function` constructor, a computed key that may name one) is
+/// ECMAScript too; it only decides which core variant runs it.
 fn pure_ecmascript(graph: &DependencyGraph) -> bool {
-    graph.host_globals.is_empty()
-        && graph.host_only_globals.is_empty()
-        && graph.dynamic_eval_sites.is_empty()
-        && graph.dynamic_function_sites.is_empty()
-        && graph.dynamic_reflective_sites.is_empty()
+    graph.host_globals.is_empty() && graph.host_only_globals.is_empty()
 }
 
 /// One JavaScript entry file and nothing else.
@@ -96,10 +117,11 @@ mod tests {
     use std::fs;
 
     fn select_for(source: &str) -> Variant {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "quench-core-variant-{}-{}",
             std::process::id(),
-            source.len()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         fs::create_dir_all(&directory).unwrap();
         let entry = directory.join("entry.cjs");
@@ -129,10 +151,19 @@ mod tests {
             "console.log(typeof setTimeout);",
             "console.log(typeof structuredClone);",
             "require('node:fs');",
-            "eval('1');",
-            "new Function('return 1');",
         ] {
-            assert_ne!(select_for(source), Variant::Core, "{source}");
+            assert_eq!(select_for(source), Variant::Static, "{source}");
+        }
+    }
+
+    #[test]
+    fn dynamic_source_without_a_host_global_takes_the_core_host() {
+        for source in [
+            "console.log(eval('1 + 1'));",
+            "console.log(new Function('return 1')());",
+            "const key = Math.random() > 2 ? 'a' : 'b'; console.log(({a: 1, b: 2})[key]);",
+        ] {
+            assert_eq!(select_for(source), Variant::CoreDynamic, "{source}");
         }
     }
 
