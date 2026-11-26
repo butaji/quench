@@ -20,7 +20,6 @@ use crate::staged::region::{Access, Region};
 // over static data (an IC's ops) whose unrolled form never reaches it.
 unsafe extern "C" {
     static UNSUPPORTED_assumption: u8;
-    static UNSUPPORTED_number_operator: u8;
     static UNSUPPORTED_shape_in: u8;
     static UNSUPPORTED_site: u8;
 }
@@ -274,11 +273,6 @@ impl Stage for StencilStage {
     fn assumption(&mut self, watch: u64) -> bool {
         let _ = watch;
         unsupported!(UNSUPPORTED_assumption) != 0
-    }
-    #[inline(always)]
-    fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
-        let _ = (operator, passed, constant);
-        (unsupported!(UNSUPPORTED_number_operator), false)
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {

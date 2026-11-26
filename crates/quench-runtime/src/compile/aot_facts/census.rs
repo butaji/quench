@@ -43,6 +43,14 @@ impl Census {
         }
     }
 
+    /// Code added at run time as global code may write any global and any object's named
+    /// properties (`gate::World::Locals`): no binding of either names one closure.
+    pub(super) fn open_to_global_code(&mut self) {
+        self.global_wild = true;
+        self.member_wild = true;
+        self.members.clear();
+    }
+
     /// The closure `key` holds, when it is written once, with a closure, and no write the
     /// analysis cannot follow reaches it.
     fn single(&self, key: Key) -> Option<u32> {

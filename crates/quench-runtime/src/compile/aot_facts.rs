@@ -81,14 +81,16 @@ impl<'a> FunctionFacts<'a> {
 
 /// The facts of `program`, or none where the program can add code at run time.
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
-    if !gate::closed_world(program) {
+    let world = gate::world(program);
+    if world == gate::World::Open {
         return AotFacts::default();
     }
     let scope = Scope::of(program);
     let flows: Vec<FunctionFlow> = (0..program.function_count())
         .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function, &scope)))
         .collect();
-    let census = Census::of(&flows);
+    let mut census = Census::of(&flows);
+    if world == gate::World::Locals { census.open_to_global_code(); }
     let mut facts = AotFacts::default();
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
