@@ -308,7 +308,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     // the argument proof starts from them as well as from the declared Numbers.
     let (pinned_ints, pinned_doubles) = super::call_args::entry_pins(&homes, &webs, &span);
     let seeded: Vec<Register> = numbers.iter().copied().chain(pinned_doubles).collect();
-    let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
+    let proven_args = super::call_args::ProvenArgs::new(function, &spec.known.program.constants, seeded, pinned_ints);
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };

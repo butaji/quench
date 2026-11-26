@@ -303,19 +303,23 @@ impl Webs {
     /// For each web, the webs that may not share its pin: those live where it is live, or where
     /// it is defined.
     pub(crate) fn clashes(&self, span: &Span, decoded: &[Decoded]) -> Vec<Vec<usize>> {
-        let mut clash: Vec<Vec<usize>> = vec![Vec::new(); self.orig.len()];
+        // One bit row per web: setting a pair is one store, and each list comes out sorted and distinct by a scan.
+        const WORD: usize = u64::BITS as usize;
+        let (webs, words) = (self.orig.len(), self.orig.len().div_ceil(WORD));
+        let mut bits = vec![0u64; webs * words];
         for (k, row) in decoded.iter().enumerate() {
             let mut held = self.live_at(span, span.header + k as Pc);
             held.extend([row.dst, row.also].into_iter().flatten().map(usize::from));
+            let mut set = vec![0u64; words];
+            for &web in &held { set[web / WORD] |= 1 << (web % WORD); }
             for &web in &held {
-                clash[web].extend(held.iter().copied().filter(|other| *other != web));
+                for (word, add) in bits[web * words..(web + 1) * words].iter_mut().zip(&set) { *word |= add; }
             }
         }
-        for list in &mut clash {
-            list.sort_unstable();
-            list.dedup();
-        }
-        clash
+        (0..webs).map(|web| {
+            let row = &bits[web * words..(web + 1) * words];
+            (0..webs).filter(|&other| other != web && row[other / WORD] >> (other % WORD) & 1 != 0).collect()
+        }).collect()
     }
 
     /// The webs the region is entered with: those live at the header that reach its first row.

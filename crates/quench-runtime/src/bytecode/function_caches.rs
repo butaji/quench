@@ -18,7 +18,16 @@ pub struct FunctionCaches {
     /// The int32 `+`/`-` PCs the facts analysis proves exact, ascending (`base_region::exact`), `None` where the
     /// analysis declines the function.
     pub exact_sums: std::cell::OnceCell<Option<Box<[u32]>>>,
+    /// The proven-argument masks of b-jit compiles by their seeds (declared and pinned Number registers, pinned int32
+    /// registers), at most `PROVEN_ARGS_SEEDS` of them (`base_region::call_args::ProvenArgs`).
+    pub proven_args: std::cell::RefCell<Vec<ProvenArgsEntry>>,
 }
+
+/// One seeding of `FunctionCaches::proven_args`: its Number registers, its int32 registers, the masks per PC.
+pub type ProvenArgsEntry = (Box<[super::Register]>, Box<[super::Register]>, std::rc::Rc<[u64]>);
+
+/// The seedings `FunctionCaches::proven_args` keeps; the oldest goes first.
+pub const PROVEN_ARGS_SEEDS: usize = 4;
 
 /// A boolean a function derives on its first ask and keeps (`Function::lazy_flag`). Each owns a
 /// bit pair of `Function::lazy_flags`: its known bit, and its value bit above that.

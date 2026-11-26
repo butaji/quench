@@ -196,7 +196,7 @@ pub(crate) struct Layout<'a> {
     pub(crate) number_held: &'a [bool],
     /// Per caller PC, the mask of the call's arguments proven Numbers (bit `k`: argument `k`, `call_args::proven_arguments`);
     /// empty where none is proven.
-    pub(crate) proven_args: &'a [u64],
+    pub(crate) proven_args: &'a super::call_args::ProvenArgs<'a>,
     /// The Number guards a Mem slot's entry keeps, by row (`numbers::entry_reads`).
     pub(crate) entry_reads: &'a super::numbers::EntryReads,
     /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).

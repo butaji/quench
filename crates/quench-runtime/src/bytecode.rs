@@ -43,7 +43,7 @@ pub use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::{SourcePositions, SourcePositionsBuilder};
 mod function_caches;
-pub use function_caches::{FunctionCaches, LazyFlag};
+pub use function_caches::{FunctionCaches, LazyFlag, ProvenArgsEntry, PROVEN_ARGS_SEEDS};
 pub use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
