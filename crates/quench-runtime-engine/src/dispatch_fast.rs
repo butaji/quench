@@ -16939,6 +16939,7 @@ fn derive_lane_view<'live>(
     fused.extend(lane_frame::fuse_rows(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     if let Some(kinds) = int_kinds.as_ref() {
         prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating);
+        prove_compare_jumps(constants, &mut records, kinds, &mut int_speculating);
     }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
@@ -17557,6 +17558,25 @@ fn prove_loop_steps(decoded: &[WideInstruction], records: &mut [LaneInstruction]
             speculating.push((head as u32, proven as *const (), checked as *const ()));
         }
         records[head].handler = proven as *const ();
+    }
+}
+
+/// The comparison jumps whose operands the int32 kinds prove (`lane_frame::proven_compare_jump`): each takes its proven
+/// instance, which reads its register operands untagged. One that reads a speculative register is listed in
+/// `speculating` with its formed instance (`LaneView::retire_int_speculation`), which it takes back once an update
+/// overflows that register. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
+fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
+    speculating: &mut Vec<(u32, *const (), *const ())>) {
+    use quench_runtime::bytecode::Operand;
+    let proven = |operand: Operand| operand.register_index().is_some_and(|register| kinds.proven(register));
+    let speculative = |operand: Operand| operand.register_index().is_some_and(|register| kinds.of(register) == int_kinds::Kind::Speculative);
+    for (pc, record) in records.iter_mut().enumerate() {
+        let (left, right) = (Operand(record.b), Operand(record.c));
+        let Some((proven_handler, formed)) = lane_frame::proven_compare_jump(record, constants, proven) else { continue };
+        if speculative(left) || speculative(right) {
+            speculating.push((pc as u32, proven_handler as *const (), formed as *const ()));
+        }
+        record.handler = proven_handler as *const ();
     }
 }
 
