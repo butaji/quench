@@ -3839,6 +3839,7 @@ fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Value, value: V
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_host_private_symbol_set(object, key, value)
         && !row_typed_store(ip, vm, object, key, value)
+        && !vm.array_index_key(key).is_some_and(|index| vm.typed_array_set_bigint(object, index as usize, value))
         && !vm.try_plain_string_key_set(object, key, value)
         && !key
             .as_int()

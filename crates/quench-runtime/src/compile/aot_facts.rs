@@ -32,8 +32,14 @@ use scope::Scope;
 /// The facts of one program.
 #[derive(Default)]
 pub struct AotFacts {
-    /// `(function, pc)` of a plain call → the function it always calls.
+    /// `(function, pc)` of a plain call → the function it always calls, or, for a method read
+    /// (`guessed_calls`), the one closure every store of its name writes.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
+    /// The `call_targets` that are a method read's guess, not a proof: the receiver may hold another
+    /// value of that name (a builtin's, a closure made again, a store through a computed key). Only a
+    /// row that guards the callee it reaches takes one (`FunctionFacts::call_target`); one that drops
+    /// the guard takes the proven ones only (`FunctionFacts::proven_call_target`).
+    pub(crate) guessed_calls: std::collections::BTreeSet<(u32, u32)>,
     /// `(function, pc)` of a construction (`new`) → the function it always constructs.
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
     /// Function id → register → the Number representation it always holds.
@@ -72,9 +78,15 @@ pub struct FunctionFacts<'a> {
 }
 
 impl<'a> FunctionFacts<'a> {
-    /// The function the plain call at `pc` always calls.
+    /// The function the plain call at `pc` calls: proven, or a method read's guess (`AotFacts::guessed_calls`).
+    /// A row taking it guards the callee it reaches.
     pub fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
+    }
+
+    /// The function the plain call at `pc` always calls, proven: a row may drop its callee guard for it.
+    pub fn proven_call_target(&self, pc: u32) -> Option<u32> {
+        self.call_target(pc).filter(|_| !self.facts.guessed_calls.contains(&(self.function, pc)))
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
@@ -105,10 +117,12 @@ pub fn analyze(program: &ResidualProgram) -> AotFacts {
         let id = id as u32;
         for call in &flow.calls {
             let Some(target) = census.target(call.callee) else { continue };
+            let guessed = census.guessed(call.callee);
             if call.construct {
-                facts.construct_targets.insert((id, call.pc), target);
+                if !guessed { facts.construct_targets.insert((id, call.pc), target); }
             } else {
                 facts.call_targets.insert((id, call.pc), target);
+                if guessed { facts.guessed_calls.insert((id, call.pc)); }
             }
         }
         for &(base, atom) in &flow.prototype_writes {
