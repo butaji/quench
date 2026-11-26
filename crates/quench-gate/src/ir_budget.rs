@@ -74,8 +74,13 @@ const RUNNER: &str = "quench-bench/primitives/ir_budget.cjs";
 /// Iterations of the shorter measured run; the longer runs twice as many.
 const ITERATIONS: u64 = 20_000;
 const MARK: &str = "quench_ir_mark";
-/// Marks per op: around op(n), then around op(2n), each run after a collection (`gc()`).
-const MARKS_PER_OP: usize = 4;
+/// Marks per measured pair: around op(n), then around op(2n), each run after a collection (`gc()`).
+const MARKS_PER_PAIR: usize = 4;
+/// Pairs per op. The JIT tiers measure two: a compile can land inside one window (a promotion at
+/// a doubling of completions, a retire and recompile), and a window holding a compile inflates
+/// that window alone. Each length takes its smaller window, so op(n) holding a compile no longer
+/// gives a negative count (k03_call_add b-jit -1608, v_throw_catch b-jit -2846 at 240164ca2f).
+fn pairs(mode: &str) -> usize { if mode == INTERPRETER { 1 } else { 2 } }
 /// Whether each measured run starts from a collected heap (`--expose-gc`, the runner's
 /// `collect`), so an op's window never pays for a sweep of garbage an earlier op left
 /// (k_str_build gained a string sweep when alloc_* ops were added before it). The GC
@@ -251,6 +256,7 @@ fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<Measured>,
         .arg(host).args((mode != DEFAULT).then_some(mode)).args(COLLECT.then_some("--expose-gc")).arg(RUNNER).arg(ITERATIONS.to_string()).args(ops)
         .env("QUENCH_DEV", if mode == INTERPRETER { "ir-mark" } else { "ir-mark,sync-compile" })
         .env("IRBUDGET_WARMUP", if mode == INTERPRETER { "3" } else { "12" })
+        .env("IRBUDGET_PAIRS", pairs(mode).to_string())
         .env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", &scratch);
     let run = process::run(&mut command)?;
     let names: Vec<String> = run.stdout.lines().filter_map(|line| line.strip_prefix(LINE_PREFIX)).map(str::to_owned).collect();
@@ -259,12 +265,14 @@ fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<Measured>,
     }
     let totals = dumps(&scratch)?;
     let _ = fs::remove_dir_all(&scratch);
-    if totals.len() < names.len() * MARKS_PER_OP {
-        return Err(format!("{} callgrind dumps for {} ops; expected {} marks each", totals.len(), names.len(), MARKS_PER_OP));
+    let marks = MARKS_PER_PAIR * pairs(mode);
+    if totals.len() < names.len() * marks {
+        return Err(format!("{} callgrind dumps for {} ops; expected {} marks each", totals.len(), names.len(), marks));
     }
     let measured = |index: usize| {
-        // Dump k holds the counts from mark k-1 to mark k: per op, op(n) then op(2n).
-        let (shorter, longer) = (&totals[index * MARKS_PER_OP + 1], &totals[index * MARKS_PER_OP + 3]);
+        // Dump k holds the counts from mark k-1 to mark k: per pair, op(n) then op(2n).
+        let window = |offset: usize| (0..pairs(mode)).map(|pair| &totals[index * marks + pair * MARKS_PER_PAIR + offset]).min_by_key(|dump| dump.total).unwrap();
+        let (shorter, longer) = (window(1), window(3));
         let records = (longer.entries as f64 - shorter.entries as f64) / ITERATIONS as f64;
         ((longer.total as f64 - shorter.total as f64) / ITERATIONS as f64, split(shorter, longer), records)
     };
