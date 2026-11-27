@@ -322,7 +322,7 @@ pub(crate) type CallActivation =
 
 /// The static form of a call row (`protocol_row` of `MISS`, `call_form`): its leaf form (`NOT_LEAF`
 /// for a plain activation), its argument count (`ANY_ARGC` where the record's immediate holds it),
-/// whether its receiver is its function's `undefined` register (`script_call_miss`'s `PLAIN`), and
+/// whether its receiver is its function's `undefined` register (`script_call_prove_miss`'s `PLAIN`), and
 /// whether it returns its callee's completion (`protocol_misses::script_call::RETURNS`).
 #[derive(Clone, Copy)]
 pub(crate) struct CallForm {
@@ -3756,7 +3756,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
                 }
                 Step::Control(LaneControl::Edge(Edge::Following)) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
                 // The frame activated the callee (`CallFrame::call_hand_over`): its first record, as the
-                // proved handlers continue (`script_call_miss`, `script_call_leaf_miss`).
+                // proved handlers continue (`script_call_prove_miss`, `script_call_leaf_prove_miss`).
                 Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
                 Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
             }
@@ -3789,8 +3789,8 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
 }
 
 /// The static form of the call row whose miss is `miss` (`CallForm`): a plain script call of a
-/// `script_call_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
-/// of a `script_call_leaf_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
+/// `script_call_prove_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
+/// of a `script_call_leaf_prove_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
 /// miss, whose record the lane frame does not answer.
 pub(crate) const fn call_form(miss: u16) -> Option<CallForm> {
     use super::protocol_misses::script_call as code;
@@ -3843,7 +3843,7 @@ const fn call_activation(miss: u16) -> CallActivation {
 }
 
 /// The plain activation of `target` past the lane frame's admission of the call record `record` at
-/// `ip` (`CallActivation`): the proved arm of `lane_plain_activation!` from its window on, its
+/// `ip` (`CallActivation`): the proved arm of `plain_call_activation` from its window on, its
 /// window filled from the record's (`fill_window_in_lane`) and its header pushed straight below it at
 /// the admitted `depth` (`enter_plain_window`). A call that does not return its completion first runs
 /// an entry cell's body (`enter_cell_body_in_lane`), as the proved arm does; a declined body re-reads
@@ -3883,7 +3883,7 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
 }
 
 /// The leaf call of `target` of form `LEAF` past the lane frame's admission of the call record
-/// `record` at `ip` (`CallActivation`): `script_call_leaf_miss`'s proved arm from its run on
+/// `record` at `ip` (`CallActivation`): `script_call_leaf_prove_miss`'s proved arm from its run on
 /// (`lane_run_leaf`). A leaf pushes no plain activation, so the depth is not read.
 ///
 /// # Safety

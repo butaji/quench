@@ -7,7 +7,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
-use super::super::leaf_calls::script_call_leaf_miss;
+use super::super::leaf_calls::script_call_leaf_prove_miss;
 use super::super::native_calls::{builtin_miss_of, math_miss_of, reflect_get_miss};
 
 /// The kind of a parameter byte: a leaf call (`leaf_parameters`).
@@ -52,26 +52,26 @@ pub(crate) const fn leaf_call_miss_of(parameters: u8) -> Handler {
 /// The leaf call body of a leaf-form payload (`leaf_parameters`).
 const fn leaf_miss_of_form(payload: u8) -> Handler {
     match (payload >> 3, payload & 7) {
-        (PLAIN_LEAF, 0) => script_call_leaf_miss::<PLAIN_LEAF, 0> as Handler,
-        (PLAIN_LEAF, 1) => script_call_leaf_miss::<PLAIN_LEAF, 1> as Handler,
-        (PLAIN_LEAF, 2) => script_call_leaf_miss::<PLAIN_LEAF, 2> as Handler,
-        (PLAIN_LEAF, 3) => script_call_leaf_miss::<PLAIN_LEAF, 3> as Handler,
-        (PLAIN_LEAF, 4) => script_call_leaf_miss::<PLAIN_LEAF, 4> as Handler,
-        (CAPTURE_LEAF, 0) => script_call_leaf_miss::<CAPTURE_LEAF, 0> as Handler,
-        (CAPTURE_LEAF, 1) => script_call_leaf_miss::<CAPTURE_LEAF, 1> as Handler,
-        (CAPTURE_LEAF, 2) => script_call_leaf_miss::<CAPTURE_LEAF, 2> as Handler,
-        (CAPTURE_LEAF, 3) => script_call_leaf_miss::<CAPTURE_LEAF, 3> as Handler,
-        (CAPTURE_LEAF, 4) => script_call_leaf_miss::<CAPTURE_LEAF, 4> as Handler,
-        (CONTEXT_LEAF, 0) => script_call_leaf_miss::<CONTEXT_LEAF, 0> as Handler,
-        (CONTEXT_LEAF, 1) => script_call_leaf_miss::<CONTEXT_LEAF, 1> as Handler,
-        (CONTEXT_LEAF, 2) => script_call_leaf_miss::<CONTEXT_LEAF, 2> as Handler,
-        (CONTEXT_LEAF, 3) => script_call_leaf_miss::<CONTEXT_LEAF, 3> as Handler,
-        (CONTEXT_LEAF, 4) => script_call_leaf_miss::<CONTEXT_LEAF, 4> as Handler,
-        (THIS_LEAF, 0) => script_call_leaf_miss::<THIS_LEAF, 0> as Handler,
-        (THIS_LEAF, 1) => script_call_leaf_miss::<THIS_LEAF, 1> as Handler,
-        (THIS_LEAF, 2) => script_call_leaf_miss::<THIS_LEAF, 2> as Handler,
-        (THIS_LEAF, 3) => script_call_leaf_miss::<THIS_LEAF, 3> as Handler,
-        (THIS_LEAF, 4) => script_call_leaf_miss::<THIS_LEAF, 4> as Handler,
+        (PLAIN_LEAF, 0) => script_call_leaf_prove_miss::<PLAIN_LEAF, 0> as Handler,
+        (PLAIN_LEAF, 1) => script_call_leaf_prove_miss::<PLAIN_LEAF, 1> as Handler,
+        (PLAIN_LEAF, 2) => script_call_leaf_prove_miss::<PLAIN_LEAF, 2> as Handler,
+        (PLAIN_LEAF, 3) => script_call_leaf_prove_miss::<PLAIN_LEAF, 3> as Handler,
+        (PLAIN_LEAF, 4) => script_call_leaf_prove_miss::<PLAIN_LEAF, 4> as Handler,
+        (CAPTURE_LEAF, 0) => script_call_leaf_prove_miss::<CAPTURE_LEAF, 0> as Handler,
+        (CAPTURE_LEAF, 1) => script_call_leaf_prove_miss::<CAPTURE_LEAF, 1> as Handler,
+        (CAPTURE_LEAF, 2) => script_call_leaf_prove_miss::<CAPTURE_LEAF, 2> as Handler,
+        (CAPTURE_LEAF, 3) => script_call_leaf_prove_miss::<CAPTURE_LEAF, 3> as Handler,
+        (CAPTURE_LEAF, 4) => script_call_leaf_prove_miss::<CAPTURE_LEAF, 4> as Handler,
+        (CONTEXT_LEAF, 0) => script_call_leaf_prove_miss::<CONTEXT_LEAF, 0> as Handler,
+        (CONTEXT_LEAF, 1) => script_call_leaf_prove_miss::<CONTEXT_LEAF, 1> as Handler,
+        (CONTEXT_LEAF, 2) => script_call_leaf_prove_miss::<CONTEXT_LEAF, 2> as Handler,
+        (CONTEXT_LEAF, 3) => script_call_leaf_prove_miss::<CONTEXT_LEAF, 3> as Handler,
+        (CONTEXT_LEAF, 4) => script_call_leaf_prove_miss::<CONTEXT_LEAF, 4> as Handler,
+        (THIS_LEAF, 0) => script_call_leaf_prove_miss::<THIS_LEAF, 0> as Handler,
+        (THIS_LEAF, 1) => script_call_leaf_prove_miss::<THIS_LEAF, 1> as Handler,
+        (THIS_LEAF, 2) => script_call_leaf_prove_miss::<THIS_LEAF, 2> as Handler,
+        (THIS_LEAF, 3) => script_call_leaf_prove_miss::<THIS_LEAF, 3> as Handler,
+        (THIS_LEAF, 4) => script_call_leaf_prove_miss::<THIS_LEAF, 4> as Handler,
         _ => script_call_full_miss,
     }
 }

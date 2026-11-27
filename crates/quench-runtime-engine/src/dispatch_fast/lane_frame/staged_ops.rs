@@ -138,8 +138,8 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
 }
 
 /// The call hooks of a call row's frame (`protocol_row`, `LaneCall`): the proved plain call
-/// (`script_call_miss`'s proven arm, `lane_plain_activation!`) and the proved leaf call
-/// (`script_call_leaf_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
+/// (`plain_call_activation`) and the proved leaf call
+/// (`script_call_leaf_prove_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
 ///
 /// - `call_entry`: the site's entry, the link masked to the cache (no bounds test), tested whole by
 ///   one admission compare (link-proofs.md: generation, program, the run's conditions, `DIAGNOSED`,
@@ -220,7 +220,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // SAFETY: the cache's length is a power of two (`SCRIPT_CALL_TARGETS_INITIAL`), so the masked
         // index lies within it; nothing before the hand-off resolves a target or collects.
         let target = unsafe { entries.get_unchecked(index) };
-        // A static count is the row's (`call_form`), so its tests fold as `script_call_miss`'s `ARGC`.
+        // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
         if target.admission != stack.admission

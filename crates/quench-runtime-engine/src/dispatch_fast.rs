@@ -207,9 +207,9 @@ fn noted_slot(address: usize, function: u32) -> usize {
 
 use quench_runtime::vm::engine_types::NO_CALL_LINK;
 /// The bit of a call link the plain call proved (`script_call_prove_miss`): its target activates
-/// plainly and takes the site's argument count, so `script_call_miss` tests only the callee's
+/// plainly and takes the site's argument count, so `script_call_prove_miss` tests only the callee's
 /// identity. The index is the link without it (`link_index`); a link without the bit is out of
-/// range for `script_call_miss`, which proves it first.
+/// range for `script_call_prove_miss`, which proves it first.
 const PLAIN_LINK: u16 = 1 << 15;
 const _: () = assert!(SCRIPT_CALL_TARGETS[0] < PLAIN_LINK as usize && SCRIPT_CALL_TARGETS[1] < PLAIN_LINK as usize);
 
@@ -1676,7 +1676,7 @@ impl LaneStack {
         self.plain.bound.set(bound);
     }
 
-    /// Whether a proved plain call (`lane_plain_activation!`) may push one more plain activation
+    /// Whether a proved plain call (`plain_call_activation`) may push one more plain activation
     /// over `depth`, the plain depth it loaded, with `room` values for its window: the activation
     /// limit (`activation_count() < activation_limit`) and the values' room
     /// (`activation_room_in_lane`), the same answer. Both are one compare of the window's end
@@ -5875,7 +5875,7 @@ script_handler! {
 
 /// A lane `GetField` whose read meets the accessor its site cached
 /// (`Vm::cached_field_getter`): the getter runs as a frameless activation of the read's
-/// record, as `script_call_miss` runs a call, with the base as receiver and no arguments,
+/// record, as `script_call_prove_miss` runs a call, with the base as receiver and no arguments,
 /// and its completion is the read's value. `Err` carries the record to continue at: the
 /// general path for any other read.
 #[inline(never)]
@@ -7673,7 +7673,7 @@ fn region_field_in_lane(
     }
 }
 
-/// The call target of an inlined `frame`'s callee, when `script_call_miss` would activate it
+/// The call target of an inlined `frame`'s callee, when `script_call_prove_miss` would activate it
 /// in place now, binding the frame's receiver as its `this`: the target the call caches, an
 /// activation of the running program with room on the lane stack.
 fn inlined_target_in_lane(
@@ -8997,10 +8997,10 @@ fn plan_anchor_in_lane() {
 }
 
 script_handler! {
-    /// `script_call_miss` of a linked target whose entry is not a plain activation: the site
+    /// The miss of a linked target whose entry is not a plain activation: the site
     /// calls the form for that entry directly from now on, an environment or keeping
     /// activation its own handler and any other entry the out-of-line form, which sorts them
-    /// out. Out of line, reached by `sibling!`, so `script_call_miss` makes no call.
+    /// out. Out of line, reached by `sibling!`, so the miss makes no call.
     #[inline(never)]
     fn script_call_requicken_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -9034,63 +9034,20 @@ unsafe fn set_script_calls_in_lane(cx: *mut LaneContext, allowed: bool) {
     }
 }
 
-script_handler! {
-    /// A JavaScript `Call` of a frameless target (`Vm::resolve_script_call_target`): the
-    /// callee runs in the lane on a window of the lane stack, with the frame facts its
-    /// push would have set held by the activation until it returns or the lane exits.
-    /// Any other call takes the general path. `ARGC` is the record's argument count where
-    /// the view resolved it (`script_call_handler`), so the window's copy makes no test, else
-    /// `ANY_ARGC`. `PLAIN` where the record's receiver is its function's `undefined`
-    /// register (`Function::undefined_register`, `specialize_script_calls`), whose value the
-    /// handler then knows without reading it.
-    fn script_call_miss<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
-        // A run that calls no script functions refuses every cached call
-        // (`Admission::NO_SCRIPT_CALLS`), which the link's test below makes.
-        debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        // Every fact of the target the link settled is in its entry's admission word, which
-        // the lane's must equal whole (link-proofs.md): the generation, the program, the
-        // run's conditions (`REFUSED`: a pending construction or `with`; `NO_SCRIPT_CALLS`),
-        // the tier's diagnostics (`DIAGNOSED`) and the proof (`UNPROVEN`: an entry no plain call
-        // proved yet, taken back when its cell publishes). The index is the
-        // link masked to the cache, so it needs no bounds test: any entry it lands on is
-        // tested whole. What stays per call: the callee's identity (entries are shared by
-        // every site and callee), the argument count against the entry's parameters (a
-        // site's, not an entry's fact), and the stacks' room (`plain_room`).
-        let entries = &vm.lane_stack.script_targets.entries;
-        let index = usize::from(i.call_link.get()) & (entries.len() - 1);
-        // SAFETY: the cache's length is a power of two (`SCRIPT_CALL_TARGETS_INITIAL`), so the
-        // masked index lies within it; nothing below resolves a target or collects.
-        let target = unsafe { &*std::ptr::from_ref(entries.get_unchecked(index)) };
-        let argc = call_argument_count::<ARGC>(i);
-        if target.callee != callee
-            || target.admission != vm.lane_stack.admission
-            || argc > FIXED_ARGUMENT_COPIES
-            || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
-        {
-            sibling!(script_call_prove_miss::<ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
-        }
-        debug_assert!(!constructing_in_lane(vm, callee));
-        // A leaf entry its own call form proved (`script_call_leaf_prove_miss`) activates as
-        // `Activates` from any other call (`CallEntry::activates`).
-        debug_assert!(target.entry.activates());
-        debug_assert!(target.program() == unsafe { (*cx).program });
-        #[cfg(feature = "profile-lane-exits")]
-        profile_script_call_target(cx, ip, callee, target);
-        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN, proven)
-    }
-}
 
 script_handler! {
-    /// `script_call_miss` of a site whose link is not proved: the target it links, which
-    /// takes its entry's form where that is not a plain activation
-    /// (`script_call_requicken_miss`) and the out-of-line form where the site's arguments are
-    /// more than it takes, else the entry is proved (`Admission::UNPROVEN` cleared) and the
-    /// call runs plainly, a callee whose cell holds a body too (the activation tests the cell).
+    /// The miss of a call row (`script_call_row`) whose entry the row does not admit: the target the
+    /// site links, which takes its entry's form where that is not a plain activation
+    /// (`script_call_requicken_miss`), and the out-of-line form where the site's arguments are more than
+    /// it takes. Else the entry is proved (`Admission::UNPROVEN` cleared), the link marks it (`PLAIN_LINK`),
+    /// and the call runs through its row, which admits it by the entry's proof, the argument count and the
+    /// room (`CallFrame::call_entry`). A returning call the run refuses (`returning_call_admitted`) takes the
+    /// general path. An entry already proved, whose row declined the call, takes the full form: the row's
+    /// decline is final, so the row is not entered again. A callee whose cell holds a body is proved too:
+    /// the row's activation tests the cell.
     #[cold]
     #[inline(never)]
-    fn script_call_prove_miss<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
+    pub(crate) fn script_call_prove_miss<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
@@ -9103,107 +9060,72 @@ script_handler! {
         if target.entry != CallEntry::Activates {
             sibling!(script_call_requicken_miss, r, ip, Carried::script_in(cx, view))
         }
+        let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
+        if returns && !returning_call_admitted(cx) {
+            return exit(ip);
+        }
         let argc = call_argument_count::<ARGC>(i);
         if argc > FIXED_ARGUMENT_COPIES || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
-        // A callee whose cell holds a body is proved too: the plain activation tests the cell
-        // on every call, proved or not (`lane_plain_activation!`), and enters the body through
-        // it (`enter_cell_body_in_lane`) or, for a call completing its caller, through the
-        // activation's `BodyEntry` record. Only a leaf entry's proved form skips the cell, and
-        // this proves no leaf entry (`CallEntry::Activates` above).
-        // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits proved
-        // calls from every site whose arguments it takes (`script_call_miss`'s compare).
+        // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits the row's calls
+        // from every site whose arguments it takes.
         let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
         let entry = &mut vm.lane_stack.script_targets.entries[index];
         debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
+        if entry.admission.0 & Admission::UNPROVEN == 0 {
+            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
+        }
         entry.admission.0 &= !Admission::UNPROVEN;
         debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         i.call_link.set(i.call_link.get() | PLAIN_LINK);
-        sibling!(script_call_miss::<ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
+        let row = script_call_row(ARGC, PLAIN, returns);
+        sibling!(row, r, ip, Carried::script_in(cx, view))
     }
 }
 
-/// The plain activation of `target`, an `Activates` entry, for the call record `i` at `ip`
-/// whose argument count is `ARGC` (`call_argument_count`), past its target's proof
-/// (`script_call_miss`, `script_call_leaf_miss`).
-macro_rules! lane_plain_activation {
-    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {
-        lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, false)
-    };
-    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, proven) => {
-        lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, true)
-    };
-    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, $proven:literal) => {{
-        let (cx, vm, r, ip, i, target) = ($cx, $vm, $r, $ip, $i, $target);
-        // A plain call's receiver is `undefined` by its record (`script_call_miss`'s `PLAIN`).
-        // Its `this` is then its target's (`ScriptCallTarget::lexical_this`), one load.
-        // A receiver whose binding needs the heap takes the out-of-line form, so this
-        // handler makes no call and keeps its registers.
-        let this = if $plain {
-            debug_assert_eq!(direct_call_this_in_lane(vm, target, Value::UNDEFINED), Some(target.lexical_this));
-            target.lexical_this
-        } else {
-            let Some(this) = direct_call_this_in_lane(vm, target, r.get(i.c)) else {
-                sibling!(script_call_full_miss, r, ip, Carried::script(cx))
-            };
-            this
-        };
-        // Values past the parameters and a full lane stack take the out-of-line form too,
-        // whose activation keeps them or grows the stack (`activate_in_lane`), and so does another
-        // program's target (`push_activation_in_lane`).
-        // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
-        // A proved call (`script_call_miss`) tested the argument count against the entry it
-        // found; the room stays per call, one compare (`LaneStack::plain_room`).
-        let argc = call_argument_count::<$argc>(i);
-        // The plain depth the proved push writes past (`LaneStack::plain_room`), loaded once.
-        let mut depth = vm.lane_stack.plain.depth.get();
-        if if $proven {
-            debug_assert!(argc <= FIXED_ARGUMENT_COPIES && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)));
-            debug_assert_eq!(vm.lane_stack.plain_room(depth, target.room), activation_room_in_lane(vm, target));
-            !vm.lane_stack.plain_room(depth, target.room)
-        } else {
-            argc > FIXED_ARGUMENT_COPIES || !admits_window_in_lane(vm, target, argc)
-        } {
-            sibling!(script_call_full_miss, r, ip, Carried::script(cx))
+/// The activation of `target`, a plain entry the leaf prove miss (`script_call_leaf_prove_miss`) found
+/// for the call record `i` at `ip` of argument count `ARGC`, as an unproven call makes it: an entry
+/// cell's body runs first where it pays its entry (`enter_cell_body_in_lane`), else the window is
+/// filled and the activation pushed (`enter_window_of_in_lane`). `None`, before any write, where the
+/// call takes the full form: a receiver whose binding reads the heap, or values past the window.
+#[inline(always)]
+fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction,
+    target: &ScriptCallTarget) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let this = direct_call_this_in_lane(vm, target, r.get(i.c))?;
+    let argc = call_argument_count::<ARGC>(i);
+    if argc > FIXED_ARGUMENT_COPIES || !admits_window_in_lane(vm, target, argc) {
+        return None;
+    }
+    // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and only an admitted one reaches here.
+    debug_assert!(!vm.with_scope_entered);
+    let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
+    if returns && !returning_call_admitted(cx) {
+        return Some(Resumed::Exit(exit(ip)));
+    }
+    // SAFETY: the record's window of `r` holds its values.
+    let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+    // A callee whose entry cell holds a body that pays its entry runs it before any activation exists.
+    if !returns && unsafe { (*target.view).enters_cell_body() } {
+        if let Some(resumed) = enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
+            return Some(resumed);
         }
-        let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and
-        // only an admitted one reaches here.
-        debug_assert!(!vm.with_scope_entered);
-        if returns && !returning_call_admitted(cx) {
-            return exit(ip);
-        }
-        // SAFETY: the record's window of `r` holds its values.
-        let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-        // A callee whose entry cell holds a body that pays its entry runs it before any activation exists.
-        if !returns && unsafe { (*target.view).enters_cell_body() } {
-            if let Some(resumed) = enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
-                resume!(cx, resumed)
-            }
-            // A declined body may have made the plain activations records (entering emitted
-            // code spills them): the push writes over the depth it left, and a first plain
-            // activation names the records' count to the ones above (`PlainFrames::bound`).
-            depth = vm.lane_stack.plain.depth.get();
-            if depth == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
-        }
-        debug_assert!(!target.settles(), "a settling target activates through its own call form");
-        let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-        let (registers, base) = if $proven {
-            enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
-        } else {
-            enter_window_of_in_lane::<false, false, true>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None)
-        };
-        next!(cx, registers, base, Carried::script(cx))
-    }};
+        // A declined body may have made the plain activations records (entering emitted code spills them):
+        // the push writes over the depth it left, and a first plain activation names the records' count
+        // to the ones above (`PlainFrames::bound`).
+        if vm.lane_stack.plain.depth.get() == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
+    }
+    let callee_registers = fill_window_in_lane(vm, target, passed, argc);
+    let (registers, base) = enter_window_of_in_lane::<false, false, true>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
+    Some(Resumed::At(registers, base, Carried::script(cx)))
 }
-use lane_plain_activation;
 
 pub(crate) mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, AdmittedWindow, materialize_running_leaf_in_lane, leaf_call_handler};
 
 /// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
-/// leaf's activation is pending (`script_call_leaf_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
+/// leaf's activation is pending (`script_call_leaf_prove_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
 /// the callee's frame (and, at a leaf's unmoved top, its window over the leaf's registers) below the activation the
 /// leaf makes on a leave, which then resumes the wrong frame. Zeroing the plain depth limit makes every direct row
 /// refuse to its helper row, which makes the leaf's activation first (`in_innermost_frame`). Called after the run's
@@ -9240,7 +9162,7 @@ fn materialize_leaf_in_lane(cx: *mut LaneContext) {
     let form = leaf.form;
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
-    // (`script_call_leaf_miss`).
+    // (`script_call_leaf_prove_miss`).
     let window = unsafe { (*cx).registers.0 };
     unsafe { stack.values.set_top(window.add(usize::from(target.registers) + lane_values::CONTEXT)) };
     let activation = Activation::of_parts(
@@ -9257,7 +9179,7 @@ fn materialize_leaf_in_lane(cx: *mut LaneContext) {
     );
     // SAFETY: the call proved room for the activation (`activation_room_in_lane`).
     unsafe { stack.push_activation(activation, window) };
-    // The receiver the call proved it binds directly (`script_call_leaf_miss`), from the
+    // The receiver the call proved it binds directly (`script_call_leaf_prove_miss`), from the
     // caller's registers, which the leaf does not write, for a form that binds none yet.
     let this = (!leaf_binds_this(form)).then(|| {
         direct_call_this_in_lane(vm, target, leaf.caller_registers.get(call.c))
@@ -9271,7 +9193,7 @@ fn materialize_leaf_in_lane(cx: *mut LaneContext) {
     );
 }
 
-/// The `script_call_miss` argument count of a record its view did not resolve.
+/// The `script_call_prove_miss` argument count of a record its view did not resolve.
 const ANY_ARGC: u16 = u16::MAX;
 
 /// The argument count of the call record `i`: `ARGC`, unless that is `ANY_ARGC`.
@@ -9372,14 +9294,14 @@ fn receiver_this_in_lane(vm: &Vm, binding: ThisBinding, receiver: Value) -> Opti
 }
 
 script_handler! {
-    /// `script_call_miss` out of line, so the plain call keeps its registers: a receiver
+    /// The out-of-line form of a call row, so the plain call keeps its registers: a receiver
     /// whose binding reads the heap (`call_this_in_lane`), a forwarding target, which takes
     /// `script_call_keeping_miss`, and a target whose body is a read (`CallEntry::Reads`,
     /// `CallEntry::ReadsElement`), whose hit (`call_read_in_lane`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
     /// activates the callee. A site that called such a target calls this form directly, so it
-    /// makes `script_call_miss`'s own entry tests.
+    /// makes the row's own entry tests.
     #[inline(never)]
     fn script_call_full_miss<>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
@@ -9625,7 +9547,7 @@ script_handler! {
             quench_runtime::vm::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
                 sibling!(generator_step_miss::<0>, r, ip, Carried::script_in(cx, view))
             }
-            quench_runtime::vm::iterators::IterationStep::Call => sibling!(script_call_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view)),
+            quench_runtime::vm::iterators::IterationStep::Call => sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view)),
             _ => {}
         }
         let Some(result) = array_iteration_result_in_lane(vm, iterator) else {
@@ -9780,7 +9702,7 @@ fn array_iteration_result_in_lane(vm: &mut Vm, iterator: Value) -> Option<Value>
 script_handler! {
     /// A JavaScript `Call` of another program's frameless callee (`LaneStack::cross_targets`):
     /// its activation runs in the callee's program, which its return leaves
-    /// (`Completion::Cross`). A site whose callee is no such target calls `script_call_miss`
+    /// (`Completion::Cross`). A site whose callee is no such target calls `script_call_prove_miss`
     /// again.
     #[inline(never)]
     fn script_call_cross_miss<>(cx, r, ip, i, view) {
@@ -9794,7 +9716,7 @@ script_handler! {
         }
         let Some(target) = vm.linked_cross_call_entry(callee, &i.call_link) else {
             requicken(ip, script_call_handler(i.imm()));
-            sibling!(script_call_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
@@ -9815,7 +9737,7 @@ script_handler! {
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
         // A plain activation of a window the fixed copies take, not completing its caller,
-        // pushes as `script_call_miss`'s does, entering the callee's program
+        // pushes as `script_call_prove_miss`'s does, entering the callee's program
         // (`enter_window_in_lane`'s cross completion); the site calls its fixed form from now on
         // (`script_call_cross_plain_miss`).
         let argc = ImmediateLayout::argument_count(i.imm());
@@ -9897,9 +9819,9 @@ fn cross_plain_handler(argc: u16) -> Handler {
 }
 
 script_handler! {
-    /// `script_call_miss` of a callee its target cache does not hold: resolving it
+    /// `script_call_prove_miss` of a callee its target cache does not hold: resolving it
     /// (`Vm::resolve_script_call_target`) makes a call, so it runs out of line and the call
-    /// continues at `script_call_miss`, which then finds it, or at `native_call_miss`.
+    /// continues at `script_call_prove_miss`, which then finds it, or at `native_call_miss`.
     #[inline(never)]
     fn script_call_resolve_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -9919,7 +9841,7 @@ script_handler! {
                 if vm.lane_stack.refuses() || !vm.lane_stack.script_calls_allowed() {
                     return exit(ip);
                 }
-                sibling!(script_call_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
+                sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
             // Another program's callee that needs a frame takes it as `frame_call_in_lane`
             // pushes one.
@@ -10281,7 +10203,7 @@ script_handler! {
     /// A call that forwards without an observable step of its own (`Vm::forwarded_call`):
     /// `f.call(thisArg, ...args)`, a bound function without bound arguments, or an
     /// uncurried builtin (`uncurryThis(f)(thisArg, ...args)`). A frameless target's
-    /// activation is the one `script_call_miss` makes, and a native runs as
+    /// activation is the one `script_call_prove_miss` makes, and a native runs as
     /// `native_call_miss` runs it, with the forwarded receiver and arguments. Any other
     /// takes the general path.
     #[inline(never)]
@@ -11574,7 +11496,7 @@ fn construct_forwarded_parent_in_lane(
 
 script_handler! {
     /// `new` of a frameless target that `Vm::inline_construct_target` would push: the
-    /// receiver it allocates, then the activation `script_call_miss` makes, whose
+    /// receiver it allocates, then the activation `script_call_prove_miss` makes, whose
     /// completion substitutes the receiver for a non-object result. Any other
     /// construction takes the general path.
     fn script_construct_miss<>(cx, r, ip, i, view) {
@@ -11759,7 +11681,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `script_call_miss` of a target that keeps its passed values
+    /// `script_call_prove_miss` of a target that keeps its passed values
     /// (`ScriptCallTarget::forwards`): the keeping activation (`call_keeping_activation_in_lane`).
     /// Out of line, so ordinary calls keep their code.
     #[inline(never)]
@@ -11767,7 +11689,7 @@ script_handler! {
         match call_keeping_activation_in_lane(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Err(Some(next)) => next,
-            // A site this form serves since `script_call_miss` saw a keeping target calls
+            // A site this form serves since `script_call_prove_miss` saw a keeping target calls
             // the full form once its callee keeps nothing.
             Err(None) => {
                 requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
@@ -13066,7 +12988,7 @@ fn carried_at_in_lane(cx: *mut LaneContext, view: *const LaneView, registers: Re
 }
 
 /// A lane body's call at `call_pc` of the running activation (`lane_region`'s `Call`): the
-/// activation `script_call_miss`'s common form makes, then the callee's own lane body. A
+/// activation `script_call_prove_miss`'s common form makes, then the callee's own lane body. A
 /// callee whose body returns completes the call (`call_return::step_activation_return_of`), the result in the
 /// call's register; one that leaves, or has no body, leaves the lane at its record in that
 /// activation (`LaneContext::callee_resume`). A call the common form does not make misses,
@@ -13645,7 +13567,7 @@ fn count_proved_entry_in_lane(vm: &mut Vm, target: &ScriptCallTarget) {
     vm.programs.record_js_jit_lane_entry(program, function);
 }
 
-/// `enter_window_of_in_lane` of a proved plain call (`lane_plain_activation!` past `PLAIN_LINK`):
+/// `enter_window_of_in_lane` of a proved plain call (`plain_call_activation` past `PLAIN_LINK`):
 /// the record it would build is always plain (no general form, so no crossing; no
 /// construction, settling, keeping or forwarding; an empty native prefix; a lane stack
 /// window), so its header goes below the window straight from the call's words
