@@ -101,6 +101,24 @@ impl Heap {
         self.class_space.set_field(granule, slot, value);
     }
 
+    /// The initialization of live cell `granule` with `values` under exact shape `shape`, in place where
+    /// they fit the cell's capacity (`region_capacity`): each field is stored as an in-place store is
+    /// (`class_cell_store`), the fields past them are slack, and the cell takes the class of `shape` with
+    /// its link and flags. `false`, with nothing changed, where they do not fit: the caller departs.
+    pub(crate) fn class_cell_initialize(&mut self, granule: u32, shape: u32, values: &[Value]) -> bool {
+        if values.len() > region_capacity(granule) as usize {
+            return false;
+        }
+        for (slot, &value) in values.iter().enumerate() {
+            self.class_cell_store(granule, slot, value);
+        }
+        self.class_space.delete_slack(granule, values.len());
+        let class = header_class(self.class_space.header(granule));
+        let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class));
+        self.class_space.write_header(granule, live_header(next));
+        true
+    }
+
     /// The add of `value` as field `slot` along the class edge from class `before`'s shape to shape `after`,
     /// in place for live cell `granule` where the field fits the cell's capacity (`region_capacity`). The cell
     /// keeps its link and flags, takes the after-shape's class, and the readers of the old shape retire

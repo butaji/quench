@@ -2209,7 +2209,15 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
-        // Replacing storage is a record edit: a class cell departs first, so the owner is a record.
+        // A live class cell whose capacity holds the values takes them in place, under the class of
+        // `shape` (`class_cell_initialize`): a preshaped receiver or a built object stays a cell.
+        if let Some(granule) = self.live_class_cell(owner)
+            && self.class_cell_initialize(granule, shape, values)
+        {
+            self.properties.note_shape_values(shape, values);
+            return;
+        }
+        // Otherwise replacing storage is a record edit: the cell departs first, so the owner is a record.
         self.depart_for_mutation(owner);
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
