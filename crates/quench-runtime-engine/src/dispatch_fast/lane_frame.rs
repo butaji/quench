@@ -3091,7 +3091,10 @@ macro_rules! row_decode {
             Operation::decode_value(quench_runtime::staged::Fields::wide($fields))
         } else if const { $op == quench_runtime::staged::COMPARE_JUMP_ROW } {
             compare_fields($fields)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE, quench_runtime::bytecode::Op::NumericAdd | quench_runtime::bytecode::Op::NumericMultiply | quench_runtime::bytecode::Op::ToPropertyKey) } {
+            operator_fields($fields)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
+            // `Binary` (its operator is a field no instance fixes) and `IntCaseIndex`.
             Operation::decode_generic(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmInt)) } {
             Operation::decode_wasm_int(quench_runtime::staged::Fields::wide($fields))
@@ -3285,6 +3288,32 @@ fn compare_fields<W, P, const OP: u16, const FLAG: u8>(fields: LaneFields<'_, OP
         (quench_runtime::staged::Comparison::of_operator(u32::from(i.a)), Operand(i.b), Operand(i.c))
     };
     Some(Operation::CompareJump { comparison, left, right, negate: true })
+}
+
+/// The `Operation` a `ToPropertyKey`, `NumericAdd` or `NumericMultiply` record decodes to, read from the record's own
+/// fields by its opcode (`row_decode!`'s arm for these). Their `decode_generic` arms are pure field reads: a
+/// `ToPropertyKey` names its result and source registers, and an arithmetic record's operator is its opcode's
+/// (`+` for `NumericAdd`, `*` for `NumericMultiply`), so the Number operation is `binary_operation`'s over that
+/// constant. A record whose operator field names another operator, or whose result carries flags, is none, as
+/// `decode_numeric_arithmetic` and `decode_binary` leave it. `Binary` is not here: its operator is a field no
+/// instance fixes, so which operation it is (Number, equality or the VM's) is that field's to say.
+#[inline(always)]
+fn operator_fields<W, P, const OP: u16, const FLAG: u8>(fields: LaneFields<'_, OP, FLAG>) -> Option<Operation<W, P>> {
+    let instruction = quench_runtime::staged::Fields::wide(fields);
+    if const { matches!(LaneFields::<OP, FLAG>::OPCODE, quench_runtime::bytecode::Op::ToPropertyKey) } {
+        return Some(Operation::PropertyKey { destination: instruction.result_register(), source: instruction.register_b() });
+    }
+    let own = if const { matches!(LaneFields::<OP, FLAG>::OPCODE, quench_runtime::bytecode::Op::NumericMultiply) } {
+        quench_runtime::vm::operations::binary_operator::Multiplication
+    } else {
+        quench_runtime::vm::operations::binary_operator::Addition
+    };
+    if instruction.result_flags() != 0 || instruction.binary_operator() != own {
+        return None;
+    }
+    // `+` and `*` are arithmetic operators, for which `binary_operation` is always a Number operation.
+    quench_runtime::staged::numeric::binary_operation(own, instruction.result_register(), instruction.operand_b(), instruction.operand_c())
+        .map(Operation::Number)
 }
 
 /// Whether a comparison jump's `flag` is a proven instance (`FLAG_COMPARE_PROVEN`), whose operands are int32s.
@@ -3541,8 +3570,6 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
             compare_fields(LaneFields::<OP, FLAG>(i))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
             Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
-            Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmJump)) } {
             Operation::decode_wasm_jump(quench_runtime::staged::Fields::wide(fields))
         } else {
