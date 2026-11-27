@@ -226,7 +226,7 @@ impl<'a> FunctionFacts<'a> {
     }
 
     /// Whether no builtin prototype object has an index property (`AotFacts::prototype_indices_empty`).
-    pub(crate) fn prototype_indices_empty(&self) -> bool {
+    pub fn prototype_indices_empty(&self) -> bool {
         self.facts.prototype_indices_empty()
     }
 
