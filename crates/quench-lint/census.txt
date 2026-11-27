@@ -1,5 +1,8 @@
 staged_rechecks 260
 hand_lowerings 138
+variant_rows 8
+opaque_helper_calls 21
+bjit_stencil_lines 108
 opcodes 290
 opcodes_with_staged_operation 286
 derivation_debt_lines 45
