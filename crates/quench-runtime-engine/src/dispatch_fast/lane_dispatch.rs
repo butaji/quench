@@ -38,6 +38,11 @@ pub(crate) fn dispatch_in_lane(cx: *mut LaneContext, mut ip: Ip) -> Ip {
         );
         let (ip_next, left) = exited(next);
         if left {
+            // A record of an inlined view leaves it first: the general path runs the function's own
+            // record, in the frames an inlined callee's makes (`inlined_views::leave`).
+            if super::inlined_views::may_be_inlined(ip_next) {
+                return super::inlined_views::leave_at_exit(cx, ip_next);
+            }
             return ip_next;
         }
         ip = ip_next;

@@ -189,6 +189,21 @@ pub(crate) fn leave(cx: *mut super::LaneContext, r: super::Registers, ip: Ip) ->
     }
 }
 
+/// The record the general path runs for a lane exit at `ip`, a record of an inlined view: the
+/// function's own, once the run leaves the view (`leave`). `QUENCH_N7_TRACE` reports each.
+#[cold]
+#[inline(never)]
+pub(crate) fn leave_at_exit(cx: *mut super::LaneContext, ip: Ip) -> Ip {
+    if std::env::var_os("QUENCH_N7_TRACE").is_some() {
+        let origin = with_inlined(ip, |view, index| (view.origins[index], index));
+        // SAFETY: a record of a live view.
+        eprintln!("n7 exit {:?} handler {:p}", origin, unsafe { (*ip).handler });
+    }
+    // SAFETY: the running lane's context; its registers are the inlined activation's.
+    let r = unsafe { (*cx).registers };
+    leave(cx, r, ip).1
+}
+
 /// Makes and installs the inlined view of the function running the leaf call at `ip`, once the
 /// call's link is proved (`script_call_leaf_prove_miss`): each proved leaf site makes it anew with
 /// every site linked so far. The interpreter only (no compiled tier claims the view's PCs), and
