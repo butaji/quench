@@ -666,6 +666,9 @@ struct ProgramEntry {
     aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
     /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
     call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
+    /// Per class (a constructor's function id): the layout id its constructed instances hold, 0 until the first
+    /// construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
+    class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -923,6 +926,38 @@ impl ProgramStore {
             let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
             std::sync::Arc::new(crate::compile::call_graph::CallGraph::of(&entry.residual, &facts))
         })))
+    }
+
+    /// The header cell of class `class` (a constructor's function id) in program `id`: the layout id its constructed
+    /// instances hold, recorded once by the first construction (`Vm::record_class_header`), 0 until then.
+    pub fn class_header(&self, id: ProgramId, class: u32) -> Option<&std::cell::Cell<u32>> {
+        Self::class_header_cell(self.entry(id)?, class)
+    }
+
+    fn class_header_cell(entry: &ProgramEntry, class: u32) -> Option<&std::cell::Cell<u32>> {
+        let headers = entry.class_headers.get_or_init(|| (0..entry.residual.functions.len()).map(|_| std::cell::Cell::new(0)).collect());
+        headers.get(class as usize)
+    }
+
+    /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) names a
+    /// closed union of classes and misses on nothing (`Miss::None`), with one arm per class, that class's header cell
+    /// and the function its method is. Plans of one callee (no class) keep their own rows. A site's record dispatches
+    /// on its receiver's header (`planned_call_row`).
+    pub fn planned_call_sites(&self, id: ProgramId, function: u32) -> Vec<crate::vm::engine_types::PlannedSite> {
+        use crate::compile::call_plan::Miss;
+        use crate::vm::engine_types::{PlannedArm, PlannedSite, PlannedTarget};
+        let (Some(entry), Some(facts)) = (self.entry(id), self.aot_facts(id)) else { return Vec::new() };
+        let unresolved = PlannedTarget { epoch: 0, target: std::ptr::null() };
+        facts.call_plans(&entry.residual, function).into_iter()
+            .filter(|(_, plan)| plan.miss == Miss::None && !plan.arms.is_empty())
+            .filter_map(|(pc, plan)| {
+                let arms = plan.arms.iter().map(|arm| {
+                    let header = Self::class_header_cell(entry, arm.class?)?;
+                    Some(PlannedArm { function: arm.function, header: std::ptr::from_ref(header), target: std::cell::Cell::new(unresolved) })
+                }).collect::<Option<Box<[PlannedArm]>>>()?;
+                Some(PlannedSite { pc, arms })
+            })
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -1341,6 +1376,7 @@ impl ProgramStore {
             js_entry_facts: JsEntryFactsTable::default(),
             aot_facts: std::cell::OnceCell::new(),
             call_graph: std::cell::OnceCell::new(),
+            class_headers: std::cell::OnceCell::new(),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),

@@ -95,14 +95,23 @@ impl ConstructPlan {
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        vm.allocate_planned_object(self.header, self.prototype, &values, fields)
+        self.allocate_receiver(vm, &values, fields)
     }
 
     /// The receiver this plan allocates with `values`, as `values` computed them: no second
     /// array gathered from them.
     #[inline(always)]
     pub(crate) fn allocate_values(&self, vm: &mut Vm, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
-        vm.allocate_planned_object(self.header, self.prototype, values, usize::from(self.fields))
+        self.allocate_receiver(vm, values, usize::from(self.fields))
+    }
+
+    /// The receiver of `values`' first `fields` fields, which records its class's header (`Vm::record_class_header`):
+    /// a planned construction is a construction of the plan's callee like any other.
+    #[inline(always)]
+    fn allocate_receiver(&self, vm: &mut Vm, values: &[Value; CONSTRUCT_PLAN_FIELDS], fields: usize) -> Value {
+        let this = vm.allocate_planned_object(self.header, self.prototype, values, fields);
+        vm.record_class_header(self.callee, this);
+        this
     }
 
     /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
