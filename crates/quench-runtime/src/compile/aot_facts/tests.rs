@@ -1,6 +1,6 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::{analyze, world, AotFacts};
+use super::{analyze, world, AotFacts, FieldDefault};
 use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
@@ -726,6 +726,50 @@ fn a_reached_eval_keeps_the_world_open() {
     // The eval runs at the top level, so new code is reached and the closed world's assumption fails.
     let program = program("function f(a) { return a | 1; } f(2); eval('1');");
     assert_eq!(world(&program), World::Open);
+}
+
+fn union_names(union: &super::UnionLayout) -> Vec<u32> {
+    union.fields.iter().map(|(atom, _)| *atom).collect()
+}
+
+#[test]
+fn a_union_lists_the_constructors_fields_then_the_fields_stored_later() {
+    let program = program("function P(x) { this.x = x; } var p = new P(1); p.extra = 3;");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    let union = facts.class_union_layout(p).expect("a closed program has a union for P");
+    assert_eq!(union_names(&union), vec![atom_named(&program, "x"), atom_named(&program, "extra")]);
+    assert!(union.fields.iter().all(|(_, field)| field.default == FieldDefault::Absent), "no prototype names x or extra");
+}
+
+#[test]
+fn a_name_stored_on_the_prototype_is_an_absent_fields_default() {
+    let program = program("function P() { this.x = 1; } P.prototype.x = 0; var p = new P();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    let union = facts.class_union_layout(p).expect("a closed program has a union for P");
+    assert_eq!(union.fields.iter().map(|(_, field)| field.default).collect::<Vec<_>>(), vec![FieldDefault::Prototype(p)]);
+}
+
+#[test]
+fn a_for_in_over_an_instance_has_no_union() {
+    let program = program("function P() { this.x = 1; } var p = new P(); for (var k in p) {}");
+    let facts = analyze(&program);
+    assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none(), "for-in enumerates the instance");
+}
+
+#[test]
+fn a_computed_name_store_on_an_instance_has_no_union() {
+    let program = program("(function (k) { function P() { this.x = 1; } var p = new P(); p[k] = 2; })('y');");
+    let facts = analyze(&program);
+    assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none(), "a computed key may name any field");
+}
+
+#[test]
+fn an_open_world_has_no_union() {
+    let program = program("function P() { this.x = 1; } var p = new P(); eval('1');");
+    let facts = analyze(&program);
+    assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none());
 }
 
 #[test]
