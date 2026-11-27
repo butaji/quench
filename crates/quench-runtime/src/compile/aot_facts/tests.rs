@@ -1050,3 +1050,27 @@ fn a_closure_created_in_a_loop_is_not_one_closure() {
     let inner = (0..program.function_count()).find(|&id| program.with_record(id, |function| function.parent.is_some())).expect("a nested function") as u32;
     assert!(!analyze(&program).closure_identity(inner), "the loop creates a closure per iteration");
 }
+
+#[test]
+fn a_method_only_called_on_its_class_instances_takes_that_class_as_this() {
+    let program = program("function Scheduler() { this.count = 0; } \
+        Scheduler.prototype.run = function run() { return this.count; }; \
+        new Scheduler().run();");
+    let facts = analyze(&program);
+    let (scheduler, run) = (function_named(&program, "Scheduler") as u32, function_named(&program, "run") as u32);
+    assert_eq!(facts.function_facts(run).this_classes().single().map(|(class, _)| class), Some(scheduler));
+}
+
+#[test]
+fn an_instance_of_a_class_only_stored_by_name_never_departs_its_shape() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
+    let facts = analyze(&program);
+    assert!(facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+}
+
+#[test]
+fn a_delete_on_an_instance_departs_its_class_shape() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); delete s.count;");
+    let facts = analyze(&program);
+    assert!(!facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+}
