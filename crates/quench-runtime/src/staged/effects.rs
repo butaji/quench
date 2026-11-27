@@ -488,6 +488,9 @@ impl<W, P> Operation<W, P> {
             Self::Number(_) => Effects { may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
+            // The interpreter's safepoint collects only byte debt (`Heap::byte_due`, polled at a back edge): it does
+            // not allocate, so `may_collect` here is not `may_alloc`. Once the lane's back edge polls `byte_due` too,
+            // `may_collect` folds into `may_alloc` (GC47; plans/r4-class-layout.md). The bit is unchanged until then.
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
             Self::Call(operation) => operation.effects(),
             // A suspension resumes the activation after anything: an `await` may run guest code

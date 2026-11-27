@@ -2388,8 +2388,8 @@ impl Vm {
                     );
                     continue;
                 }
-                // A back edge collects only once the allocation threshold is reached.
-                FrameArm::Jump if !self.heap.should_collect() => {
+                // A back edge collects only byte debt (`poll_byte_debt`), so it takes this path while cell debt waits.
+                FrameArm::Jump if !self.heap.byte_due() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2537,7 +2537,16 @@ impl Vm {
                     return Ok(FrameOutcome::Complete(value));
                     }
                 },
-                Ok(StepResult::Continue) => {}
+                Ok(StepResult::Continue) => {
+                    // Cell debt is serviced at the op boundary: the op stored its result, and the
+                    // frame's PC names the next instruction, whose root map is the live set before it.
+                    // Natives and call ops reach here after their value is in the frame.
+                    if self.heap.should_collect() {
+                        self.frames[frame].pc = pc;
+                        self.frames[frame].pc_is_resume = false;
+                        self.service_allocation_debt(unsafe { &*executing_residual });
+                    }
+                }
                 Ok(StepResult::PushFrame { destination, call_guard, completion }) => {
                     // A callee of another program became active; the loop runs it until it returns.
                     let callee_program = self.frames[frame + 1].program;
@@ -2574,8 +2583,8 @@ impl Vm {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                    // An entry is a safepoint: else a due collection waits for a loop, every call a frame.
-                    self.maybe_collect(unsafe { &*executing_residual });
+                    // An entry is a poll: byte debt collects here; cell debt waits for the callee's first op boundary.
+                    self.poll_byte_debt(unsafe { &*executing_residual });
                 }
                 Ok(StepResult::ResumeFrames(recovered)) => {
                     pending_calls.extend(recovered.calls);
@@ -2609,8 +2618,8 @@ impl Vm {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                    // The replacement frame publishes all callee roots before this back edge.
-                    self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
+                    // The replacement frame publishes all callee roots before this poll: byte debt only.
+                    self.poll_byte_debt(current_program.as_deref().unwrap_or(entry_program));
                 }
                 Ok(StepResult::Suspend(Suspended::Await { value, destination })) => {
                     // An async call the loop pushed in place (`Vm::try_settling_call`) suspends

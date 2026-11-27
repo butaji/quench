@@ -913,7 +913,8 @@ impl Vm {
             *pc = target;
             if backward {
                 self.frames[f].pc = target;
-                self.maybe_collect(p);
+                // A poll: byte debt only. Wasm's cell debt is serviced at its op boundary (the general loop's `Continue`).
+                self.poll_byte_debt(p);
             }
         }
     }

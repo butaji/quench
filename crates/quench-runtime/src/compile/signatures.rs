@@ -419,6 +419,8 @@ mod tests {
         assert_eq!(call_form(throws, false), CallForm::Frameless);
         let leaves = Signature { leaves: Leaves::RestartCall, effects: Effects::NONE };
         assert_eq!(call_form(leaves, false), CallForm::Framed);
+        // `collects` stands for a signature whose only effect is a collection point (GC47: an interpreter safepoint
+        // collects only byte debt, and the bit is unchanged until `may_collect` folds into `may_alloc`).
         let collects = Signature { leaves: Leaves::Never, effects: Effects { may_collect: true, ..Effects::NONE } };
         assert_eq!(call_form(collects, false), CallForm::Framed);
         let runs = Signature { leaves: Leaves::Never, effects: Effects { may_call_js: true, ..Effects::NONE } };
