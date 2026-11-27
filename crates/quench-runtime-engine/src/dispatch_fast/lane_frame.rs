@@ -3113,11 +3113,30 @@ fn boolean_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Opt
     Some(table[entry])
 }
 
+/// The first `FLAG` of a comparison jump whose operands the view's int32 kinds prove int32s (`proven_compare_jump`):
+/// `FLAG_COMPARE_PROVEN + 2 * entry + form`, the operator and operand form of `FLAG_COMPARE_FORMED`. It ends the
+/// flag space: the last instance is 255.
+const FLAG_COMPARE_PROVEN: u8 = FLAG_COMPARE_BOOLEAN + BOOLEAN_TESTS.len() as u8;
+const _: () = assert!(FLAG_COMPARE_PROVEN as usize + 2 * FORMED_COMPARISONS.len() <= 256);
+
+/// The `2 * entry + form` offset of a comparison jump's operator-and-operands instance, formed or proven
+/// (`FLAG_COMPARE_FORMED`, `FLAG_COMPARE_PROVEN`); `None` for any other flag.
+const fn operand_fixed_offset(flag: u8) -> Option<u8> {
+    let len = 2 * FORMED_COMPARISONS.len();
+    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < len {
+        Some(flag - FLAG_COMPARE_FORMED)
+    } else if flag >= FLAG_COMPARE_PROVEN && ((flag - FLAG_COMPARE_PROVEN) as usize) < len {
+        Some(flag - FLAG_COMPARE_PROVEN)
+    } else {
+        None
+    }
+}
+
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
     if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
-    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < 2 * FORMED_COMPARISONS.len() {
-        return Some(FORMED_COMPARISONS[((flag - FLAG_COMPARE_FORMED) / 2) as usize]);
+    if let Some(offset) = operand_fixed_offset(flag) {
+        return Some(FORMED_COMPARISONS[(offset / 2) as usize]);
     }
     None
 }
@@ -3125,10 +3144,110 @@ const fn compare_flag(flag: u8) -> Option<u32> {
 /// Whether a comparison jump's `flag` fixes its right operand as a register (`Some(false)`) or a constant
 /// (`Some(true)`), its left one being a register; `None` where it fixes no operand kinds.
 const fn compare_operands(flag: u8) -> Option<bool> {
-    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < 2 * FORMED_COMPARISONS.len() {
-        Some((flag - FLAG_COMPARE_FORMED) % 2 == 1)
+    match operand_fixed_offset(flag) {
+        Some(offset) => Some(offset % 2 == 1),
+        None => None,
+    }
+}
+
+/// Whether a comparison jump's `flag` is a proven instance (`FLAG_COMPARE_PROVEN`), whose operands are int32s.
+const fn proven_compare_flag(flag: u8) -> bool {
+    flag >= FLAG_COMPARE_PROVEN && ((flag - FLAG_COMPARE_PROVEN) as usize) < 2 * FORMED_COMPARISONS.len()
+}
+
+/// The proven instance of a comparison jump at `2 * entry + form` (`proven_compare_flag`), for the record's direction.
+fn proven_compare_row<const BACKWARD: bool>(offset: usize) -> Option<Handler> {
+    macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
+    macro_rules! proven { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_PROVEN + $n)),+] } }
+    let table: [Handler; 2 * FORMED_COMPARISONS.len()] = proven!(0 1 2 3 4 5 6 7 8 9 10 11);
+    table.get(offset).copied()
+}
+
+/// The proven instance of the plain comparison jump `record` (`jump_row` of `COMPARE_JUMP_ROW`, not yet run), where
+/// `proven` says the view's int32 kinds prove a register operand an int32: its left operand is such a register, its
+/// right one such a register or an int32 constant (`mode` takes the constant), and its operator a `FORMED_COMPARISONS`
+/// one that `record` decodes to. Returns the proven instance and the formed instance `compare_jump_row` chooses for
+/// the same operands, the handler the record takes back where the proof retires. `None` otherwise, the record unchanged.
+pub(crate) fn proven_compare_jump(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool + Copy) -> Option<(Handler, Handler)> {
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    if record.handler == jump_row::<OP>(true) as *const () {
+        proven_compare_of::<true>(record, constants, proven)
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        proven_compare_of::<false>(record, constants, proven)
     } else {
         None
+    }
+}
+
+/// The `FORMED_COMPARISONS` entry and the operands of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, its
+/// handler checked by the caller), where its operator is one of those and its record decodes to that comparison.
+fn formed_compare_of(record: &LaneInstruction) -> Option<(usize, Operand, Operand)> {
+    let operator = u32::from(record.a);
+    let entry = FORMED_COMPARISONS.iter().position(|&formed| formed == operator)?;
+    let decodes_so = matches!(Operation::<u64, ()>::decode_generic(quench_runtime::staged::Fields::wide(LaneFields::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(record))),
+        Some(Operation::CompareJump { comparison, .. }) if comparison == quench_runtime::staged::Comparison::of_operator(operator));
+    decodes_so.then_some((entry, Operand(record.b), Operand(record.c)))
+}
+
+fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool) -> Option<(Handler, Handler)> {
+    use quench_runtime::bytecode::OperandKind::{Constant, Register};
+    let (entry, left, right) = formed_compare_of(record)?;
+    if left.kind() != Some(Register) || !proven(left) { return None }
+    let operator = FORMED_COMPARISONS[entry];
+    let (form, mode) = match right.kind() {
+        Some(Register) if proven(right) => (0, 0),
+        Some(Constant) => {
+            let constant = constants.get(usize::from(right.payload()))?;
+            if constant.as_int().is_none() { return None }
+            (1, constant.to_bits())
+        }
+        _ => return None,
+    };
+    let formed = compare_jump_row::<BACKWARD>(operator, left, right)?;
+    let proven_handler = proven_compare_row::<BACKWARD>(2 * entry + form)?;
+    if form == 1 { record.mode = mode; }
+    Some((proven_handler, formed))
+}
+
+/// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
+fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
+    macro_rules! guarded { ($($n:literal)+) => { [$(compare_guarded_row::<BACKWARD, $n> as Handler),+] } }
+    guarded!(0 1 2 3 4 5)
+}
+
+/// The guarded instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) whose two operands are
+/// registers and whose operator is a `FORMED_COMPARISONS` one it decodes to (`formed_compare_of`). `None` otherwise.
+pub(crate) fn guarded_compare_jump(record: &LaneInstruction) -> Option<Handler> {
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    let (entry, left, right) = formed_compare_of(record)?;
+    if left.kind() != Some(quench_runtime::bytecode::OperandKind::Register) || right.kind() != Some(quench_runtime::bytecode::OperandKind::Register) { return None }
+    if backward { compare_guarded_instances::<true>().get(entry).copied() } else { compare_guarded_instances::<false>().get(entry).copied() }
+}
+
+script_handler! {
+    /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the view's int32 kinds do not
+    /// prove (`guarded_compare_jump`). It tests both registers' int32 tags, once per execution: an int32 pair runs the proven
+    /// instance (`proven_compare_row`) over the same record. Any other pair requickens the record to its formed register and
+    /// register instance (`compare_jump_row`) for good.
+    pub(crate) fn compare_guarded_row<BACKWARD: bool, ENTRY: u8>(cx, r, ip, i, view) {
+        // SAFETY: `guarded_compare_jump` installed this form on a record whose two operands are registers, which it keeps.
+        let (left, right) = unsafe { (Operand(i.b).register_index().unwrap_unchecked(), Operand(i.c).register_index().unwrap_unchecked()) };
+        if r.int(left).is_some() && r.int(right).is_some() {
+            if let Some(proven) = proven_compare_row::<BACKWARD>(2 * usize::from(ENTRY)) {
+                sibling!(proven, r, ip, view)
+            }
+        }
+        let general = compare_jump_row::<BACKWARD>(FORMED_COMPARISONS[usize::from(ENTRY)], Operand(i.b), Operand(i.c))
+            .unwrap_or(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(BACKWARD));
+        requicken(ip, general);
+        sibling!(general, r, ip, view)
     }
 }
 
@@ -3163,17 +3282,19 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
 }
 
 /// The plain comparison jump row (`jump_row`) of `handler` where it is an instance its first run moved to
-/// (`compare_jump_row`, either direction); `None` for any other handler. A record moved back to its plain row
+/// (`compare_jump_row`, or a `compare_guarded_row` either direction); `None` for any other handler. A record moved back to its plain row
 /// takes its instance again at its next run, so the move undoes only what the run learned.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
-    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
+    fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43)
+        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55)
     }
-    const _: () = assert!(COMPARE_OPERATORS as usize + 2 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 44);
+    const _: () = assert!(COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 56);
     if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
     if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
+    if compare_guarded_instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
+    if compare_guarded_instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
     None
 }
 
@@ -3307,6 +3428,9 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         if const { matches!(compare_operands(FLAG), Some(true)) } {
             frame.reads = frame.reads.with_immediate(Value::from_bits(i.mode));
         }
+        // A proven instance's operands are int32s the view's kinds prove (`proven_compare_jump`), which the staged
+        // comparison reads untagged, as `operator_row`'s proven forms do.
+        if const { proven_compare_flag(FLAG) } { frame.operands_int = true; }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(LaneControl::Edge(Edge::Target)) => {
                 if const { TEST != quench_runtime::staged::NO_LINK } {
@@ -3875,6 +3999,9 @@ pub(crate) const OPERANDS_INT32: u8 = 4;
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
 /// A register the view's int32 kinds prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
+/// Two registers the view did not prove: their int32 tags are tested once per execution, and a pair of
+/// int32s runs the `OPERANDS_PROVEN` instance; any other pair requickens the record to `OPERANDS_REGISTERS` for good.
+pub(crate) const OPERANDS_GUARDED: u8 = 7;
 
 script_handler! {
     /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
@@ -3888,15 +4015,28 @@ script_handler! {
         let generic: Handler = generated_row!(OP, ACC, FLAG_UNREAD);
         // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
         unsafe {
-            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 || FORM == OPERANDS_GUARDED } {
                 std::hint::assert_unchecked(Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register));
             }
-            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_PROVEN } {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_PROVEN || FORM == OPERANDS_GUARDED } {
                 std::hint::assert_unchecked(Operand(i.c).kind() == Some(quench_runtime::bytecode::OperandKind::Register));
             }
             if const { FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
                 std::hint::assert_unchecked(Operand(i.c).kind() == Some(quench_runtime::bytecode::OperandKind::Constant));
             }
+        }
+        // The guarded form: each register's int32 tag is tested here, once per execution; an int32 pair runs the
+        // proven instance over the same record, and any other pair requickens the record to its general form for
+        // good. The register kinds are asserted above.
+        if const { FORM == OPERANDS_GUARDED } {
+            // SAFETY: both operands are registers (asserted above).
+            let (left, right) = unsafe { (Operand(i.b).register_index().unwrap_unchecked(), Operand(i.c).register_index().unwrap_unchecked()) };
+            if r.int(left).is_some() && r.int(right).is_some() {
+                sibling!(operator_row::<OP, ACC, OPERATOR, OPERANDS_PROVEN> as Handler, r, ip, view)
+            }
+            let general: Handler = operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS>;
+            requicken(ip, general);
+            sibling!(general, r, ip, view)
         }
         let (left, right) = (Operand(i.b), Operand(i.c));
         let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 || FORM == OPERANDS_PROVEN_INT32 } {

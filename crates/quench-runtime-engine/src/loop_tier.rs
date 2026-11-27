@@ -399,12 +399,14 @@ pub(crate) fn loop_compile_in_lane(
         .filter(|array| array.field.is_none())
         .filter_map(|array| machine.typed_array_kind(r.get(array.register)).map(|kind| (array.register, kind))).collect();
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
+    let typed_rows: Vec<_> = (region.header as usize..=region.backedge as usize)
+        .map(|pc| own.and_then(|view| crate::dispatch_fast::typed_element_kind(view, pc))).collect();
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
     // A construction site's plan, where the region may keep its receiver as its field values.
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
-    let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds,
+    let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds, typed_rows: &typed_rows,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap_reads().memory_policy();

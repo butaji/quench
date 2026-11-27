@@ -135,6 +135,9 @@ pub(crate) struct BodySpec<'a> {
     /// header: which variant of row an arithmetic or comparison site takes (`variant_of`) and whether it is
     /// widened. Empty where nothing was recorded.
     pub(crate) kinds: &'a [OperandKinds],
+    /// The typed array kind each spanned instruction's interpreter record observed, from the header
+    /// (`Observation::typed_rows`); empty where nothing was recorded.
+    pub(crate) typed: &'a [Option<quench_runtime::tier_surface::TypedArrayKind>],
 }
 
 /// A class-typed parameter's prototype as the entry observed it: the parameter's register, the receiver's exact shape
@@ -269,6 +272,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate().map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row }).collect();
     super::exact::promote(function, &spec.known.program.constants, &stitched.origins, &mut rows);
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
+    typed_rows(region, &stitched.origins, spec.typed, &mut rows);
     let seen = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
     feedback_admits(&mut decoded, &kinds, spec.known.fields);
@@ -361,6 +365,24 @@ fn name_process_statics(row: &mut Planned) -> Result<(), String> {
         *free = Some((hole as u8, symbol));
     }
     Ok(())
+}
+
+/// An element row no loop entry proves (`Heap::Index`, `Heap::Store` with no entry hole) whose interpreter
+/// record observed a native typed kind becomes that kind's typed row, which proves the array's view for
+/// the kind on each access (`TYPED_INDEX_ROW`, `TYPED_STORE_ROW` without entry) instead of dispatching on it.
+fn typed_rows(region: &LoopRegion, origins: &[super::super::lane_unit::Origin], typed: &[Option<quench_runtime::tier_surface::TypedArrayKind>], rows: &mut [Decoded]) {
+    for (row, origin) in rows.iter_mut().zip(origins) {
+        let super::super::lane_unit::Origin::Caller(pc) = origin else { continue };
+        let Some(Some(kind)) = typed.get((*pc - region.header) as usize) else { continue };
+        if row.hole != 0 || quench_runtime::staged::typed_elements::NativeKind::new(*kind).is_none() { continue; }
+        row.heap = match row.heap {
+            // An integer kind's read delivers a double (`TYPED_INDEX_ROW`'s Float destination), which an index or
+            // bitwise use would convert back: only a float kind's read takes the typed row.
+            Some(Heap::Index) if matches!(kind, quench_runtime::tier_surface::TypedArrayKind::Float64 | quench_runtime::tier_surface::TypedArrayKind::Float32) => Some(Heap::TypedIndex(*kind as u8)),
+            Some(Heap::Store) => Some(Heap::TypedStore(*kind as u8)),
+            other => other,
+        };
+    }
 }
 
 /// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):

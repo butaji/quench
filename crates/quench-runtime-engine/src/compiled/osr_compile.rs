@@ -350,7 +350,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     if !base { return base_only.then_some(None); }
     if region.inlining.is_some() { return Some(None); }
     let registers = known.program.function(function as usize).registers;
-    let spec = BodySpec { function, registers, known, realm: Some(calls.realm), widened, seen: observation.entry_types, kinds: observation.operand_kinds };
+    let spec = BodySpec { function, registers, known, realm: Some(calls.realm), widened, seen: observation.entry_types, kinds: observation.operand_kinds, typed: observation.typed_rows };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
     let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return Some(None) };

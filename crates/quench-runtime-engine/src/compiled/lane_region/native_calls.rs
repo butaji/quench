@@ -84,7 +84,7 @@ impl Inline {
     /// Whether the operation searches an array's elements (`includes`, `indexOf`): its
     /// receiver's view is hoisted around a loop like a store's (`Lowering::element_search`).
     const fn searches(self) -> bool {
-        matches!(self, Self::Builtin(Builtin::Includes | Builtin::IndexOf))
+        matches!(self, Self::Builtin(Builtin::Includes | Builtin::IndexOf | Builtin::At))
     }
 
     /// Whether the operation reads a flat string's units at an index (`charCodeAt`): its receiver's

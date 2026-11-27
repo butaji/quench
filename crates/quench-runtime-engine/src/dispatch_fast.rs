@@ -4508,6 +4508,17 @@ pub(crate) const fn element_typed_row(read: bool, index: u32) -> Handler {
     rows!(0 1 2 3 4 5 6 7 8)
 }
 
+/// The typed array kind the element record at `pc` of `view` observed, where its row is a typed
+/// element row (`requicken_typed`); `None` for any other record.
+pub(crate) fn typed_element_kind(view: &LaneView, pc: usize) -> Option<TypedArrayKind> {
+    if pc >= view.records.len() { return None; }
+    // SAFETY: `pc` names a record of the view.
+    let record = unsafe { &*view.records.base().add(pc) };
+    (is_typed_element_row(record.handler, true) || is_typed_element_row(record.handler, false))
+        // SAFETY: a typed element record's immediate is its native kind's index (`requicken_typed`).
+        .then(|| quench_runtime::staged::typed_elements::native_kind_at(unsafe { record.operand.imm }).kind)
+}
+
 /// Whether `handler` is a typed keyed read row (`read`) or write row, of any kind (`element_typed_row`).
 pub(crate) fn is_typed_element_row(handler: *const (), read: bool) -> bool {
     (0..TYPED_KIND_SITES.len() as u32).any(|index| element_typed_row(read, index) as *const () == handler)
@@ -17036,6 +17047,7 @@ pub(crate) fn derive_lane_view<'live>(
     }
     let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     let proven_counters = int_kinds.as_ref().map(|kinds| int_steps::prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating)).unwrap_or_default();
+    if let Some(kinds) = int_kinds.as_ref() { prove_compare_jumps(constants, &mut records, kinds, &mut int_speculating); }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -17366,11 +17378,12 @@ fn arithmetic_binary(instruction: WideInstruction) -> bool {
 /// Where the registers' int32 kinds (`kinds`) prove every register operand of a record with no
 /// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
 /// which reads them with no tag test; one that reads a speculative register is listed in
-/// `speculating` with its checked form (`LaneView::retire_int_speculation`).
+/// `speculating` with its checked form (`LaneView::retire_int_speculation`). Where the kinds prove no such
+/// operand, a register pair takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
 fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
     kinds: Option<&int_kinds::IntKinds>, speculating: &mut Vec<(u32, *const (), *const ())>) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
         ($acc:expr) => {
             generated_row!(quench_runtime::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
@@ -17444,6 +17457,16 @@ fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], 
                     speculating.push((pc as u32, proven_handler as *const (), handler as *const ()));
                 }
                 records[pc].handler = proven_handler as *const ();
+            }
+            // The guarded form, where the kinds prove neither register of a register pair: the same operator's
+            // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Not listed in
+            // `speculating`: its guard is the check, and its general form is the record's requicken target. A
+            // register and an int32 constant keep their int32 form, which tests one tag already.
+            macro_rules! guarded_at {
+                ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
+            }
+            if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && let Some(guarded_handler) = arithmetic_operators!(instruction.binary_operator(), guarded_at) {
+                records[pc].handler = guarded_handler as *const ();
             }
         } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
             records[pc].handler = strict_equality_row::<false> as Handler as *const ();
@@ -17620,6 +17643,29 @@ pub(super) fn proven_step_forms() -> [(Handler, Handler); 6] {
 /// The (checked, proven) pair whose checked form is `handler`.
 pub(super) fn checked_step(handler: *const ()) -> Option<(Handler, Handler)> {
     proven_step_forms().into_iter().find(|(checked, _)| *checked as *const () == handler)
+}
+
+/// The comparison jumps whose operands the int32 kinds prove (`lane_frame::proven_compare_jump`): each takes its proven
+/// instance, which reads its register operands untagged. One that reads a speculative register is listed in
+/// `speculating` with its formed instance (`LaneView::retire_int_speculation`), which it takes back once an update
+/// overflows that register. A register pair the kinds do not prove takes its guarded instance (`guarded_compare_jump`),
+/// which tests the tags once per execution. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
+fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
+    speculating: &mut Vec<(u32, *const (), *const ())>) {
+    use quench_runtime::bytecode::Operand;
+    let proven = |operand: Operand| operand.register_index().is_some_and(|register| kinds.proven(register));
+    let speculative = |operand: Operand| operand.register_index().is_some_and(|register| kinds.of(register) == int_kinds::Kind::Speculative);
+    for (pc, record) in records.iter_mut().enumerate() {
+        let (left, right) = (Operand(record.b), Operand(record.c));
+        let Some((proven_handler, formed)) = lane_frame::proven_compare_jump(record, constants, proven) else {
+            if let Some(guarded) = lane_frame::guarded_compare_jump(record) { record.handler = guarded as *const (); }
+            continue
+        };
+        if speculative(left) || speculative(right) {
+            speculating.push((pc as u32, proven_handler as *const (), formed as *const ()));
+        }
+        record.handler = proven_handler as *const ();
+    }
 }
 
 /// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the

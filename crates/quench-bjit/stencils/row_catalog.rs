@@ -247,8 +247,8 @@ macro_rules! catalog {
     /// operand hole 2 and the store's value hole 1. The entry proved the kind once, so no row tests it; an index past the
     /// count or a value no element converts leaves through EXIT0 with nothing written. `TYPED_LENGTH_ROW` reads the count
     /// the entry words hold (hole 1) as the destination's int32.
-    TYPED_INDEX_ROW: uses(Float, Unread, Src, Always) x TYPED_KINDS twin: kernel(typed_load) = Heap::TypedIndex(k) => k,
-    TYPED_STORE_ROW: uses(Unread, Src, Src, Always) x TYPED_KINDS twin: kernel(typed_store_f64) = Heap::TypedStore(k) => k,
+    TYPED_INDEX_ROW: uses(Float, Unread, Src, Kept) x TYPED_KINDS twin: kernel(typed_load) = Heap::TypedIndex(k) => k,
+    TYPED_STORE_ROW: uses(Unread, Src, Src, Kept) x TYPED_KINDS twin: kernel(typed_store_f64) = Heap::TypedStore(k) => k,
     TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always) twin: kernel(typed_length) = Heap::TypedLength,
     /// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
     /// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.

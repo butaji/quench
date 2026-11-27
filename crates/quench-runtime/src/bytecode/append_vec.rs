@@ -182,6 +182,7 @@ impl<T> Deref for AppendVec<T> {
 }
 
 impl<T> std::ops::DerefMut for AppendVec<T> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
         self.0.get_mut().as_mut_slice()
     }

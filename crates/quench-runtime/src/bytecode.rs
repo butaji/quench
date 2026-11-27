@@ -1937,6 +1937,7 @@ impl std::ops::Deref for FunctionSlot {
 }
 
 impl std::ops::DerefMut for FunctionSlot {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Function {
         // A change to a record still running unlowered makes it the compiled one.
         self.settle_tier0();
@@ -3897,6 +3898,7 @@ impl RopeText {
 
 impl std::ops::Deref for RopeText {
     type Target = str;
+    #[inline(always)]
     fn deref(&self) -> &str {
         self.flat.get_or_init(|| {
             let units = self.string.flat_unkept();
@@ -3928,6 +3930,7 @@ impl KeptText {
 
 impl std::ops::Deref for KeptText {
     type Target = str;
+    #[inline(always)]
     fn deref(&self) -> &str {
         // SAFETY: `new` checked that the range holds UTF-8, and kept bytes never change.
         unsafe { std::str::from_utf8_unchecked(&(*self.bytes).as_ref()[self.range.clone()]) }
@@ -4003,6 +4006,7 @@ impl SourceText {
 
 impl std::ops::Deref for SourceText {
     type Target = str;
+    #[inline(always)]
     fn deref(&self) -> &str {
         match self {
             Self::Shared(text) => text,

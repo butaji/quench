@@ -420,7 +420,12 @@ impl Vm {
             shapes: &[],
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[] };
+        // The typed kind each element record observed (`dispatch_fast::typed_element_kind`), from the region's header.
+        let typed: Vec<_> = self.programs.views_in_lane(self.active_program).and_then(|views| views.get(function as usize))
+            .and_then(quench_runtime::vm::program_store::derived_lane_view)
+            .map(|view| (region.header as usize..=region.backedge as usize).map(|pc| crate::dispatch_fast::typed_element_kind(view, pc)).collect())
+            .unwrap_or_default();
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[], typed: &typed };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
@@ -516,7 +521,7 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<Ima
         program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
         invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
-    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
+    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[], typed: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
     let calls = image_calls(&built)?;
