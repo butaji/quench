@@ -11,12 +11,8 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{InitializerConstant, InitializerStore, InitializerValue};
-use crate::aot_image::symbols::{
-    HeapValueRecipe, ShapeRecipe, ATTRIBUTE_CONFIGURABLE, ATTRIBUTE_ENUMERABLE, ATTRIBUTE_WRITABLE,
-};
-
-/// The attribute bits of a field an initializer's store adds: a plain data property.
-pub(crate) const ADDED_FIELD: u8 = ATTRIBUTE_WRITABLE | ATTRIBUTE_ENUMERABLE | ATTRIBUTE_CONFIGURABLE;
+use crate::aot_image::symbols::{HeapValueRecipe, ShapeRecipe};
+pub(crate) use crate::aot_image::symbols::ADDED_FIELD;
 
 /// By `(function, pc)` of each construction in `unit` (its caller's or an inlined frame's), the
 /// plan the image keeps its receiver by, its callee and shape interned in `symbols`.

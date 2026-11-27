@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::GuardLayout as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::ClassLayout as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -37,6 +37,8 @@ pub(crate) const NO_SHAPE: u32 = u32::MAX;
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;
 pub(crate) const ATTRIBUTE_ENUMERABLE: u8 = 1 << 1;
 pub(crate) const ATTRIBUTE_CONFIGURABLE: u8 = 1 << 2;
+/// The attribute bits of a field an initializer's store adds: a plain data property.
+pub(crate) const ADDED_FIELD: u8 = ATTRIBUTE_WRITABLE | ATTRIBUTE_ENUMERABLE | ATTRIBUTE_CONFIGURABLE;
 
 /// What a run-time address in image code addresses. Class A/B variants mirror `RelocKind`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -75,6 +77,9 @@ pub(crate) enum Symbol {
     /// The layout id of the objects of a field guard key's construction (`guarded_layout`):
     /// `NO_LAYOUT` where the guard does not resolve.
     GuardLayout(u32),
+    /// The layout id of the instances of constructor `key` (a function id, `class_layout`): `NO_LAYOUT`
+    /// where the class has no fixed instance shape at link.
+    ClassLayout(u32),
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
@@ -186,7 +191,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 13] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 14] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -200,6 +205,7 @@ const KEYED: [(u32, fn(u32) -> Symbol); 13] = [
     (RelocKind::HolderLink as u32, Symbol::HolderLink),
     (RelocKind::HolderValue as u32, Symbol::HolderValue),
     (RelocKind::GuardLayout as u32, Symbol::GuardLayout),
+    (RelocKind::ClassLayout as u32, Symbol::ClassLayout),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
@@ -223,6 +229,7 @@ impl Symbol {
             Self::HolderLink(_) => RelocKind::HolderLink as u32,
             Self::HolderValue(_) => RelocKind::HolderValue as u32,
             Self::GuardLayout(_) => RelocKind::GuardLayout as u32,
+            Self::ClassLayout(_) => RelocKind::ClassLayout as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -235,7 +242,7 @@ impl Symbol {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
-                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) => key,
+                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) | Self::ClassLayout(key) => key,
             Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
@@ -256,6 +263,7 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
         Symbol::HolderLink(key) => Some(holder_constant(image, vm, key).map_or(NO_LINK, |(_, link, _)| u64::from(link))),
         Symbol::HolderValue(key) => Some(holder_constant(image, vm, key).map_or(Value::UNDEFINED, |(_, _, value)| value).to_bits()),
         Symbol::GuardLayout(key) => Some(u64::from(guarded_layout(image, vm, key).unwrap_or(NO_LAYOUT))),
+        Symbol::ClassLayout(class) => Some(u64::from(class_layout(vm, class).unwrap_or(NO_LAYOUT))),
         _ => None,
     }
 }
@@ -302,16 +310,28 @@ fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
         Some(prototype) => heap_value(image, vm, prototype)?,
         None => Value::NULL,
     };
+    let constructor = match recipe.constructor {
+        Some(constructor) => Some(heap_value(image, vm, constructor)?),
+        None => None,
+    };
+    let fields = recipe.fields.iter()
+        .map(|&(atom, attributes)| Some((vm.intern_atom(image.atoms.get(atom as usize)?), attributes)))
+        .collect::<Option<Vec<_>>>()?;
+    Some(built_shape(vm, prototype, constructor, fields))
+}
+
+/// The shape an object of `prototype` takes once a construction by `constructor` (`constructed_root_shape`) has made
+/// it and `fields` (atoms with their attribute bits) are added in order: the one rule every constructed shape
+/// of a recipe, and of a class's instances (`class_layout`), derives from.
+fn built_shape(vm: &mut Vm, prototype: Value, constructor: Option<Value>, fields: impl IntoIterator<Item = (quench_runtime::bytecode::Atom, u8)>) -> u32 {
     let mut shape = Vm::empty_object(prototype).shape();
-    if let Some(constructor) = recipe.constructor {
-        let constructor = heap_value(image, vm, constructor)?;
+    if let Some(constructor) = constructor {
         shape = vm.constructed_root_shape(shape, constructor);
     }
-    for &(atom, attributes) in recipe.fields.iter() {
-        let atom = vm.intern_atom(image.atoms.get(atom as usize)?);
+    for (atom, attributes) in fields {
         shape = vm.transition_data_property_shape(shape, PropertyKey::string(atom), data_attributes(attributes));
     }
-    Some(shape)
+    shape
 }
 
 /// The link a holder that does not resolve names (`Symbol::HolderLink`): bits outside the link
@@ -494,6 +514,26 @@ fn holder_shape(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u16) -> Option
     let (shape, at) = found?;
     let ty = vm.tagged_slot_type(shape, slot)?;
     (at == usize::from(slot)).then_some((shape, slot, ty))
+}
+
+/// The layout id of the instances of constructor `class` (`Symbol::ClassLayout`), in the program `vm` runs: the
+/// shape its initializer stores make of the constructed object (`constructions::image_plan`'s recipe, the shape the
+/// VM's construct plan of the closure makes), under its prototype's link, as `guarded_layout` interns it. The
+/// construction's fields are the initializer's stores, each once; a body whose stores are not an initializer, or
+/// whose fields may stay inline (`guarded_layout`), has no fixed instance shape here, so `None`.
+pub(crate) fn class_layout(vm: &mut Vm, class: u32) -> Option<u32> {
+    let names = {
+        let program = vm.programs.residual(vm.active_program)?;
+        let stores = program.function_get(class as usize)?.initializer_stores(&program.constants)?;
+        stores.iter().map(|store| program.atoms.get(store.atom as usize).map(Box::<str>::from)).collect::<Option<Vec<_>>>()?
+    };
+    if names.iter().enumerate().any(|(index, name)| names[..index].contains(name)) { return None; }
+    if names.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
+    let closure = closure_of(vm, class)?;
+    let prototype = prototype_of(vm, class)?;
+    let fields = names.iter().map(|name| (vm.intern_atom(name), ADDED_FIELD)).collect::<Vec<_>>();
+    let shape = built_shape(vm, prototype, Some(closure), fields);
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).arena_layout(shape))
 }
 
 /// The data attributes of a field's attribute bits.
