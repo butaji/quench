@@ -212,7 +212,7 @@ impl Vm {
     /// entry and one shape are read; anything else, an empty entry included, answers `false`.
     #[inline(always)]
     pub fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
-        let Some(record_id) = receiver.direct_object_index() else {
+        let Some(record_id) = receiver.direct_object_index().map(|r| self.heap.record_id(r)) else {
             return false;
         };
         let entry = self.field_cache_entry(site);
@@ -231,7 +231,7 @@ impl Vm {
     /// as its defines would add them; `false` where an append finds no room, leaving the rest
     /// to `initialize_object_properties`, which replaces whatever storage it holds.
     fn append_preshaped_fields(&mut self, this: Value, index: usize) -> bool {
-        let Some(record_id) = this.direct_object_index() else {
+        let Some(record_id) = this.direct_object_index().map(|r| self.heap.record_id(r)) else {
             return false;
         };
         let entry = &self.preshaped_receivers[index];

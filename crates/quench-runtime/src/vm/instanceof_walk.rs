@@ -16,7 +16,7 @@ impl Vm {
             return Some(holds);
         }
         let mut object = match value.direct_object_index() {
-            Some(record) => self.heap.object_record_by_id(record),
+            Some(record) => self.heap.object_record_by_id(self.heap.record_id(record)),
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
             // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
             None => self.ordinary_link_holder(value)?,
@@ -63,7 +63,7 @@ impl Vm {
         }
         // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        Some((object, ProtoLink::object_record(prototype.direct_object_index()?)?.bits(), slot))
+        Some((object, ProtoLink::object_record(self.heap.record_id(prototype.direct_object_index()?))?.bits(), slot))
     }
 
     /// The encoded `prototype` link `instanceof constructor` tests a chain for, where the steady case proved

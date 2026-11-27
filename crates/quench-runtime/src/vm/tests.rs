@@ -22960,7 +22960,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             let marked = |vm: &Vm, object: Value| {
                 let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-                let id = object.direct_object_index().unwrap() as usize;
+                let id = vm.heap.record_id(object.direct_object_index().unwrap()) as usize;
                 let (blocks, count) = vm.heap.native_object_mark_blocks();
                 let block = id / layout.mark_records_per_block;
                 assert!(block < count);
