@@ -99,7 +99,7 @@ impl Vm {
             return None;
         }
         self.heap.mark_prototype(prototype);
-        let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
+        let watch = crate::heap::watch_prototype_values(self.heap.object_ref(prototype)?.exact_shape())?;
         let hint = GetterHint { guard, atom, holder: prototype, slot, remakes, watch };
         if let Some(index) = owned {
             self.holder_hints.getter[usize::from(index)] = hint;
@@ -225,7 +225,7 @@ impl Vm {
 
     pub(super) fn own_constant_of(&self, atom: Atom) -> Option<crate::vm::engine_types::OwnConstant> {
         let hint = self.holder_hints.own.iter().find(|hint| hint.atom == atom && hint.watch.is_published())?;
-        let shape = self.heap.object(hint.holder)?.exact_shape();
+        let shape = self.heap.object_ref(hint.holder)?.exact_shape();
         Some(crate::vm::engine_types::OwnConstant { object: hint.holder, shape, value: hint.value })
     }
 }
