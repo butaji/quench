@@ -212,6 +212,10 @@ setting! {
         /// `=report` lists them all at exit instead, `=deopt+helper-call` stops at those kinds
         /// only (`crate::fallback`). Not an experiment: the development check that keeps them out.
         StrictFallback = "strict-fallback",
+        /// At exit, how often each fact cell was retired, with its ladder (`crate::fact_stats`).
+        FactStats = "fact-stats",
+        /// At exit, the bytes of each category with its role, truth or cache (`Vm::report_byte_census`).
+        ByteCensus = "byte-census",
     }
 }
 

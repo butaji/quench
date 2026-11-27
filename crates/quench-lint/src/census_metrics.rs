@@ -112,6 +112,29 @@ pub fn hand_lowerings(text: &str) -> usize {
         .map(|line| line.matches("object_slots::emit(").count() + line.matches("emit_js_guard(").count()).sum()
 }
 
+fn code_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.lines().filter(|line| !line.trim_start().starts_with("//"))
+}
+
+/// Second rows for one fact: staged functions named for the fact they assume (`_within`, `_proved`, `_known`).
+pub fn variant_rows(text: &str) -> usize {
+    const SUFFIXES: [&str; 3] = ["_within", "_proved", "_known"];
+    code_lines(text).filter_map(|line| line.split("fn ").nth(1)?.split(['<', '(']).next())
+        .filter(|name| SUFFIXES.iter().any(|suffix| name.ends_with(suffix))).count()
+}
+
+/// Calls from staged rows into helpers no tier specializes.
+pub fn opaque_helper_calls(text: &str) -> usize {
+    const OPAQUE: [&str; 4] = [".vm_step(", ".call_out(", ".call_helper(", ".call_native("];
+    code_lines(text).map(|line| OPAQUE.iter().map(|call| line.matches(call).count()).sum::<usize>()).sum()
+}
+
+/// Hand-written raw memory lines in the stencils, Wasm and RegExp included (both still lack a staged form).
+pub fn bjit_stencil_lines(text: &str) -> usize {
+    const RAW: [&str; 8] = ["read_volatile", "write_volatile", ".read()", ".write(", "ptr::read", "ptr::write", "as *const", "as *mut"];
+    code_lines(text).filter(|line| RAW.iter().any(|raw| line.contains(raw))).count()
+}
+
 pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }

@@ -15,6 +15,11 @@ impl Heap {
         self.properties.subscribe_shape(shape, code)
     }
 
+    /// The bytes of the facts held in this heap: the slot and shape readers, and the layouts code holds.
+    pub(crate) fn dependency_bytes(&self) -> usize {
+        self.properties.dependency_bytes() + self.dependencies.layout_hold_bytes()
+    }
+
     /// The slot's observation and its shape's departures together (tests of both tables).
     #[cfg(test)]
     pub(crate) fn subscribe_slot(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
