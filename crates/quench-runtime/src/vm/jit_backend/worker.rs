@@ -4,7 +4,7 @@
 //! lane body took 300 ms the first time and each of its four recompiles 60-90 ms, which made
 //! its first `--jit` iteration six times slower than the interpreter's (x86_64, 2026-11-07).
 
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender};
 use std::task::Poll;
 
 type Work = Box<dyn FnOnce() + Send>;
@@ -12,16 +12,20 @@ type Work = Box<dyn FnOnce() + Send>;
 /// Work handed to the code generator's thread, whose result arrives later.
 pub struct Pending<T> {
     result: Receiver<T>,
+    /// Whether a poll has passed: the next one joins the work.
+    polled: std::cell::Cell<bool>,
 }
 
 impl<T> Pending<T> {
-    /// The result once the work has run; `Ready(None)` if the thread is gone.
+    /// The result at the program's second poll, which waits for the work; `Ready(None)` if the
+    /// thread is gone. The first poll is pending however far the work got, so the code installs at
+    /// the same point of the program on every run: what a run does, and so its peak, is a function
+    /// of its input, not of the two threads' timing.
     pub fn poll(&self) -> Poll<Option<T>> {
-        match self.result.try_recv() {
-            Ok(result) => Poll::Ready(Some(result)),
-            Err(TryRecvError::Empty) => Poll::Pending,
-            Err(TryRecvError::Disconnected) => Poll::Ready(None),
+        if !self.polled.replace(true) {
+            return Poll::Pending;
         }
+        self.result.recv().map_or(Poll::Ready(None), |result| Poll::Ready(Some(result)))
     }
 }
 
@@ -124,7 +128,7 @@ pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 's
     // fixed-work measurement (`QUENCH_DEV=sync-compile`) sees the code a run installs.
     if cfg!(test) || crate::trace::Dev::SyncCompile.on() {
         job();
-        return Pending { result };
+        return Pending { result, polled: std::cell::Cell::new(true) };
     }
     let queue = QUEUE.get_or_init(|| {
         let (queue, jobs) = std::sync::mpsc::channel::<Work>();
@@ -144,7 +148,7 @@ pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 's
         }
         None => job(),
     }
-    Pending { result }
+    Pending { result, polled: std::cell::Cell::new(false) }
 }
 
 /// The code generator's loop. Its large scratch lives in its own arena (`quench_alloc::adopt_scratch_thread`),
@@ -154,16 +158,12 @@ pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 's
 fn serve(jobs: &Receiver<Work>) {
     quench_alloc::adopt_scratch_thread();
     loop {
-        match jobs.try_recv() {
-            Ok(job) => job(),
-            Err(TryRecvError::Empty) => {
+        match jobs.recv() {
+            Ok(job) => {
+                job();
                 release_compile_scratch();
-                match jobs.recv() {
-                    Ok(job) => job(),
-                    Err(_) => return,
-                }
             }
-            Err(TryRecvError::Disconnected) => return,
+            Err(_) => return,
         }
     }
 }
@@ -171,6 +171,7 @@ fn serve(jobs: &Receiver<Work>) {
 /// Returns the code generator's idle pages to the system (its held compile context first, the arena's largest
 /// tenant), and the code zone's batched writer-view retirements.
 fn release_compile_scratch() {
+    crate::compile::compile_phase_boundary(crate::compile::CompilePhase::NativeCodeDone);
     super::release_compile_context();
     quench_alloc::release_empty_pages();
     // Every free block of a page or more, not only those of 64 KiB: the small classes a kept code vector pins held

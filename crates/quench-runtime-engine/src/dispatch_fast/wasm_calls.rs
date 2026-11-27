@@ -284,7 +284,7 @@ impl WasmActivation for LaneCall<'_> {
 
     fn push_pending_call(&mut self, caller: usize, guard: quench_runtime::stack::GuestCallGuard) {
         // SAFETY: `ip` is a record of the active view.
-        let call_pc = unsafe { self.ip.offset_from((*self.cx).base) } as usize;
+        let call_pc = unsafe { record_pc(self.cx, self.ip) };
         let vm = unsafe { vm(self.cx) };
         vm.frames[caller].pc = call_pc + 1;
         vm.frames[caller].pc_is_resume = true;

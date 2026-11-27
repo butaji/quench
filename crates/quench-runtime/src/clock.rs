@@ -125,14 +125,6 @@ pub fn monotonic_ns() -> Option<f64> {
     }
 }
 
-/// Whether engine policies read the work clock instead of wall time (`QUENCH_DEV=work-clock`,
-/// implied by `virtual-clock`): GC old-generation sizing charges work units, so a run's
-/// collections do not depend on host speed or timing jitter.
-pub fn is_work() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| is_virtual() || crate::trace::Dev::WorkClock.on())
-}
-
 /// Work done by every heap in the process, in typical-host nanoseconds (`now_work`).
 static WORK: AtomicU64 = AtomicU64::new(0);
 

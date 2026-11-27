@@ -23,7 +23,7 @@ pub(crate) fn window_scope(cx: *mut LaneContext, r: Registers, ip: Ip, at_site: 
     let script = activation.script().filter(|script| script.environment)?;
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the running
     // function's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, ip) as usize) };
     let body = code.function(activation.function() as usize);
     // SAFETY: the activation's window follows its registers (`activate_environment_in_lane`).
     let entries = unsafe { r.0.add(usize::from(body.registers)) };

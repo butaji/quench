@@ -31,13 +31,6 @@ script_handler! {
     }
 }
 
-/// The pc of the record at `ip` in the running view.
-#[inline(always)]
-fn record_pc(cx: *mut LaneContext, ip: Ip) -> usize {
-    // SAFETY: the record lies in the running view.
-    unsafe { ip.offset_from((*cx).base) as usize }
-}
-
 /// The suspension a row on the lane's frame makes of the record at `ip` (`suspending`), in place
 /// as `suspender` says: the frame resumes at this record (a `yield*` step,
 /// `Suspending::again`) or after it, with the value it is resumed with in the row's
@@ -49,7 +42,8 @@ fn record_pc(cx: *mut LaneContext, ip: Ip) -> usize {
 #[inline(always)]
 pub(crate) fn lane_suspend_at(cx: *mut LaneContext, r: Registers, ip: Ip, suspender: Suspender,
     suspending: Suspending<u64>) -> Resumed {
-    let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
+    // SAFETY: the record lies in the running view.
+    let at = (unsafe { record_pc(cx, ip) } + usize::from(!suspending.again), suspending.destination);
     let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);
     match suspender {
         Suspender::Window => {

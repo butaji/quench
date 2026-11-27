@@ -27,7 +27,7 @@ pub(crate) fn settle_raised_window(cx: *mut LaneContext, record: Ip) -> Option<I
     }
     // SAFETY: the context's program outlives the lane run, and `record` is one of the running
     // function's records.
-    let (code, call_pc) = unsafe { (&*(*cx).code, record.offset_from((*cx).base) as u32) };
+    let (code, call_pc) = unsafe { (&*(*cx).code, record_pc(cx, record) as u32) };
     if code.function(activation.function() as usize).handler_at(call_pc).is_some() {
         return None;
     }

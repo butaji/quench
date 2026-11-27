@@ -80,7 +80,7 @@ pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCall
         if unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view).is_some_and(|own| own.warming()) { caller.recount_late_calls(); return false; }
         if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_none() { return false; }
         caller.respecialize();
-        let (pc, region) = (unsafe { ip.offset_from(caller.records()) } as u32, unsafe { (*cx).region_payload } != 0);
+        let (pc, region) = (unsafe { pc_in_view(caller.records(), ip) } as u32, unsafe { (*cx).region_payload } != 0);
         return caller.loops.iter().filter(|site| region && (site.header..=site.backedge).contains(&pc))
             .fold(false, |left, site| site.tier.borrow_mut().late_callee(site.tiers) | left);
     } else if caller.late_calls_settled() { unsafe { (*cx).late_settled = ip } }

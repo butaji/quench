@@ -82,7 +82,7 @@ const FINGERPRINTS: &[Fingerprint] = &[
     },
     // SSOT 1 (TOD-2231): `===`/`==` decided by hand beside the staged `generic::decide` row: the
     // identical-but-not-NaN test, the `null == undefined` pair, the short-string record compare, and
-    // the bodies that hold them.
+    // the bodies that held them (now thin delegators to the staged rows, so no longer fingerprinted).
     Fingerprint {
         name: "equality",
         home: &["quench-runtime/src/staged/generic.rs"],
@@ -90,8 +90,6 @@ const FINGERPRINTS: &[Fingerprint] = &[
             &["Relation::NotEqual", "CANONICAL_NAN"],
             &["Binary::And, left_nullish, right_nullish"],
             &["TAG_SHORT", "Relation::Equal"],
-            &["fn equality_words("],
-            &["fn number_strict_equality("],
         ],
         also: &[],
     },

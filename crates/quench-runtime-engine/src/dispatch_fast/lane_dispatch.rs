@@ -16,7 +16,7 @@ pub(crate) fn dispatch_in_lane(cx: *mut LaneContext, mut ip: Ip) -> Ip {
             // the lane record keeps only the handler.
             let function = running_function_in_lane(cx);
             let code = unsafe { &*(*cx).code };
-            let pc = unsafe { ip.offset_from((*cx).base) as usize };
+            let pc = unsafe { record_pc(cx, ip) as usize };
             if let Some(body) = code.function_get(function as usize)
                 && let Some(packed) = body.code.get(pc)
             {
@@ -38,6 +38,11 @@ pub(crate) fn dispatch_in_lane(cx: *mut LaneContext, mut ip: Ip) -> Ip {
         );
         let (ip_next, left) = exited(next);
         if left {
+            // A record of an inlined view leaves it first: the general path runs the function's own
+            // record, in the frames an inlined callee's makes (`inlined_views::leave`).
+            if super::inlined_views::may_be_inlined(ip_next) {
+                return super::inlined_views::leave_at_exit(cx, ip_next);
+            }
             return ip_next;
         }
         ip = ip_next;

@@ -1616,6 +1616,9 @@ pub enum CompilePhase {
     /// A compiled program is complete and its encoding for the host's compile cache starts:
     /// the parser's and code generator's work is over, and the encoder's begins.
     Encoding,
+    /// The code generator's thread finished a compile: the lowering's and code generator's code
+    /// pages it touched are no run's working set.
+    NativeCodeDone,
 }
 
 /// What a compilation does at each `CompilePhase`, set once by the embedding.

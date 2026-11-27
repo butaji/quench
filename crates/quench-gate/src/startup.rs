@@ -43,11 +43,10 @@ const DEFAULT: &str = "default";
 /// The cases measured under callgrind, and the cases whose peak resident set is measured.
 const CASES: [&str; 3] = ["empty", "hello", "module"];
 const RSS_CASES: [&str; 2] = ["empty", "hello"];
-/// The V8-v7 suite (the `quench-bench/js-engine-benchmark` submodule), whose peak resident set per
-/// fixture is held in the bars' two modes: each fixture is `base.js`, the fixture and a runner that
+/// The V8-v7 suite (the `quench-bench/js-engine-benchmark` submodule; its fixtures are what its `run.js`
+/// loads), whose peak resident set per fixture is held in the bars' two modes: each fixture is `base.js`, the fixture and a runner that
 /// throws on a failed validation. The median of `V8_RUNS` runs, as file pages make one run noisy.
 const V8_SUITE: &str = "quench-bench/js-engine-benchmark/v8-v7";
-const V8_FIXTURES: [&str; 8] = ["richards", "deltablue", "crypto", "raytrace", "earley-boyer", "regexp", "splay", "navier-stokes"];
 const V8_MODES: [&str; 2] = [INTERPRETER, DEFAULT];
 const V8_RUNS: usize = 3;
 /// The fixtures whose touched text is held: the bench the plan works on (a cachegrind run of a
@@ -61,9 +60,6 @@ const TEXT: &str = "text_kb";
 const FUNCTIONS: usize = 200;
 /// A measurement more than this many percent over its ceiling fails.
 const OVER_PERCENT: u64 = 2;
-/// The over limit of a V8-v7 fixture's peak resident set: its default mode compiles on a background
-/// thread, and when that compile's scratch peaks against the run moves the peak 3-4% between runs.
-const V8_RSS_OVER_PERCENT: u64 = 5;
 /// A measurement more than this many percent under its ceiling fails, so the ceiling is lowered.
 const UNDER_PERCENT: u64 = 10;
 /// `1` rewrites the budget file from the measurements instead of failing on them.
@@ -91,14 +87,9 @@ enum Judgement {
 }
 
 /// Judges `measured` against `ceiling` with integer arithmetic, so the limits are exact.
-/// How many percent over its ceiling a measurement may go.
-fn over_percent(key: &Key) -> u64 {
-    if key.0.starts_with("v8-") && key.2 == RSS { V8_RSS_OVER_PERCENT } else { OVER_PERCENT }
-}
-
-fn judge(measured: u64, ceiling: Option<u64>, over: u64) -> Judgement {
+fn judge(measured: u64, ceiling: Option<u64>) -> Judgement {
     let Some(ceiling) = ceiling else { return Judgement::Unrecorded };
-    if measured * 100 > ceiling * (100 + over) {
+    if measured * 100 > ceiling * (100 + OVER_PERCENT) {
         Judgement::Over
     } else if measured * 100 < ceiling * (100 - UNDER_PERCENT) {
         Judgement::Under
@@ -126,11 +117,10 @@ fn settle(measured: &Ceilings, ceilings: &Ceilings, write: bool) -> Settled {
         let ceiling = ceilings.get(key).copied();
         next.insert(key.clone(), ceiling.map_or(value, |ceiling| ceiling.min(value)));
         let name = label(key);
-        let over = over_percent(key);
-        match (judge(value, ceiling, over), ceiling) {
+        match (judge(value, ceiling), ceiling) {
             (Judgement::Over, Some(ceiling)) => {
                 let percent = (value as f64 - ceiling as f64) / ceiling as f64 * 100.0;
-                failures.push(format!("{name}: {value} is {percent:.1}% over its ceiling {ceiling} (limit {over}%)"));
+                failures.push(format!("{name}: {value} is {percent:.1}% over its ceiling {ceiling} (limit {OVER_PERCENT}%)"));
             }
             (Judgement::Under, Some(_)) if !write => failures.push(format!("{name}: {value} is more than {UNDER_PERCENT}% under its ceiling; lower the ceiling to {value}")),
             (Judgement::Unrecorded, _) if !write => failures.push(format!("{name}: {value} with no ceiling in {BUDGETS} (record it with {DEBT_WRITE}=1)")),
@@ -214,13 +204,19 @@ fn write_scripts(scratch: &Path) -> Result<BTreeMap<&'static str, PathBuf>, Stri
     Ok(BTreeMap::from([("empty", empty), ("hello", hello), ("module", main)]))
 }
 
+/// The suite's fixtures, as its own `run.js` loads them after `base.js`.
+fn v8_fixtures(run: &str) -> Vec<&str> {
+    run.lines().filter_map(|line| line.trim().strip_prefix("load('")?.strip_suffix("');")?.strip_suffix(".js")).filter(|name| *name != "base").collect()
+}
+
 /// The V8-v7 fixtures as runnable scripts in `scratch`, by case name (`v8-<fixture>`).
 fn write_v8_scripts(root: &Path, scratch: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let suite = root.join(V8_SUITE);
     let read = |name: &str| fs::read_to_string(suite.join(name))
         .map_err(|error| format!("{}: {error} (git submodule update --init {V8_SUITE})", suite.join(name).display()));
     let base = read("base.js")?;
-    V8_FIXTURES.iter().map(|fixture| {
+    let run = read("run.js")?;
+    v8_fixtures(&run).into_iter().map(|fixture| {
         let path = scratch.join("scripts").join(format!("v8-{fixture}.js"));
         write_file(&path, &format!("{base}\n{}\n{V8_RUNNER}", read(&format!("{fixture}.js"))?))?;
         Ok((format!("v8-{fixture}"), path))
@@ -333,8 +329,9 @@ unsafe extern "C" {
     fn wait4(pid: c_int, status: *mut c_int, options: c_int, rusage: *mut Rusage) -> c_int;
 }
 
-/// Set on a re-run of this gate binary that measures one child: the file to write its peak to.
-const RSS_OUT: &str = "QUENCH_GATE_RSS_OUT";
+/// The first argument of a re-run of this gate binary that measures one child (`measure_child`): then the file to
+/// write its peak to and the command.
+const MEASURE_RSS: &str = "--measure-rss";
 
 /// The peak resident set of one run of `host mode script`, in kilobytes. A child's `ru_maxrss`
 /// starts at the high-water mark of the process that spawned it (Linux carries it through `exec`),
@@ -345,7 +342,7 @@ fn peak_rss_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch:
     let out = scratch.join("peak_rss_kb");
     let gate = env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
     let mut command = config.command(gate);
-    command.env(RSS_OUT, &out).arg(host).args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
+    command.arg(MEASURE_RSS).arg(&out).arg(host).args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
     environment(&mut command, mode, scratch);
     let status = command.status().map_err(|error| format!("cannot run {}: {error}", host.display()))?;
     if !status.success() {
@@ -355,12 +352,15 @@ fn peak_rss_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch:
     text.trim().parse().map_err(|error| format!("{}: {error}", out.display()))
 }
 
-/// In a copy of this binary started by `peak_rss_kb` (`RSS_OUT` set): runs the arguments as a
-/// command, writes its `ru_maxrss` (kilobytes) to the `RSS_OUT` file, and exits with its status.
+/// In a copy of this binary started by `peak_rss_kb` (`--measure-rss OUT COMMAND...`): runs the command, writes its
+/// `ru_maxrss` (kilobytes) to `OUT`, and exits with its status.
 pub fn measure_child() -> Option<std::process::ExitCode> {
-    let out = env::var_os(RSS_OUT)?;
-    let args = env::args_os().skip(1).collect::<Vec<_>>();
-    let child = Command::new(&args[0]).args(&args[1..]).env_remove(RSS_OUT).spawn();
+    let mut args = env::args_os().skip(1);
+    if args.next()? != MEASURE_RSS {
+        return None;
+    }
+    let (out, command) = (args.next()?, args.collect::<Vec<_>>());
+    let child = Command::new(&command[0]).args(&command[1..]).spawn();
     let Ok(child) = child else { return Some(std::process::ExitCode::from(127)) };
     let (mut status, mut usage): (c_int, Rusage) = (0, Rusage::default());
     // SAFETY: `child` is an unwaited child of this process, and `status` and `usage` are valid
@@ -404,9 +404,13 @@ pub fn run(config: &Config) -> Verdict {
             if TEXT_FIXTURES.contains(&case.as_str()) {
                 measured.insert(key(&case, mode, TEXT), touched_text_kb(config, &host, mode, &script, &scratch, &sizes)?);
             }
-            let mut runs = (0..V8_RUNS).map(|_| peak_rss_kb(config, &host, mode, &script, &scratch)).collect::<Result<Vec<_>, _>>()?;
-            runs.sort_unstable();
-            measured.insert(key(&case, mode, RSS), runs[V8_RUNS / 2]);
+            // The default mode's peak moves 3-4% with its background compile's timing: no ceiling can hold it
+            // without a band, so its code creep is held by touched text and its peak by the scoreboard.
+            if mode == INTERPRETER {
+                let mut runs = (0..V8_RUNS).map(|_| peak_rss_kb(config, &host, mode, &script, &scratch)).collect::<Result<Vec<_>, _>>()?;
+                runs.sort_unstable();
+                measured.insert(key(&case, mode, RSS), runs[V8_RUNS / 2]);
+            }
         }
     }
     let _ = fs::remove_dir_all(&scratch);
@@ -436,6 +440,11 @@ mod tests {
 
     fn rows(entries: &[(&str, &str, &str, u64)]) -> Ceilings {
         entries.iter().map(|&(case, mode, metric, value)| (key(case, mode, metric), value)).collect()
+    }
+
+    #[test]
+    fn v8_fixtures_are_what_run_js_loads_after_base() {
+        assert_eq!(v8_fixtures("// x\nload('base.js');\nload('richards.js');\nload('earley-boyer.js');\n"), ["richards", "earley-boyer"]);
     }
 
     #[test]
@@ -474,15 +483,12 @@ mod tests {
 
     #[test]
     fn the_judge_draws_its_bands_exactly() {
-        assert_eq!(judge(1000, None, OVER_PERCENT), Judgement::Unrecorded);
-        assert_eq!(judge(1000, Some(1000), OVER_PERCENT), Judgement::Within);
-        assert_eq!(judge(1020, Some(1000), OVER_PERCENT), Judgement::Within);
-        assert_eq!(judge(1021, Some(1000), OVER_PERCENT), Judgement::Over);
-        assert_eq!(judge(900, Some(1000), OVER_PERCENT), Judgement::Within);
-        assert_eq!(judge(899, Some(1000), OVER_PERCENT), Judgement::Under);
-        assert_eq!(judge(1050, Some(1000), V8_RSS_OVER_PERCENT), Judgement::Within);
-        assert_eq!(over_percent(&key("v8-richards", DEFAULT, RSS)), V8_RSS_OVER_PERCENT);
-        assert_eq!(over_percent(&key("v8-richards", DEFAULT, TEXT)), OVER_PERCENT);
+        assert_eq!(judge(1000, None), Judgement::Unrecorded);
+        assert_eq!(judge(1000, Some(1000)), Judgement::Within);
+        assert_eq!(judge(1020, Some(1000)), Judgement::Within);
+        assert_eq!(judge(1021, Some(1000)), Judgement::Over);
+        assert_eq!(judge(900, Some(1000)), Judgement::Within);
+        assert_eq!(judge(899, Some(1000)), Judgement::Under);
     }
 
     #[test]

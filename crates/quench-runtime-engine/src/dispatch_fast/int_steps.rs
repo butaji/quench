@@ -50,7 +50,7 @@ pub(crate) fn retired_step(cx: *mut LaneContext, site: &LoopSite, update: Ip, te
     let Some(view) = site_view(cx, site) else { return fused };
     let Some((_, proven)) = checked_step(fused as *const ()) else { return fused };
     // SAFETY: the update is a record of the view.
-    let Ok(pc) = u32::try_from(unsafe { update.offset_from(view.records()) }) else { return fused };
+    let Ok(pc) = u32::try_from(unsafe { crate::dispatch_fast::pc_in_view(view.records(), update) }) else { return fused };
     let proved = view.proven_counters.iter().any(|&(at, counter, speculative)| at == pc
         && (!speculative || int_kinds::speculation_allowed()) && Operand(test.b).register_index() == Some(counter));
     if proved { proven } else { fused }

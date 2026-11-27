@@ -87,7 +87,7 @@ pub(crate) fn push_construction_frame(
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
     // SAFETY: the call record lies in the running view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let call_pc = unsafe { record_pc(cx, ip) } as usize;
     vm.frames[frame].pc = call_pc + 1;
     vm.frames[frame].pc_is_resume = true;
     vm.set_construct_target(Some(quench_runtime::vm::activation::ConstructionTarget { callee, new_target }));
