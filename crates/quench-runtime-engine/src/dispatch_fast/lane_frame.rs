@@ -3974,7 +3974,7 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
         if depth == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
     }
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this);
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this, true);
     Resumed::At(registers, base, Carried::script(cx))
 }
 

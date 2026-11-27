@@ -13585,7 +13585,7 @@ fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers, target: &
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
     unsafe {
-        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
+        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None, false);
     }
 }
 
@@ -13743,6 +13743,7 @@ fn enter_plain_window(
     depth: usize,
     argc: u16,
     this: Value,
+    checked: bool,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::protocol::{push_plain_at, PlainHeader};
     let stack: &mut LaneStack = &mut vm.lane_stack;
@@ -13767,7 +13768,8 @@ fn enter_plain_window(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
-    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
+    // A call row's hand-off checked `this` where it bound it (`checked`, `call_hand_over`).
+    if !checked { note_lane_this(vm, this, || unsafe { (*target.view).this_rows }); }
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
