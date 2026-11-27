@@ -2,14 +2,16 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Before, Ctx, Events, step};
+use super::effects::{Before, Ctx, step};
+use super::record::Record;
+use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
 use super::scope::Scope;
-use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
-use crate::dataflow::{Dataflow, solve};
+use super::value::{Key, PrototypeBase, Word};
+use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
+use crate::dataflow::{BitSet, Dataflow, solve};
 use crate::staged::{Comparison, Operation};
-use crate::typed_ir::{Cell, Classes, Elements, Length, Representation, Type, language_bit};
+use crate::typed_ir::{Cell, Classes, Elements, Representation, Type, WIDENING_ROUNDS, language_bit};
 use crate::ValueType;
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
@@ -63,40 +65,25 @@ pub(super) struct FunctionFlow {
     pub(super) arity: Option<u16>,
 }
 
-/// The cells a function's registers hold at every point, kept compactly: each reachable block's cells at
-/// entry, and each instruction's register writes with the cells written. The cell of a register before
-/// the instruction at `pc` is its last write earlier in `pc`'s block, else its cell at the block's entry.
-#[derive(Default)]
-pub struct RegisterCells {
-    /// By block, its first PC and its registers' cells at entry, in PC order; a block no path reaches is absent.
-    entries: Vec<(u32, Box<[crate::typed_ir::Cell]>)>,
-    /// By PC, in order, the registers the instruction there writes, with their cells after it.
-    writes: Vec<(u32, Box<[(u16, crate::typed_ir::Cell)]>)>,
-}
-
-impl RegisterCells {
-    /// The cell `register` holds just before the instruction at `pc`: none where no path reaches `pc`.
-    pub fn at(&self, pc: u32, register: u16) -> Option<crate::typed_ir::Cell> {
-        let block = self.entries.partition_point(|(start, _)| *start <= pc).checked_sub(1)?;
-        let (start, entry) = &self.entries[block];
-        let from = self.writes.partition_point(|(at, _)| *at < *start);
-        let to = self.writes.partition_point(|(at, _)| *at < pc);
-        let written = self.writes[from..to].iter().rev()
-            .find_map(|(_, cells)| cells.iter().find(|(written, _)| *written == register).map(|(_, cell)| *cell));
-        written.or_else(|| entry.get(usize::from(register)).copied())
-    }
-
-    /// The cells of every register at the entry of the block that starts at `pc`, where one does.
-    pub fn entry(&self, pc: u32) -> Option<&[crate::typed_ir::Cell]> {
-        self.entries.binary_search_by_key(&pc, |(start, _)| *start).ok().map(|index| &*self.entries[index].1)
-    }
-}
-
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
 struct Solver<'a> {
     ctx: &'a Ctx<'a>,
     function: &'a Function,
     blocks: &'a Blocks,
+    /// The integer bounds a loop header widens its ranges to (`typing::thresholds`): the bounds the relational jumps compare against.
+    thresholds: Vec<i64>,
+    /// The blocks a backedge enters: the loop headers, where a join widens (`join`).
+    headers: BitSet,
+    /// Per block, how many joins changed its input: past `WIDENING_ROUNDS` a loop header widens on every change.
+    rounds: Vec<std::cell::Cell<u8>>,
+}
+
+/// The state a block starts with, or an edge carries: the words of the registers, and the block the state flows into,
+/// so a join there knows whether it is a loop header and how often it has changed (`Solver::join`).
+#[derive(Clone, PartialEq)]
+struct Arrival {
+    block: usize,
+    words: Vec<Word>,
 }
 
 /// The facts of function `id`, whose record is `function`.
@@ -117,19 +104,50 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         decode,
         records,
     };
-    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks };
-    let inputs = solve(&mut solver);
+    let thresholds = typing::thresholds(relational_bounds(function, scope));
+    let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
+    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds };
+    let fixpoint = solve(&mut solver);
+    let inputs = solver.narrow(fixpoint);
     let mut record = Record::new(ctx.registers);
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
-            record.registers.entries.push((blocks.ranges[block].start as u32, state.iter().map(|word| word.cell).collect()));
-            solver.replay(block, state, &mut record);
+            let cells = state.words.iter().map(|word| word.cell).collect();
+            let sources = state.words.iter().map(|word| Source::of(word.origin)).collect();
+            record.registers.push_entry(blocks.ranges[block].start as u32, cells, sources);
+            solver.replay(block, state.words, &mut record);
         }
     }
-    record.registers.entries.sort_by_key(|(start, _)| *start);
-    record.registers.writes.sort_by_key(|(pc, _)| *pc);
+    record.registers.sort();
     let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
     record.finish(arity)
+}
+
+/// The integer constants the function's relational jumps compare a value against (`typing::thresholds`): the ones
+/// whose operand is a constant. A register operand's bound is the state's, which the narrowing pass tightens to.
+fn relational_bounds(function: &Function, scope: &Scope) -> Vec<i64> {
+    (0..function.code.len())
+        .filter_map(|pc| match Operation::<u64, ()>::of(function.instruction_at(pc))? {
+            Operation::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. } => Some([left, right]),
+            _ => None,
+        })
+        .flatten()
+        .filter(|operand| matches!(operand.kind(), Some(crate::bytecode::OperandKind::Constant)))
+        .filter_map(|operand| scope.constant_type(usize::from(operand.payload())).int_range())
+        .flat_map(|range| [range.min, range.max])
+        .collect()
+}
+
+/// The blocks a backedge enters (a normal edge to a block no later than its source): every loop has one, and every cycle
+/// of the graph passes through one, so widening at these blocks alone makes the solve finite.
+fn loop_headers(blocks: &Blocks) -> BitSet {
+    let mut headers = BitSet::with_capacity(blocks.ranges.len());
+    for (block, (targets, kinds)) in blocks.targets.iter().zip(&blocks.kinds).enumerate() {
+        for (&target, kind) in targets.iter().zip(kinds) {
+            if matches!(kind, ControlEdge::Normal) && target <= block { headers.insert(target); }
+        }
+    }
+    headers
 }
 
 /// Per PC, whether the `MakeArray` there is a literal whose `DefineArrayElement` records follow it back to back and
@@ -151,7 +169,7 @@ fn whole_literals(function: &Function) -> Box<[bool]> {
 }
 
 impl Dataflow for Solver<'_> {
-    type State = Vec<Word>;
+    type State = Arrival;
 
     fn blocks(&self) -> usize {
         self.blocks.ranges.len()
@@ -161,44 +179,40 @@ impl Dataflow for Solver<'_> {
         &self.blocks.targets[block]
     }
 
-    fn entry_state(&self, block: usize) -> Option<Vec<Word>> {
-        (block == 0).then(|| self.entry_facts())
+    fn entry_state(&self, block: usize) -> Option<Arrival> {
+        (block == 0).then(|| Arrival { block, words: self.entry_facts() })
     }
 
-    fn join(&self, into: &mut Vec<Word>, incoming: &Vec<Word>) -> bool {
-        let mut changed = false;
-        for (slot, &fact) in into.iter_mut().zip(incoming) {
-            let joined = slot.join(fact);
-            changed |= joined != *slot;
-            *slot = joined;
+    /// Joins `incoming` into the input of `into.block`. At a loop header, once its input has changed `WIDENING_ROUNDS`
+    /// times, a range that grows is widened to the nearest threshold (`typing::widen`), so the header reaches a fixed
+    /// bound in finitely many joins; elsewhere the join is exact. `narrow` then tightens what widening over-approximated.
+    fn join(&self, into: &mut Arrival, incoming: &Arrival) -> bool {
+        let widen = self.headers.contains(into.block) && self.rounds[into.block].get() >= WIDENING_ROUNDS;
+        let changed = self.join_words(&mut into.words, &incoming.words, widen);
+        if changed {
+            let rounds = &self.rounds[into.block];
+            rounds.set(rounds.get().saturating_add(1));
         }
         changed
     }
 
-    fn transfer(&mut self, block: usize, state: &Vec<Word>) -> Vec<Word> {
-        let mut out = state.clone();
+    fn transfer(&mut self, block: usize, state: &Arrival) -> Arrival {
+        let mut words = state.words.clone();
         for pc in self.blocks.ranges[block].clone() {
-            step(self.ctx, pc, self.function.instruction_at(pc), &mut out);
+            step(self.ctx, pc, self.function.instruction_at(pc), &mut words);
         }
-        out
+        Arrival { block, words }
     }
 
-    /// An exception edge may leave the block before any of its writes, so it carries no fact. A normal
-    /// edge carries the fact its block's conditional jump proves on it (`Solver::refine`). A backedge (to a block
-    /// no later than its source: every loop has one) settles the integer ranges it carries (`typing::settle`),
-    /// so a loop's header is joined within finitely many rounds.
-    fn transfer_edge_at(&self, block: usize, index: usize, out: &Vec<Word>) -> Vec<Word> {
-        match self.blocks.kinds[block][index] {
-            ControlEdge::Handler => vec![Word::UNKNOWN; out.len()],
-            ControlEdge::Normal => {
-                let target = self.blocks.targets[block][index];
-                let mut edge = self.refine(block, target, out);
-                if target <= block {
-                    for word in &mut edge { word.cell.ty = typing::settle(word.cell.ty); }
-                }
-                edge
-            }
-        }
+    /// An exception edge may leave the block before any of its writes, so it carries no fact. A normal edge carries
+    /// the fact its block's conditional jump proves on it (`Solver::refine`).
+    fn transfer_edge_at(&self, block: usize, index: usize, out: &Arrival) -> Arrival {
+        let target = self.blocks.targets[block][index];
+        let words = match self.blocks.kinds[block][index] {
+            ControlEdge::Handler => vec![Word::UNKNOWN; out.words.len()],
+            ControlEdge::Normal => self.refine(block, target, &out.words),
+        };
+        Arrival { block: target, words }
     }
 }
 
@@ -255,6 +269,45 @@ impl Solver<'_> {
             }
         }
         Some(refined)
+    }
+}
+
+impl Solver<'_> {
+    /// Joins the words `incoming` holds into `into`, register by register; whether `into` changed. Where `widen`, a
+    /// word's integer range is widened (`typing::widen`) instead of joined, and its other parts are joined.
+    fn join_words(&self, into: &mut [Word], incoming: &[Word], widen: bool) -> bool {
+        let mut changed = false;
+        for (slot, &fact) in into.iter_mut().zip(incoming) {
+            let joined = slot.join(fact);
+            let next = if widen {
+                Word { cell: Cell { ty: typing::widen(&self.thresholds, slot.cell.ty, joined.cell.ty), ..joined.cell }, ..joined }
+            } else {
+                joined
+            };
+            changed |= next != *slot;
+            *slot = next;
+        }
+        changed
+    }
+
+    /// One descending pass over the fixpoint `inputs` (narrowing): each block's input is recomputed as the join of the
+    /// edges the fixpoint's inputs send it, without widening, so a widened range tightens to what its edges carry (a
+    /// counter widened to int32's span becomes `[0, n]` under `i < n`). `inputs` is a post-fixpoint, so each edge's state
+    /// is at most the one it had, and the result still bounds every reachable state.
+    fn narrow(&mut self, inputs: Vec<Option<Arrival>>) -> Vec<Option<Arrival>> {
+        let mut next: Vec<Option<Arrival>> = (0..inputs.len()).map(|block| self.entry_state(block)).collect();
+        for (block, input) in inputs.iter().enumerate() {
+            let Some(state) = input else { continue };
+            let out = self.transfer(block, state);
+            for index in 0..self.blocks.targets[block].len() {
+                let edge = self.transfer_edge_at(block, index, &out);
+                match &mut next[edge.block] {
+                    Some(known) => { self.join_words(&mut known.words, &edge.words, false); }
+                    slot => *slot = Some(edge),
+                }
+            }
+        }
+        next
     }
 }
 
@@ -345,150 +398,11 @@ impl Solver<'_> {
             record.observe(self.ctx, instruction, pc, &state);
             let events = step(self.ctx, pc, instruction, &mut state);
             record.commit(instruction, &state, events);
-            let written: Box<[_]> = instruction.written_registers().map(|register| (u16::from(register), state[usize::from(register)].cell)).collect();
-            if !written.is_empty() { record.registers.writes.push((pc as u32, written)); }
-        }
-    }
-}
-
-/// What a replay gathers over a function's reachable code.
-struct Record {
-    calls: Vec<Call>,
-    writes: Vec<(Key, Word)>,
-    wild_owner: bool,
-    wild_global: bool,
-    wild_member: bool,
-    prototype_writes: Vec<(PrototypeBase, u32)>,
-    /// Per register, the join of the facts it is defined with.
-    defs: Vec<Option<Word>>,
-    /// Per register, whether a read saw a value that is not a Number.
-    unsafe_reads: Vec<bool>,
-    field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
-    registers: RegisterCells,
-    reads: std::collections::BTreeSet<Key>,
-}
-
-impl Record {
-    fn new(registers: usize) -> Self {
-        Self {
-            calls: Vec::new(),
-            writes: Vec::new(),
-            wild_owner: false,
-            wild_global: false,
-            wild_member: false,
-            prototype_writes: Vec::new(),
-            defs: vec![None; registers],
-            unsafe_reads: vec![false; registers],
-            field_owners: std::collections::BTreeMap::new(),
-            registers: RegisterCells::default(),
-            reads: std::collections::BTreeSet::new(),
-        }
-    }
-
-    /// Notes the reads and the calls `instruction` makes, from the facts before it.
-    fn observe(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: usize, state: &[Word]) {
-        for register in used_registers(instruction) {
-            if !state[usize::from(register)].is_number() {
-                self.unsafe_reads[usize::from(register)] = true;
-            }
-        }
-        // An element read of an array a field holds reads that field's elements (`Key::Element`).
-        if instruction.op() == crate::bytecode::Op::GetIndex
-            && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
-        {
-            self.reads.insert(Key::Element(atom));
-        }
-        if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
-            let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
-            *joined = joined.join(owner.cell.classes);
-        }
-        let traits = instruction.op().traits();
-        let construct = traits.has(Traits::CONSTRUCTION);
-        // Every call form the staged decoder reads (`staged::Invocation`): a register call, a known
-        // function's, a method site's, a construction; not an eval, `super(...)` or an array of arguments.
-        if let Some(invocation) = crate::staged::Invocation::of(instruction, ctx.decode) {
-            let (target, callee) = match invocation.callee {
-                crate::staged::Callee::Register(register) => (Target::Register, state[usize::from(register)]),
-                crate::staged::Callee::Known(function) => (Target::Known(u32::from(function)), Word::UNKNOWN),
-                crate::staged::Callee::Method { atom, .. } => (Target::Method(atom), Word::UNKNOWN),
-            };
-            let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
-            let receiver = match invocation.receiver {
-                crate::staged::Receiver::Register(register) => state[usize::from(register)],
-                crate::staged::Receiver::This { path: None } if !ctx.is_root =>
-                    ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id))),
-                crate::staged::Receiver::This { path: Some((atom, _)) } => match ctx.types {
-                    Some(_) => super::effects::this_member(ctx, atom),
-                    None => Word::UNKNOWN,
-                },
-                // A construction's receiver is the object it allocates: an instance of the class it constructs.
-                crate::staged::Receiver::Allocated => match callee.cell.ty.body_index() {
-                    Some(class) if construct => Word::instance(class),
-                    _ => Word::of(Type::DIRECT_OBJECT_FAMILY),
-                },
-                _ => Word::UNKNOWN,
-            };
-            // An array method that may change its array (`push`, `splice`, ...) makes the arrays the receiver names hold
-            // the arguments, and an unknown length (`Scope::is_array_mutator`).
-            let method = match (invocation.callee, callee.origin) {
-                (crate::staged::Callee::Method { atom, .. }, _) => Some(atom),
-                (crate::staged::Callee::Register(_), Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => Some(atom),
-                _ => None,
-            };
-            if method.is_some_and(|atom| ctx.scope.is_array_mutator(atom)) {
-                let stored = arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
-                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements };
-                self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
-            }
-            self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
-        }
-    }
-
-    /// Notes the writes `instruction` made and the facts it defined, from the facts after it.
-    fn commit(&mut self, instruction: WideInstruction, state: &[Word], events: Events) {
-        self.wild_owner |= events.wild_owner;
-        self.wild_global |= events.wild_global;
-        self.wild_member |= events.wild_member;
-        self.writes.extend(events.writes);
-        self.prototype_writes.extend(events.prototype_write);
-        for register in instruction.written_registers() {
-            let index = usize::from(register);
-            self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
-        }
-        // The key a defined value was read from, where its word names one (`Origin`).
-        if let Some(defined) = instruction.defined_register() {
-            match state[usize::from(defined)].origin {
-                Some(Origin::Binding(key)) => { self.reads.insert(key); }
-                Some(Origin::Member(atom)) => { self.reads.insert(Key::Member(atom)); }
-                Some(Origin::MemberOn { class, instance, atom, .. }) => {
-                    self.reads.insert(Key::MemberOn { class, instance, atom });
-                    self.reads.insert(Key::MemberAny(atom));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn finish(self, arity: Option<u16>) -> FunctionFlow {
-        let numbers: Box<[Option<Representation>]> = self
-            .defs
-            .iter()
-            .zip(&self.unsafe_reads)
-            .map(|(def, &unsafe_read)| if unsafe_read { None } else { def.and_then(Word::representation) })
-            .collect();
-        FunctionFlow {
-            calls: self.calls,
-            writes: self.writes,
-            wild_owner: self.wild_owner,
-            global_wild: self.wild_global,
-            member_wild: self.wild_member,
-            numbers,
-            prototype_writes: self.prototype_writes,
-            field_owners: self.field_owners,
-            registers: self.registers,
-            reads: self.reads,
-            arity,
+            let written: Box<[_]> = instruction.written_registers().map(|register| {
+                let word = state[usize::from(register)];
+                (u16::from(register), word.cell, Source::of(word.origin))
+            }).collect();
+            if !written.is_empty() { record.registers.push_writes(pc as u32, written); }
         }
     }
 }
