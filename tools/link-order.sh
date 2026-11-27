@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Trains the dynamic x86_64 link order (crates/quench/link/x86_64-linux.order) the
-# experiment build links with: every function the layout corpus executes under --no-jit,
+# experiment build links with: every function the layout corpus executes under --no-jit and
+# in default mode (so the compiler's code is packed too),
 # ordered by how many corpus programs execute it, then by exactly which, then first
 # appearance (symbol-order --sets). Each program is profiled twice, with an empty compile
 # cache (the parser, analysis, code generation and Wasm validation run) and warm (the cache
@@ -11,7 +12,7 @@
 # Corpus: the interpreter curriculum, the numbered micros, Node library modules compiled
 # without running, tools/layout-corpus/rt-*.js and npm-*.js (packages from its package-lock.json,
 # installed with `npm ci`), and the Wasm kernels. The scored engine suites are never run.
-# Requires valgrind and npm with registry access; takes about 15 minutes on 4 cores. Rebuild
+# Requires valgrind and npm with registry access; takes about 15-30 minutes on 4 cores. Rebuild
 # afterwards (the order is a link input) and check tools/check-link-order.sh stays near 100%.
 set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,13 +48,17 @@ cp tools/layout-corpus/package.json tools/layout-corpus/package-lock.json "$pack
 export binary corpus profiles work
 export QUENCH_LAYOUT_NODE_MODULES="$packages/node_modules"
 profile_one() {
-    local program=$1 home="$work/homes/$1" arguments=(--no-jit "$corpus/$1")
-    [ "$program" = wasm-kernels ] && arguments=(--no-jit "$PWD/quench-bench/wasm-micros/kernels.cjs" 3)
-    mkdir -p "$home"
-    for state in cold warm; do
-        (cd "$corpus" && env -i PATH="$PATH" HOME="$home" QUENCH_LAYOUT_NODE_MODULES="$QUENCH_LAYOUT_NODE_MODULES" \
-            timeout 900 valgrind --tool=cachegrind --cache-sim=no --demangle=no \
-            --cachegrind-out-file="$profiles/$state-$program.out" "$binary" "${arguments[@]}" >/dev/null 2>&1 || true)
+    local program=$1 script="$corpus/$1" extra=() mode
+    [ "$program" = wasm-kernels ] && script="$PWD/quench-bench/wasm-micros/kernels.cjs" extra=(3)
+    for mode in no-jit default; do
+        local home="$work/homes/$mode-$program" flags=(--no-jit)
+        [ "$mode" = default ] && flags=()
+        mkdir -p "$home"
+        for state in cold warm; do
+            (cd "$corpus" && env -i PATH="$PATH" HOME="$home" QUENCH_LAYOUT_NODE_MODULES="$QUENCH_LAYOUT_NODE_MODULES" \
+                timeout 900 valgrind --tool=cachegrind --cache-sim=no --demangle=no --smc-check=all \
+                --cachegrind-out-file="$profiles/$mode-$state-$program.out" "$binary" "${flags[@]}" "$script" "${extra[@]}" >/dev/null 2>&1 || true)
+        done
     done
 }
 export -f profile_one

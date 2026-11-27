@@ -324,6 +324,13 @@ thread_local! {
     static COMPILE_CONTEXT: std::cell::Cell<Option<cranelift_codegen::Context>> = const { std::cell::Cell::new(None) };
 }
 
+/// Drops the compiling thread's held context (`compile_function`): its tables are a cache sized
+/// by the largest body compiled, megabytes the thread would otherwise keep through every idle
+/// period. The thread calls this when its queue drains, so the next burst allocates them anew.
+pub fn release_compile_context() {
+    drop(COMPILE_CONTEXT.with(std::cell::Cell::take));
+}
+
 
 #[cfg(all(test, feature = "jit", target_arch = "x86_64"))]
 mod vendor_patch_tests;
