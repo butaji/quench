@@ -135,7 +135,7 @@ pub(super) struct FunctionFlow {
     /// reaches into `destination` and returns it, as `Object.extend` does (`Record::copies`). Its one store is accounted at
     /// its call sites (`copies::expand`), not as a wild store.
     pub(super) copies: Option<(u16, u16)>,
-    /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (`Origin::Literal`).
+    /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (its `Cell::sites`).
     pub(super) literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
 }
 

@@ -1,9 +1,9 @@
 //! Copy helpers and `Object.assign` as summarized effects (TOD-2448). A copy helper (`Record::copies`: `Object.extend`'s
 //! body, a for-in over its source that stores `dst[p] = src[p]`) stores under a key the analysis cannot name, so its body
 //! would mark its function `member_wild`, which turns off every fold and gate the closed world proves. Its stores are
-//! accounted where it is called instead: a call of it, or of `Object.assign`, whose source is an object literal of a fixed
-//! shape (`Origin::Literal`) writes each of the literal's keys as a named store (`Key::Member`) of the value the literal holds
-//! for it. A call whose source is no such literal may store any name, so it marks its caller `member_wild`.
+//! accounted where it is called instead: a call of it, or of `Object.assign`, whose source may be only object literals of a
+//! fixed shape (`Cell::sites`) writes each of their keys as a named store (`Key::Member`) of the value the literal holds
+//! for it. A call whose source may be any other object may store any name, so it marks its caller `member_wild`.
 //!
 //! Why the literal's keys are the whole copy: a for-in over an object visits its own enumerable keys and its prototype's. The
 //! literal's keys are its site's, all data properties (an accessor is no site key), and a later store to it is a store of its
@@ -17,7 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::flow::{Call, FunctionFlow, Target};
-use super::value::{Key, Origin, Word};
+use super::value::{Key, Word};
+use crate::typed_ir::Sites;
 
 /// The copy helpers the program may call only where their calls are accounted (`sealed`).
 #[derive(Default)]
@@ -86,6 +87,16 @@ fn sealed(flows: &[FunctionFlow]) -> Sealed {
     sealed
 }
 
+/// The keys and values of the literal sites `sites` may be, if it is a set and every site has its table (`FunctionFlow::literals`):
+/// a copy writes all of them, so a site without one (or an object of any other origin) is no copy's source.
+fn literal_fields(flows: &[FunctionFlow], sites: Sites) -> Option<Vec<(u32, Word)>> {
+    let mut fields = Vec::new();
+    for site in sites.set()? {
+        fields.extend(flows.get(site.function as usize)?.literals.get(&site.pc)?.iter().copied());
+    }
+    Some(fields)
+}
+
 /// The argument positions `call` copies from, if it is a copy: the source of a sealed helper it calls (`Target::Known`, a register
 /// that holds its closure, or a method name only it is stored under), or every argument after the first of `Object.assign`.
 fn copied_from(call: &Call, sealed: &Sealed, assign: Option<u32>) -> Option<Vec<usize>> {
@@ -115,10 +126,7 @@ pub(super) fn expand(flows: &mut [FunctionFlow], assign: Option<u32>) {
         for call in &flow.calls {
             let Some(sources) = copied_from(call, &sealed, assign) else { continue };
             for index in sources {
-                let fields = call.arguments.get(index).and_then(|word| match word.origin {
-                    Some(Origin::Literal { function, pc }) => flows.get(function as usize)?.literals.get(&pc),
-                    _ => None,
-                });
+                let fields = call.arguments.get(index).and_then(|word| literal_fields(flows, word.cell.sites));
                 match fields {
                     Some(fields) => writes.extend(fields.iter().map(|&(atom, value)| (caller, call.pc, Key::Member(atom), value))),
                     None => wild.push(caller),
