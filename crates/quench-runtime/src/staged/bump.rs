@@ -6,7 +6,7 @@
 use super::Stage;
 use super::region::Region;
 use super::layout_offsets::{CLASS_CELL_GRANULE_BYTES, NATIVE_CLASS_CELL_LAYOUT, NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR, OBJECT_RECORD_STUB};
-use super::object_encoding::departed_header_word;
+use super::object_encoding::{REGION_SHIFT, departed_header_word, region_field_capacity};
 use super::value_encoding::DIRECT_OBJECT_TAG;
 
 /// The cursor at `cursor`'s next id and whether its run still has it.
@@ -102,5 +102,39 @@ pub fn claim_empty_object<S: Stage>(stage: &mut S, object: EmptyObject<S::Word>,
     stage.store_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32, object.words);
     stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, object.layout);
     stage.store_u32(Region::Records.mutable(), record, OBJECT_RECORD_STUB as i32, granule);
+    Some(stage.or_imm(granule, DIRECT_OBJECT_TAG))
+}
+
+/// The words a class cell claim reads: region `k`'s allocation cursor (`Heap::native_cell_cursor`), the class space's
+/// base, and the class id the header takes.
+#[derive(Clone, Copy)]
+pub struct ClassCell<W> {
+    pub cursor: W,
+    pub cells: W,
+    pub class: W,
+}
+
+/// A class cell of region `region` from its cursor run, the bump `ClassSpace::claim_cell` makes over the heap. The
+/// cursor's next local cell is granule `(region << REGION_SHIFT) + next << region`: its header takes the class id, its
+/// fields `fields` in slot order, and its slack `deleted` (`Value::DELETED`). The answer is the direct object word of
+/// the granule. The object is fresh, so no barrier; the run was charged when claimed. A spent run leaves at `miss`
+/// before anything is written.
+#[inline(always)]
+pub fn claim_class_cell<S: Stage>(stage: &mut S, region: u32, cell: ClassCell<S::Word>, fields: &[S::Word], deleted: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    debug_assert!(fields.len() <= region_field_capacity(region));
+    let (next, room) = cursor_next(stage, cell.cursor);
+    stage.guard(room, miss)?;
+    cursor_bump(stage, cell.cursor, next);
+    let local = stage.mul_imm(next, 1u64 << region);
+    let granule = stage.add_imm(local, u64::from(region << REGION_SHIFT));
+    let offset = stage.mul_imm(granule, CLASS_CELL_GRANULE_BYTES as u64);
+    let base = stage.add(cell.cells, offset);
+    stage.store_u64(Region::HeapMeta.mutable(), base, NATIVE_CLASS_CELL_LAYOUT.header_offset as i32, cell.class);
+    for slot in 0..region_field_capacity(region) {
+        let value = fields.get(slot).copied().unwrap_or(deleted);
+        let at = (NATIVE_CLASS_CELL_LAYOUT.fields_offset + slot * NATIVE_CLASS_CELL_LAYOUT.field_size) as i32;
+        stage.store_u64(Region::Payload.mutable(), base, at, value);
+    }
     Some(stage.or_imm(granule, DIRECT_OBJECT_TAG))
 }

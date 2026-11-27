@@ -18,6 +18,7 @@ use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, 
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
     CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
+    region_field_capacity,
 };
 use crate::value::Value;
 use crate::value_vec::ValueArena;
@@ -204,6 +205,36 @@ impl ClassSpace {
         // SAFETY: `local` is a claimed, uninitialized region 0 cell, written whole here.
         unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: departed_header(record), fields: [] }) };
         Some(granule(0, local))
+    }
+
+    /// Claims a class cell of region `region` for class `class`: its header the live class id, its fields `fields`
+    /// in slot order and the slack `Value::DELETED`. The cell comes from the region's cursor (`RecordSpace::bump_id`),
+    /// charged as an allocation. `None` where the region is full. `fields` must fit the region.
+    pub(super) fn claim_cell(&mut self, region: u32, class: u32, fields: &[Value], allocated: &mut usize) -> Option<u32> {
+        debug_assert!((1..CAPACITY_CLASSES as u32).contains(&region) && fields.len() <= region_field_capacity(region));
+        if !self.ensure_reserved() {
+            return None;
+        }
+        let local = with_region_mut!(self.regions, region, |space| space.bump_id(allocated))?;
+        let granule = granule(region, local);
+        let cell = self.cell_ptr(granule);
+        // SAFETY: `granule` is a claimed, uninitialized cell of the reserved space, written whole here: its
+        // header word, then each of its `region_field_capacity` fields.
+        unsafe {
+            cell.write(live_header(class));
+            let slots = cell.cast::<Value>().add(1);
+            for slot in 0..region_field_capacity(region) {
+                slots.add(slot).write(fields.get(slot).copied().unwrap_or(Value::DELETED));
+            }
+        }
+        Some(granule)
+    }
+
+    /// The address of region `region`'s allocation cursor, which a construction's class cell claim bumps
+    /// (`staged::bump::claim_class_cell`).
+    pub(super) fn cell_cursor_address(&self, region: u32) -> usize {
+        debug_assert!((1..CAPACITY_CLASSES as u32).contains(&region));
+        with_region!(self.regions, region, |space| std::ptr::addr_of!(space.cursor) as usize)
     }
 
     /// Whether region 0's cursor has a stub left, which `claim_stub_quick` would claim.
@@ -533,6 +564,11 @@ impl super::Heap {
     /// runs; a native entry rereads it with the other record bases.
     #[inline(always)]
     pub fn native_stub_cursor(&self) -> usize { self.class_space.stub_cursor_address() }
+
+    /// The allocation cursor of cell region `region` (1 to 5), which a class cell claim bumps
+    /// (`staged::bump::claim_class_cell`), read as `native_stub_cursor` is.
+    #[inline(always)]
+    pub fn native_cell_cursor(&self, region: u32) -> usize { self.class_space.cell_cursor_address(region) }
 }
 
 /// Whether granule `g` lies in a class cell's region (1 to 5), where an object is a cell until it departs.
@@ -546,7 +582,7 @@ pub(super) const fn is_cell_granule(g: u32) -> bool {
 pub(crate) const fn region_capacity(granule: u32) -> u32 {
     let (region, _) = locate(granule);
     assert!((region as usize) < CAPACITY_CLASSES, "granule past the class space");
-    (1 << region) - 1
+    region_field_capacity(region) as u32
 }
 
 /// The header word of a live class cell: the class id in the low half, zero above.
