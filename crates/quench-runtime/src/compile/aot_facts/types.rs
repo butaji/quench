@@ -108,7 +108,7 @@ impl Types {
             strings: scope.string_builtins(&Proofs::of(flows)),
         };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
-        for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
+        for &(_, key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let joined = types.cells.entry(key).or_insert(Cell::NEVER);
             *joined = joined.join(fact.cell);
             if let Some(stored) = fact.cell.ty.int_range().filter(|range| range.min == range.max) {

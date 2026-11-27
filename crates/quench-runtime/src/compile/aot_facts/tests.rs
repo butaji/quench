@@ -776,3 +776,30 @@ fn a_strict_function_keyed_on_this_handed_to_a_builtin_callback_keeps_the_world_
         function dead() { eval('1'); }");
     assert_eq!(world(&program), World::Closed);
 }
+
+#[test]
+fn a_prototype_method_last_written_at_top_level_resolves_for_a_later_run_once_read() {
+    let program = program(
+        "function Foo() {} function first() { return 1; } function second() { return 2; } \
+         Foo.prototype.m = first; Foo.prototype.m = second; \
+         function run() { var method = new Foo().m; return method(); } run();",
+    );
+    let facts = analyze(&program);
+    let run = function_named(&program, "run") as u32;
+    let second = function_named(&program, "second") as u32;
+    assert!(facts.call_targets.iter().any(|(&(function, _), &target)| function == run && target == second));
+}
+
+#[test]
+fn a_prototype_method_written_again_by_a_hot_function_names_no_phase_target() {
+    let program = program(
+        "function Foo() {} function first() { return 1; } function second() { return 2; } \
+         Foo.prototype.m = first; \
+         function hot() { Foo.prototype.m = second; } \
+         for (var i = 0; i < 2; i++) hot(); \
+         function run() { var method = new Foo().m; return method(); } run();",
+    );
+    let facts = analyze(&program);
+    let run = function_named(&program, "run") as u32;
+    assert!(!facts.call_targets.keys().any(|&(function, _)| function == run));
+}

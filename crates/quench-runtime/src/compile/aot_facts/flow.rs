@@ -54,8 +54,8 @@ pub(super) struct Call {
 /// What one function contributes to the closed-world facts.
 pub(super) struct FunctionFlow {
     pub(super) calls: Vec<Call>,
-    /// Every binding write, with the fact of the value written.
-    pub(super) writes: Vec<(Key, Word)>,
+    /// Every binding write, with the PC that makes it and the fact of the value written (`phase::folds` orders them).
+    pub(super) writes: Vec<(u32, Key, Word)>,
     /// Whether a write the analysis cannot follow reaches the function's own slots.
     pub(super) wild_owner: bool,
     /// Whether a write the analysis cannot follow reaches the globals.
@@ -378,7 +378,7 @@ impl Solver<'_> {
             let events = step(ctx, pc, instruction, &mut state);
             stored_bounds(instruction, &events.writes, &masks, record);
             mask_bounds(self.ctx, instruction, &mut masks);
-            record.commit(instruction, &state, events);
+            record.commit(pc as u32, instruction, &state, events);
             let written: Box<[_]> = instruction.written_registers().map(|register| {
                 let word = state[usize::from(register)];
                 (u16::from(register), settled(self.ctx, word), Source::of(word.origin))

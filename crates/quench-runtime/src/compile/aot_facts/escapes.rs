@@ -63,7 +63,7 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
     let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
     let roots: BTreeSet<u32> = flows.iter().enumerate().filter(|(_, flow)| flow.returns_out).map(|(id, _)| id as u32).collect();
     let handed = Handed::of(flows, facts, census, scope);
-    let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).copied().collect();
+    let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).map(|&(_, key, word)| (key, word)).collect();
     let round = Round {
         handed: &handed,
         reached: read_words(&writes, &handed.read),

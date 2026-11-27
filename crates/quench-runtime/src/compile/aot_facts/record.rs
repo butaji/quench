@@ -35,7 +35,7 @@ pub(super) fn indices_of(function: u32, index: Word) -> Indices {
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
     calls: Vec<Call>,
-    writes: Vec<(Key, Word)>,
+    writes: Vec<(u32, Key, Word)>,
     wild_owner: bool,
     wild_global: bool,
     computed_global: bool,
@@ -203,7 +203,7 @@ impl Record {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements, global: stored.global };
-                self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
+                self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
                 if call.receiver.cell.elements != Elements::NEVER && ctx.scope.is_array_builtin(atom) {
@@ -239,7 +239,7 @@ impl Record {
     }
 
     /// Notes the writes `instruction` made and the facts it defined, from the facts after it.
-    pub(super) fn commit(&mut self, instruction: WideInstruction, state: &[Word], events: Events) {
+    pub(super) fn commit(&mut self, pc: u32, instruction: WideInstruction, state: &[Word], events: Events) {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.computed_global |= events.computed_store;
@@ -248,7 +248,7 @@ impl Record {
         self.wild_member |= events.wild_member;
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
-        self.writes.extend(events.writes);
+        self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
         self.accessors.extend(events.accessors);
         self.shapes.extend(events.shape);
         for register in instruction.written_registers() {

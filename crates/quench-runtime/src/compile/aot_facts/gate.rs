@@ -139,7 +139,7 @@ fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, esc
     let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
     let mut named = BTreeSet::new();
     for flow in flows {
-        for (key, word) in &flow.writes {
+        for (_, key, word) in &flow.writes {
             if matches!(key, Key::Member(_) | Key::MemberOn { .. } | Key::MemberAny(_)) {
                 escapes::mark(&word.cell, &materialized, &mut named);
             }
@@ -263,5 +263,5 @@ pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &
     let apply = apply as u32;
     world == World::Closed
         && !APPLY_WRITE_NAMES.iter().any(|name| names(name))
-        && flows.iter().all(|flow| !flow.member_wild && flow.writes.iter().all(|(key, _)| !writes_named(*key, apply)))
+        && flows.iter().all(|flow| !flow.member_wild && flow.writes.iter().all(|(_, key, _)| !writes_named(*key, apply)))
 }
