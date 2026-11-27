@@ -382,7 +382,7 @@ mod tests {
             builder.finalize(isa.frontend_config());
             assert_eq!(convert(&mut function), 1);
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
-            let memory = super::super::compile_function(function, &*isa, None, |compiled, _|
+            let memory = super::super::compile_function_reading(function, &*isa, None, false, |compiled, _|
                 Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))).unwrap();
             // SAFETY: the owned code is pure, bounded and has exactly this C signature.
             let run: unsafe extern "C" fn(u64, i32, i32) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
@@ -441,7 +441,7 @@ mod tests {
         for ty in [ir::types::I8, ir::types::I32, ir::types::I64] {
             let function = nested_select_fixture(&*isa, ty, ty, true);
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
-            super::super::compile_function(function, &*isa, None, |_, function| {
+            super::super::compile_function_reading(function, &*isa, None, false, |_, function| {
                 cranelift_codegen::verify_function(function, &*isa).unwrap();
                 assert!(!function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).any(|inst|
                     matches!(function.dfg.insts[inst], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
@@ -469,7 +469,7 @@ mod tests {
             (ir::types::I64, ir::types::I64), (ir::types::I8, ir::types::I64), (ir::types::I64, ir::types::I32)] {
             let function = nested_select_fixture(&*isa, x_type, y_type, false);
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
-            let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
+            let memory = super::super::compile_function_reading(function, &*isa, None, false, |compiled, function| {
                 cranelift_codegen::verify_function(function, &*isa).unwrap();
                 Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
             }).unwrap();
@@ -531,7 +531,7 @@ mod tests {
                 for mismatched in [false, true] {
                     let function = complement_select_fixture(&*isa, ty, cc, mismatched);
                     cranelift_codegen::verify_function(&function, &*isa).unwrap();
-                    super::super::compile_function(function, &*isa, None, |_, function| {
+                    super::super::compile_function_reading(function, &*isa, None, false, |_, function| {
                         cranelift_codegen::verify_function(function, &*isa).unwrap();
                         let comparisons = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
                             .filter(|inst| function.dfg.insts[*inst].opcode() == ir::Opcode::Icmp).count();
@@ -568,7 +568,7 @@ mod tests {
             for &cc in IntCC::all() {
                 for mismatched in [false, true] {
                     let function = complement_select_fixture(&*isa, ty, cc, mismatched);
-                    let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
+                    let memory = super::super::compile_function_reading(function, &*isa, None, false, |compiled, function| {
                         cranelift_codegen::verify_function(function, &*isa).unwrap();
                         Ok(crate::vm::engine_types::CodeMemory::new(compiled.code_buffer()).expect("executable mapping"))
                     }).unwrap();
@@ -648,7 +648,7 @@ mod tests {
                 builder.seal_all_blocks();
                 builder.finalize(isa.frontend_config());
                 cranelift_codegen::verify_function(&function, &*isa).unwrap();
-                let memory = super::super::compile_function(function, &*isa, None, |compiled, function| {
+                let memory = super::super::compile_function_reading(function, &*isa, None, false, |compiled, function| {
                     cranelift_codegen::verify_function(function, &*isa).unwrap();
                     let increments = compiled.code_buffer().chunks_exact(std::mem::size_of::<u32>())
                         .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))

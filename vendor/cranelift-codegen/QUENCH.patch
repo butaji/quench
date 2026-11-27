@@ -4136,3 +4136,273 @@ diff -ruN -x Cargo.lock -x .cargo_vcs_info.json -x README.md -x QUENCH.patch -x 
 +        assert_eq!(f.dfg.resolve_aliases(result), counter);
 +    }
 +}
+--- cranelift-codegen-0.137.1/src/context.rs
++++ b/src/context.rs
+@@ -57,6 +57,11 @@ pub struct Context {
+ 
+     /// Reused register allocator context.
+     pub(crate) regalloc_ctx: regalloc2::Ctx,
++
++    /// Drop the function's instructions and its flow analyses once lowered
++    /// (`TargetIsa::compile_function`): a caller that reads nothing of `func` after the compile
++    /// but its parameters keeps neither through register allocation.
++    pub release_ir: bool,
+ }
+ 
+ impl Context {
+@@ -81,6 +86,7 @@ impl Context {
+             compiled_code: None,
+             want_disasm: false,
+             regalloc_ctx: regalloc2::Ctx::default(),
++            release_ir: false,
+         }
+     }
+ 
+@@ -140,10 +146,16 @@ impl Context {
+ 
+             self.verify_if(isa)?;
+             self.optimize(isa, ctrl_plane)?;
++            if self.release_ir {
++                // Lowering reads the dominator tree only.
++                self.cfg = ControlFlowGraph::new();
++                self.loop_analysis = LoopAnalysis::new();
++            }
+             result = isa.compile_function(
+-                &self.func,
++                &mut self.func,
+                 &self.domtree,
+                 &mut self.regalloc_ctx,
++                self.release_ir,
+                 self.want_disasm,
+                 ctrl_plane,
+             );
+--- cranelift-codegen-0.137.1/src/isa/aarch64/mod.rs
++++ b/src/isa/aarch64/mod.rs
+@@ -52,7 +52,8 @@ impl AArch64Backend {
+     /// finalizes branches. The result is ready for binary emission.
+     fn compile_vcode(
+         &self,
+-        func: &Function,
++        func: &mut Function,
++        release_ir: bool,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
+         ctrl_plane: &mut ControlPlane,
+@@ -62,6 +63,7 @@ impl AArch64Backend {
+         let abi = abi::AArch64Callee::new(func, self, &self.isa_flags, &sigs)?;
+         compile::compile::<AArch64Backend>(
+             func,
++            release_ir,
+             domtree,
+             regalloc_ctx,
+             self,
+@@ -76,13 +78,14 @@ impl AArch64Backend {
+ impl TargetIsa for AArch64Backend {
+     fn compile_function(
+         &self,
+-        func: &Function,
++        func: &mut Function,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
++        release_ir: bool,
+         want_disasm: bool,
+         ctrl_plane: &mut ControlPlane,
+     ) -> CodegenResult<CompiledCodeStencil> {
+-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
++        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
+ 
+         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;
+         let value_labels_ranges = emit_result.value_labels_ranges;
+--- cranelift-codegen-0.137.1/src/isa/mod.rs
++++ b/src/isa/mod.rs
+@@ -305,12 +305,14 @@ pub trait TargetIsa: fmt::Display + Send + Sync {
+     /// Get the ISA-dependent maximum vector register size, in bytes.
+     fn dynamic_vector_bytes(&self, dynamic_ty: ir::Type) -> u32;
+ 
+-    /// Compile the given function.
++    /// Compile the given function. With `release_ir`, the function's instructions are dropped once
++    /// they are lowered, before register allocation: only its parameters (relocation names) remain.
+     fn compile_function(
+         &self,
+-        func: &Function,
++        func: &mut Function,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
++        release_ir: bool,
+         want_disasm: bool,
+         ctrl_plane: &mut ControlPlane,
+     ) -> CodegenResult<CompiledCodeStencil>;
+--- cranelift-codegen-0.137.1/src/isa/pulley_shared/mod.rs
++++ b/src/isa/pulley_shared/mod.rs
+@@ -120,7 +120,8 @@ where
+     /// finalizes branches. The result is ready for binary emission.
+     fn compile_vcode(
+         &self,
+-        func: &ir::Function,
++        func: &mut ir::Function,
++        release_ir: bool,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
+         ctrl_plane: &mut ControlPlane,
+@@ -134,6 +135,7 @@ where
+         let abi = abi::PulleyCallee::new(func, self, &self.isa_flags, &sigs)?;
+         machinst::compile::<Self>(
+             func,
++            release_ir,
+             domtree,
+             regalloc_ctx,
+             self,
+@@ -180,13 +182,14 @@ where
+ 
+     fn compile_function(
+         &self,
+-        func: &ir::Function,
++        func: &mut ir::Function,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
++        release_ir: bool,
+         want_disasm: bool,
+         ctrl_plane: &mut cranelift_control::ControlPlane,
+     ) -> CodegenResult<CompiledCodeStencil> {
+-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
++        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
+ 
+         let want_disasm =
+             want_disasm || (cfg!(feature = "trace-log") && log::log_enabled!(log::Level::Debug));
+--- cranelift-codegen-0.137.1/src/isa/riscv64/mod.rs
++++ b/src/isa/riscv64/mod.rs
+@@ -66,7 +66,8 @@ impl Riscv64Backend {
+     /// finalizes branches. The result is ready for binary emission.
+     fn compile_vcode(
+         &self,
+-        func: &Function,
++        func: &mut Function,
++        release_ir: bool,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
+         ctrl_plane: &mut ControlPlane,
+@@ -76,6 +77,7 @@ impl Riscv64Backend {
+         let abi = abi::Riscv64Callee::new(func, self, &self.isa_flags, &sigs)?;
+         compile::compile::<Riscv64Backend>(
+             func,
++            release_ir,
+             domtree,
+             regalloc_ctx,
+             self,
+@@ -90,13 +92,14 @@ impl Riscv64Backend {
+ impl TargetIsa for Riscv64Backend {
+     fn compile_function(
+         &self,
+-        func: &Function,
++        func: &mut Function,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
++        release_ir: bool,
+         want_disasm: bool,
+         ctrl_plane: &mut ControlPlane,
+     ) -> CodegenResult<CompiledCodeStencil> {
+-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
++        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
+ 
+         let want_disasm = want_disasm || log::log_enabled!(log::Level::Debug);
+         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;
+--- cranelift-codegen-0.137.1/src/isa/s390x/mod.rs
++++ b/src/isa/s390x/mod.rs
+@@ -51,7 +51,8 @@ impl S390xBackend {
+     /// finalizes branches. The result is ready for binary emission.
+     fn compile_vcode(
+         &self,
+-        func: &Function,
++        func: &mut Function,
++        release_ir: bool,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
+         ctrl_plane: &mut ControlPlane,
+@@ -61,6 +62,7 @@ impl S390xBackend {
+         let abi = abi::S390xCallee::new(func, self, &self.isa_flags, &sigs)?;
+         compile::compile::<S390xBackend>(
+             func,
++            release_ir,
+             domtree,
+             regalloc_ctx,
+             self,
+@@ -75,14 +77,15 @@ impl S390xBackend {
+ impl TargetIsa for S390xBackend {
+     fn compile_function(
+         &self,
+-        func: &Function,
++        func: &mut Function,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
++        release_ir: bool,
+         want_disasm: bool,
+         ctrl_plane: &mut ControlPlane,
+     ) -> CodegenResult<CompiledCodeStencil> {
+         let flags = self.flags();
+-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
++        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
+ 
+         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, flags, ctrl_plane)?;
+         let value_labels_ranges = emit_result.value_labels_ranges;
+--- cranelift-codegen-0.137.1/src/isa/x64/mod.rs
++++ b/src/isa/x64/mod.rs
+@@ -59,7 +59,8 @@ impl X64Backend {
+ 
+     fn compile_vcode(
+         &self,
+-        func: &Function,
++        func: &mut Function,
++        release_ir: bool,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
+         ctrl_plane: &mut ControlPlane,
+@@ -71,6 +72,7 @@ impl X64Backend {
+         let abi = abi::X64Callee::new(func, self, &self.x64_flags, &sigs)?;
+         compile::compile::<Self>(
+             func,
++            release_ir,
+             domtree,
+             regalloc_ctx,
+             self,
+@@ -85,13 +87,14 @@ impl X64Backend {
+ impl TargetIsa for X64Backend {
+     fn compile_function(
+         &self,
+-        func: &Function,
++        func: &mut Function,
+         domtree: &DominatorTree,
+         regalloc_ctx: &mut regalloc2::Ctx,
++        release_ir: bool,
+         want_disasm: bool,
+         ctrl_plane: &mut ControlPlane,
+     ) -> CodegenResult<CompiledCodeStencil> {
+-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
++        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
+ 
+         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;
+         let value_labels_ranges = emit_result.value_labels_ranges;
+--- cranelift-codegen-0.137.1/src/machinst/compile.rs
++++ b/src/machinst/compile.rs
+@@ -13,7 +13,8 @@ use regalloc2::{Algorithm, RegallocOptions};
+ /// Compile the given function down to VCode with allocated registers, ready
+ /// for binary emission.
+ pub fn compile<B: LowerBackend + TargetIsa>(
+-    f: &Function,
++    f: &mut Function,
++    release_ir: bool,
+     domtree: &DominatorTree,
+     regalloc_ctx: &mut regalloc2::Ctx,
+     b: &B,
+@@ -40,6 +41,12 @@ pub fn compile<B: LowerBackend + TargetIsa>(
+         let _tt = timing::vcode_lower();
+         lower.lower(b, ctrl_plane)?
+     };
++    // The lowered code holds everything emission needs: the instructions are dropped before
++    // register allocation, the compile's largest phase, so the two never hold memory together.
++    if release_ir {
++        f.dfg = crate::ir::DataFlowGraph::new();
++        f.layout = crate::ir::Layout::new();
++    }
+ 
+     log::debug!(
+         "Number of lowered vcode instructions: {}",

@@ -57,6 +57,11 @@ pub struct Context {
 
     /// Reused register allocator context.
     pub(crate) regalloc_ctx: regalloc2::Ctx,
+
+    /// Drop the function's instructions and its flow analyses once lowered
+    /// (`TargetIsa::compile_function`): a caller that reads nothing of `func` after the compile
+    /// but its parameters keeps neither through register allocation.
+    pub release_ir: bool,
 }
 
 impl Context {
@@ -81,6 +86,7 @@ impl Context {
             compiled_code: None,
             want_disasm: false,
             regalloc_ctx: regalloc2::Ctx::default(),
+            release_ir: false,
         }
     }
 
@@ -140,10 +146,16 @@ impl Context {
 
             self.verify_if(isa)?;
             self.optimize(isa, ctrl_plane)?;
+            if self.release_ir {
+                // Lowering reads the dominator tree only.
+                self.cfg = ControlFlowGraph::new();
+                self.loop_analysis = LoopAnalysis::new();
+            }
             result = isa.compile_function(
-                &self.func,
+                &mut self.func,
                 &self.domtree,
                 &mut self.regalloc_ctx,
+                self.release_ir,
                 self.want_disasm,
                 ctrl_plane,
             );

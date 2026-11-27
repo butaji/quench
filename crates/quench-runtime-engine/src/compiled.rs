@@ -9665,7 +9665,7 @@ mod tests {
             builder.seal_all_blocks();
             builder.finalize(isa.frontend_config());
             if !observe_counter {
-                let converted = quench_runtime::vm::jit_backend::compile_function(function.clone(), &*isa, None, |_, native| {
+                let converted = quench_runtime::vm::jit_backend::compile_function_reading(function.clone(), &*isa, None, false, |_, native| {
                     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
                     let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
                     let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
