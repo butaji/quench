@@ -161,8 +161,10 @@ fn serve(jobs: &Receiver<Work>) {
     }
 }
 
-/// Returns the code generator's idle pages to the system, and the code zone's batched writer-view retirements.
+/// Returns the code generator's idle pages to the system (its held compile context first, the arena's largest
+/// tenant), and the code zone's batched writer-view retirements.
 fn release_compile_scratch() {
+    super::release_compile_context();
     quench_alloc::release_empty_pages();
     quench_alloc::release_scratch();
     crate::vm::engine_calls::flush_retired_writers();
