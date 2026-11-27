@@ -97,6 +97,15 @@ impl<'a> EmitFrame<'a> {
         }
     }
 
+    /// The resolved word `owner`'s proofs in `State` are keyed by (`headers`): a receiver's is `this`'s, as its
+    /// proofs are shared; a temporary has none.
+    fn proof_word(&mut self, builder: &mut FunctionBuilder<'_>, owner: Owner) -> Option<ir::Value> {
+        match self.proof_key(owner)? {
+            Some(register) => Some(headers::register_word(builder, self.registers, self.state, register)),
+            None => Some(headers::this_word(builder, self.this?)),
+        }
+    }
+
     /// The other registers that hold `register`'s tagged value, which is one SSA value: copies a
     /// `Move` made (`register_copy`), not yet redefined. Receivers keep their own proofs.
     fn copies(&self, register: Register) -> Vec<Register> {
@@ -112,7 +121,6 @@ impl<'a> EmitFrame<'a> {
     fn retire_fast_proofs(&mut self, owner: Owner, before: &State) {
         self.state.proofs.headers.clone_from(&before.proofs.headers);
         self.state.proofs.records.clone_from(&before.proofs.records);
-        self.state.proofs.readable.clone_from(&before.proofs.readable);
         self.state.proofs.layouts.retain(|key, _| before.proofs.layouts.contains_key(key));
         if self.state.proofs.global != before.proofs.global { self.state.proofs.global = None; }
         if let Some(Some(register)) = self.proof_key(owner) {
@@ -186,13 +194,14 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The shape the owner's header holds as a constant, or its kept layout's.
     fn proven_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner) -> Option<(u32, ShapeFact)> {
         let key = self.proof_key(owner)?;
-        headers::header_shape(stage.builder, self.state, key).or_else(||
+        let word = self.proof_word(stage.builder, owner);
+        word.and_then(|word| headers::header_shape(stage.builder, self.state, word)).or_else(||
             self.state.proofs.layouts.range((key, 0)..=(key, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
     }
 
     fn prove_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, (shape, proof): (u32, Shaped<ir::Value>), direct: bool) {
-        let Some(key) = self.proof_key(owner) else { return };
-        headers::note_header_shape(stage.builder, self.state, key, (shape, proof.fact()));
+        let Some(word) = self.proof_word(stage.builder, owner) else { return };
+        headers::note_header_shape(stage.builder, self.state, word, (shape, proof.fact()));
         // A read that proves the receiver a direct object of its shape proves it for the block,
         // for each copy of its value too (`copies`).
         if let (true, Owner::Register(register)) = (direct, owner) {

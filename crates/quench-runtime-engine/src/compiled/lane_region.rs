@@ -237,8 +237,8 @@ struct State {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldValue {
-    /// Receiver home until its next definition (`None` is the fixed `this`).
-    owner: Option<Register>,
+    /// The resolved tagged word of the receiver the read named: a fact of the object, so every register holding it shares it.
+    owner: ir::Value,
     atom: Atom,
     value: ir::Value,
     ty: Type,
@@ -248,9 +248,10 @@ struct FieldValue {
 /// belong to the shared dataflow analysis and need no duplicate snapshots.
 #[derive(Clone, Default)]
 struct LocalProofs {
-    /// Direct-object proofs by owner, until an effect that may change the object retires
-    /// them: a register's, and in the final entry fixed `this`'s.
-    headers: Vec<Option<ObjectHeader>>,
+    /// Direct-object proofs by the resolved tagged word they prove, until an effect that may change the object
+    /// retires them. A register's redefinition names a new word, so it retires nothing. The flag is whether the
+    /// proof was a read's (`readable`, which may name a function's object).
+    headers: smallvec::SmallVec<[(ir::Value, ObjectHeader, bool); INLINE_FIELD_BINDINGS]>,
     /// The record each proved value names (`ObjectRecord`), by the tagged word (resolved), and whether
     /// the proof was a read's (`readable`, which may name a function's object): a fact of the value, which
     /// no effect changes (records stay put in a run, and the reservation's base is the run's), so it
@@ -258,9 +259,6 @@ struct LocalProofs {
     /// (a copy, an inlined frame's `this`). A later header of any of them reads its shape through it, with
     /// no family test and no record lookup: the untagged view of a proven object (R2, facts on values).
     records: smallvec::SmallVec<[(ir::Value, ObjectRecord, bool); INLINE_FIELD_BINDINGS]>,
-    /// The owners of `headers` whose proof a read made, which may name a function's record
-    /// (`ObjectHeader::prove_readable`): a store proves them again as objects.
-    readable: BitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// The projection of the realm's global object a held slot's access proved (`call_out::global_layout`),
@@ -319,10 +317,6 @@ impl LocalProofs {
         self.admitted_captures.push((callee, view));
     }
 
-    fn set_readable(&mut self, owner: usize, readable: bool) {
-        if readable { self.readable.insert(owner); } else { self.readable.remove(owner); }
-    }
-
     /// An admitted existing own-slot write changes only this name. Retire it for every receiver, since distinct receiver values may alias.
     fn write_field(&mut self, atom: Atom) {
         self.fields.retain(|field| field.atom != atom);
@@ -349,7 +343,7 @@ impl State {
 
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
-            headers: vec![None; registers + 1], records: smallvec::SmallVec::new(), readable: BitSet::with_capacity(registers + 1),
+            headers: smallvec::SmallVec::new(), records: smallvec::SmallVec::new(),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
@@ -367,11 +361,6 @@ impl State {
         }
     }
 
-    /// The `headers` index of an owner: a register, or fixed `this` (`None`).
-    fn header_index(&self, owner: Option<Register>) -> usize {
-        owner.map_or(self.values.len(), usize::from)
-    }
-
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
@@ -381,8 +370,7 @@ impl State {
         self.proofs.keep_typed_views();
         // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
         self.proofs.admitted_captures.clear();
-        self.proofs.headers.fill(None);
-        self.proofs.readable.clear();
+        self.proofs.headers.clear();
         self.proofs.layouts.clear();
         self.proofs.global = None;
         self.proofs.stable = false;
@@ -1090,16 +1078,14 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let Some(edges) = self.forward.get(pc).copied().flatten() else { return };
         let Some(arrived) = self.arrived.remove(&pc) else { return };
         let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
-        for (index, header) in state.proofs.headers.iter_mut().enumerate() {
-            *header = first.headers[index].filter(|proof| rest.iter()
-                .all(|other| other.headers[index] == Some(*proof)));
-        }
+        // A header every arrival holds for the same word is the join's, read where any arrival read it.
+        state.proofs.headers = first.headers.iter().filter(|(word, header, _)| rest.iter()
+            .all(|other| other.headers.iter().any(|(known, proof, _)| known == word && proof == header)))
+            .map(|(word, header, _)| (*word, *header, arrived.iter()
+                .any(|other| other.headers.iter().any(|(known, _, readable)| known == word && *readable))))
+            .collect();
         state.proofs.records = first.records.iter().copied().filter(|record| rest.iter()
             .all(|other| other.records.contains(record))).collect();
-        state.proofs.readable.clear();
-        for arrived in &arrived {
-            for owner in arrived.readable.iter() { state.proofs.readable.insert(owner); }
-        }
         state.proofs.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
         state.proofs.global = first.global.filter(|kept| rest.iter().all(|other| other.global == Some(*kept)));
@@ -1191,7 +1177,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
             let exit = self.guard_exit(state, target as u32);
             let header = self.object_header(state, Some(register), false, exit);
-            headers::prove_header_shape(&mut self.builder, state, Some(register), header, shape, exit);
+            let word = self.register_word(state, register);
+            headers::prove_header_shape(&mut self.builder, state, word, header, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }
@@ -2581,6 +2568,7 @@ impl Lowering<'_, '_> {
         if !state.virtuals.is_empty() || !incoming.virtuals.is_empty() { self.valid = false; declined("a kept receiver reaches a join", pc); }
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
+        state.proofs.headers.retain(|header| incoming.proofs.headers.contains(header));
         state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
@@ -3669,10 +3657,11 @@ impl Lowering<'_, '_> {
     fn guard_inlined_receiver(&mut self, state: &mut State, frame: usize, exit: ir::Block) {
         let inlined = self.unit.frames[frame];
         let receiver = self.tagged(state, inlined.receiver);
+        let word = self.builder.func.dfg.resolve_aliases(receiver);
         // A numeric body has no entry facts: only a dominating proof admits its receiver.
         let entry = self.entry.as_ref();
         let admitted = entry.is_some_and(|entry| entry.call_receivers.contains(frame))
-            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
+            || state.proofs.headers.iter().any(|(known, ..)| *known == word)
             || entry.is_some_and(|entry| entry.records[usize::from(inlined.receiver)].is_some()
                 || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some()));
         let callee = self.program.function(inlined.target.function as usize);
@@ -4786,8 +4775,11 @@ impl Lowering<'_, '_> {
         {
             return Some(true);
         }
-        let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
-            .find(|field| field.owner == owner && field.atom == atom));
+        let known = match field {
+            Some((owner, atom)) => self.owner_word(state, owner)
+                .and_then(|word| state.proofs.fields.iter().copied().find(|field| field.owner == word && field.atom == atom)),
+            None => None,
+        };
         #[cfg(test)] if known.is_some() { record_field_forward(first.1); }
         let held = HeldRead { known: known.map(|field| field.value), ..HeldRead::default() };
         let value = self.field_value(state, (base, lookup), &parts, held, exit)?;
@@ -4918,6 +4910,16 @@ impl Lowering<'_, '_> {
         headers::object_header(&mut self.builder, &mut self.registers, state, (entry, self.payload), owner, read, exit)
     }
 
+    /// The resolved word a register holds: the value its proofs are keyed by (`headers::register_word`).
+    fn register_word(&mut self, state: &mut State, register: Register) -> ir::Value {
+        headers::register_word(&mut self.builder, &mut self.registers, state, register)
+    }
+
+    /// The resolved word of `owner`, a register's or fixed `this`'s; `None` for `this` where the entry has none.
+    fn owner_word(&mut self, state: &mut State, owner: Option<Register>) -> Option<ir::Value> {
+        headers::owner_word(&mut self.builder, &mut self.registers, state, self.entry.as_ref().map(|entry| entry.this), owner)
+    }
+
     fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
         if source >= self.unit.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
@@ -4988,9 +4990,10 @@ impl Lowering<'_, '_> {
 
     /// The slot a loop's entry projected for the int32 store at `pc` (`LoopStore`), where the
     /// store's object is the record the projection addresses.
-    fn projected_slot(&self, state: &State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
-        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(slot.domain)
-            && state.proofs.headers[state.header_index(register)].is_some_and(|header| header.record == slot.header.record))
+    fn projected_slot(&mut self, state: &mut State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
+        let slot = self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(slot.domain))?;
+        let word = self.owner_word(state, register)?;
+        state.proofs.headers.iter().any(|(known, header, _)| *known == word && header.record == slot.header.record).then_some(slot)
     }
 
     /// The named store of `operation` through its site's plan: `ty` is the stored value's type,

@@ -10,7 +10,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
         let LoopRead { value: variable, ty, representation, receiver, header, .. } = read;
         if let Some(receiver) = receiver {
-            prove_receiver(state, instruction, receiver, header);
+            self.prove_receiver(state, instruction, receiver, header);
         }
         let raw = self.builder.use_var(variable);
         if representation == Representation::Int64 {
@@ -57,7 +57,9 @@ impl Lowering<'_, '_> {
         #[cfg(test)]
         record_hoisted_field(cache_site, read.representation);
         #[cfg(not(test))] let _ = cache_site;
-        state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty: read.ty });
+        if let Some(owner) = self.owner_word(state, base.register_index()) {
+            state.proofs.fields.push(FieldValue { owner, atom, value, ty: read.ty });
+        }
         value
     }
 }
@@ -67,17 +69,23 @@ fn field_lookup(instruction: WideInstruction) -> Option<FieldLookup> {
     (instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::FieldLookup).then(|| instruction.field_lookup()).flatten()
 }
 
-/// The receiver `instruction` reads takes the type, and the header, its hoisted read proved.
-fn prove_receiver(state: &mut State, instruction: WideInstruction, (owner, ty): (Register, Type), header: Option<ObjectHeader>) {
-    let owner = match field_lookup(instruction) {
-        Some(FieldLookup::Atom { base, .. }) => base.register_index().unwrap_or(owner),
-        _ => owner,
-    };
-    let fact = &mut state.values[usize::from(owner)];
-    // An unboxed register has no tagged view to keep (`headers::object_header`).
-    if fact.tagged.current() { *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, Representation::Tagged) }; }
-    if let Some(header) = header {
-        state.proofs.headers[usize::from(owner)] = Some(header);
+impl Lowering<'_, '_> {
+    /// The receiver `instruction` reads takes the type, and the header, its hoisted read proved.
+    fn prove_receiver(&mut self, state: &mut State, instruction: WideInstruction, (owner, ty): (Register, Type), header: Option<ObjectHeader>) {
+        let owner = match field_lookup(instruction) {
+            Some(FieldLookup::Atom { base, .. }) => base.register_index().unwrap_or(owner),
+            _ => owner,
+        };
+        let fact = &mut state.values[usize::from(owner)];
+        // An unboxed register has no tagged view to keep (`headers::object_header`).
+        if fact.tagged.current() { *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, Representation::Tagged) }; }
+        if let Some(header) = header {
+            let word = self.register_word(state, owner);
+            match state.proofs.headers.iter_mut().find(|(known, ..)| *known == word) {
+                Some(proof) => proof.1 = header,
+                None => state.proofs.headers.push((word, header, false)),
+            }
+        }
     }
 }
 
