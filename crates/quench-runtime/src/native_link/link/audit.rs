@@ -12,7 +12,6 @@ const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
     "specialize_module_with_atom_prefix", "specialize_eval_with_context",
     "specialize_function_constructor",
 ];
-const SYNTAX_FRONTEND_SYMBOLS: &[&str] = &["oxc_parser::", "oxc_semantic::"];
 pub(in crate::native_link) const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
     "::run_fast_lane", "::derive_lane_view", "::js_step_callout",
     "::step_wasm", "::js_tier_frame_entry",
@@ -29,7 +28,7 @@ pub(super) fn is_compiler_symbol(symbol: &str) -> bool {
 }
 
 pub(in crate::native_link) fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
-    BACKEND_COMPILER_SYMBOLS.iter().chain(SYNTAX_FRONTEND_SYMBOLS).copied()
+    BACKEND_COMPILER_SYMBOLS.iter().chain(crate::compile::call_sites::SYNTAX_FRONTEND_SYMBOLS).copied()
         .chain(JS_SOURCE_COMPILER_SYMBOLS.iter().copied().filter(|_| symbol.contains("quench_runtime")))
         .filter(|name| symbol.contains(name))
 }
@@ -64,7 +63,7 @@ fn audit_retained_execution(symbols: &str, support: NativeImageSupport) -> Resul
         return Ok(());
     }
     // Inspect whole demangled names: Rust types may contain spaces, and a required core generic
-    // emitted by OXC does not itself retain an OXC operation.
+    // emitted by the syntax front end does not itself retain a front-end operation.
     let retained = retained_execution_support(symbols);
     if retained.is_empty() {
         return Ok(());

@@ -97,7 +97,7 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
-pub mod source_routes;
+pub mod source_routes; pub(crate) mod call_sites;
 mod settled;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite; mod rest_alias;
