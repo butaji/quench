@@ -356,6 +356,11 @@ impl Planner<'_, '_> {
             CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
             _ => (!forwarded).then_some(target),
         }).collect();
+        // A call of an inlined callee that inlines none of its targets leaves the unit at every run (the lowering
+        // makes calls from the caller's own frame only): it blocks its callee, which stays its own unit.
+        if depth > 0 && found.is_empty() {
+            return (Vec::new(), true);
+        }
         let (ran, targets, reserved, mark) = (!found.is_empty(), found.len(), (self.registers, self.budget), self.survey_len());
         // The alternatives share the site's executions equally: the record keeps no split.
         let share = (weight / (targets.max(1) as u64)).max(1);

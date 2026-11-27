@@ -18,7 +18,7 @@
 
 use super::census::Census;
 use super::flow::FunctionFlow;
-use super::value::{Key, Origin};
+use super::value::{Class, Key, Origin};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -49,6 +49,17 @@ pub(crate) struct Types {
     /// The type of a field, binding or return no write of has been seen yet: none (`Type::NEVER`) in the
     /// solve's first pass (`bottom`), any value once the passes stop.
     unseen: Type,
+    /// Per field, return, element or binding, the class of the objects its writes store (`Class`), joined
+    /// beside its type: what a read of it holds, as a guess (`Class::guessed`).
+    classes: BTreeMap<Key, Class>,
+    /// Per call `(function, pc)`, the join of the classes of every function it may call's returns.
+    call_classes: BTreeMap<(u32, u32), Class>,
+    /// The class of a key no write of has been seen yet, as `unseen` is its type.
+    unseen_class: Class,
+    /// Per function, the join of the classes of the `this` its calls pass, beside `receivers`.
+    receiver_classes: BTreeMap<u32, Class>,
+    /// Per function, the join of the classes of each parameter's arguments, beside `params`.
+    param_classes: BTreeMap<u32, Vec<Class>>,
 }
 
 impl Types {
@@ -56,9 +67,17 @@ impl Types {
     /// guess for it, the parameters of each function, and the bindings.
     pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> Self {
         let mut types = Self { fields: BTreeMap::new(), returns: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(),
-            bindings: BTreeMap::new(), unseen: Type::ANY };
-        for flow in flows {
+            bindings: BTreeMap::new(), unseen: Type::ANY, classes: BTreeMap::new(), call_classes: BTreeMap::new(), unseen_class: Class::Many,
+            receiver_classes: BTreeMap::new(), param_classes: BTreeMap::new() };
+        static PASS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let pass = PASS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for (fid, flow) in flows.iter().enumerate() {
             for &(key, fact) in &flow.writes {
+                if matches!(key, Key::Member(_) | Key::MemberOn { .. } | Key::Return(_) | Key::Global(_) | Key::Slot { .. } | Key::Element(_)) {
+                    let class = types.classes.entry(key).or_insert(Class::Never);
+                    if std::env::var_os("QUENCH_CLASS_DEBUG").is_some() && *class != Class::Many && class.join(fact.class) == Class::Many { eprintln!("CLASSDBG pass {pass} f{fid} {key:?} {:?} <- {fact:?}", *class); }
+                    *class = class.join(fact.class);
+                }
                 let joined = match key {
                     Key::Member(atom) => types.fields.entry(atom).or_insert(Type::NEVER),
                     Key::Return(function) => types.returns.entry(function).or_insert(Type::NEVER),
@@ -76,15 +95,19 @@ impl Types {
                 // A callee no return of reaches never returns: it adds nothing to the join.
                 let ty = callees.iter().fold(Type::NEVER, |ty, callee| ty.join(types.returns.get(callee).copied().unwrap_or(Type::NEVER)));
                 types.calls.insert((id, call.pc), ty);
+                let class = callees.iter().fold(Class::Never, |class, callee| class.join(types.classes.get(&Key::Return(*callee)).copied().unwrap_or(Class::Never)));
+                types.call_classes.insert((id, call.pc), class);
             }
         }
-        types.params = parameters(flows, facts, census);
+        (types.params, types.param_classes) = parameters(flows, facts, census);
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
                 let receiver = receiver_type(call);
                 for target in targets(id as u32, call, facts, census) {
                     let joined = types.receivers.entry(target).or_insert(Type::NEVER);
                     *joined = joined.join(receiver);
+                    let class = types.receiver_classes.entry(target).or_insert(Class::Never);
+                    *class = class.join(call.receiver.class);
                 }
             }
         }
@@ -104,7 +127,46 @@ impl Types {
         self.receivers.values_mut().for_each(never);
         self.params.values_mut().flatten().for_each(|ty| *ty = Type::NEVER);
         self.unseen = Type::NEVER;
+        self.classes.values_mut().for_each(|class| *class = Class::Never);
+        self.call_classes.values_mut().for_each(|class| *class = Class::Never);
+        self.unseen_class = Class::Never;
+        self.receiver_classes.values_mut().for_each(|class| *class = Class::Never);
+        self.param_classes.values_mut().flatten().for_each(|class| *class = Class::Never);
         self
+    }
+
+    /// The class of `this` in `function`, a guess: the join of its receivers' (`this`), any where no
+    /// recorded call reaches it.
+    pub(super) fn this_class(&self, function: u32) -> Class {
+        self.receiver_classes.get(&function).copied().unwrap_or(Class::Many).guessed()
+    }
+
+    /// The class parameter `index` of `function` takes at entry, a guess (`param`).
+    pub(super) fn param_class(&self, function: u32, index: u16) -> Class {
+        self.param_classes.get(&function).and_then(|classes| classes.get(usize::from(index))).copied().unwrap_or(Class::Many).guessed()
+    }
+
+    /// The class a read of `key` holds (a field, return, element or binding): the join of its writes', a
+    /// guess; `unseen_class` where none is seen.
+    pub(super) fn class(&self, key: Key) -> Class {
+        self.classes.get(&key).copied().unwrap_or(self.unseen_class).guessed()
+    }
+
+    /// The classes the solve found, for the trace.
+    pub(super) fn class_trace(&self) -> Vec<(Key, Class)> {
+        self.classes.iter().filter(|(_, class)| **class != Class::Many).map(|(key, class)| (*key, *class))
+            .chain(self.receiver_classes.iter().map(|(function, class)| (Key::Slot { owner: *function, slot: u16::MAX }, *class))).collect()
+    }
+
+    /// The class a read of field `atom` off class `class`'s instances (`instance`) or static object holds, a
+    /// guess: the join of that class's stores of it (`Key::MemberOn`), none where none is seen.
+    pub(super) fn class_on(&self, class: u32, instance: bool, atom: u32) -> Option<Class> {
+        self.classes.get(&Key::MemberOn { class, instance, atom }).map(|class| class.guessed())
+    }
+
+    /// The class the call at `pc` of `function` returns, a guess: any where its callees are not known.
+    pub(super) fn call_class(&self, function: u32, pc: u32) -> Class {
+        self.call_classes.get(&(function, pc)).copied().unwrap_or(Class::Many).guessed()
     }
 
     /// The type a read of field `atom` takes: the join of its stores, `unseen` where none is seen.
@@ -185,11 +247,12 @@ fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts, census: &C
 /// builtin makes, a call through a computed callee) may pass anything: the types are a guess, as the
 /// field types they feed are, which a tier holds only under the fields' slot dependencies, so such a call
 /// that stores what it was passed widens the slot and retires the code.
-fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTreeMap<u32, Vec<Type>> {
+fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> (BTreeMap<u32, Vec<Type>>, BTreeMap<u32, Vec<Class>>) {
     let undefined = Type::language(ValueType::Undefined);
     let mut params: BTreeMap<u32, Vec<Type>> = flows.iter().enumerate()
         .filter_map(|(id, flow)| Some((id as u32, vec![Type::NEVER; usize::from(flow.arity?)])))
         .collect();
+    let mut classes: BTreeMap<u32, Vec<Class>> = params.iter().map(|(id, slots)| (*id, vec![Class::Never; slots.len()])).collect();
     let mut reached = std::collections::BTreeSet::new();
     for (id, flow) in flows.iter().enumerate() {
         for call in &flow.calls {
@@ -199,6 +262,11 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTre
                 for (index, slot) in slots.iter_mut().enumerate() {
                     *slot = slot.join(call.arguments.get(index).map_or(undefined, |argument| argument.ty));
                 }
+                if let Some(slots) = classes.get_mut(&target) {
+                    for (index, slot) in slots.iter_mut().enumerate() {
+                        *slot = slot.join(call.arguments.get(index).map_or(Class::Never, |argument| argument.class));
+                    }
+                }
             }
         }
     }
@@ -207,5 +275,8 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTre
     for (function, slots) in &mut params {
         if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Type::ANY); }
     }
-    params
+    for (function, slots) in &mut classes {
+        if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Class::Many); }
+    }
+    (params, classes)
 }
