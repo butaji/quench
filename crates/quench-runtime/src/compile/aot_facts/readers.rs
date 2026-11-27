@@ -140,6 +140,13 @@ impl Readers {
         }
     }
 
+    /// Whether code the solve cannot follow may enumerate or read every field of an instance of `class`: an instance reaches a
+    /// sink (`reflective`), where a for-in, a spread, `Object.keys`, a `JSON` walk or `Reflect.ownKeys` is not followed. Those
+    /// operations hand their operands to a sink (`plain`, `open`), so they are the enumerators; no name table is consulted.
+    pub(super) fn reflects_class(&self, class: u32) -> bool {
+        self.reflective.may_hold(class)
+    }
+
     /// Whether the call at `pc` of function `function` has a result no read follows (`call` in `scan`).
     pub(super) fn result_dead(&self, function: u32, pc: u32) -> bool {
         self.dead_results.contains(&(function, pc))

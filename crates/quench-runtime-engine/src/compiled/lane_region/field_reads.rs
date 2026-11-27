@@ -258,27 +258,4 @@ impl Lowering<'_, '_> {
     }
 }
 
-impl Lowering<'_, '_> {
-    /// Whether the loop field `field`, whose first read is `instruction`, is carried as a raw
-    /// double: every read and store site names the one own slot of one shape, whose arena words
-    /// are raw doubles, and every store writes a Number. Its stores then write the binary64 word
-    /// through the slot the entry projected and its reads take the carried word, boxing nothing.
-    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction) -> bool {
-        let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return false };
-        let raw_slot = |site: u16| match site_loads(self.fields, site).map(Vec::as_slice) {
-            Some([load]) if load.holder.is_none() && load.valid() && !load.function_shape && load.raw_double => Some((load.shape, load.slot)),
-            _ => None,
-        };
-        let Some(slot) = raw_slot(cache_site) else { return false };
-        let reads = field.reads.iter().all(|pc| match self.unit.instructions[*pc].field_lookup() {
-            Some(FieldLookup::Atom { cache_site, .. }) => raw_slot(cache_site) == Some(slot),
-            _ => false,
-        });
-        reads && field.stores.iter().all(|store| {
-            let instruction = self.unit.instructions[*store];
-            raw_slot(instruction.cache_site_index()) == Some(slot)
-                && self.cell_before(*store, instruction.register_a()).ty.is_subtype(Type::NUMBER)
-        })
-    }
-}
 

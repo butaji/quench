@@ -1388,10 +1388,10 @@ impl Vm {
                     values.truncate(start);
                     object
                 }
-                crate::bytecode::LiteralStep::Json(start) => {
-                    let text = program.data_literal_text(start).ok_or_else(|| {
-                        JsError::validation("data literal is outside the program's source".into())
-                    })?;
+                crate::bytecode::LiteralStep::Json(constant) => {
+                    let Some(crate::bytecode::Constant::String(text)) = program.constants.get(constant as usize) else {
+                        return Err(JsError::validation("data literal is not a JSON text constant".into()));
+                    };
                     self.json_literal(text)?
                 }
             };
@@ -1834,13 +1834,13 @@ impl Vm {
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
         if usize::from(cache.slot) >= storage_len { return None; }
-        let (ty, raw_double) = self.native_slot_rep(cache.receiver, None, cache.slot)?;
+        let ty = self.heap.slot_type(cache.receiver, usize::from(cache.slot));
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
             .filter(|object| object.exact_shape() == cache.receiver)
             .and_then(Object::plain_property_storage);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage, ty,
-            inherited: None, function_shape: false, raw_double, formed: None, holder_id: None,
+            inherited: None, function_shape: false, formed: None, holder_id: None,
         })
     }
 
@@ -1902,7 +1902,7 @@ impl Vm {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 inherited: crate::vm::engine_types::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
-                raw_double: false, formed: None, holder_id: None,
+                formed: None, holder_id: None,
             });
         }
         loads
@@ -1953,38 +1953,24 @@ impl Vm {
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
         if usize::from(entry.slot) >= storage_len { return None; }
-        let (ty, raw_double) = self.native_slot_rep(entry.receiver, holder, entry.slot)?;
+        let ty = self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot));
         // The holder's layout id, where the entry kept one (`FieldCache::holder_id`); the plan
         // checks it names the holder's shape before a read guards by it.
         let holder_id = (holder.is_some() && entry.holder_id != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_id);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None, ty,
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
-            raw_double, formed: None, holder_id,
+            formed: None, holder_id,
         })
-    }
-
-    /// The type of `slot` of the shape that holds it (`holder`, else the receiver's) and whether
-    /// its arena words are raw doubles (`Heap::slot_holds_raw_doubles`). Generated code reads a
-    /// raw-double slot only as its receiver's own, under a dependency on its type
-    /// (`NativeFieldLoad::slot_dependency`), which a widening that recodes the words retires;
-    /// `None` for any other raw-double slot.
-    fn native_slot_rep(&self, receiver: u32, holder: Option<u32>, slot: u16) -> Option<(crate::typed_ir::Type, bool)> {
-        let owner = holder.unwrap_or(receiver);
-        let ty = self.heap.slot_type(owner, usize::from(slot));
-        let raw_double = self.heap.slot_holds_raw_doubles(owner, usize::from(slot));
-        let depended = ty != crate::typed_ir::Type::ANY && ty != crate::typed_ir::Type::NEVER;
-        (!raw_double || (holder.is_none() && depended)).then_some((ty, raw_double))
     }
 
     /// The type `slot` of `shape` holds where a reader may take its words as tagged values, which
     /// an ahead image's guessed field read is (`aot_image::symbols::guarded_shape`): `None` where
-    /// its words are raw doubles, or where no store has typed the slot yet, so a first Number
-    /// store could make them raw. A type within Number may still widen to raw doubles, so a
-    /// reader depends on it (`SlotDependency`); any other type stays tagged.
+    /// no store has typed the slot yet. A type within Number is a dependency of its reader
+    /// (`SlotDependency`); any other type stays tagged.
     pub fn tagged_slot_type(&self, shape: u32, slot: u16) -> Option<crate::typed_ir::Type> {
         let ty = self.heap.slot_type(shape, usize::from(slot));
-        (!self.heap.slot_holds_raw_doubles(shape, usize::from(slot)) && ty != crate::typed_ir::Type::NEVER).then_some(ty)
+        (ty != crate::typed_ir::Type::NEVER).then_some(ty)
     }
 
     /// The global object's own data field a by-name load's hint (an own entry) names, its
@@ -4650,9 +4636,7 @@ impl Vm {
     }
 
     /// Whether a loop region's native stores of `writes` to the own data slot `site` caches on
-    /// `object` are admitted, and the slot's address for its entry record where its words are
-    /// tagged (null where they are raw doubles, which the region's staged store writes as raw
-    /// doubles, `StoreArm::raw_double`, and which no raw tagged writer may take).
+    /// `object` are admitted, and the slot's address for its entry record.
     pub fn cached_field_store_admission(
         &mut self,
         p: &ResidualProgram,
@@ -4664,14 +4648,11 @@ impl Vm {
         let slot = self.cached_own_writable_slot(p, object, atom, site)?;
         let shape = self.heap.object(object)?.shape();
         // A Number store's own row admits the domain of the value it stores
-        // (`Lowering::admit_slot_writes_as`): the entry keeps a Number slot's narrower type
-        // rather than widening it to every Number, which would make an int32 slot hold raw
-        // doubles and decline the code its compile planned on that slot.
+        // (`Lowering::admit_slot_writes`): the entry keeps a Number slot's narrower type
+        // rather than widening it to every Number, which would make an int32 slot decline the
+        // code its compile planned on that slot.
         let current = self.heap.slot_type(shape, slot);
         let writes = if writes == crate::typed_ir::Type::NUMBER && current.is_subtype(writes) { current } else { writes };
-        if self.heap.slot_holds_raw_doubles(shape, slot) {
-            return self.heap.admit_slot_writes_as(shape, slot, writes, true).then(std::ptr::null_mut);
-        }
         // SAFETY: the address goes to the entry record alone; the region writes it as its admission says.
         unsafe { self.cached_field_store_pointer(p, object, atom, site, writes) }
     }

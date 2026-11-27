@@ -9,6 +9,7 @@ use super::accessors;
 use super::census::{self, Census};
 use super::class_layout;
 use super::escapes;
+use super::phase;
 use super::flow::{self, FunctionFlow};
 use super::gate::{self, World};
 use super::length_settle;
@@ -121,7 +122,8 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     let accessor_names = accessors::names_of(&first);
     let resolved = Census::of(&first, world).singles();
     let flows = analyze_typed(&resolved, &accessor_names, None, &none);
-    let census = Census::of(&flows, world);
+    let mut census = Census::of(&flows, world);
+    census.phases = phase::folds(program, &flows, &census);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
@@ -129,7 +131,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
             if !call.construct && let Some(set) = census.candidates(call.callee) {
                 facts.call_candidates.insert((id, call.pc), set.iter().copied().collect());
             }
-            let Some(target) = census.target(call.callee) else { continue };
+            let Some(target) = census.target_from(call.callee, id, call.pc) else { continue };
             let guessed = census.guessed(call.callee);
             if call.construct {
                 if !guessed { facts.construct_targets.insert((id, call.pc), target); }
@@ -215,7 +217,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
             }
             for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
                 if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
-                let Some(target) = census.target(call.callee) else { continue };
+                let Some(target) = census.target_from(call.callee, id, call.pc) else { continue };
                 facts.call_targets.insert((id, call.pc), target);
                 if census.guessed(call.callee) { facts.guessed_calls.insert((id, call.pc)); }
                 facts.call_candidates.remove(&(id, call.pc));
@@ -236,6 +238,8 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
         field_readers.finish(&facts.cells, &open_escapes);
         facts.readers = Some(field_readers);
+        // The unions read the settled readers and cells, so they are built after both settle.
+        facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.

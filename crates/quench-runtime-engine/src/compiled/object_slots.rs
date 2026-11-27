@@ -242,7 +242,7 @@ pub(crate) fn field_load_groups(loads: &[NativeFieldLoad]) -> Option<Vec<(Native
     let mut groups: Vec<(NativeFieldLoad, Vec<u32>)> = Vec::new();
     for load in loads {
         let family = groups.iter_mut().find(|(known, _)| load.holder.is_none() && known.holder.is_none()
-            && known.slot == load.slot && known.storage == load.storage && known.raw_double == load.raw_double);
+            && known.slot == load.slot && known.storage == load.storage);
         match family {
             Some((known, shapes)) => {
                 shapes.push(load.shape);
@@ -323,7 +323,7 @@ impl NativeFieldLoad {
     /// in a plain arena run (more fields than inline storage holds): its guard compares the record's
     /// layout id with the one the loader resolves (`ImageWord::Layout`, `symbols::guarded_layout`).
     pub(crate) fn image_layout(self) -> bool {
-        self.guessed() && self.holder.is_none() && self.storage.is_none() && !self.raw_double
+        self.guessed() && self.holder.is_none() && self.storage.is_none()
             && self.storage_len > quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count
     }
 
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None, holder_id: None };
         assert!(field.valid());
         for shape in [quench_runtime::vm::NO_FIELD_RECEIVER,
             quench_runtime::value_vec::DICTIONARY_STORAGE, quench_runtime::value_vec::DICTIONARY_STORAGE | 1] {

@@ -329,6 +329,31 @@ pub trait Stage: crate::projection::Sealed {
         fill_by_rows(self, top, undefined, prefix, passed, registers);
     }
 
+    /// `fill_window` where the window's register count is a word of the stage (an indirect callee's record names it at
+    /// run time): register `k` below `registers` holds argument `k` of the `count` arguments at `arguments` where
+    /// `k < count`, else `undefined`. One loop over the register count (`loop_words`), so a stage with a loop runs one
+    /// body; `Concrete` inherits it.
+    #[inline(always)]
+    fn fill_window_dynamic(&mut self, top: Self::Word, undefined: Self::Word, arguments: Self::Word, count: u16,
+        registers: Self::Word) {
+        let zero = self.constant(0);
+        let some = self.ult(zero, registers);
+        self.effect_if(some, |stage| {
+            let count = stage.constant(u64::from(count));
+            let _ = stage.loop_words([zero], |stage, [index]| {
+                let at = stage.mul_imm(index, 8_u64);
+                let slot = stage.add(top, at);
+                let source = stage.add(arguments, at);
+                let within = stage.ult(index, count);
+                let value = stage.choose(within, |stage| stage.load_u64(Region::Frame.mutable(), source, 0), |_| undefined);
+                stage.store_u64(Region::Frame.mutable(), slot, 0, value);
+                let next = stage.add_imm(index, 1_u64);
+                let more = stage.ult(next, registers);
+                (more, [next])
+            });
+        }, |_| {});
+    }
+
     /// The first index at or after `from` (at most the text's length) where `needle` occurs in
     /// `text`, and whether one does: a span primitive (`spans`). A stage with a tuned search runs it
     /// instead of the rows (`Concrete`).

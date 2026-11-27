@@ -60,7 +60,7 @@ use quench_runtime::bytecode::{ImmediateLayout, Register, WideInstruction};
 use quench_runtime::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_runtime::staged::frame::{ARGC_SHIFT, NATIVE_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
-use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
+use quench_bjit::call_record::{CalleeRecord, CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
 use crate::aot_image::Symbol;
@@ -76,11 +76,13 @@ pub(crate) struct CallPart {
     pub(crate) symbols: Symbolic,
 }
 
+pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
+
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
 /// the choice that made them.
 pub(crate) struct CallChain {
     pub(crate) parts: Vec<CallPart>,
-    pub(crate) records: Vec<Box<CallRecord>>,
+    pub(crate) records: Vec<OwnedCallRecord>,
     pub(crate) choice: Choice,
 }
 

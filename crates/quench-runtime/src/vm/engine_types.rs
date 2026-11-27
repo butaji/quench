@@ -33,7 +33,7 @@ use crate::heap::TableWords;
 use super::dispatch_frame::PendingGeneralCall;
 use crate::code_dependencies::Invalidation;
 use crate::staged::js_step_head::JsStepHead;
-use quench_bjit::call_record::CallRecord;
+use quench_bjit::call_record::{CalleeRecord, CallRecord};
 use super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use super::lane_values::LaneValues;
 use super::lane_activations::LaneActivations;
@@ -478,6 +478,8 @@ pub struct AheadImages {
     /// The program's closed-world facts, which shaped its lane bodies' units (`unit_of`): the
     /// compile's, or derived once again from the program where the image was read from a file.
     pub facts: std::cell::OnceCell<AotFacts>,
+    /// The call graph of the program the facts describe (`compile::call_graph`), derived with them on first use.
+    pub graph: std::cell::OnceCell<crate::compile::call_graph::CallGraph>,
 }
 
 /// What the tier finds in a function at its entries. Each fact depends only on the function and
@@ -969,7 +971,7 @@ pub struct LaneMethod {
     /// a body is called directly.
     pub closed: bool,
     /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
-    pub _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    pub _records: Vec<OwnedCallRecord>,
     /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
     /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
     pub constructors: Box<[Value]>,
@@ -1582,11 +1584,6 @@ pub struct InlinedCall {
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub alternative: Option<usize>,
-    /// For a call through a forwarding native (`CalleeBinding::Forwarded`), the register
-    /// holding the native and its identity, which the call guards too; the callee register
-    /// then holds the function it calls, the receiver is the first argument and the window
-    /// the rest (`Planner::through_call`).
-    pub function_call: Option<(Register, Value)>,
 }
 
 /// The most parameters an activated import passes (`JsImportPlan`).
@@ -1634,8 +1631,6 @@ pub enum LaneBody {
 #[derive(Clone, Copy, Default)]
 pub struct LaneBodyHistory {
     pub lifetimes: u8,
-    /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
-    pub shrinks: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     pub callee_recompiles: u8,
     pub late_calls: u32,
@@ -1720,11 +1715,6 @@ pub struct LoopTier {
     /// The field stores the code left at often enough once, which the next compilation planned
     /// again from their sites' caches (`left_store`), sorted.
     pub refed: Vec<usize>,
-    /// Entries the published code's guards declined in a row, and whether the next compilation
-    /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
-    /// bound misses every versioned entry.
-    pub entry_misses: u16,
-    pub unbounded: bool,
     /// Runs in a row that left inside the loop before its first backward edge (`LoopTier::weigh_run`): code that
     /// pays its entry for no iteration, whose site gives up its native code past `widen_after_leaves` of them.
     pub fruitless: u16,
@@ -2194,7 +2184,7 @@ pub struct ResumeTable {
 pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
     pub direct: Box<[DirectCallee]>,
-    pub records: Vec<Box<CallRecord>>,
+    pub records: Vec<OwnedCallRecord>,
     /// The callees its records were rebound to after their planned closure's guard missed
     /// (`dispatch_fast::rebind_region_call`): each record's descriptor word names one of these, which
     /// stay allocated for the code's life, as a frame running an earlier one keeps reading it.
@@ -2829,6 +2819,10 @@ pub struct ShapeRecipe {
     pub fields: Box<[(u32, u8)]>,
 }
 
+/// A direct row's records, owned by the code that reads them: its site record, and the callee record the site names
+/// (`CallRecord::callee_record`).
+pub type OwnedCallRecord = (Box<CallRecord>, Box<CalleeRecord>);
+
 /// A call the closed world proves (`AotFacts::call_target`) that a body makes by its callee's entry:
 /// its site, its callee, and the record its direct row reads, as the plan made it. The record's
 /// run-time words (the callee's identity, cell, descriptor, captures and global) are a closure's,
@@ -2855,10 +2849,12 @@ pub struct BaseImage {
     pub scratch: u32,
 }
 
-/// What the bindings keep: every closure bound, and by key every descriptor the record named.
+/// What the bindings keep: every closure bound, by key every descriptor the record named, and every callee record a
+/// binding made (`CallRecord::callee_record` names one; a closed-set class's vector names one too).
 pub struct Held {
     pub callees: RefCell<FoldedRoots>,
     pub descriptors: Box<[RefCell<Vec<Box<DirectCallee>>>]>,
+    pub records: RefCell<Vec<Box<UnsafeCell<CalleeRecord>>>>,
 }
 
 /// A lane body compiled ahead: its code, and what its lowering proved about the entry ABI.
@@ -2905,7 +2901,6 @@ miss_reasons! {
     NoPlan => "no-plan",
     HelperConstructContext => "helper-construct:context",
     PlanNoUnit => "plan:no-unit",
-    PlanInvalidBindings => "plan:invalid-bindings",
     PlanFrameNotAdmitted => "plan:frame-not-admitted",
     PlanNoEntry => "plan:no-entry-instruction",
     PlanCompileBound => "plan:compile-bound",
@@ -3147,9 +3142,6 @@ pub struct NativeFieldLoad {
     /// Whether a live function record had the receiver shape when the plan was made: a read
     /// then proves a readable record (an object or a function's), never a direct object.
     pub function_shape: bool,
-    /// Whether the slot's arena words are raw doubles (its owner's type is Number under float
-    /// slots): its load reads the double and boxes it (`staged::object::read_slot`).
-    pub raw_double: bool,
     /// For an own read, the layout id (`Object::hint_shape`) of the receivers the site's lane
     /// record last answered: the read guards it in one compare of the record's own word,
     /// proving the shape and the storage form, and reads that form's layout, a fact of the id,
@@ -5161,7 +5153,7 @@ impl AheadImages {
     #[inline]
 
     pub fn of(image: AotImage) -> Self {
-        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new() }
+        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new(), graph: std::cell::OnceCell::new() }
     }
 
     /// Whether the image has no functions.

@@ -1,7 +1,7 @@
 //! What the functions of a program share: each function's parent, the Number constants, and the
 //! atoms that name the global object.
 
-use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
+use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ProgramKind, ResidualProgram};
 use crate::heap::TypedArrayKind;
 use crate::typed_ir::{IntRange, Type};
 use std::collections::BTreeSet;
@@ -42,6 +42,8 @@ const TYPED_ARRAY_CONSTRUCTORS: [(&str, TypedArrayKind); 9] = [
 pub(super) struct Scope {
     /// Each function's parent, by function id.
     parents: Vec<Option<u32>>,
+    /// Whether the program is a Module: its root is strict code, whose `this` is `undefined` (`root_this_is_global`).
+    module: bool,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
     /// The atoms of the builtins that add properties to the objects they are given (`PROPERTY_ADDERS`).
@@ -89,6 +91,7 @@ impl Scope {
             parents: (0..program.function_count())
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
+            module: matches!(program.kind, ProgramKind::Module),
             constant_types: program.constants.iter().zip(constant_atoms(program))
                 .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             global_objects: program
@@ -195,6 +198,12 @@ impl Scope {
     /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).
     pub(super) fn passes_this(&self, atom: u32) -> bool {
         self.this_passers.contains(&atom)
+    }
+
+    /// Whether the root's `this` is the global object: a Script's is (sloppy top-level code), a Module's is `undefined`
+    /// (its code is strict, as a Module is).
+    pub(super) fn root_this_is_global(&self) -> bool {
+        !self.module
     }
 
     /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).

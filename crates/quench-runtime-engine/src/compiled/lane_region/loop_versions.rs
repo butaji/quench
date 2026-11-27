@@ -11,10 +11,11 @@
 //! (`IntRanges::in_bounds`), where each tested it per iteration.
 //!
 //! The comparison is the entry's, so a failed one is the entry's own exact-PC leave: the
-//! interpreter runs the loop, which tests every access. A loop that can change an array's length
-//! (any instruction `Model::disturbs_lengths`) keeps its per-access tests, and one that a previous
-//! body left at its entry (`generic`) compiles again without versioning: a bound that exceeds its
-//! array on most entries repays no guard.
+//! interpreter runs the loop, which tests every access. There is one compiled body: no checked twin
+//! and no second version. A loop whose body may change an array's length (a step the solve reports
+//! as resizing, `Lowering::may_resize`) keeps a version only where each such step is itself checked
+//! by a version of an entry inside the loop (`IntRanges::settled_versions`); otherwise it has none
+//! and tests its accesses where they are made.
 //!
 //! The words never wrap: a counter and a bound are int32, a scale is an int32 register or constant,
 //! and a base is an int32 or an index word of `IntRange::EXACT`, so `base + counter * scale` stays

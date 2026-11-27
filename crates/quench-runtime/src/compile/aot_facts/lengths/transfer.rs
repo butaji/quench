@@ -3,11 +3,12 @@
 //! (`step_of_constant`, `sum_of_registers`, `shift_kind`, `moves_bits`).
 
 use super::super::effects::{Ctx, Events, runs_guest_code};
-use super::super::value::{Origin, Word};
+use super::super::value::{Key, Origin, Word};
 use super::super::FunctionFacts;
 use super::relations::{Relation, bound_of, complete_arrays, is_string, proves_below};
 use super::Lengths;
 use crate::bytecode::{Operand, OperandKind, Register, WideInstruction};
+use crate::typed_ir::Length;
 use crate::staged::{Callee, Comparison, Invocation, Operation};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
@@ -22,6 +23,15 @@ pub(super) enum Resize<'a, 'b> {
 }
 
 impl Resize<'_, '_> {
+    /// Whether the step may resize some array, of any class.
+    fn may_resize(self) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::Every => true,
+            Self::Calls { facts, pc } => facts.may_write_any_elements(pc),
+        }
+    }
+
     /// Whether the step may resize the array `word` holds.
     pub(super) fn touches(self, word: &Word) -> bool {
         match self {
@@ -78,11 +88,12 @@ fn element_key(instruction: WideInstruction) -> Option<Register> {
 }
 
 
-/// Advances `lengths` over the instruction at `pc`. `run` steps the register words over it (`effects::step`) and returns its events.
-/// The relations are read from the words before the instruction (a call's callee, the bounds an element store meets, a resize's
-/// keys and receivers) and after it (the arrays' kinds, the registers it defines).
+/// Advances `lengths` over the instruction at `pc`. `run` steps the register words over it (`effects::step`) and returns its events,
+/// with whether the step may resize an array: a call or guest code that may write an array's elements, a mutator, or an element
+/// store the relations do not prove within its array. The relations are read from the words before the instruction (a call's
+/// callee, the bounds an element store meets, a resize's keys and receivers) and after it (the arrays' kinds, the registers it defines).
 pub(in crate::compile::aot_facts) fn advance(ctx: &Ctx<'_>, facts: &FunctionFacts<'_>, pc: usize, instruction: WideInstruction, lengths: &mut Lengths,
-    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> Events {
+    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> (Events, bool) {
     let resize = resize_of(ctx, facts, pc, instruction, words);
     let stored_below = match Operation::<u64, ()>::of(instruction) {
         Some(Operation::ElementWrite { base, key, .. }) => proves_below(lengths.relations(), key, base, 0),
@@ -96,6 +107,9 @@ pub(in crate::compile::aot_facts) fn advance(ctx: &Ctx<'_>, facts: &FunctionFact
     // The step's graded effects (`site_effects`) say whether it may run guest code, which may write any field.
     let calls_js = facts.site_effects(pc as u32).may_call_js;
     let events = run(words);
+    let grows = events.wild_elements
+        || (!stored_below && events.writes.iter().any(|(key, word)| matches!(key, Key::Element(_)) && word.cell.elements.length != Length::Never));
+    let may_resize = grows || resize.may_resize();
     lengths.write(ctx, instruction, words, &events, resize, stored_below);
     lengths.clobber_loads(&events, calls_js);
     lengths.record_load(instruction, calls_js);
@@ -111,7 +125,7 @@ pub(in crate::compile::aot_facts) fn advance(ctx: &Ctx<'_>, facts: &FunctionFact
     if let Some(length) = allocated_length(ctx, pc, instruction, words) {
         lengths.insert(length);
     }
-    events
+    (events, may_resize)
 }
 
 /// The Length relation a `new Array(n)` at `pc` gives its array: `n` holds the array's length. Read from the words after the call;
@@ -172,9 +186,9 @@ pub(in crate::compile::aot_facts) fn refine(ctx: &Ctx<'_>, instruction: WideInst
     if let Some((array, reach)) = bound_of(&lengths.relations, big) {
         refined.insert(Relation::Within { index, array, reach: offset + slack + reach });
     }
-    // `index < bound` between Numbers, where the bound is named by a relation: `proves_below` follows it through the bound's own.
-    let named = lengths.relations.iter().any(|held| held.names(big));
-    if slack == 1 && offset == 0 && named && words.get(usize::from(big)).is_some_and(|word| word.is_number()) {
+    // `index < bound` between Numbers: `proves_below` follows it through the bound's own relations, and `bound_below` reads
+    // the bound an index is below (a loop's counter against its bound, whichever length the bound is at most).
+    if slack == 1 && offset == 0 && words.get(usize::from(big)).is_some_and(|word| word.is_number()) {
         refined.insert(Relation::Less { index, bound: big });
     }
     refined

@@ -103,7 +103,6 @@ pub(crate) enum Refused {
     Recursion,
     /// More activations than the inline depth.
     Depth,
-    Size,
     Budget,
     /// The registers of the window pass the policy's window or do not fit an instruction.
     Registers,
@@ -167,7 +166,6 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
         (facts.callee != callee.identity.to_bits(), Refused::Identity),
         (context.chain.contains(&callee.function), Refused::Recursion),
         (context.chain.len() > policy.max_depth, Refused::Depth),
-        (callee.code.len() > policy.max_instructions, Refused::Size),
         (callee.code.len() > context.budget, Refused::Budget),
         (window > context.limit, Refused::Registers),
         (callee.homes.iter().any(|(argument, _)| *argument >= shape.argc), Refused::Arguments),
@@ -375,7 +373,6 @@ fn frame(shape: &CallShape, callee: &Callee, base: Register) -> InlinedCall {
         base,
         registers: callee.registers,
         alternative: None,
-        function_call: None,
     }
 }
 
@@ -515,11 +512,9 @@ mod tests {
     }
 
     #[test]
-    fn size_budget_opcode_recursion_depth_and_window_are_bounded_by_the_policy() {
+    fn budget_opcode_recursion_depth_and_window_are_bounded_by_the_policy() {
         let (policy, live) = (&TierRows::Measured.table().stitch, parameters_live());
-        let long = vec![WideInstruction::new(Op::Move, 2, 0, 0, 0); policy.max_instructions + 1];
         let plan = |code: &[WideInstruction], context: &mut Context| InlineSite::plan(&SHAPE, &facts(), &callee(code, &HOMES, &live), context).err();
-        assert_eq!(plan(&long, &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch)), Some(Refused::Size));
         let mut spent = Context::root(CALLER, BASE, &TierRows::Measured.table().stitch);
         spent.budget = 0;
         assert_eq!(plan(&sum(), &mut spent), Some(Refused::Budget));

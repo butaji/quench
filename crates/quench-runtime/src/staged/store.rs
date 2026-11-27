@@ -94,20 +94,6 @@ fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S:
     Some(())
 }
 
-/// The binary64 word `number` into `slot` of the plain object at `record`, whose exact shape the
-/// caller proved and keeps the slot in its arena run as a raw double (`StoreArm::raw_double`):
-/// no tag, no canonical integer form. A Number is immediate, so no barrier gates it; a narrow
-/// run, whose halves take no wide word, leaves at `miss`.
-#[inline(always)]
-pub(crate) fn own_store_raw<S: Stage>(stage: &mut S, record: S::Word, slot: u16, number: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-    let run = super::object::flat_run(stage, payload, miss)?;
-    let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
-    let address = stage.add_imm(run, offset);
-    super::slot_store::store_word(stage, address, number, Representation::Float64);
-    Some(())
-}
-
 /// `value` into the full-word slot at `address` of record `record_id`, which a frame bound
 /// before the run (the site's cache slot): behind the barrier's gate, as the own store is.
 #[inline(always)]

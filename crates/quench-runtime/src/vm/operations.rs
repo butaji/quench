@@ -691,20 +691,12 @@ impl Vm {
     }
 
     /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
-    /// native's call parked on the chain's top record. The native does not run; the run ends with
-    /// the chain as its `Captured` exit (`JsError::captured`, read by `exit::Exit::of`). Only the
-    /// input natives' own entries reach it (Date call and construct, Date.now, Math.random), so no
-    /// other call pays for the edge. `new_target` is `Some` for a construction.
-    pub(super) fn capture_input_native(&mut self, native: Native, new_target: Option<Value>, this: Value, args: &[Value]) -> JsError {
+    /// native's call parked on the chain's top record, kept for the build. The native does not run;
+    /// the run returns the chain as its outcome (`JsError::captured`, read as the run's `Captured` exit by `exit::Exit::of`). Only the input natives' own entries
+    /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
+    pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value], new_target: Option<Value>) -> JsError {
         let callee = self.native_value(native);
-        let chain = self.capture_chain_parked(0, callee, this, args.to_vec().into_boxed_slice(), new_target);
-        // The build's consumers still read the chain from the clock's handoff (`clock::take_input_capture`);
-        // this copy goes there until they read the run's exit.
-        crate::clock::store_input_capture(chain.clone());
-        match self.check_execution_interrupt() {
-            Err(error) => error,
-            Ok(()) => JsError::captured(chain),
-        }
+        JsError::captured(self.capture_chain_parked(0, callee, this, args.into(), new_target))
     }
 
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
@@ -1631,9 +1623,9 @@ impl Vm {
     }
 }
 
-/// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
+/// `Number ** Number` (`Math.pow`), the value `staged::power::power` computes.
 pub fn exponentiate(base: f64, exponent: f64) -> f64 {
-    crate::staged::math::power(base, exponent)
+    crate::staged::power::power(base, exponent)
 }
 
 /// The entry that runs `native`'s call. The families' membership tests keep their precedence: the

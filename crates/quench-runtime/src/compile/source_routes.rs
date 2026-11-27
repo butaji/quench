@@ -32,8 +32,8 @@ pub(crate) struct SourceRoutes {
     pub(crate) typescript_has_module_syntax: fn(&str) -> Option<bool>,
     pub(crate) typescript_parameter_sites: fn(&str) -> Option<Vec<ParameterSite>>,
     pub(crate) standalone_source_demands: fn(&str, crate::SourceKind) -> Option<super::SourceDemands>,
-    /// The call sites of `source`, frozen once (`call_printer::freeze_source_call_sites`).
-    pub(crate) freeze_call_sites: fn(&ProgramSource),
+    /// The call sites of `program`, frozen once (`call_printer::freeze_call_sites`).
+    pub(crate) freeze_call_sites: fn(&ResidualProgram),
     /// The call sites a throwing function's text gives before its source froze any.
     pub(crate) unfrozen_call_sites: fn(&ProgramSource, Option<SourceSpan>, u32) -> Option<Vec<CallSiteDescription>>,
 }
@@ -67,7 +67,7 @@ pub fn enable() {
         typescript_has_module_syntax: Engine::typescript_has_module_syntax_source,
         typescript_parameter_sites: Engine::typescript_parameter_sites_source,
         standalone_source_demands: Engine::standalone_source_demands_parsed,
-        freeze_call_sites: crate::vm::call_printer::freeze_source_call_sites,
+        freeze_call_sites: crate::vm::call_printer::freeze_call_sites,
         unfrozen_call_sites: super::call_sites::unfrozen_call_sites,
     });
 }

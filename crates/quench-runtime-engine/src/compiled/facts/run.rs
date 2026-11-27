@@ -1,23 +1,22 @@
 //! The fixpoint of `transfer` over the control-flow graph, and the replay of its rows: the one
-//! analysis, which every consumer of a type, a range or a length relation reads.
+//! analysis, which every consumer of a type or a range reads. Length relations are the solver's
+//! (`quench-runtime`'s `aot_facts`), not this run's.
 
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::lengths::Relations;
 use super::ranges::{self, Edge};
-use super::{hold_contracts, join_types, meet_relations, set, transfer_instruction, typed_read, Contract, Facts, Flow, TypedRead, INLINE_ANALYSIS_ITEMS};
+use super::{hold_contracts, join_types, numberless, set, transfer_instruction, typed_read, Contract, Facts, Flow, TypedRead, INLINE_ANALYSIS_ITEMS};
 use quench_runtime::bytecode::{Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
 use quench_runtime::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use std::cell::{Cell, RefCell};
+use quench_runtime::staged::Operation;
 use quench_runtime::vm::operations::NumberRelation;
 
-/// The abstract state of a run at one point: the registers' types (a range is a type), and the
-/// length relations a unit-proving run tracks beside them.
+/// The abstract state of a run at one point: the registers' types (a range is a type).
 #[derive(Clone)]
 pub(crate) struct Point {
     pub(crate) types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
-    pub(crate) relations: Relations,
 }
 
 /// The unit a run proves the ranges of: its inlined frames, whose arguments the markers pass,
@@ -32,18 +31,15 @@ pub(crate) struct Model<'a> {
     /// Whether the element access at a PC reads or writes a hoisted view, whose miss leaves the
     /// body (`Lowering::hoisted_access`).
     pub(crate) dense: &'a dyn Fn(usize) -> bool,
-    /// What the access at a PC does through a hoisted typed view (`Lowering::typed_access`), where it is
-    /// one that runs no guest code and changes no array's length (`TypedAccess`).
-    pub(crate) typed: &'a dyn Fn(usize) -> Option<TypedAccess>,
 }
 
-/// An instruction on a hoisted typed view whose effect on lengths is known (`Model::typed`).
+/// An instruction on a hoisted typed view whose effect on lengths is known (`Lowering::typed_access`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TypedAccess {
     /// A `length` read of a register's typed array, which the view answers natively.
     Length,
     /// An element store through a typed or double view: it changes no length, and runs guest
-    /// code only where its value is no Number (`Relations::step`).
+    /// code only where its value is no Number.
     Store,
 }
 
@@ -54,7 +50,7 @@ pub(crate) struct Seeds<'a> {
     pub(crate) contracts: &'a [Contract],
     /// The typed element reads (sorted PCs) and the element type their typed array's kind proves each yields.
     pub(crate) typed_reads: &'a [TypedRead],
-    /// The unit the run proves ranges of; a type-only run has none and tracks no relations.
+    /// The unit the run proves ranges of; a type-only run has none.
     pub(crate) model: Option<Model<'a>>,
     /// The PCs (ascending) of the products no consumer reads the sign of a zero of
     /// (`Lowering::signless_products`): where operands of ranges make a negative zero possible,
@@ -89,10 +85,9 @@ pub(crate) type Raise = (usize, usize, Option<Register>);
 
 impl Point {
     /// The state at the entry: the proven inputs.
-    fn entering(initial: &[Type], seeds: Seeds<'_>) -> Self {
+    fn entering(initial: &[Type]) -> Self {
         let types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = initial.iter().copied().collect();
-        let relations = seeds.model.map_or_else(Relations::default, |_| Relations::new(initial.len()));
-        Self { types, relations }
+        Self { types }
     }
 
     /// The state on the edge of the comparison `instruction` that is taken where it is `truth`.
@@ -100,7 +95,6 @@ impl Point {
     fn refine(&mut self, constants: &[Constant], instruction: WideInstruction, truth: bool) {
         let Some(relation) = NumberRelation::from_operator(instruction.binary_operator_field()) else { return };
         let operands = [instruction.operand_b(), instruction.operand_c()];
-        self.relations.bound(ranges::effective_relation(relation, truth), operands);
         let Edge::Refined(refined) = Edge::of(&ranges::lookup(&self.types, constants), relation, truth, operands) else { return };
         for (operand, range) in operands.into_iter().zip(refined) {
             if let Some(register) = operand.register_index() { set(&mut self.types, register, Type::int(range)); }
@@ -123,6 +117,23 @@ impl Point {
         self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::INT32))
     }
 
+    /// Whether `register` holds no Number here (`facts::numberless`): a string constant, say.
+    pub(crate) fn numberless(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).copied().is_some_and(numberless)
+    }
+
+    /// The range of the integer `register` holds here, if it is one.
+    pub(crate) fn int_range(&self, register: Register) -> Option<IntRange> {
+        self.types.get(usize::from(register)).copied().and_then(Type::int_range)
+    }
+
+    /// Whether `instruction` is an element store whose value the point holds a Number of: a store that
+    /// runs no guest code, where its view is typed (`Lowering::typed_access`).
+    pub(crate) fn numeric_store(&self, instruction: WideInstruction) -> bool {
+        matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementWrite { value, .. })
+            if self.types.get(usize::from(value)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)))
+    }
+
     /// The range of the result of the arithmetic of `instruction` where it leaves int32 but is
     /// an integer Number of `IntRange::WORD` (`ranges::index_range`).
     pub(crate) fn index_range(&self, constants: &[Constant], instruction: WideInstruction, signless: bool) -> Option<IntRange> {
@@ -142,12 +153,10 @@ impl Model<'_> {
         let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc).map(|index| self.unit.frames[index]) else { return };
         for register in frame.base..frame.base + frame.registers {
             set(&mut point.types, register, Type::ANY);
-            point.relations.kill(register);
         }
         for (to, from) in frame.passed_registers(self.program.function(frame.target.function as usize)) {
             let copied = point.types.get(usize::from(from)).copied().unwrap_or(Type::ANY);
             set(&mut point.types, to, copied);
-            point.relations.copy(to, from);
         }
     }
 }
@@ -157,10 +166,6 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     let instruction = text.instructions[pc];
     if let Some(model) = seeds.model {
         model.enter_frame(pc, point);
-        // A store of a Number runs no guest code (its value and key convert without a call).
-        let numeric_store = point.numeric_store(instruction);
-        let lookup = ranges::lookup(&point.types, text.constants);
-        point.relations.step(&model, pc, instruction, text.written, &lookup, numeric_store);
     }
     // A direct own read proves its receiver before defining its result.
     // If result and receiver alias, transfer kills that refinement.
@@ -204,29 +209,21 @@ pub(crate) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstru
     analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, raises }, initial, seeds)
 }
 
-/// A block's input as `solve` holds it: the row of the block led by `heads[block]`, its types
-/// and the length relations the run keeps (empty where it tracks none).
+/// A block's input as `solve` holds it: the row of the block led by `heads[block]`, its types.
 #[derive(Clone, PartialEq)]
 struct Row {
     block: usize,
     types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
-    length_of: Vec<Option<Register>>,
-    below: Vec<Option<Register>>,
-    under: Vec<Option<Register>>,
-    atmost: Vec<Option<Register>>,
-    twice: Vec<Option<Register>>,
 }
 
 impl Row {
     fn of(block: usize, point: Point) -> Self {
-        let Relations { length_of, below, under, atmost, twice, .. } = point.relations;
-        Self { block, types: point.types, length_of, below, under, atmost, twice }
+        Self { block, types: point.types }
     }
 
-    /// The state on entry to the block: its relations name the registers their rows do.
+    /// The state on entry to the block.
     fn point(&self) -> Point {
-        Point { types: self.types.clone(),
-            relations: Relations::of_rows(self.length_of.clone(), self.below.clone(), self.under.clone(), self.atmost.clone(), self.twice.clone()) }
+        Point { types: self.types.clone() }
     }
 }
 
@@ -348,8 +345,6 @@ impl quench_runtime::dataflow::Dataflow for FactFlow<'_, '_, '_> {
         let block = into.block;
         let widening = self.headers[block].get() && self.rounds[block].get() >= WIDENING_ROUNDS;
         let mut changed = join_types(&mut into.types, &incoming.types, widening);
-        changed |= meet_relations([&mut into.length_of, &mut into.below, &mut into.under, &mut into.atmost, &mut into.twice],
-            [incoming.length_of.as_slice(), incoming.below.as_slice(), incoming.under.as_slice(), incoming.atmost.as_slice(), incoming.twice.as_slice()]);
         changed |= hold_contracts(self.seeds.contracts, self.heads[block], &mut into.types);
         self.joined(into, changed);
         changed
@@ -369,7 +364,6 @@ impl quench_runtime::dataflow::Dataflow for FactFlow<'_, '_, '_> {
                 let mut caught = state.clone();
                 if let Some(register) = bound {
                     set(&mut caught.types, register, Type::ANY);
-                    caught.relations.kill(register);
                 }
                 raised.push((pc, target, caught));
             }
@@ -387,7 +381,7 @@ impl quench_runtime::dataflow::Dataflow for FactFlow<'_, '_, '_> {
         }
         self.raised = raised;
         // The edges carry their own states (`transfer_edge_at`).
-        Row { block, types: smallvec::SmallVec::new(), length_of: Vec::new(), below: Vec::new(), under: Vec::new(), atmost: Vec::new(), twice: Vec::new() }
+        Row { block, types: smallvec::SmallVec::new() }
     }
 
     fn transfer_edge_at(&self, _block: usize, index: usize, _out: &Row) -> Row {
@@ -421,7 +415,7 @@ pub(crate) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) 
     let blocks = heads.len();
     let mut flow = FactFlow {
         text, seeds,
-        entry: (text.entry < length).then(|| Point::entering(initial, seeds)),
+        entry: (text.entry < length).then(|| Point::entering(initial)),
         rounds: (0..blocks).map(|_| Cell::new(0)).collect(),
         headers: (0..blocks).map(|_| Cell::new(false)).collect(),
         reached: quench_runtime::dataflow::BitSet::with_capacity(length),
@@ -437,7 +431,7 @@ pub(crate) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) 
     facts.backedge = flow.backedge;
     for (row, pc) in rows.into_iter().zip(flow.heads) {
         let Some(row) = row else { continue };
-        facts.store_row(pc, &row.types, [&row.length_of, &row.below, &row.under, &row.atmost, &row.twice]);
+        facts.store_row(pc, &row.types);
     }
     facts
 }

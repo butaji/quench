@@ -25,6 +25,7 @@ mod function;
 mod gate;
 mod length_settle;
 mod lengths;
+mod phase;
 mod pipeline;
 mod quiet;
 mod readers;
@@ -46,6 +47,7 @@ use super::signatures::{CallSite, Signatures};
 use class_layout::ClassLayouts;
 use readers::Readers;
 use record::ElementStore;
+pub use class_layout::{FieldDefault, UnionField, UnionLayout};
 pub use function::FunctionFacts;
 pub use gate::World;
 pub use pipeline::{analyze, analyze_as, world};
@@ -129,6 +131,9 @@ pub struct AotFacts {
     /// the solve proved, read by `AotFacts::class_layout` and `AotFacts::prototype_layout`. The only home of the names
     /// a class's `prototype` takes.
     pub(crate) layouts: ClassLayouts,
+    /// The union layouts of the constructed classes the closed world proves one for (`class_layout::unions_of`), read by
+    /// `AotFacts::class_union_layout`.
+    unions: BTreeMap<u32, UnionLayout>,
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
@@ -161,6 +166,7 @@ impl AotFacts {
             element_stores: BTreeMap::new(),
             signatures: None,
             layouts: ClassLayouts::default(),
+            unions: BTreeMap::new(),
             readers: None,
         }
     }
@@ -260,6 +266,16 @@ impl AotFacts {
     /// layout reads it too (`aot_image::symbols`).
     pub fn prototype_layout(&self, class: u32) -> Option<&[u32]> {
         self.layouts.prototypes.get(&class).map(|fields| &**fields)
+    }
+
+    /// The union layout of class `class`'s instances (`class_layout::unions_of`): every named field an instance may hold, in
+    /// slot order, the constructor's own fields first. Each field carries its settled cell and what an instance with no own
+    /// field of the name reads (`FieldDefault`). A store outside the union departs the instance, so MEM's absent fields are
+    /// pre-declared deleted slots, one per union field. Proven only in a closed world whose instances no code enumerates
+    /// (for-in, `Object.keys`, a `JSON` walk, a spread, `Reflect.ownKeys`) and that no computed-key store or delete reaches;
+    /// None otherwise.
+    pub fn class_union_layout(&self, class: u32) -> Option<UnionLayout> {
+        self.unions.get(&class).cloned()
     }
 
     /// Whether two element classes are apart: no link of the program joins them, so an array of one class is never an array

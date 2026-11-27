@@ -11,7 +11,6 @@ use super::super::lane_facts::bind_callees;
 use quench_runtime::bytecode::{ResidualProgram, WideInstruction};
 use quench_runtime::code_dependencies::Invalidation;
 use crate::dispatch_fast::LaneRecoverySpace;
-use quench_bjit::call_record::CallRecord;
 
 /// The callees the call sites of a region's function recorded, and the realm they were found in:
 /// what the region's build stitches in. The default has no call site: every call stays a call.
@@ -57,7 +56,7 @@ impl CallCode {
 
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
-    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
+    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<crate::compiled::OwnedCallRecord>), caller_registers: u16, invalidation: Invalidation) -> Self {
         // The windows start past the function's environment window (`base_region::function::inline_base`):
         // the room covers that reach as well as the activations a leave inside a callee pushes.
         let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));

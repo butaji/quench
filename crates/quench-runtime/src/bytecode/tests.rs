@@ -161,7 +161,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             declared_types: None,
         source_name: String::new(),
         source: None,
-        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into() },
+        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
         functions: vec![Function {
             parent: None,
             name: None,
@@ -282,7 +282,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             declared_types: None,
         source_name: String::new(),
         source: None,
-        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into() },
+        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
         functions: vec![Function {
             parent: None,
             name: None,
@@ -613,7 +613,6 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 0,
         column_offset: 0,
-        call_sites: Default::default(),
         layout: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
@@ -627,7 +626,6 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 1,
         column_offset: 2,
-        call_sites: Default::default(),
         layout: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
@@ -643,7 +641,6 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: prefix.len() as u32,
         line_offset,
         column_offset,
-        call_sites: Default::default(),
         layout: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));

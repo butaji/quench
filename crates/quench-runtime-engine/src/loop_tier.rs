@@ -17,9 +17,6 @@ impl LoopTier {
     /// A run that keeps the code may move it to u-jit (`promote`).
     pub(crate) fn weigh_run(&mut self, tiers: &Tiers, backedges: u64, left: bool) {
         self.runs = self.runs.saturating_add(1);
-        // A run does not clear `entry_misses`: a site whose published code misses its entry guard and then
-        // runs another way (the interpreter or a lower tier) would otherwise reset the count on every outer
-        // iteration and never widen (v_array_push_grow: a fresh array each outer trip, ~2,350 Ir per miss).
         self.iterations = self.iterations.saturating_add(backedges);
         self.fruitless = if left && backedges == 0 { self.fruitless.saturating_add(1) } else { 0 };
         self.tier_runs = self.tier_runs.saturating_add(1);
@@ -70,16 +67,6 @@ impl LoopTier {
     pub(crate) fn backedge_budget(&self, tiers: &Tiers) -> Option<u64> {
         if !self.base || self.compilations >= tiers.loops.max_compilations { return None; }
         self.promote_at.map(|at| at.saturating_sub(self.iterations))
-    }
-
-    /// Counts an entry the published code's guards declined: past `widen_after_leaves` over the code's life,
-    /// the code goes and the next compilation versions no loop bound on entry, once.
-    pub(crate) fn missed_entry(&mut self, tiers: &Tiers) {
-        if self.unbounded || self.compilations >= tiers.loops.max_compilations { return; }
-        self.entry_misses += 1;
-        if self.entry_misses < tiers.loops.widen_after_leaves { return; }
-        self.unbounded = true;
-        if let Some(code) = self.code.take() { code.retire(); }
     }
 
     /// A callee its code calls by the helper got a body after it compiled (`record_late_call`): the

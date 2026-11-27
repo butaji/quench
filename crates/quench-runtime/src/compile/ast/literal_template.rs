@@ -15,9 +15,12 @@ impl FunctionCompiler<'_, '_> {
     /// observable effect besides creating its containers, in the order and with the keys
     /// evaluation would.
     pub(super) fn literal_template(&mut self, value: &Expression<'_>) -> Option<Register> {
-        let start = value.span().start;
-        let steps = if self.owner.data_literal == Some(start) {
-            vec![LiteralStep::Json(start)]
+        let span = value.span();
+        let steps = if self.owner.data_literal == Some(span.start) {
+            // The JSON text is the program's constant, so the value needs no source text.
+            let json = std::rc::Rc::<str>::from(&self.owner.text[span.start as usize..span.end as usize]);
+            let constant = self.owner.constant(crate::bytecode::Constant::String(json));
+            vec![LiteralStep::Json(constant)]
         } else {
             if Self::literal_containers(value)? < MIN_TEMPLATE_CONTAINERS {
                 return None;
