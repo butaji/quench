@@ -44,8 +44,6 @@ fn required_taken(priors: &Priors, loops: &Loops, span: u64, compile_ns_per_ir: 
 /// pays, at the compile cost of the priors; under `tier-stress` the warm-up alone.
 pub(crate) fn admission_taken(tiers: &Tiers, span: u64) -> u32 {
     if tiers.admits_all { return tiers.loops.warmup_taken; }
-    let base_first = crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]);
-    if let Some(taken) = base_first.then(|| base_admission_taken(&tiers.priors, &tiers.loops, span)).flatten() { return taken; }
     required_taken(&tiers.priors, &tiers.loops, span, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
 }
 
@@ -66,82 +64,16 @@ pub(crate) fn repaid_entries(tiers: &Tiers, span: u64, entries: u64, iterations:
     Some(spare.checked_div(entry_ns(&tiers.priors)).unwrap_or(u64::MAX))
 }
 
-/// What entering a loop region and leaving it costs, in ns: the mean of the sites' fitted entries in compiled
-/// bytecodes (`note_site_entry`) at the prior's compiled ns per bytecode, never below the prior's `region_entry_ns`
-/// (TOD-2194: entries measured ~2,000-2,400 instructions on R-tree against the prior's ~470).
+/// What entering a loop region and leaving it costs, in ns: the prior's `region_entry_ns`. A tier decision is a
+/// function of the program and the priors alone, so every run of a program decides the same.
 pub(crate) fn entry_ns(priors: &Priors) -> u64 {
-    let [sites, sum] = SITE_ENTRIES.each_ref().map(|sum| sum.load(std::sync::atomic::Ordering::Relaxed));
-    if sites < MIN_SITES { return priors.region_entry_ns; }
-    (sum / sites * priors.interpreter_ns * priors.body_share / PER_MILLE).max(priors.region_entry_ns)
-}
-
-/// The sites whose entry was fitted (`note_site_entry`), and the sum of their entries in compiled bytecodes.
-static SITE_ENTRIES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-
-/// The fitted sites before their mean replaces the prior.
-const MIN_SITES: u64 = 4;
-/// The entry a site's fit is held to, in compiled bytecodes: past it the fit is the noise of a few runs, not a
-/// cost (an entry is a few thousand instructions, a compiled bytecode a few).
-const MAX_ENTRY_BYTECODES: f64 = 10_000.0;
-/// The compiled ps per bytecode a site's fit is held to (an interpreted bytecode is ~10 ns).
-const MAX_RATE_PS: f64 = 100_000.0;
-/// The ps in a ns.
-const PS_PER_NS: u64 = 1000;
-
-/// The sites whose compiled ns per bytecode was fitted (`note_site_entry`) and the sum of those, in ps; and the
-/// b-jit region compiles timed on the program's thread (`note_base_compile`): their bytecodes and ns.
-static NATIVE_RATE: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static BASE_COMPILES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-
-/// The b-jit compile bytecodes before their measure replaces the prior.
-const MIN_BASE_COMPILED: u64 = 256;
-
-/// Notes a b-jit region compile of a loop `span` bytecodes long that took `ns` of the program's thread, all of it
-/// (`loop_tier::loop_compile_in_lane`): its observation, analysis and stitch; a u-jit one (`base` false) is not.
-pub(crate) fn note_base_compile(base: bool, span: u64, ns: u64) {
-    if !base { return; }
-    for (sum, add) in BASE_COMPILES.iter().zip([span, ns]) {
-        sum.fetch_add(add, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// What a b-jit region compile of a loop `span` bytecodes long costs the program, in ns: the measured compiles' time
-/// per bytecode, in compiled bytecodes of the sites' measured speed (`NATIVE_RATE`) at the prior's compiled ns per
-/// bytecode, as `entry_ns` is: a ratio of two times, which a slower clock scales alike. `None` until both are
-/// measured. Measured on R-tree (TOD-2288): ~94 us per bytecode, against the prior's 24.
-fn base_compile_ns(priors: &Priors, span: u64) -> Option<u64> {
-    let [bytecodes, ns] = BASE_COMPILES.each_ref().map(|sum| sum.load(std::sync::atomic::Ordering::Relaxed));
-    let [sites, rate_ps] = NATIVE_RATE.each_ref().map(|sum| sum.load(std::sync::atomic::Ordering::Relaxed));
-    if bytecodes < MIN_BASE_COMPILED || sites < MIN_SITES || rate_ps == 0 { return None; }
-    let native_ps = u128::from(rate_ps / sites).max(1);
-    let compiled_ps = u128::from(priors.interpreter_ns * priors.body_share * PS_PER_NS / PER_MILLE);
-    Some(u64::try_from(u128::from(span) * u128::from(ns) * compiled_ps / u128::from(bytecodes) / native_ps).unwrap_or(u64::MAX))
-}
-
-/// The backward jumps a loop `span` bytecodes long takes in the interpreter before its b-jit region pays its measured
-/// compile and entry (`base_compile_ns`), in the default and b-jit modes, where a b-jit region is the first compile;
-/// `None` until its compiles are measured.
-fn base_admission_taken(priors: &Priors, loops: &Loops, span: u64) -> Option<u32> {
-    let outlay = entry_ns(priors).saturating_add(base_compile_ns(priors, span)?);
-    let taken = body_required_taken(priors, base_saved_per_iteration(priors, span), outlay);
-    Some(u32::try_from(taken).unwrap_or(u32::MAX).max(loops.warmup_taken))
+    priors.region_entry_ns
 }
 
 /// Whether a loop `span` bytecodes long whose runs take `trip` iterations each repays a region's entry within one run:
 /// its b-jit saving per iteration (`base_saved_per_iteration`) over them, against the measured entry (`entry_ns`).
 pub(crate) fn trip_repays_entry(tiers: &Tiers, span: u64, trip: u64) -> bool {
     trip.saturating_mul(base_saved_per_iteration(&tiers.priors, span)) >= entry_ns(&tiers.priors)
-}
-
-/// Notes the fitted entry of a site `span` bytecodes long, `iterations` of its own (`RunStats::entry_iterations`),
-/// once its code's timed runs are in (`LoopTier::weigh_time`).
-pub(crate) fn note_site_entry(iterations: f64, span: u64, ns_per_iteration: f64) {
-    let ps = (ns_per_iteration * PS_PER_NS as f64 / span.max(1) as f64).clamp(1.0, MAX_RATE_PS) as u64;
-    for (sum, add) in NATIVE_RATE.iter().zip([1, ps]) { sum.fetch_add(add, std::sync::atomic::Ordering::Relaxed); }
-    let bytecodes = (iterations * span as f64).clamp(0.0, MAX_ENTRY_BYTECODES) as u64;
-    for (sum, add) in SITE_ENTRIES.iter().zip([1, bytecodes]) {
-        sum.fetch_add(add, std::sync::atomic::Ordering::Relaxed);
-    }
 }
 
 /// The iterations after which a loop body whose iterations work through `work` bytecodes pays

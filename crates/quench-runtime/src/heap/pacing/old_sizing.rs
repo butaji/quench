@@ -4,7 +4,6 @@
 //! share of the time and tightens while they take little, between the table's bounds.
 
 use super::Ratio;
-use std::time::Instant;
 
 /// Work-clock costs, in nanoseconds of a typical host: a full collection's per live weight
 /// kept and the mutator's per weight allocated (median of Splay's full intervals, no-JIT,
@@ -50,16 +49,16 @@ pub(crate) struct OldGenerationState {
     tightened: u32,
     /// Eighths the full-only headroom has widened from `headroom_tightest_eighths`.
     headroom_widened: u32,
-    /// When the full collection under way started.
-    full_started: Option<Instant>,
-    /// When the last full collection ended.
-    last_full_end: Option<Instant>,
+    /// Whether a full collection is under way.
+    full_started: bool,
+    /// Whether a full collection has ended: the first one only starts the cycle its successor is weighed over.
+    full_ended: bool,
 }
 
 impl OldGenerationState {
     /// Notes the start of a full collection.
     pub(crate) fn start_full(&mut self) {
-        self.full_started = Some(Instant::now());
+        self.full_started = true;
     }
 }
 
@@ -86,7 +85,7 @@ impl OldGenerationSizing {
     /// After a collection, when `full`: widens or tightens the growth one eighth from the
     /// share of the time since the previous full collection's end that this one took.
     ///
-    /// Under the work clock (`crate::clock::is_work`) the shares come from work, not wall time:
+    /// The shares come from work, never wall time, so the same program makes the same decisions on every run:
     /// the full collection costs `WORK_GC_PER_LIVE` per live weight it kept (`live_weight`) and
     /// the mutator `WORK_MUTATOR_PER_ALLOCATED` per weight allocated since the previous full
     /// collection (`allocated`), so the same program makes the same decisions on any host.
@@ -94,20 +93,13 @@ impl OldGenerationSizing {
         if !full {
             return;
         }
-        let now = Instant::now();
-        let started = state.full_started.take();
-        let previous = state.last_full_end.replace(now);
-        let (Some(started), Some(previous)) = (started, previous) else {
+        let started = std::mem::take(&mut state.full_started);
+        let previous = std::mem::replace(&mut state.full_ended, true);
+        if !(started && previous) {
             return;
-        };
-        let (full, cycle) = if crate::clock::is_work() {
-            let full = live_weight.saturating_mul(WORK_GC_PER_LIVE);
-            (full, allocated.saturating_mul(WORK_MUTATOR_PER_ALLOCATED).saturating_add(full))
-        } else {
-            let full = now.saturating_duration_since(started).as_nanos();
-            let cycle = now.saturating_duration_since(previous).as_nanos();
-            (usize::try_from(full).unwrap_or(usize::MAX), usize::try_from(cycle).unwrap_or(usize::MAX))
-        };
+        }
+        let full = live_weight.saturating_mul(WORK_GC_PER_LIVE);
+        let cycle = allocated.saturating_mul(WORK_MUTATOR_PER_ALLOCATED).saturating_add(full);
         let range = self.widest_eighths.saturating_sub(self.tightest_eighths);
         if full >= self.widen_from.of(cycle) {
             state.tightened = state.tightened.saturating_sub(1);
@@ -202,7 +194,6 @@ const MEMORY_FIRST_FULL_ONLY_HEADROOM_EIGHTHS: u32 = 4;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     const SIZING: OldGenerationSizing = OldGenerationSizing {
         tightest_eighths: 4,
@@ -217,12 +208,13 @@ mod tests {
         resident_headroom_eighths: 0,
     };
 
-    /// A full collection that took `full` of a cycle of `cycle` since the last one ended.
-    fn full_taking(state: &mut OldGenerationState, full: Duration, cycle: Duration) {
-        let now = Instant::now();
-        state.last_full_end = now.checked_sub(cycle);
-        state.full_started = now.checked_sub(full);
-        SIZING.after_collection(true, state, 0, 0);
+    /// A full collection that took `1 / share` of its cycle's work since the last one ended.
+    fn full_taking(state: &mut OldGenerationState, share: usize) {
+        state.full_ended = true;
+        state.start_full();
+        // live x WORK_GC_PER_LIVE is the full collection's work, allocated x WORK_MUTATOR_PER_ALLOCATED the mutator's.
+        let live = WORK_MUTATOR_PER_ALLOCATED;
+        SIZING.after_collection(true, state, WORK_GC_PER_LIVE * (share - 1), live);
     }
 
     #[test]
@@ -232,10 +224,10 @@ mod tests {
         SIZING.after_collection(false, &mut state, 0, 0);
         assert_eq!(SIZING.growth(&state), Ratio::new(8, 8), "a minor collection moves nothing");
         for _ in 0..8 {
-            full_taking(&mut state, Duration::from_millis(1), Duration::from_secs(1));
+            full_taking(&mut state, 1000);
         }
         assert_eq!(SIZING.growth(&state), Ratio::new(4, 8));
-        full_taking(&mut state, Duration::from_millis(500), Duration::from_secs(1));
+        full_taking(&mut state, 2);
         assert_eq!(SIZING.growth(&state), Ratio::new(5, 8));
     }
 
@@ -243,13 +235,13 @@ mod tests {
     fn full_only_headroom_starts_tight_widens_under_costly_collections_and_tightens_when_cheap() {
         let mut state = OldGenerationState::default();
         assert_eq!(SIZING.headroom(&state), Ratio::new(12, 8));
-        full_taking(&mut state, Duration::from_millis(1), Duration::from_secs(1));
+        full_taking(&mut state, 1000);
         assert_eq!(SIZING.headroom(&state), Ratio::new(12, 8), "cheap collections keep the tightest headroom");
         for _ in 0..4 {
-            full_taking(&mut state, Duration::from_millis(500), Duration::from_secs(1));
+            full_taking(&mut state, 2);
         }
         assert_eq!(SIZING.headroom(&state), Ratio::new(24, 8), "costly ones widen to the bound");
-        full_taking(&mut state, Duration::from_millis(1), Duration::from_secs(1));
+        full_taking(&mut state, 1000);
         assert_eq!(SIZING.headroom(&state), Ratio::new(20, 8));
     }
 
@@ -259,6 +251,6 @@ mod tests {
         state.start_full();
         SIZING.after_collection(true, &mut state, 0, 0);
         assert_eq!(SIZING.growth(&state), Ratio::new(8, 8));
-        assert!(state.last_full_end.is_some());
+        assert!(state.full_ended);
     }
 }

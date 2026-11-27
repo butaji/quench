@@ -1688,7 +1688,6 @@ pub(super) fn loop_run_in_lane(
         )
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the callback executes no guest code.
-    let started = site.tier.borrow().times_run().then(loop_tier::Timing::start);
     let run = match unsafe { region_run_in_lane(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) } {
         Ok(run) => run,
         // The lane admitted no run, so the region's code entered nothing and the interpreter takes the jump.
@@ -1707,7 +1706,7 @@ pub(super) fn loop_run_in_lane(
     crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, || int_steps::native_handed_doubles(cx, site, exit, |register| r.get(register).as_int().is_some()));
     unsafe { vm(cx) }.refresh_body_bases(); // the region reloaded only its own payload's bases, not a body frame's below it
     // A run pays for its entry with the iterations it completed, wherever it leaves.
-    site.note_run(entry.backedge_count(), region.holds_exit(exit) || matches!(exit, LaneExit::Inlined { .. }), started.and_then(loop_tier::Timing::ns));
+    site.note_run(entry.backedge_count(), region.holds_exit(exit) || matches!(exit, LaneExit::Inlined { .. }));
     if nested {
         return region_left_in_lane(cx, r, site.function, exit);
     }
