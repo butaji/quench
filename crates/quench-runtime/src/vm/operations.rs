@@ -723,7 +723,6 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
             Native::IntlInitialize => {
                 let (global, object_prototype) = (self.realm.globals, self.object_proto);
@@ -1264,6 +1263,54 @@ impl Vm {
                 };
                 let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
                 Ok(Value::number(result.unwrap_or(f64::NAN)))
+            Native::ArrayPush => self.array_push_native(p, this, args),
+            Native::ArrayIsArray => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                Ok(if self.is_array(p, value)? {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
+            Native::ArrayPop => self.array_pop_native(p, this),
+            Native::ArraySlice => self.array_slice_native(p, this, args),
+            Native::ArrayIncludes => self.array_includes_native(p, this, args),
+            Native::ArrayJoin => self.array_join_native(p, this, args),
+            Native::ArrayConcat => self.array_concat_native(p, this, args),
+            Native::ArrayFlat => self.array_flatten_native(p, native, this, args),
+            Native::ArrayReverse => self.array_reverse_native(p, this),
+            Native::ArrayShift => self.array_shift_native(p, this),
+            Native::ArrayUnshift => self.array_unshift_native(p, this, args),
+            Native::ArraySplice => self.array_splice_native(p, this, args),
+            Native::ArrayFill => self.array_fill_native(p, this, args),
+            Native::ArrayAt
+            | Native::ArrayLastIndexOf
+            | Native::ArrayIndexOf
+            | Native::ArrayCopyWithin
+            | Native::ArrayWith
+            | Native::ArrayForEach
+            | Native::ArrayMap
+            | Native::ArrayFilter
+            | Native::ArraySome
+            | Native::ArrayEvery
+            | Native::ArrayFind
+            | Native::ArrayFindIndex
+            | Native::ArrayFindLast
+            | Native::ArrayFindLastIndex
+            | Native::ArrayGroup
+            | Native::ArrayGroupToMap
+            | Native::ArrayFlatMap
+            | Native::ArrayReduce
+            | Native::ArrayReduceRight => self.array_indexed_native(p, native, this, args),
+            Native::ArrayToReversed
+            | Native::ArrayToSpliced
+            | Native::ArraySort
+            | Native::ArrayToSorted
+            | Native::ArrayToString
+            | Native::ArrayToLocaleString
+            | Native::ArraySpecies => self.array_modern_native(p, native, this, args),
+            Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
+                self.array_iterator_native(p, native, this)
             }
             Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args, false),
@@ -1340,8 +1387,6 @@ impl Vm {
             | Native::NumberIsFinite
             | Native::NumberIsInteger
             | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
-            Native::NumberFixed => self.number_format(p, this, args, native),
-            Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::String => {
                 let argument = self.string_constructor_argument(args);
                 let text = if let Some(description) = self.heap.symbol_data(argument) {
@@ -1412,7 +1457,6 @@ impl Vm {
             | Native::CallSiteIsNative
             | Native::CallSiteToString => self.call_site_native(p, native, this),
             Native::ArrayBufferSpecies => Ok(this),
-            Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => {
                 let callee = self
                     .active_native_callable()
@@ -2059,6 +2103,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .or_else(|| value_entry(native))
         .or_else(|| json::entry(native))
         .or_else(|| super::date::entry(native))
+        .or_else(|| super::number_natives::entry(native))
         .unwrap_or(enter_table)
 }
 
