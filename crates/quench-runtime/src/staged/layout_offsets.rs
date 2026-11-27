@@ -155,6 +155,26 @@ pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCu
     limit_offset: size_of::<u32>(),
 };
 
+/// A class cell's words (`heap::class_space`): the header at `header_offset`, whose low half is the
+/// class id (`class_offset`) and whose high half is the departed object's record id (`record_id_shift`);
+/// then the capacity's fields, `field_size` bytes each, from `fields_offset`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeClassCellLayout {
+    pub header_offset: usize,
+    pub class_offset: usize,
+    pub record_id_shift: u32,
+    pub fields_offset: usize,
+    pub field_size: usize,
+}
+
+pub const NATIVE_CLASS_CELL_LAYOUT: NativeClassCellLayout = NativeClassCellLayout {
+    header_offset: 0,
+    class_offset: 0,
+    record_id_shift: 32,
+    fields_offset: 8,
+    field_size: 8,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeTypedArrayLayout {
     pub entry_size: usize,

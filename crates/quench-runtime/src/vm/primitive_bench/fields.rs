@@ -43,15 +43,15 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
         .unwrap();
     assert_eq!(
         vm.heap
-            .object(receiver)
+            .object_ref(receiver)
             .unwrap()
-            .inline_properties()
+            .record().inline_properties()
             .is_none(),
         ARENA
     );
     assert_ne!(
-        vm.heap.object(receiver).unwrap().exact_shape(),
-        vm.heap.object(other).unwrap().exact_shape()
+        vm.heap.object_ref(receiver).unwrap().exact_shape(),
+        vm.heap.object_ref(other).unwrap().exact_shape()
     );
     assert_eq!(
         vm.get_field_cached(&program, receiver, atom, site).unwrap(),
@@ -118,9 +118,9 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
     assert_eq!(vm.primary_own_field_hit(&program, other, site), None);
     assert_eq!(
         vm.heap
-            .object(receiver)
+            .object_ref(receiver)
             .unwrap()
-            .inline_properties()
+            .record().inline_properties()
             .is_none(),
         ARENA
     );

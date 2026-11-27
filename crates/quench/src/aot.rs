@@ -157,18 +157,7 @@ pub fn saved_wait(saved: &'static [SavedWait]) -> Option<(usize, &'static SavedW
 /// the process's whole memory map; the program runs on a thread of its own
 /// (`shared_run::run_node_worker`). The exit flushes std's buffered output as std's does.
 pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'static) -> ! {
-    // SAFETY: plain system calls on the standard descriptors, before any thread starts.
-    unsafe {
-        let mut descriptors = [0, 1, 2].map(|fd| libc::pollfd { fd, events: 0, revents: 0 });
-        if libc::poll(descriptors.as_mut_ptr(), 3, 0) >= 0 {
-            for descriptor in descriptors {
-                if descriptor.revents & libc::POLLNVAL != 0 {
-                    libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
-                }
-            }
-        }
-        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-    }
+    quench_runtime::host::begin_process();
     image_dump::begin();
     let status = match crate::host::process_start::begin_main().and_then(|()| crate::shared_run::run_node_worker(run)) {
         Ok(status) => status,

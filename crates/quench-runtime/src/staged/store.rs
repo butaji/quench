@@ -262,17 +262,17 @@ mod tests {
         for shape in 1..=count as u32 {
             heap.property_add(object, Value::integer(0), shape);
         }
-        let shape = heap.object(object).unwrap().exact_shape();
+        let shape = heap.object_ref(object).unwrap().exact_shape();
         (object, shape)
     }
 
     fn read(heap: &Heap, object: Value, shape: u32, slot: u16) -> Option<Value> {
         // SAFETY: a live record of the shape, whose slot it holds.
-        unsafe { crate::staged::concrete_own_field_hit(heap.object(object).unwrap(), heap.arena_values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_own_field_hit(heap.object_ref(object).unwrap().record(), heap.arena_values_base(), shape, slot) }
     }
 
     fn store(heap: &mut Heap, object: Value, shape: u32, slot: u16, value: Value) -> bool {
-        let id = object.direct_object_index().unwrap();
+        let id = heap.record_id(object.direct_object_index().unwrap());
         // SAFETY: a live record of the shape, whose slot it holds.
         unsafe { concrete_own_store(heap, id, shape, false, slot, value) }
     }

@@ -7,6 +7,7 @@ use super::record::Record;
 use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
 use super::scope::Scope;
+use super::shape::Shape;
 use super::value::{Key, PrototypeBase, Word};
 use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
@@ -62,6 +63,8 @@ pub(super) struct FunctionFlow {
     pub(super) reads: std::collections::BTreeSet<Key>,
     /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
     pub(super) links: Vec<(u32, u32)>,
+    /// The changes its instructions and calls make to named properties, in PC order (`shape`).
+    pub(super) shapes: Vec<Shape>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,

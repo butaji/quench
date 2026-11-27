@@ -492,7 +492,7 @@ impl Vm {
                 return Some(data);
             }
             if self.heap.array(object).is_some() {
-                return self.heap.object(object);
+                return self.heap.object_ref(object).map(|o| o.record());
             }
         }
         if !matches!(key, PropertyKey::Symbol(_))
@@ -501,7 +501,7 @@ impl Vm {
         {
             return None;
         }
-        self.heap.object(object)
+        self.heap.object_ref(object).map(|o| o.record())
     }
 
     /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
@@ -509,7 +509,7 @@ impl Vm {
     /// the key is none of its exotic ones.
     #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
         self.proved_read_receiver(object, key)
-            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object)).flatten())
+            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object_ref(object).map(|o| o.record())).flatten())
     }
 
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
@@ -682,7 +682,7 @@ impl Vm {
         let Some(subjects) = self.heap.chain_subjects(prototype, depth) else { return false };
         // A holder up the chain that is an object record: its id, plus one; any other holder
         // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
-        let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
+        let holder = if depth > 0 { holder.direct_object_index().map_or(0, |r| self.heap.record_id(r) + 1) } else { 0 };
         match self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
             Some(entry) => {
                 self.hold_fact(entry, &subjects);
@@ -707,7 +707,7 @@ impl Vm {
         let mut subjects = smallvec::SmallVec::<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
         let mut link = prototype;
         for _ in 0..depth {
-            let object = self.heap.object(link)?;
+            let object = self.heap.object_ref(link)?;
             if !object.was_used_as_prototype() {
                 return None;
             }
@@ -730,7 +730,7 @@ impl Vm {
         let mut depth = 0u8;
         let mut link = prototype;
         while !link.is_null() {
-            link = self.heap.object(link)?.proto();
+            link = self.heap.object_ref(link)?.proto();
             depth = depth.checked_add(1)?;
         }
         Some(depth)
@@ -758,7 +758,7 @@ impl Vm {
     /// The rewrite takes the same entry, which the chain's subjects already hold.
     fn refine_getter_fact(&self, layout: u32, key: PropertyKey, depth: u8, slot: u32, holder: Value) {
         use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
-        let (Some(key32), Some(data)) = (key.key32(), self.heap.object(holder)) else {
+        let (Some(key32), Some(data)) = (key.key32(), self.heap.object_ref(holder)) else {
             return;
         };
         let kind = match self.slot_accessor(data.shape(), slot as usize) {
@@ -768,7 +768,7 @@ impl Vm {
         };
         if kind != KIND_GETTER {
             // An own accessor's holder is each receiver itself, never the one recorded.
-            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
+            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().map_or(0, |r| self.heap.record_id(r) + 1) };
             self.symbol_load_proofs.record_accessor(layout, key32, depth, slot, kind, holder_id);
         }
     }
@@ -966,7 +966,7 @@ impl Vm {
             } else if object.direct_array_index().is_some() {
                 object = self
                     .heap
-                    .object(object)
+                    .object_ref(object)
                     .expect("live direct array retains its object header")
                     .proto();
             } else if let Some(symbol) = self.heap.symbol_data(object) {
@@ -1028,7 +1028,7 @@ impl Vm {
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
-                    _ => match self.heap.object(object) {
+                    _ => match self.heap.object_ref(object) {
                         Some(x) => object = x.proto(),
                         None => return Ok(Value::UNDEFINED),
                     },

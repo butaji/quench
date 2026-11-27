@@ -47,6 +47,8 @@ pub(super) struct Events {
     /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
     /// element, whose array joins the unnamed class its element reads come back with.
     pub(super) links: Vec<(u32, u32)>,
+    /// The change the instruction makes to a named property or a key the analysis cannot name (`shape`).
+    pub(super) shape: Option<super::shape::Shape>,
 }
 
 /// The cell `word` holds as the settled solve reads it: its elements joined with those of its element class
@@ -93,6 +95,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     if let Some(local) = instruction.numeric_local_target() {
         write(ctx, pc, true, &mut events, Key::Slot { owner: ctx.id, slot: local }, value);
     }
+    events.shape = super::shape::of_instruction(ctx, pc, instruction, operation.as_ref(), state);
     writes(ctx, pc, instruction, operation, state, &mut events);
     // A literal's element definition joins the element type of the array it defines into (`MakeArray`).
     if instruction.op() == crate::bytecode::Op::DefineArrayElement {
@@ -274,7 +277,7 @@ pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
 }
 
 /// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
-fn this_fact(ctx: &Ctx<'_>) -> Word {
+pub(super) fn this_fact(ctx: &Ctx<'_>) -> Word {
     ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id)))
 }
 

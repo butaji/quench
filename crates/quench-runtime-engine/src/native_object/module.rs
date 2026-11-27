@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{NativeData, NativeFunction};
+use crate::aot_image::demand::Demand;
 use quench_runtime::bytecode::{ProgramKind, ResidualProgram};
 use cranelift_codegen::{binemit::Reloc, ir};
 use cranelift_module::{FuncId, Module, ModuleReloc, ModuleRelocTarget};
@@ -32,12 +33,14 @@ pub struct NativeReloc {
 pub struct NativeJsModule {
     pub functions: Vec<NativeFunction>,
     pub data: Vec<NativeData>,
+    /// What the image reaches of the runtime (the closed-world contract, `aot_image::demand`).
+    pub demand: Demand,
     entry_table: usize,
 }
 
 impl NativeJsModule {
-    pub(crate) fn of(functions: Vec<NativeFunction>, data: Vec<NativeData>, entry_table: usize) -> Self {
-        Self { functions, data, entry_table }
+    pub(crate) fn of(functions: Vec<NativeFunction>, data: Vec<NativeData>, entry_table: usize, demand: Demand) -> Self {
+        Self { functions, data, demand, entry_table }
     }
 
     /// Linker symbol for the ABI header followed by function-ID-ordered entries.
@@ -64,7 +67,8 @@ pub fn lower_native_js_module_for(program: &ResidualProgram, namespace: &str, ta
     }
     let facts = quench_runtime::compile::aot_facts::analyze(program);
     let image = crate::aot_image::lower(program, &facts, target)?;
-    crate::aot_image::object::emit(&image, namespace, target)
+    let demand = crate::aot_image::demand::of(&image, program);
+    crate::aot_image::object::emit(&image, namespace, target, demand)
 }
 
 /// Defines `code` as the already-compiled body of `id`, its relocations named by declaration.

@@ -835,11 +835,9 @@ complexity crates/quench-runtime/src/vm/object_template.rs::Vm<H>::template_node
 complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::bigint_operation 12
 complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::binary 22
 complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::binary_slow 14
-complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::call_native_dispatch 29
 complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::call_native_table 180
 complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::create_list_from_array_like 11
 complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::identity_equality 14
-complexity crates/quench-runtime/src/vm/operations.rs::Vm<H>::native_family 29
 complexity crates/quench-runtime/src/vm/operations.rs::numeric_integer_result 14
 complexity crates/quench-runtime/src/vm/owned_clone_native.rs::Vm<H>::embedding_clone_allocate 14
 complexity crates/quench-runtime/src/vm/primitive_bench/captures.rs::dense_read 14

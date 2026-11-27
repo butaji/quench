@@ -88,7 +88,8 @@ impl AccessorCall {
             return None;
         };
         let entry = vm.field_cache_entry(cache);
-        let receiver = vm.heap_reads().object_record_by_id(base.direct_object_index()?);
+        // R4-B2b: needs heap (HeapReads has no record_id; the engine cannot reach &Heap)
+        let receiver = vm.heap_reads().object_record_by_id(base.direct_object_index()?.raw());
         (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
             && entry.holder == NO_FIELD_HOLDER
             && entry.receiver == receiver.exact_shape())

@@ -273,7 +273,7 @@ impl Vm {
         if prototype.is_deleted() {
             return None;
         }
-        ProtoLink::object_record(prototype.direct_object_index()?)
+        ProtoLink::object_record(self.heap.record_id(prototype.direct_object_index()?))
     }
 
     /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
@@ -287,7 +287,7 @@ impl Vm {
             return None;
         }
         let target = proof.1;
-        let Some(record) = value.direct_object_index() else {
+        let Some(record) = value.direct_object_index().map(|r| self.heap.record_id(r)) else {
             return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
         };
         let mut object = self.heap.object_record_by_id(record);
@@ -362,7 +362,7 @@ impl Vm {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
-        self.heap.object(value)
+        self.heap.object_ref(value).map(|object| object.record())
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
@@ -404,7 +404,7 @@ impl Vm {
                 Some(object) => object.proto(),
                 None => match self.heap.get(current) {
                     Some(Cell::Proxy { .. }) => return None,
-                    _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
+                    _ => self.heap.object_ref(current).map_or(Value::NULL, |object| object.proto()),
                 },
             };
             if next.is_null() {
@@ -536,7 +536,7 @@ impl Vm {
             {
                 return self.verify_has_instance_holder(current);
             }
-            let Some(object) = self.heap.object(current) else {
+            let Some(object) = self.heap.object_ref(current) else {
                 return false;
             };
             current = object.proto();
@@ -562,7 +562,7 @@ impl Vm {
         let mut current = holder;
         let mut depth = 0u8;
         while current != self.instanceof_has_instance_holder {
-            let Some(object) = self.heap.object(current) else {
+            let Some(object) = self.heap.object_ref(current) else {
                 return;
             };
             current = object.proto();

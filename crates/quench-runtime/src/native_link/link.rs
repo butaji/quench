@@ -1,4 +1,4 @@
-mod audit;
+pub(in crate::native_link) mod audit;
 use audit::audit;
 
 use super::NativeImageInputs;
@@ -239,7 +239,7 @@ impl NativeSupport {
         self.apply_link_options(&mut command, inputs, executable)?;
         self.add_objects(&mut command, inputs, executable);
         let interface = super::exports::configure(&mut command, inputs, executable)?;
-        checked_output(&mut command, "native image link")?;
+        checked_link(&mut command)?;
         let symbols = audit(inputs, executable, self.support)?;
         let footprint = super::footprint::read(executable, &symbols)?;
         let dynamic_interface = interface.verify(executable)?;
@@ -290,7 +290,7 @@ impl NativeSupport {
             command.args(["--cfg", "quench_native_bootstrap"]).env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
         if self.rust_lto {
-            command.args(["-C", "lto=thin"]);
+            command.args(["-C", "lto=fat"]);
         }
         self.apply_platform_flags(command, inputs, executable)?;
         for path in &self.native_paths {
@@ -323,6 +323,7 @@ impl NativeSupport {
             std::fs::write(&script, DISCARD_UNWIND_TABLES).map_err(|error| format!("{}: {error}", script.display()))?;
             command.arg("-C").arg("link-arg=-Wl,--no-eh-frame-hdr")
                 .arg("-C").arg(format!("link-arg=-Wl,-T,{}", script.display()));
+            apply_static_layout_flags(command);
         }
         // Apple Silicon's macOS floor already supports chained fixups. Request them explicitly:
         // rustc's default deployment target otherwise selects classic relocations, dirtying every
@@ -368,6 +369,23 @@ impl NativeSupport {
             }
         }
     }
+}
+
+/// The static image's section and code layout: unreferenced sections are collected, and identical
+/// functions fold. Folding (`--icf`) is an lld feature, so the link uses lld when it is on the
+/// path. `-z norelro` drops the RELRO page: a static non-PIE image has no dynamic relocations
+/// for it to protect.
+#[cfg(target_os = "linux")]
+fn apply_static_layout_flags(command: &mut Command) {
+    command.args(["-C", "link-arg=-Wl,--gc-sections", "-C", "link-arg=-Wl,-z,norelro"]);
+    if lld_on_path() {
+        command.args(["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Wl,--icf=all"]);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn lld_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join("ld.lld").is_file()))
 }
 
 // LLVM's raw and wrapper bitcode signatures (BitCodeFormat.html). Detect
@@ -478,6 +496,17 @@ fn exact_dependency(file: &Path, name: &str, reported_files: &[Value]) -> Result
         ));
     }
     Ok(matches.remove(0))
+}
+
+/// The image link's driver. A successful link's stderr reaches this process's stderr, so the
+/// linker's reports (a `QUENCH_EXTRA_LINK_ARGS` `--why-live` chain) are not discarded.
+fn checked_link(command: &mut Command) -> Result<(), String> {
+    let output = command.output().map_err(|error| format!("native image link: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("native image link failed ({}):\n{}", output.status, String::from_utf8_lossy(&output.stderr)));
+    }
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
 }
 
 pub fn checked_output(command: &mut Command, operation: &str) -> Result<Vec<u8>, String> {

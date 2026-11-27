@@ -658,15 +658,132 @@ impl<'a> HostContext<'a> {
     }
 }
 
+/// The process's standard output as `SystemHost` writes it: one buffered writer, so a line does
+/// not cost a system call. It is flushed before stderr output (the two stay in order), by
+/// `flush_stdout`, and at normal process exit (`stdout_flush_at_exit`).
+static STDOUT: std::sync::Mutex<Option<io::BufWriter<io::Stdout>>> = std::sync::Mutex::new(None);
+static STDOUT_EXIT_HOOK: std::sync::Once = std::sync::Once::new();
+
+extern "C" fn stdout_flush_at_exit() {
+    flush_stdout();
+}
+
+fn with_stdout(write: impl FnOnce(&mut io::BufWriter<io::Stdout>) -> io::Result<()>) {
+    STDOUT_EXIT_HOOK.call_once(|| {
+        // SAFETY: registers a plain function that only flushes the buffer above.
+        unsafe { libc::atexit(stdout_flush_at_exit) };
+    });
+    let mut guard = STDOUT.lock().unwrap_or_else(|poison| poison.into_inner());
+    let writer = guard.get_or_insert_with(|| io::BufWriter::new(io::stdout()));
+    let _ = write(writer);
+}
+
+/// Writes the buffered standard output to the descriptor. A program's exit path calls it before
+/// the process ends, since `_exit` skips the atexit hook.
+pub fn flush_stdout() {
+    let mut guard = STDOUT.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(writer) = guard.as_mut() {
+        let _ = writer.flush();
+    }
+}
+
+/// Ends the process with `status`, after the buffered standard output is written. `_exit`
+/// skips the C runtime's exit handlers, which a compiled program does not depend on.
+pub fn exit_process(status: u8) -> ! {
+    flush_stdout();
+    exit_now(i32::from(status))
+}
+
+/// The process start std's runtime does for a `main` of its own (`#![no_main]`): the standard
+/// descriptors are open (a closed one is `/dev/null`, so no file the program opens takes its
+/// number), and SIGPIPE is ignored, so a write to a closed pipe is an `EPIPE` error as in Node.
+#[cfg(unix)]
+pub fn begin_process() {
+    // SAFETY: plain system calls on the standard descriptors, before any thread starts.
+    unsafe {
+        let mut descriptors = [0, 1, 2].map(|fd| libc::pollfd { fd, events: 0, revents: 0 });
+        if libc::poll(descriptors.as_mut_ptr(), 3, 0) >= 0 {
+            for descriptor in descriptors {
+                if descriptor.revents & libc::POLLNVAL != 0 {
+                    libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                }
+            }
+        }
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+    adopt_main_stack_budget();
+}
+
+/// The calling thread's stack distance budget is its real stack's: the stack from its lowest
+/// address to here, less the headroom (`crate::stack::budget_for_stack`). So deep recursion
+/// raises a RangeError before the stack's end, not a fault. A bound the OS does not report, or
+/// one too small to leave a budget, keeps the worker's budget.
+#[cfg(unix)]
+fn adopt_main_stack_budget() {
+    let Some(low) = thread_stack_low() else { return };
+    let budget = crate::stack::budget_for_stack(crate::stack::current_stack_pointer().saturating_sub(low));
+    if budget > 0 {
+        crate::stack::set_thread_stack_budget(budget);
+    }
+}
+
+/// The lowest address of the calling thread's stack, as the OS reports it.
+#[cfg(target_os = "linux")]
+fn thread_stack_low() -> Option<usize> {
+    // SAFETY: the attribute is initialised by `pthread_getattr_np` and destroyed before return.
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) != 0 {
+            return None;
+        }
+        let mut low: *mut libc::c_void = std::ptr::null_mut();
+        let mut size: libc::size_t = 0;
+        let found = libc::pthread_attr_getstack(&attr, &mut low, &mut size) == 0;
+        libc::pthread_attr_destroy(&mut attr);
+        found.then_some(low as usize)
+    }
+}
+
+/// The lowest address of the calling thread's stack: its top less its size.
+#[cfg(target_vendor = "apple")]
+fn thread_stack_low() -> Option<usize> {
+    // SAFETY: plain queries about the calling thread.
+    unsafe {
+        let thread = libc::pthread_self();
+        let top = libc::pthread_get_stackaddr_np(thread) as usize;
+        top.checked_sub(libc::pthread_get_stacksize_np(thread))
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_vendor = "apple"))))]
+fn thread_stack_low() -> Option<usize> {
+    None
+}
+
+#[cfg(not(unix))]
+pub fn begin_process() {}
+
+#[cfg(unix)]
+fn exit_now(status: i32) -> ! {
+    // SAFETY: `_exit` ends the process at once; every buffer the program owns is flushed first.
+    unsafe { libc::_exit(status) }
+}
+
+#[cfg(not(unix))]
+fn exit_now(status: i32) -> ! {
+    std::process::exit(status)
+}
+
 #[derive(Default)]
 pub struct SystemHost;
 
 impl Host for SystemHost {
     fn write_line(&mut self, text: &str) {
-        let _ = writeln!(io::stdout().lock(), "{text}");
+        with_stdout(|out| writeln!(out, "{text}"));
     }
 
     fn write_err(&mut self, text: &str) {
+        flush_stdout();
         let _ = writeln!(io::stderr().lock(), "{text}");
     }
 

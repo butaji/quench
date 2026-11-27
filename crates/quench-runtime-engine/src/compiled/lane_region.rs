@@ -581,6 +581,9 @@ pub(crate) struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
     unit: &'a super::lane_unit::Unit,
+    /// The alias region each (class, atom) named property is keyed by (`declare_fields`); empty
+    /// unless every property access of the unit is keyed.
+    field_regions: BTreeMap<regions::FieldKey, cranelift_codegen::ir::AliasRegion>,
     /// The function's parameter count: an entry guard on a parameter declines the region
     /// when a call's value does not match the compiled entry fact.
     params: usize,
@@ -616,6 +619,9 @@ pub(crate) struct Lowering<'a, 'f> {
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
+    /// The call plans of the lowered function and of its inlined callees (`bindings::CallPlans`): each call
+    /// site's arms and miss decide its admission.
+    plans: bindings::CallPlans<'a>,
     /// The Stable facts the code folded, each a code dependency of its publication.
     stable: stable::StableUses,
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
@@ -2090,6 +2096,7 @@ pub(crate) fn lower(
         poll_latches: super::SecondaryMap::new(),
         shared_headers,
         global_reads,
+        plans: bindings::CallPlans::new(program, vm.facts),
         vm,
         stable: Default::default(),
         generic,
@@ -2145,6 +2152,7 @@ pub(crate) fn lower(
         ranges: int_ranges::IntRanges::new(0),
         entering: Vec::new(),
         at: 0,
+        field_regions: BTreeMap::new(),
         forward: Vec::new(), sealable: BitSet::new(),
         arrived: BTreeMap::new(), loop_carry: BTreeMap::new(), carried_typed: BTreeMap::new(),
         entered: BitSet::with_capacity(unit.instructions.len()),
@@ -2154,6 +2162,7 @@ pub(crate) fn lower(
         raises: catches::raises(&catches),
         catches,
     };
+    lowering.field_regions = lowering.declare_fields();
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
         for register in writes(*instruction).into_iter().map(usize::from).filter(|r| *r < count) {
@@ -2462,8 +2471,10 @@ pub(crate) fn lower(
     let mut polls = std::mem::take(&mut lowering.polls);
     let reentries = std::mem::take(&mut lowering.reentries);
     let stable = lowering.stable.take();
+    let field_regions = std::mem::take(&mut lowering.field_regions);
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
+    super::regions::retag_field_regions(&mut native, &field_regions);
     super::jit_backend::builder::keep_context(builder_context);
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
@@ -2854,7 +2865,7 @@ impl Lowering<'_, '_> {
                     }
                     if call.alternative.is_none()
                         && numeric
-                        && !self.closed_proves(frame)
+                        && self.planned_target(frame).is_none()
                         && let Some(root) = aliases[usize::from(call.callee_register)] {
                         let binding = (root, call.target);
                         if !admitted.contains(&binding) {
@@ -3023,6 +3034,50 @@ impl Lowering<'_, '_> {
     fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
         self.solved_classes(pc)?;
         self.accessed_register(pc, instruction)
+    }
+
+    /// The (class, atom) key of the named field access at unit PC `pc`, where the solver proves its
+    /// receiver one class (`solved_classes`): the key its property values' region is declared under.
+    fn field_key(&self, pc: usize) -> Option<regions::FieldKey> {
+        let instruction = *self.unit.instructions.get(pc)?;
+        let Some(FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
+        match self.solved_classes(pc)? {
+            quench_runtime::typed_ir::Classes::Set { ids, len: 1, proven: true } => Some((ids[0], atom)),
+            _ => None,
+        }
+    }
+
+    /// The keys of the unit's named property accesses, where every property access of the unit is
+    /// keyed (the soundness rule of `regions::retag_field_regions`): `None` where one is not, or where
+    /// the unit makes an access the keys do not cover (a store helper's, an allocation's).
+    fn field_keys(&self) -> Option<BTreeSet<regions::FieldKey>> {
+        let mut keys = BTreeSet::new();
+        for (pc, instruction) in self.unit.instructions.iter().enumerate() {
+            for operation in [crate::compiled::performed(instruction), crate::compiled::decoded(instruction)].into_iter().flatten() {
+                match operation {
+                    quench_runtime::staged::Operation::GetField { .. } | quench_runtime::staged::Operation::SetField { .. } => {
+                        keys.insert(self.field_key(pc)?);
+                    }
+                    quench_runtime::staged::Operation::StoreField { .. } | quench_runtime::staged::Operation::FieldAdd { .. }
+                    | quench_runtime::staged::Operation::Delete { .. } | quench_runtime::staged::Operation::FieldGetHost { .. }
+                    | quench_runtime::staged::Operation::Allocate { .. } => return None,
+                    _ => {}
+                }
+            }
+        }
+        Some(keys)
+    }
+
+    /// Declares the unit's field regions after `Region::ALL`, one per key `field_keys` names; none
+    /// where it names none.
+    fn declare_fields(&mut self) -> BTreeMap<regions::FieldKey, cranelift_codegen::ir::AliasRegion> {
+        let Some(keys) = self.field_keys() else { return BTreeMap::new() };
+        regions::declare_field_regions(&mut self.builder.func, keys)
+    }
+
+    /// The alias region of the named field access at unit PC `pc`, where its key is declared.
+    fn field_region(&self, pc: usize) -> Option<cranelift_codegen::ir::AliasRegion> {
+        self.field_regions.get(&self.field_key(pc)?).copied()
     }
 
     /// The closed set of classes the solver names for the object the access at unit PC `pc` reads or
@@ -3510,13 +3565,14 @@ impl Lowering<'_, '_> {
     /// `step` with what the operation's frame needs beyond its edges (`StepWith`).
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: quench_runtime::staged::Operation<ir::Value, EmitProof>,
         StepWith { access, sites, site }: StepWith<'_>) -> quench_runtime::staged::Step<ir::Value, ()> {
+        let property = self.field_region(self.at);
         let locals = !self.completion.numeric();
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
         let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload), facts: Default::default() };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
-            held,
+            held, property,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, views: &mut self.stable.views, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
@@ -3775,7 +3831,7 @@ impl Lowering<'_, '_> {
             CalleeBinding::Function => (
                 if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
                     || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame))
-                    || self.closed_call(state, exit, frame) { None }
+                    || self.plan_call(state, exit, frame) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
                 Some(Type::function_body(inlined.target.function)),
             ),

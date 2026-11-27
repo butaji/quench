@@ -14,6 +14,7 @@
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use quench_runtime::bytecode::Function;
+use quench_runtime::compile::call_plan::CallPlan;
 use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
 use quench_runtime::typed_ir::BindingTime;
 use quench_runtime::value::Value;
@@ -279,6 +280,8 @@ impl Plan {
 struct Planner<'t, 'f> {
     program: &'t quench_runtime::ResidualProgram,
     targets: &'t dyn Fn(u32, u32) -> Vec<CallTarget>,
+    /// The call plan of each call site, by function and PC, where one covers it: it decides the site's inlining.
+    plans: &'t dyn Fn(u32, u32) -> Option<CallPlan>,
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
@@ -354,16 +357,26 @@ impl Planner<'_, '_> {
             return (Vec::new(), true);
         }
         // A forwarded call inlines the targets reached through the native; a plain call, the others.
-        let found: Vec<_> = (self.targets)(function, pc).into_iter().filter_map(|target| match target.callee {
+        let linked: Vec<_> = (self.targets)(function, pc).into_iter().filter_map(|target| match target.callee {
             CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
             _ => (!forwarded).then_some(target),
         }).collect();
+        let ran = !linked.is_empty();
+        // The site's plan decides what inlines where it covers the site: every arm inlines whole, and then the
+        // linked targets its arms name (a class switch's arms, once one exists); else nothing. A forwarded call's
+        // targets are its native's, which no plan names, so they keep the linked rule alone.
+        let found = match (self.plans)(function, pc).filter(|_| !forwarded) {
+            Some(plan) if plan.arms.iter().all(|arm| inlines_whole(self.program, arm.function)) => linked.into_iter()
+                .filter(|target| plan.arms.iter().any(|arm| arm.function == target.function)).collect(),
+            Some(_) => Vec::new(),
+            None => linked,
+        };
         // A call of an inlined callee that inlines none of its targets leaves the unit at every run (the lowering
         // makes calls from the caller's own frame only): it blocks its callee, which stays its own unit.
         if depth > 0 && found.is_empty() {
             return (Vec::new(), true);
         }
-        let (ran, targets, reserved, mark) = (!found.is_empty(), found.len(), (self.registers, self.budget), self.survey_len());
+        let (targets, reserved, mark) = (found.len(), (self.registers, self.budget), self.survey_len());
         // The alternatives share the site's executions equally: the record keeps no split.
         let share = (weight / (targets.max(1) as u64)).max(1);
         // A target that does not inline gives back what it reserved (`inline_target`).
@@ -422,6 +435,14 @@ impl Planner<'_, '_> {
         }
         Some(InlinedPlan { target, recovery, base, registers: callee.registers, plan })
     }
+}
+
+/// Whether `function` inlines whole into a lane unit: its code renames (`lowerable`) and fits the longest
+/// body a lane inlines. The inline form of a call plan's arm of this function (`call_plans`).
+pub(crate) fn inlines_whole(program: &quench_runtime::ResidualProgram, function: u32) -> bool {
+    let Some(callee) = program.function_get(function as usize) else { return false };
+    let code = decoded(callee);
+    code.len() <= super::tier_policy::STATIC_ROWS.lane_body.max_inlined_instructions && lowerable(&code)
 }
 
 /// Whether every instruction of an inlined callee renames, and one of them completes it (a
@@ -622,8 +643,24 @@ pub(crate) fn with_trips<'f>(
     trips: &dyn Fn(u32, u32) -> Option<u64>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
+    with_plans(program, function_id, function, (budget, max_inlined), targets, &|_, _| None, trips, body)
+}
+
+/// `with_trips` where each call site's plan (`plans`, by function and PC) decides its inlining: a site a plan covers
+/// inlines the targets it names (`Planner::inline`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_plans<'f>(
+    program: &quench_runtime::ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    (budget, max_inlined): (usize, usize),
+    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
+    plans: &dyn Fn(u32, u32) -> Option<CallPlan>,
+    trips: &dyn Fn(u32, u32) -> Option<u64>,
+    body: &dyn Fn(u32) -> Option<&'f Function>,
+) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget, max_inlined, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
+    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), plans, body, registers: u32::from(caller_registers), budget, max_inlined, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
     let plan = planner.plan_weighted(function_id, function, budget);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

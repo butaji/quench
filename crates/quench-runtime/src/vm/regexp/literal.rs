@@ -227,7 +227,7 @@ impl Vm {
         }
         let prototype = self.object_data(object)?.proto();
         self.heap.mark_prototype(prototype);
-        let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
+        let watch = crate::heap::watch_prototype_values(self.heap.object_ref(prototype)?.exact_shape())?;
         self.verify_regexp_builtin_layout(object, prototype)?;
         for (symbol, native) in [
             (WellKnownSymbol::Replace, Native::RegExpSymbolReplace),

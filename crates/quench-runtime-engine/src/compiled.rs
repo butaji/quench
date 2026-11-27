@@ -990,8 +990,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let ok = stage.raw_binary(Binary::And, ok, has_properties);
     stage.branch_if(ok, (found, &[]), (done, &[]));
     stage.builder.switch_to_block(found);
-    let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
-    let address = quench_runtime::staged::object::object_record_at(&mut stage, records, record_id);
+    let address = quench_runtime::staged::object::object_record_of(&mut stage, records, this);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
     let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
     let inline = quench_runtime::staged::object::inline_storage(&mut stage, address);
@@ -1046,7 +1045,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\njmp {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1055,7 +1056,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\nb {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1067,8 +1070,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 2\n_quench_lane_helper_ahead_Step:\nb {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1078,8 +1083,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 4\n_quench_lane_helper_ahead_Step:\njmp {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1087,9 +1094,18 @@ macro_rules! lane_helper_inventory {
     };
 }
 
-/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`).
+/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`): the ahead entry of
+/// `Step` (`ahead_general_step`, over the payload), else the helper's own.
 pub(crate) fn lane_helper_symbol(index: usize) -> Option<String> {
-    LaneHelper::NAMES.get(index).map(|name| format!("quench_lane_helper_{name}"))
+    let name = LaneHelper::NAMES.get(index)?;
+    Some(if index == LaneHelper::Step as usize { format!("quench_lane_helper_ahead_{name}") } else { format!("quench_lane_helper_{name}") })
+}
+
+/// The address an ahead image's helper `index` is in this process, as `lane_helper_symbol` names it: `ahead_general_step` for
+/// `Step`, else the helper's own address.
+pub(crate) fn ahead_helper_address(index: usize) -> Option<usize> {
+    if index == LaneHelper::Step as usize { return Some(crate::dispatch_fast::ahead_general_step as *const () as usize); }
+    LaneHelper::addresses().get(index).map(|address| *address as usize)
 }
 lane_helper_inventory! {
     FunctionCapture => function_capture_read_in_lane,
@@ -1518,7 +1534,7 @@ pub(crate) struct VmFacts<'a> {
     /// `None` where a leave returns its exit word.
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
     /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
-    /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::closed_call`),
+    /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::plan_call`),
     /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
@@ -3459,7 +3475,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
         match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
             Some(id) => {
-                let object = vm.heap_reads().object_record_by_id(id);
+                let object = vm.heap_reads().object_record_by_id(id.raw());
                 if object.plain_storage_start().is_some() { StoreStorage::Arena }
                 else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
                 else { StoreStorage::OtherRecord }
@@ -4194,7 +4210,7 @@ impl JsStepDispatch {
     /// lazily made empty string and unit strings exist: then one pass of compares replaces the
     /// rereads every allocating, call or step helper ends with.
     #[inline]
-    fn refresh_object_bases(&mut self, vm: &Vm) {
+    pub(crate) fn refresh_object_bases(&mut self, vm: &Vm) {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
@@ -4256,7 +4272,7 @@ impl JsStepDispatch {
             return;
         }
         let Some(record) = vm.heap_reads().object_record(object) else { return };
-        let (payload, layout) = record.stored_words();
+        let (payload, layout) = record.record().stored_words();
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
     }
@@ -4269,7 +4285,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object(array) else { return };
+        let Some(record) = vm.heap_reads().object_ref(array) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4500,10 +4516,10 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
     if receiver.direct_object_index().is_none() {
         return "non-direct-object";
     }
-    let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
-    if object.inline_properties().is_some() {
+    let Some(object) = vm.heap_reads().object_ref(receiver) else { return "missing-object"; };
+    if object.record().inline_properties().is_some() {
         "inline-storage"
-    } else if object.plain_storage_start().is_none() {
+    } else if object.record().plain_storage_start().is_none() {
         "extras-storage"
     } else {
         if vm.active_program != vm.frames[frame].program {
@@ -4517,9 +4533,9 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
                 let holder = vm.heap_reads().object_record_by_id(record);
                 if holder.exact_shape() != cache.holder {
                     "prototype-holder-shape-miss"
-                } else if holder.inline_properties().is_some() {
+                } else if holder.record().inline_properties().is_some() {
                     "prototype-holder-inline"
-                } else if holder.extras_storage_start().is_some() {
+                } else if holder.record().extras_storage_start().is_some() {
                     "prototype-holder-extras"
                 } else if holder.plain_storage_start().is_some() {
                     "prototype-holder-plain"
@@ -10325,13 +10341,13 @@ mod tests {
         let receiver_atom = vm.intern_atom("receiver");
         let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
         let atom = vm.intern_atom("edgeValue");
-        let shape = vm.heap_reads().object(receiver).unwrap().shape();
+        let shape = vm.heap_reads().object_ref(receiver).unwrap().shape();
         let slot = vm.shape_slot(shape, atom).unwrap();
         vm.store_property_slot(receiver, slot, Value::integer(2));
         assert!(published.lease().is_some());
         vm.store_property_slot(receiver, slot, Value::number(0.5));
         assert!(published.lease().is_none(), "widening retires future entry at the write");
-        assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object_ref(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
         assert!(weak.upgrade().is_none());
@@ -10397,7 +10413,7 @@ mod tests {
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-            let shape = vm.heap_reads().object(receiver).unwrap().shape();
+            let shape = vm.heap_reads().object_ref(receiver).unwrap().shape();
             let slot = vm.shape_slot(shape, store.atom_index()).unwrap();
             let residual = (&program as *const ResidualProgram).addr() as u64;
             let machine = (&mut vm as *mut Vm).addr() as u64;
@@ -10416,7 +10432,7 @@ mod tests {
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
-            assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
+            assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object_ref(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
                 "the wider domain is admitted on the next entry");
@@ -10515,7 +10531,7 @@ mod tests {
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object(receiver).unwrap().inline_properties().is_some());
+        assert!(vm.heap_reads().object_ref(receiver).unwrap().record().inline_properties().is_some());
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let function = program.functions.iter().position(|function|
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
@@ -10525,8 +10541,8 @@ mod tests {
         let cache = vm.field_cache_entry(site);
         assert_ne!(cache.holder, quench_runtime::vm::NO_FIELD_HOLDER);
         assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap_reads().object(receiver).unwrap().proto();
-        let holder = vm.heap_reads().object(prototype).unwrap();
+        let prototype = vm.heap_reads().object_ref(receiver).unwrap().proto();
+        let holder = vm.heap_reads().object_ref(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);

@@ -30,6 +30,9 @@ pub(crate) struct FieldFacts<'a> {
     pub(crate) held: HeldRead,
     /// Where a folded prototype value takes its code dependency.
     pub(crate) stable: StableHold<'a>,
+    /// The alias region of the access's (class, atom) key, where the solver proves its receiver's class and
+    /// the function declared one (`regions::declare_field_regions`); `None` keeps its values in `Region::ObjectSlots`.
+    pub(crate) property: Option<cranelift_codegen::ir::AliasRegion>,
 }
 
 /// What an instruction's field access already holds: the reads its value may come from, and for
@@ -334,7 +337,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let result = builder.append_block_param(done, types::I64);
         let (address, _) = emit_js_cached_field_slot(builder, self.payload, object,
             site, true, slow, Some(binding), header, Some(packed));
-        let value = emit(builder).load_u64(Region::ObjectSlots.mutable(), address, 0);
+        let value = emit(builder).raw_load(Lane::I64, regions::property_flags(self.fields.as_ref().and_then(|facts| facts.property)), address, 0);
         emit(builder).jump(done, &[value]);
         builder.switch_to_block(packed);
         let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);

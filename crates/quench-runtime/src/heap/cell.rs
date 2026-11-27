@@ -99,7 +99,7 @@ pub(crate) fn note_intrinsic_change() {
 /// list of another length does not compile.
 macro_rules! natives {
     ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[repr(u16)]
         pub enum Native {
             $( $(#[$meta])* $variant, )*
@@ -857,6 +857,18 @@ impl InlineObjectHeader {
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self { layout: 0 };
 
+    /// The header a construction of `fields` values of `proto` and `shape` allocates with: inline
+    /// storage while they fit the inline slots, else an arena run. The one rule a construct plan
+    /// (`ConstructPlan::derive_header`) and an ahead image's layout id (`Symbol::ClassLayout`) both take.
+    pub fn for_fields(proto: Value, shape: u32, fields: usize) -> Self {
+        if fields <= INLINE_PROPERTY_COUNT { Self::of(proto, shape) } else { Self::of_run(proto, shape) }
+    }
+
+    /// The layout id the header's words intern to: the header word of every object allocated from it.
+    #[inline] pub fn layout_id(self) -> u32 {
+        self.layout
+    }
+
     pub fn of(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::inline_property_storage(shape))
     }
@@ -998,12 +1010,12 @@ impl ProtoLink {
         self.0
     }
 
-    /// The layout id of an ordinary object linked here whose exact shape is `shape` and whose
-    /// values are a plain arena run: no flag, no storage-form bit (`header_word`). It is the one
-    /// representation of the class a construction of more fields than inline storage holds
-    /// makes, which an ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
-    pub fn arena_layout(self, shape: u32) -> u32 {
-        super::layouts::intern(header_word(self.0, shape))
+    /// The class id (layout id) of an ordinary object linked here, of exact shape `shape`, with no
+    /// flags (`heap::layouts::intern_class`). The one a construction of more fields than inline
+    /// storage held makes, which an ahead image's guard names as a link-time immediate
+    /// (`Symbol::GuardLayout`).
+    pub fn class(self, shape: u32) -> u32 {
+        super::layouts::intern_class(shape, self, 0)
     }
 
     /// The window link naming object record `id`; `None` past the object window, where the
@@ -1097,7 +1109,7 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 /// An object's two header words as its layout's entry holds them (`heap::layouts`): the
 /// auxiliary word low, `meta` high.
 #[inline(always)]
-const fn header_word(meta: u32, auxiliary: u32) -> u64 {
+pub(crate) const fn header_word(meta: u32, auxiliary: u32) -> u64 {
     auxiliary as u64 | (meta as u64) << u32::BITS
 }
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload);

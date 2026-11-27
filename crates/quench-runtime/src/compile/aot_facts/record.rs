@@ -5,6 +5,7 @@
 use super::effects::{Ctx, Events};
 use super::flow::{Call, FunctionFlow, Target};
 use super::registers::RegisterCells;
+use super::shape::{self, Shape};
 use super::value::{Key, Origin, PrototypeBase, Word, UNNAMED_ARRAYS};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::typed_ir::{Cell, Classes, Elements, Length, Representation, Type};
@@ -25,6 +26,7 @@ pub(super) struct Record {
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
     links: Vec<(u32, u32)>,
+    shapes: Vec<Shape>,
     handed: Vec<Word>,
     closures: Vec<u32>,
 }
@@ -44,6 +46,7 @@ impl Record {
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
             links: Vec::new(),
+            shapes: Vec::new(),
             handed: Vec::new(),
             closures: Vec::new(),
         }
@@ -113,7 +116,9 @@ impl Record {
             }
             self.links.extend(receiver.link(UNNAMED_ARRAYS));
             self.links.extend(arguments.iter().filter_map(|argument| argument.link(UNNAMED_ARRAYS)));
-            self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
+            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
+            self.calls.push(call);
         }
     }
 
@@ -124,6 +129,7 @@ impl Record {
         self.wild_member |= events.wild_member;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
+        self.shapes.extend(events.shape);
         self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -164,6 +170,7 @@ impl Record {
             registers: self.registers,
             reads: self.reads,
             links: self.links,
+            shapes: self.shapes,
             arity,
             returns_out,
             handed: self.handed,

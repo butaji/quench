@@ -68,7 +68,7 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
 
 /// The calls the unit of an image's lane body inlines: each call whose target the closed world
 /// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::closed_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
+/// (`Lowering::plan_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
 /// at its call; any other leaves into its own activation, materialized from the unit's frame
 /// (`CallRecovery::Materialize`, the join's inlined leave).
 fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {

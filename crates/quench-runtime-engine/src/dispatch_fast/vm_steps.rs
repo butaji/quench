@@ -406,12 +406,13 @@ fn helper_word(exit: Exit) -> u64 {
 /// Re-reads the register window of the payload's frame into the image payload's cached words (`native_registers`,
 /// `register_count`, `fixed_this_slot`), as `JsStepDispatch::refresh_heap_bases` reads them at entry. A step that grows
 /// `vm.frames` may have moved the frame's window, so an image body refreshes them as a lane body refreshes its bases
-/// (`refresh_body_bases`); the object bases a lane body also refreshes are not reached from here (see `ahead_general_step`).
+/// (`refresh_body_bases`), and the object bases (`refresh_object_bases`) a step that allocated or ran guest code may have moved.
 pub(crate) fn refresh_image_bases(payload: &mut JsStepDispatch, vm: &mut Vm) {
     let activation = &mut vm.frames[payload.frame];
     payload.native_registers = activation.registers.as_mut_ptr();
     payload.register_count = activation.registers.len();
     payload.fixed_this_slot = if activation.fixed_this { &activation.this as *const Value } else { std::ptr::null() };
+    payload.refresh_object_bases(vm);
 }
 
 /// The allocation of the record at `call_pc`, a fixed-shape object the record defines (`Step::Allocate`): its value is

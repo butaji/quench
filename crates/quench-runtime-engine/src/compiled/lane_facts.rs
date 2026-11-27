@@ -95,47 +95,8 @@ pub(crate) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u
     closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
 }
 
-use tier_policy::RECURSION_DEPTH;
-
-/// The functions that call `function` back through the targets their call sites linked
-/// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses
-/// directly, and the other members of a mutual recursion (`f` calling `g` calling `f`). Empty
-/// where `function` does not recurse.
-pub(crate) fn recursion_cycle(program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> std::collections::BTreeSet<u32> {
-    let callees = |caller: u32| -> Vec<u32> {
-        let Some(body) = program.function_get(caller as usize) else { return Vec::new() };
-        (0..body.code.len() as u32).flat_map(|pc| targets(caller, pc)).map(|target| target.function).collect()
-    };
-    // The call graph out of `function`, as far as `RECURSION_DEPTH` calls.
-    let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
-    let mut frontier = std::collections::BTreeSet::from([function]);
-    for _ in 0..RECURSION_DEPTH {
-        let mut next = std::collections::BTreeSet::new();
-        for caller in frontier {
-            let std::collections::btree_map::Entry::Vacant(slot) = edges.entry(caller) else { continue };
-            let out = slot.insert(callees(caller));
-            next.extend(out.iter().copied());
-        }
-        frontier = next;
-    }
-    // Those of its nodes from which `function` is reached again.
-    let mut cycle = std::collections::BTreeSet::new();
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (caller, out) in &edges {
-            if !cycle.contains(caller) && out.iter().any(|callee| *callee == function || cycle.contains(callee)) {
-                cycle.insert(*caller);
-                changed = true;
-            }
-        }
-    }
-    cycle
-}
-
 /// Whether a body of `function` calls itself directly: one entry then runs a native call tree
-/// rather than one straight line, as a loop does. Recursion through other functions is
-/// `recursion_cycle`'s.
+/// rather than one straight line, as a loop does. Recursion through other functions is `CallGraph::in_cycle`'s.
 fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
     direct.iter().any(|callee| callee.target.function == function)
 }
@@ -180,12 +141,23 @@ impl std::fmt::Write for Fnv {
     }
 }
 
-/// Whether the tier model admits compiling `function`'s body for the `entries` it has made
-/// (`tier_model::admits`), its plan charged too where `unplanned`: the gate every lane-body
-/// compile request passes.
-pub(crate) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, (entries, recursive): (u32, bool), ir: usize, caller: &crate::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
-    let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive }, unplanned, diagnostics)
+/// The static residue of `body`: its instructions, a call weighing `CALL_RESIDUE` and every other one a single unit
+/// (`tier_policy`). What the static benefit and the quick level read of a function's size.
+pub(crate) fn static_residue(body: &quench_runtime::bytecode::Function) -> u64 {
+    body.code.iter().map(|packed| if crate::compiled::meaning_compiled::is_call(body.widened(*packed)) { quench_runtime::vm::tier_policy::CALL_RESIDUE } else { 1 }).sum()
+}
+
+/// The static facts of `function`'s body (`tier_model::StaticFacts`): whether a loop or a call cycle reaches it
+/// (`CallGraph::in_loop_or_cycle`, or a loop region calls it: `called_by_loop`), and its residue.
+pub(crate) fn static_facts(program: &ResidualProgram, graph: &quench_runtime::compile::call_graph::CallGraph, function: u32, called_by_loop: bool) -> super::tier_model::StaticFacts {
+    let Some(body) = program.function_get(function as usize) else { return super::tier_model::StaticFacts::default() };
+    super::tier_model::StaticFacts { in_loop_or_cycle: called_by_loop || graph.in_loop_or_cycle(function), residue: static_residue(body) }
+}
+
+/// Whether `function`'s lane body compiles at its first entry (`tier_model::pick` over its `static_facts`), where
+/// `called_by_loop` is a loop region's call of it.
+pub(crate) fn body_pick(tiers: &Tiers, program: &ResidualProgram, graph: &quench_runtime::compile::call_graph::CallGraph, function: u32, called_by_loop: bool) -> super::tier_model::Pick {
+    super::tier_model::pick(tiers.admits_all, static_facts(program, graph, function, called_by_loop))
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
@@ -232,7 +204,7 @@ pub(crate) fn measured_ir_per_bytecode(loops: &tier_policy::Loops, lowers: Lower
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).
 pub(crate) struct Census {
     pub(crate) function: u32, pub(crate) osr: bool, pub(crate) unit: usize, pub(crate) ir: usize, pub(crate) key: u64,
-    pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) budget: usize, pub(crate) observed: Option<u32>, pub(crate) closed: bool,
+    pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) budget: usize, pub(crate) closed: bool,
     /// The planning, proofs and lowering on the VM's own thread, which the background `us`
     /// excludes and the measured window pays.
     pub(crate) plan_us: u64,
@@ -240,9 +212,9 @@ pub(crate) struct Census {
 
 impl Census {
     pub(crate) fn report(&self, took: std::time::Duration, bytes: usize) -> String {
-        let Self { function, osr, unit, ir, key, generic, direct, budget, observed, closed, plan_us } = self;
-        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes},\"plan_us\":{plan_us}}}",
-            observed.map_or(-1, i64::from), took.as_micros())
+        let Self { function, osr, unit, ir, key, generic, direct, budget, closed, plan_us } = self;
+        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes},\"plan_us\":{plan_us}}}",
+            took.as_micros())
     }
 }
 

@@ -15,6 +15,13 @@
 #![feature(stmt_expr_attributes)]
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
+// The Wasm operator lists are pure `macro_rules!`, expanded by the Wasm rules and the SIMD lanes.
+// One include here, so every module below sees the macros textually. The stencil builds mount
+// their own copy (`cfg(stencil_build)`) wherever a shared file is compiled as a stencil.
+#[macro_use]
+#[path = "staged/wasm_lists.rs"]
+mod wasm_lists;
+
 #[doc(hidden)]
 pub mod execution_interrupt;
 #[cfg(any(test, feature = "test-support"))]

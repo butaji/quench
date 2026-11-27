@@ -23,11 +23,7 @@ impl ConstructPlan {
     /// This plan with the header its receiver starts with, of its prototype and shape: inline
     /// storage when its fields fit the inline slots, else an arena run.
     pub(crate) fn derive_header(self) -> Self {
-        let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
-            InlineObjectHeader::of(self.prototype, self.shape)
-        } else {
-            InlineObjectHeader::of_run(self.prototype, self.shape)
-        };
+        let header = InlineObjectHeader::for_fields(self.prototype, self.shape, usize::from(self.fields));
         let mut classes = [FieldClass::Passed; CONSTRUCT_PLAN_FIELDS];
         for (field, class) in classes.iter_mut().enumerate() {
             *class = if self.constant & (1 << field) != 0 { FieldClass::Constant }

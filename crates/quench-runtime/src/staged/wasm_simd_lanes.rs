@@ -403,9 +403,13 @@ fn convert_lanes(bits: u128, operator: Conversion, source: u32, result: u32) -> 
 
 /// The operator list is `wasm_lists.rs`'s `simd_operator_list!`, which the runtime and the b-jit both expand;
 /// this module expands it into the enum below.
+#[cfg(stencil_build)]
 #[path = "wasm_lists.rs"]
 mod wasm_lists;
+#[cfg(stencil_build)]
 pub(crate) use wasm_lists::simd_operator_list;
+#[cfg(not(stencil_build))]
+pub(crate) use crate::wasm_lists::simd_operator_list;
 
 /// The enum and its tag lookup, generated from the operator list: the discriminants are the list's
 /// order, from zero.

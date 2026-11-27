@@ -123,10 +123,7 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
         // calls run inline: its entry from the header is paid once per run, and the body runs
         // natively the rows the region cannot (a dense `switch`, `instanceof`). A loop of a few
         // trips per entry is its function's body's to run, and one whose calls leave interprets as well.
-        // SAFETY: the program's views outlive the lane run.
-        let entries = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .and_then(|own| own.body_detail_in_lane().1);
-        let long = entries.is_some_and(|entries| site.body_iterations() / u64::from(entries.max(1)) >= u64::from(site.tiers.loops.warmup_taken) * LONG_TRIP_WARMUPS);
+        let long = site.body_iterations() >= u64::from(site.tiers.loops.warmup_taken) * LONG_TRIP_WARMUPS;
         if !nests && (!long || !calls.into_iter().all(inline)) { return false; }
     } else if !calls.into_iter().all(inline) { return false; }
     let mut body = site.body.borrow_mut();
@@ -183,7 +180,7 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     }
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending, own),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
+        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
         &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));

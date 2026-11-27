@@ -1488,8 +1488,7 @@ pub(super) unsafe fn header_site_in_lane(ip: Ip) -> *const LoopSite {
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: bool, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
-    if !now && own.counted_between_attempts(false) { return true; }
+pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -1515,12 +1514,7 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     let jit = crate::jit_routes::jit().map(|routes| routes.lane);
     let specialize = |work: crate::compiled::LaneBodyWork| jit.map_or(crate::compiled::LaneBodyOutcome::Declined, |jit| jit(cx, own, function, parameters, looped, work));
     let published = own.entry_published();
-    let warming = if now {
-        own.specialize_lane_body_now(body_entry_row(), looped.is_some(), specialize);
-        own.body_view_in_lane().is_some()
-    } else {
-        own.specialize_lane_body(body_entry_row(), false, specialize)
-    };
+    let warming = own.specialize_lane_body(body_entry_row(), specialize);
     // Every cell body is published here (`tier_machine::publish` from `specialized`): the
     // proved calls of the view, which skip the cell body, lose their proof.
     if !published && own.entry_published() {
@@ -1539,8 +1533,8 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let work = match work {
         // A looping caller's trips pay for the body as its own iterations do (`looped`).
-        crate::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: seen, called, caller, .. } =>
-            crate::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: looped.or(seen), called, caller, arrays: &arrays },
+        crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: seen, called, caller, .. } =>
+            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller, arrays: &arrays },
         poll => poll,
     };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
@@ -1577,7 +1571,7 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) })
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
     {
-        specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
+        specialize_in_lane(cx, own, site.function, &[], Some((site.span(), site.body_iterations())));
         // A body the model priced with the loop's work and found unpaid gains nothing from the loop asking
         // again: the loop retires to its plain jump, which costs no countdown per back edge (TOD-2062).
         if own.warming() && !own.body_unpaid() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }

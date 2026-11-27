@@ -168,7 +168,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
 
     // Young records reachable only through stores into old records.
     let child = heap.alloc_object(plain_object());
-    heap.object_mut(owner).unwrap().set_inline_property(0, child);
+    heap.object_mut_ref(owner).unwrap().record().set_inline_property(0, child);
     let element = heap.alloc_object(plain_object());
     heap.array_elements_mut(array).unwrap().make_mut().set(0, element);
     let garbage = heap.alloc_object(plain_object());
@@ -189,7 +189,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
     }
 
     // An old record that loses its last reference survives minors and dies at a full one.
-    heap.object_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
+    heap.object_mut_ref(owner).unwrap().record().set_inline_property(0, Value::UNDEFINED);
     collect_minor(heap, [owner, array]);
     assert!(heap.is_live(child));
     heap.collect([owner, array]);
@@ -206,8 +206,9 @@ fn records_written_twice_are_logged_once(heap: &mut Heap) {
     let owner = heap.alloc_object(plain_object());
     heap.collect([owner]);
     for value in 0..4 {
-        heap.object_mut(owner)
+        heap.object_mut_ref(owner)
             .unwrap()
+            .record()
             .set_inline_property(0, Value::number(f64::from(value)));
     }
     assert_eq!(heap.object_records.remembered_count(), 1);
@@ -434,7 +435,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
     let value = heap.alloc_object(plain_object());
 
     assert_eq!(map.legacy_heap_index(), Some(0));
-    assert_eq!(key.direct_object_index(), Some(0));
+    assert_eq!(key.direct_object_index().map(|object| heap.record_id(object)), Some(0));
     assert_ne!(map, key);
 
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
@@ -601,12 +602,12 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     drop(shared);
 
     assert!(first.direct_array_index().is_some());
-    assert_eq!(object.direct_object_index(), Some(0));
+    assert_eq!(object.direct_object_index().map(|object| heap.record_id(object)), Some(0));
     assert_eq!(first.direct_array_index(), Some(0));
     assert_ne!(object, first);
     assert!(heap.array(object).is_none());
-    assert!(heap.object(object).is_some());
-    assert!(heap.object(first).is_some());
+    assert!(heap.object_ref(object).is_some());
+    assert!(heap.object_ref(first).is_some());
     assert!(heap.get(first).is_none());
     assert_eq!(heap.array_elements(first).unwrap().owner_count(), 2);
     let first_root = heap.root(first);
@@ -676,7 +677,8 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let object = heap.alloc_object(plain_object());
     let before = heap.memory_stats().3;
     // An object lives in its record family or a legacy cell; `Heap::object_mut` finds either.
-    let data = heap.object_mut(object).unwrap();
+    let mut view = heap.object_mut_ref(object).unwrap();
+    let data = view.record();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
@@ -1107,7 +1109,7 @@ fn promoted_object_records_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
         |heap| heap.alloc_object(plain_object()),
         |heap| heap.alloc_object(plain_object()),
-        |heap, owner, child| heap.object_mut(owner).unwrap().set_inline_property(0, child),
+        |heap, owner, child| heap.object_mut_ref(owner).unwrap().record().set_inline_property(0, child),
     );
 }
 
@@ -1128,13 +1130,13 @@ fn old_owners_stay_remembered_until_their_aged_children_are_promoted_or_freed() 
     let [keeper, dropper] = [(); 2].map(|()| heap.alloc_object(plain_object()));
     heap.collect([keeper, dropper]);
     let [kept, dropped] = [(); 2].map(|()| heap.alloc_object(plain_object()));
-    heap.object_mut(keeper).unwrap().set_inline_property(0, kept);
-    heap.object_mut(dropper).unwrap().set_inline_property(0, dropped);
+    heap.object_mut_ref(keeper).unwrap().record().set_inline_property(0, kept);
+    heap.object_mut_ref(dropper).unwrap().record().set_inline_property(0, dropped);
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_live(dropped));
     assert_eq!(remembered_owners(&heap), 2, "both owners hold an aged child");
 
-    heap.object_mut(dropper).unwrap().set_inline_property(0, Value::UNDEFINED);
+    heap.object_mut_ref(dropper).unwrap().record().set_inline_property(0, Value::UNDEFINED);
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_old(kept));
     assert!(!heap.is_live(dropped), "an aged child no owner holds dies at a minor collection");
@@ -1402,8 +1404,8 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     let extras = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED]);
     heap.object_record_mut(extras).unwrap().set_extensible(false);
     let deleted = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::DELETED]);
-    assert!(heap.object(packed).unwrap().inline_properties().is_some());
-    assert!(heap.object(arena).unwrap().inline_properties().is_none());
+    assert!(heap.object_ref(packed).unwrap().record().inline_properties().is_some());
+    assert!(heap.object_ref(arena).unwrap().record().inline_properties().is_none());
     heap.track_slot_representations(&layouts);
     let nullable = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
     assert_eq!(heap.slot_type(1, 0), nullable);
@@ -1441,7 +1443,7 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
     let pointer = unsafe { heap.flat_property_mut_ptr_unchecked(object, 0, Type::ANY) }.unwrap();
     assert_eq!(heap.slot_type(2, 0), Type::ANY);
     // A reference-capable region logs its owner before its no-GC raw writes.
-    heap.object_store_mut(object, object).unwrap();
+    heap.object_store_mut_ref(object, object).unwrap();
     unsafe { pointer.write(child); }
     assert_eq!(heap.unrepresented_slots(), 0);
 }
@@ -1465,7 +1467,7 @@ fn object_publication_admits_preinitialized_slots_after_census() {
             assert!(published.direct_object_index().is_some());
             assert_eq!(heap.slot_type(1, 0), Type::immediate(value), "{publisher}/{storage}");
             assert_eq!(heap.unrepresented_slots(), 0, "{publisher}/{storage}");
-            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+            assert_eq!(heap.property_get_ref(heap.object_ref(published).unwrap(), 0), Some(value));
         }
     }
 }
@@ -1481,7 +1483,7 @@ fn unfilled_object_records_only_the_values_that_fill_it() {
     heap.fill_new_object_slot(object, 0, Value::NULL);
     assert_eq!(heap.slot_type(1, 0), Type::immediate(Value::NULL));
     assert_eq!(heap.unrepresented_slots(), 0);
-    assert_eq!(heap.property_get(heap.object(object).unwrap(), 0), Some(Value::NULL));
+    assert_eq!(heap.property_get_ref(heap.object_ref(object).unwrap(), 0), Some(Value::NULL));
 }
 
 #[test]
@@ -1507,15 +1509,16 @@ fn shape_departures_retire_readers_through_each_storage_path() {
             // No departure: a repeated shape and storage descriptor preserve the
             // shape assumption (physical storage needs its own proof).
             heap.set_object_shape(object, 1);
-            let (data, arena) = heap.object_and_arena_mut(object).unwrap();
-            data.set_properties(data.properties(), arena);
+            let (mut data, arena) = heap.object_and_arena_mut_ref(object).unwrap();
+            let properties = data.record().properties();
+            data.record().set_properties(properties, arena);
             assert!(reader.is_published());
             match change {
                 Change::Shape => heap.set_object_shape(object, 2),
                 Change::Replace => heap.initialize_object_properties(object, 2, &[Value::integer(3)]),
                 Change::Copy => {
                     let source = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(3)]);
-                    let source = heap.object(source).unwrap().clone();
+                    let source = heap.object_ref(source).unwrap().record().clone();
                     assert!(heap.copy_property_storage(&source, object));
                 }
                 Change::Append => heap.property_add(object, Value::integer(3), 3),
@@ -1524,7 +1527,7 @@ fn shape_departures_retire_readers_through_each_storage_path() {
             }
             assert!(!reader.is_published(), "{change:?}, inline={inline}");
             assert_eq!(unrelated.is_published(), !matches!(change, Change::Remap), "{change:?}");
-            assert_eq!(heap.object(object).unwrap().shape(), if matches!(change, Change::Append) { 3 } else { 2 });
+            assert_eq!(heap.object_ref(object).unwrap().shape(), if matches!(change, Change::Append) { 3 } else { 2 });
         }
     }
 }
@@ -1581,7 +1584,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             };
             assert!(!reader.is_published(), "{family:?}, generic={generic}");
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER);
-            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+            assert_eq!(heap.property_get_ref(heap.object_ref(published).unwrap(), 0), Some(value));
             assert_eq!(heap.unrepresented_slots(), 0);
             heap.track_slot_representations(&[(0, None), (1, None)]);
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER, "census includes {family:?}");
@@ -1736,9 +1739,9 @@ fn reference_counts_match_the_heap_references_after_each_collection() {
                     let live = reachable(&roots, &fields);
                     for &node in &live {
                         assert!(heap.is_live(node), "seed {seed} step {step}: a reachable node was freed");
-                        let object = heap.object(node).unwrap();
+                        let object = heap.object_ref(node).unwrap();
                         for (slot, &value) in fields[&node].iter().enumerate() {
-                            assert_eq!(heap.property_get(object, slot), Some(value), "seed {seed} step {step}");
+                            assert_eq!(heap.property_get_ref(object, slot), Some(value), "seed {seed} step {step}");
                         }
                     }
                     fields.retain(|node, _| live.contains(node));

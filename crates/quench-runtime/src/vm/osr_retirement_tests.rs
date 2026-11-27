@@ -72,7 +72,7 @@ fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations
     let mut vm = test_vm();
     vm.execute(&program).unwrap();
     let (sum, anchor, list) = sum_and_objects(&mut vm);
-    let mut shape = vm.heap.object(anchor).unwrap().exact_shape();
+    let mut shape = vm.heap.object_ref(anchor).unwrap().exact_shape();
     for round in 0..40_i32 {
         let iterations = if round == 0 { 1005.0 } else { 1.0 };
         assert_eq!(
@@ -434,7 +434,7 @@ fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
         (site.exits, site.native_region_runs)
     };
     (0..4).for_each(|_| { call(&mut vm); });
-    let mut shape = vm.heap.object(anchor).unwrap().exact_shape();
+    let mut shape = vm.heap.object_ref(anchor).unwrap().exact_shape();
     let mut last = call(&mut vm);
     assert!(last.1 > 0, "the field loop runs natively before the shape changes");
     let mut leaves = Vec::new();

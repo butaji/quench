@@ -325,8 +325,8 @@ impl Vm {
         Ok(match brand {
             B::External => self
                 .heap
-                .object(value)
-                .and_then(Object::external_address)
+                .object_ref(value)
+                .and_then(|object| object.record().external_address())
                 .is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
@@ -396,8 +396,8 @@ impl Vm {
                 value.direct_object_index().is_some()
                     && self
                         .heap
-                        .object(value)
-                        .is_some_and(Object::is_module_namespace)
+                        .object_ref(value)
+                        .is_some_and(|object| object.is_module_namespace())
             }
             B::BooleanObject
             | B::NumberObject
@@ -1233,15 +1233,15 @@ impl Vm {
     pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
         let value = self.create_embedding_null_object()?;
         self.heap
-            .object_mut(value)
+            .object_mut_ref(value)
             .expect("new native object")
-            .set_external_address(address);
+            .record().set_external_address(address);
         Ok(value)
     }
 
     pub(crate) fn embedding_external_address(&self, root: RootId) -> Option<usize> {
         let value = self.root_value(root)?;
-        self.heap.object(value)?.external_address()
+        self.heap.object_ref(value)?.record().external_address()
     }
 
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {

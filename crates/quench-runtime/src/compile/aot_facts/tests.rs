@@ -189,4 +189,47 @@ fn an_array_stored_in_a_field_is_mutated_through_the_field_in_the_original_regis
     let cells = cells_before_return(&facts, &program, "f");
     assert!(!cells.is_empty(), "the function's registers are settled");
     assert!(cells.iter().all(|cell| cell.elements.length != Length::Fixed(2)), "{cells:?}");
+/// The atom of the property name `name`, which the program names.
+fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
+    program.atoms.iter().position(|atom| atom.as_ref() == name).expect("a name the program stores") as u32
+}
+
+#[test]
+fn a_fixed_shape_constructor_has_its_layout() {
+    let program = program("function P(x) { this.x = x; this.y = x | 0; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let (p, make) = (function_named(&program, "P") as u32, function_named(&program, "make") as u32);
+    let (x, y) = (atom_named(&program, "x"), atom_named(&program, "y"));
+    assert_eq!(facts.class_layout(p), Some(&[x, y][..]));
+    assert_eq!(facts.function_facts(make).field_slot(p, y), Some(1));
+    assert_eq!(facts.function_facts(make).field_slot(p, atom_named(&program, "z")), None);
+}
+
+#[test]
+fn a_field_stored_on_one_path_only_has_no_layout() {
+    let program = program("function P(x) { if (x) { this.a = 1; } this.b = 2; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), None);
+}
+
+#[test]
+fn a_property_added_to_an_instance_after_construction_has_no_layout() {
+    let built = program("function P(x) { this.x = x; } var p = new P(1); p.x = 2;");
+    let facts = analyze(&built);
+    let p = function_named(&built, "P") as u32;
+    assert_eq!(facts.class_layout(p), Some(&[atom_named(&built, "x")][..]), "a store of a named field keeps the layout");
+
+    let added = program("function P(x) { this.x = x; } var p = new P(1); p.extra = 3;");
+    let facts = analyze(&added);
+    let p = function_named(&added, "P") as u32;
+    assert_eq!(facts.class_layout(p), None);
+}
+
+#[test]
+fn a_method_installed_on_the_prototype_is_its_prototype_layout() {
+    let program = program("function P(x) { this.x = x; } P.prototype.run = function () { return 1; }; new P(1);");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.prototype_layout(p), Some(&[atom_named(&program, "run")][..]));
 }

@@ -11,6 +11,8 @@ mod prefetch;
 mod reservation;
 pub(super) mod sweep_support;
 use reservation::{Reservation, page_bytes, return_pages};
+#[allow(unused_imports)]
+pub(super) use reservation::AddressRange;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::mem::MaybeUninit;
