@@ -1,6 +1,6 @@
 use super::class_space::{
     ClassCell0, ClassCell1, ClassCell3, ClassCell5, ClassSpace, departed_header, granule, header_class, header_record,
-    live_header, locate, region_cells,
+    live_header, locate, region_capacity, region_cells,
 };
 use super::layouts::LAYOUT_CAPACITY;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
@@ -27,6 +27,17 @@ fn a_region_packs_its_cells_end_to_end_up_to_the_next_region() {
         let end = granule(region, region_cells(region) as u32 - 1) + (1 << region);
         assert_eq!(end, granule(region + 1, 0));
     }
+}
+
+#[test]
+fn a_cell_granule_names_the_capacity_of_its_region() {
+    for region in 0..CAPACITY_CLASSES as u32 {
+        let capacity = (1u32 << region) - 1;
+        assert_eq!(region_capacity(granule(region, 0)), capacity);
+        assert_eq!(region_capacity(granule(region, region_cells(region) as u32 - 1)), capacity);
+        assert_eq!(capacity as usize + 1, 1 << region);
+    }
+    assert_eq!(region_capacity(granule(5, 0)), 31);
 }
 
 #[test]

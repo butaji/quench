@@ -101,10 +101,6 @@ pub(crate) const CLASS_RECORD_SHIFT: u32 = u32::BITS;
 /// The reserved class id of a departed object's cell. It lies past the class table's capacity, so no
 /// class guard matches it.
 pub(crate) const DEPARTED_CLASS: u32 = u32::MAX;
-/// A class's capacity class (`heap::classes`): three bits of its auxiliary word from `CAPACITY_SHIFT`,
-/// as a mask in place.
-pub(crate) const CAPACITY_SHIFT: u32 = 27;
-pub(crate) const CAPACITY_MASK: u32 = 0b111 << CAPACITY_SHIFT;
 /// The class space's regions: region `k` starts at granule `k << REGION_SHIFT` and holds cells of
 /// `2^k` granules, so a granule's local cell index is `(g & REGION_MASK) >> k`.
 pub(crate) const REGION_SHIFT: u32 = 29;

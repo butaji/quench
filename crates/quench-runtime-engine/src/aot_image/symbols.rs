@@ -467,7 +467,7 @@ const _: () = assert!(NO_LAYOUT as usize >= quench_runtime::tier_surface::layout
 
 /// The layout id of the objects of field guard key `key`'s construction (`guarded_shape`): its
 /// exact shape, its values a plain arena run, under the link of its recipe's prototype
-/// (`ProtoLink::arena_layout`). A construction of more fields than inline storage holds keeps its
+/// (`ProtoLink::class`). A construction of more fields than inline storage holds keeps its
 /// values in that run, so the id is the class's one representation, and a compare of a record's
 /// own word with it proves the shape, the form and the link. `None` where the guard does not
 /// resolve, or the recipe is of a construction whose fields may stay inline.
@@ -476,7 +476,7 @@ pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<
     let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
     if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
     let prototype = heap_value(image, vm, recipe.prototype?)?;
-    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).arena_layout(shape))
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape))
 }
 
 /// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its
