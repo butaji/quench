@@ -18,7 +18,6 @@ use super::super::entry_cell::{EntryCell, RAISED_RUN};
 use quench_bjit::call_record::{CalleeRecord, CallRecord, LaneStatus};
 use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;
-use super::super::lane_body_abi::body_signature_in_lane;
 use quench_runtime::staged::call::admit_room;
 use quench_runtime::staged::{Access, Region};
 use quench_runtime::staged::{plan_entry, Arguments, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
@@ -508,14 +507,16 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         self.push_native(stage, callee, this, call.registers, room)?;
         let entry = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let entry = self.proven_entry(stage, callee, room.cell, entry);
-        let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
+        let signature = crate::compiled::lane_body_abi::body_shim_signature(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
+        let shim = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), call.context,
+            field(std::mem::offset_of!(CallContext, head.body_shim)));
         let captures = match callee {
             DirectSite::Owned(owned) if self.rebinds.get() => self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, captures)),
             DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
             other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, captures))?,
         };
-        let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
+        let (status, word) = stage.call_entry(signature, shim, &[call.context, this, captures, room.top, entry.word()]);
         // The status test's fall-through is the returned path (`complete_call`); every other status is cold.
         let unfinished = stage.builder.create_block();
         stage.builder.set_cold_block(unfinished);
