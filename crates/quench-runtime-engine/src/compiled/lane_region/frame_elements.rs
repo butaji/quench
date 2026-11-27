@@ -13,7 +13,7 @@ use quench_runtime::bytecode::{Operand, OperandKind};
 use quench_runtime::staged::element_rows::ElementView;
 use quench_runtime::staged::elements::DenseView;
 use quench_runtime::staged::typed_elements::TypedView;
-use quench_runtime::staged::{ElementFrame, Region, Stage};
+use quench_runtime::staged::{ElementFrame, Stage};
 use quench_runtime::staged::barrier::MarkList;
 use crate::compiled::emit_js_guard;
 
@@ -82,7 +82,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn array_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
-        let at = if self.arrays_fixed { Region::RecordBases.readonly() } else { Region::RecordBases.mutable() };
+        let at = crate::compiled::regions::record_base(self.arrays_fixed);
         Some(stage.load_u64(at, self.payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32))
     }
 

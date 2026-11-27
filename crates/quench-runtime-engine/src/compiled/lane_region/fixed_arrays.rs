@@ -13,6 +13,12 @@ use super::*;
 use quench_runtime::staged::{Constant, Operation};
 
 impl Lowering<'_, '_> {
+    /// The accesses of every word an array access of this unit reads (`regions::array_access`): the record table's base
+    /// readonly where `arrays_stay_put` holds for the unit (`self.arrays_fixed`), the backing's words as the effect row proves.
+    pub(crate) fn array_access(&self) -> crate::compiled::regions::ArrayAccess {
+        crate::compiled::regions::array_access(self.unit.effects(), self.arrays_fixed)
+    }
+
     /// Whether no instruction of the unit may move arrays: each is a staged operation that cannot,
     /// or a return, or a `Binary` or equality whose operands the facts prove Numbers, which the lane
     /// lowers inline (a residual with no call-out); any other instruction may.

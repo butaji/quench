@@ -4644,7 +4644,7 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variables.bits, bits);
             match array.views {
                 ElementViews::Dense => {
-                    let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, regions::backing_access(self.unit.effects()), exit);
+                    let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, self.array_access(), exit);
                     if self.int32_loop(array) {
                         // An int32 loop keeps the backing's exact count of others, which is zero: guarded here
                         // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
@@ -4707,7 +4707,7 @@ impl Lowering<'_, '_> {
                     }
                 }
                 ElementViews::Double => {
-                    let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
+                    let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, self.array_access().record, exit);
                     self.builder.def_var(variables.values, values);
                     self.builder.def_var(variables.length, length);
                 }
@@ -4779,12 +4779,12 @@ impl Lowering<'_, '_> {
             let variables = self.array_variables(array);
             let bits = self.builder.use_var(variables.bits);
             if array.views == ElementViews::Double {
-                let (values, length) = super::emit_double_array_reload(&mut self.builder, self.payload, bits);
+                let (values, length) = super::emit_double_array_reload(&mut self.builder, self.payload, bits, self.array_access().record);
                 self.builder.def_var(variables.values, values);
                 self.builder.def_var(variables.length, length);
                 continue;
             }
-            let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
+            let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits, self.array_access().record);
             // A grown backing may count its values again; stores through the view keep none. An int32
             // loop's count stays exact (`hoist_arrays`), so its view marks nothing.
             if array.writable && !self.int32_loop(array) {
@@ -5012,7 +5012,7 @@ impl Lowering<'_, '_> {
         let generic = cold_block(&mut self.builder);
         let join = self.builder.create_block();
         let length = self.builder.append_block_param(join, types::I32);
-        let native = super::emit_array_length_read(&mut self.builder, self.payload, base, generic);
+        let native = super::emit_array_length_read(&mut self.builder, self.payload, base, self.array_access(), generic);
         self.goto(join, &[native]);
         self.builder.switch_to_block(generic);
         let probe = cold_block(&mut self.builder);

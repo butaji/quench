@@ -422,11 +422,11 @@ fn emit_js_guard(
     builder.seal_block(passed);
 }
 
-/// The array record reservation's base in the dispatch payload: fixed until the arrays change.
-fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
+/// The array record reservation's base in the dispatch payload, read at `record` (`regions::record_base`): fixed for the
+/// run where the unit's arrays stay put.
+fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value, record: quench_runtime::staged::Access) -> ir::Value {
     use quench_runtime::staged::machine::Lane;
-    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
+    stage.raw_load(Lane::I64, regions::flags(record), payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -437,12 +437,13 @@ pub(crate) fn emit_array_length_read(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     base: ir::Value,
+    access: regions::ArrayAccess,
     fallback: ir::Block,
 ) -> ir::Value {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
-    let length = quench_runtime::staged::elements::array_length(&mut stage, record_base, base, fallback)
+    let record_base = emit_array_record_base(&mut stage, payload, access.record);
+    let length = quench_runtime::staged::elements::array_length_as(&mut stage, record_base, base, fallback, access.backing.length)
         .expect("the emit stage continues past its guards");
     stage.raw_unary(Unary::Narrow(Lane::I32), length)
 }
@@ -484,13 +485,13 @@ pub(crate) fn emit_dense_array_view(
     payload: ir::Value,
     base: ir::Value,
     writable: bool,
-    backing: quench_runtime::staged::elements::BackingAccess,
+    access: regions::ArrayAccess,
     fallback: ir::Block,
 ) -> DenseArrayView {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
-    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, backing)
+    let record_base = emit_array_record_base(&mut stage, payload, access.record);
+    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, access.backing)
         .expect("the emit stage continues past its guards");
     let quench_runtime::staged::elements::Backing { values, length, .. } = backing;
     if writable {
@@ -507,10 +508,11 @@ pub(crate) fn emit_dense_array_view(
 /// writability stay what the view proved, so only the backing is read again. The helper may
 /// also have given the array extras (a sparse store's facts), which then hold the backing:
 /// `staged::elements::array_header` reads it from either place.
-pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    at: quench_runtime::staged::Access) -> (ir::Value, ir::Value) {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, at);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
     let quench_runtime::staged::elements::Backing { values, length, .. } = quench_runtime::staged::elements::record_backing(&mut stage, record);
     // A helper may have changed the backing's storage form in place (narrow or double kind,
@@ -527,18 +529,19 @@ pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
 /// holds them; `writable` also proves in-place replacement. Any other base or backing leaves
 /// through `fallback`, with nothing read.
 pub(crate) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
-    writable: bool, fallback: ir::Block) -> (ir::Value, ir::Value) {
+    writable: bool, record: quench_runtime::staged::Access, fallback: ir::Block) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, record);
     quench_runtime::staged::elements::double_view(&mut stage, record_base, base, writable, fallback)
         .expect("the emit stage continues past its guards")
 }
 
 /// `emit_dense_array_reload` of a double view (`emit_double_array_view`): the backing read again,
 /// empty once it is no longer double (`staged::elements::reloaded_double_view`).
-pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    at: quench_runtime::staged::Access) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, at);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
     quench_runtime::staged::elements::reloaded_double_view(&mut stage, record)
 }
