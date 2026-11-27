@@ -180,6 +180,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         filled: &feedback.filled,
         hole_free_stores: &feedback.hole_free_stores,
         in_bounds_reads: &feedback.in_bounds_reads,
+        spans: &feedback.spans,
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
@@ -222,7 +223,7 @@ fn bound_parameters(function: &Function) -> Box<[bool]> {
 
 /// The blocks a backedge enters (a normal edge to a block no later than its source): every loop has one, and every cycle
 /// of the graph passes through one, so widening at these blocks alone makes the solve finite.
-fn loop_headers(blocks: &Blocks) -> BitSet {
+pub(super) fn loop_headers(blocks: &Blocks) -> BitSet {
     let mut headers = BitSet::with_capacity(blocks.ranges.len());
     for (block, (targets, kinds)) in blocks.targets.iter().zip(&blocks.kinds).enumerate() {
         for (&target, kind) in targets.iter().zip(kinds) {

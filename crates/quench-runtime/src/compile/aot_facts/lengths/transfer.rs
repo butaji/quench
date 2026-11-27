@@ -171,6 +171,21 @@ pub(in crate::compile::aot_facts) fn refine(ctx: &Ctx<'_>, instruction: WideInst
             }
         }
     }
+    // `index >= 0` against the constant zero: a counter the test found non-negative on this edge, which a later step
+    // down retires (`Relation::NonNegative`).
+    if let Some(index) = left.register_index()
+        && constant_of(ctx, right) == Some(0)
+        && words.get(usize::from(index)).is_some_and(|word| word.is_number())
+    {
+        let non_negative = match relation {
+            NumberRelation::GreaterEqual => holds,
+            NumberRelation::LessThan => !holds,
+            _ => false,
+        };
+        if non_negative {
+            refined.insert(Relation::NonNegative { index });
+        }
+    }
     if !holds {
         return refined;
     }

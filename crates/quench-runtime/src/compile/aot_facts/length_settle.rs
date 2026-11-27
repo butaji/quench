@@ -4,26 +4,30 @@
 
 use super::blocks::Blocks;
 use super::effects::{Ctx, step};
-use super::flow::{FunctionFlow, conditional_target, whole_literals};
-use super::lengths::{Lengths, Relation, advance, proves_below, refine};
+use super::flow::{FunctionFlow, conditional_target, loop_headers, whole_literals};
+use super::lengths::{Lengths, Relation, advance, proves_below, refine, store_span};
 use super::scope::Scope;
 use super::types::Types;
 use super::value::{Key, Origin, Word};
 use super::FunctionFacts;
 use crate::bytecode::{Class, ControlEdge, FieldLookup, Function, Register, Successors, WideInstruction, used_registers};
 use crate::staged::{DecodeContext, Operation};
+use crate::dataflow::BitSet;
 use crate::typed_ir::ElementClass;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 /// What one round's length relations prove, which the next round's solve reads (`Ctx`): the allocations filled, the element
-/// stores that write no hole, and the element reads in bounds, each by (function, pc). Round 1 solves with none; a round's
-/// relations depend on the bytecode and on the words the solve settled, and a fact here only refines the next solve.
+/// stores that write no hole, the element reads in bounds, and the spans the element stores cover, each by (function, pc). Round 1
+/// solves with none; a round's relations depend on the bytecode and on the words the solve settled, and a fact here only refines
+/// the next solve.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Feedback {
     pub(super) filled: BTreeSet<(u32, u32)>,
     pub(super) hole_free_stores: BTreeSet<(u32, u32)>,
     pub(super) in_bounds_reads: BTreeSet<(u32, u32)>,
+    /// The element stores that cover the parameters `start .. start + len` (`store_span`), by (function, pc): (start, len).
+    pub(super) spans: BTreeMap<(u32, u32), (u16, u16)>,
 }
 
 impl Feedback {
@@ -34,6 +38,7 @@ impl Feedback {
             feedback.filled.extend(settled.filled.iter().map(|&pc| (function, pc)));
             feedback.hole_free_stores.extend(settled.hole_free_stores.iter().map(|&pc| (function, pc)));
             feedback.in_bounds_reads.extend(settled.in_bounds_reads.iter().map(|&pc| (function, pc)));
+            feedback.spans.extend(settled.spans.iter().map(|(&pc, &span)| ((function, pc), span)));
         }
         feedback
     }
@@ -53,6 +58,8 @@ pub(crate) struct Settled {
     allocations: BTreeSet<u32>,
     unfilled: BTreeSet<u32>,
     resizing: BTreeSet<(u32, ElementClass)>,
+    /// The element stores (pcs) that cover a span of parameters, as (start, len) (`store_span`).
+    spans: BTreeMap<u32, (u16, u16)>,
 }
 
 impl Settled {
@@ -67,6 +74,9 @@ impl Settled {
             Some(Operation::ElementWrite { base, key, .. }) => Some((base, key)),
             _ => None,
         };
+        if let Some(span) = store.and_then(|(_, key)| store_span(relations, key)) {
+            self.spans.insert(pc, span);
+        }
         let fill = store.filter(|&(base, key)| relations.contains(&Relation::Filled { array: base, index: key }));
         if fill.is_some() {
             self.hole_free_stores.insert(pc);
@@ -139,6 +149,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let mut inputs: Vec<Option<Lengths>> = vec![None; blocks.ranges.len()];
+    let headers = loop_headers(&blocks);
     if let Some(entry) = inputs.first_mut() {
         *entry = Some(Lengths::default());
     }
@@ -150,7 +161,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
             let out = replay(ctx, function, facts, blocks.ranges[block].clone(), words, input, None);
             for index in 0..blocks.targets[block].len() {
                 let target = blocks.targets[block][index];
-                let incoming = edge(ctx, function, &blocks, block, index, &out);
+                let incoming = edge(ctx, function, &blocks, block, index, &out, &headers);
                 match &mut inputs[target] {
                     Some(known) => changed |= known.meet(&incoming),
                     slot => {
@@ -191,6 +202,7 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         filled: &feedback.filled,
         hole_free_stores: &feedback.hole_free_stores,
         in_bounds_reads: &feedback.in_bounds_reads,
+        spans: &feedback.spans,
     };
     settle(&ctx, function, &flow.entries, facts)
 }
@@ -215,8 +227,9 @@ fn replay(ctx: &Ctx<'_>, function: &Function, facts: &FunctionFacts<'_>, range: 
 }
 
 /// The lengths a successor edge `index` of `block` carries, from the block's output `out` (its words and lengths): those of the
-/// output, and the relations the block's conditional jump proves on that edge (`refine`). An exception edge carries none.
-fn edge(ctx: &Ctx<'_>, function: &Function, blocks: &Blocks, block: usize, index: usize, out: &(Vec<Word>, Lengths)) -> Lengths {
+/// output, and the relations the block's conditional jump proves on that edge (`refine`). An exception edge carries none. An edge into
+/// a loop's header (`headers`) also pairs the parameters its words hold unchanged (`Lengths::pair_parameters`): a back edge holds none.
+fn edge(ctx: &Ctx<'_>, function: &Function, blocks: &Blocks, block: usize, index: usize, out: &(Vec<Word>, Lengths), headers: &BitSet) -> Lengths {
     if matches!(blocks.kinds[block][index], ControlEdge::Handler) {
         return Lengths::default();
     }
@@ -225,8 +238,12 @@ fn edge(ctx: &Ctx<'_>, function: &Function, blocks: &Blocks, block: usize, index
     let instruction = function.instruction_at(last);
     let fallthrough = last + 1;
     let at = blocks.ranges[target].start;
-    match conditional_target(instruction) {
+    let mut lengths = match conditional_target(instruction) {
         Some(jump) if jump != fallthrough && (at == jump || at == fallthrough) => refine(ctx, instruction, at == jump, &out.0, &out.1),
         _ => out.1.clone(),
+    };
+    if headers.contains(target) {
+        lengths.pair_parameters(ctx, &out.0);
     }
+    lengths
 }

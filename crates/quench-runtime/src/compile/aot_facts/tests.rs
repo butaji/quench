@@ -4,6 +4,7 @@ use super::{analyze, world, AotFacts, FieldDefault};
 use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
+use crate::staged::effects::{Affine, Indices};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
 use crate::heap::TypedArrayKind;
@@ -870,4 +871,34 @@ fn a_prototype_method_written_again_by_a_hot_function_names_no_phase_target() {
     let facts = analyze(&program);
     let run = function_named(&program, "run") as u32;
     assert!(!facts.call_targets.keys().any(|&(function, _)| function == run));
+}
+
+/// The pcs of the element stores (`ElementWrite`) of function `id`.
+fn element_stores(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u32> {
+    program.with_record(id, |function| {
+        (0..function.code.len()).filter(|&pc| matches!(Operation::<u64, ()>::of(function.instruction_at(pc)), Some(Operation::ElementWrite { .. })))
+            .map(|pc| pc as u32).collect()
+    })
+}
+
+#[test]
+fn a_store_through_an_index_counted_up_while_a_count_counts_down_covers_the_count_from_the_index() {
+    let program = program("function f(i, x, w, j, c, n) { while (--n >= 0) { var v = x * 2 + w[j] + c; c = Math.floor(v / 67108864); w[j++] = v & 0x3ffffff; } return c; } f(0, 3, [0, 0, 0, 0], 0, 0, 4);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let stores = element_stores(&program, f);
+    assert_eq!(stores.len(), 1, "the loop stores into one array");
+    let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
+    assert_eq!(store.indices, Indices::Span { start: Affine::parameter(3), len: Affine::parameter(5) }, "the store covers `j .. j + n`");
+}
+
+#[test]
+fn a_store_whose_index_steps_by_two_covers_the_whole_array() {
+    let program = program("function f(i, x, w, j, c, n) { while (--n >= 0) { w[j] = x; j += 2; } return c; } f(0, 3, [0, 0, 0, 0], 0, 0, 4);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let stores = element_stores(&program, f);
+    assert_eq!(stores.len(), 1, "the loop stores into one array");
+    let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
+    assert_eq!(store.indices, Indices::Whole, "a step of two leaves no span of the count");
 }

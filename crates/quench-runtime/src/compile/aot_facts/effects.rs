@@ -49,6 +49,8 @@ pub(super) struct Ctx<'a> {
     pub(super) hole_free_stores: &'a std::collections::BTreeSet<(u32, u32)>,
     /// The element reads the previous round proved in bounds, by (function, pc) (`length_settle::Feedback`).
     pub(super) in_bounds_reads: &'a std::collections::BTreeSet<(u32, u32)>,
+    /// The element stores the previous round proved cover a span of parameters, by (function, pc): (start, len) (`length_settle::Feedback`).
+    pub(super) spans: &'a std::collections::BTreeMap<(u32, u32), (u16, u16)>,
 }
 
 /// What an instruction does beyond its registers: the bindings it writes, and whether it makes
