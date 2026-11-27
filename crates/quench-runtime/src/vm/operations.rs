@@ -2136,8 +2136,8 @@ fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if Vm::is_disposal_native(native) {
         return Some(enter_disposal);
     }
-    if Vm::is_collection_native(native) {
-        return Some(enter_collection);
+    if let Some(entry) = super::collections::entry(native) {
+        return Some(entry);
     }
     super::wasm_js::entry(native)
 }
@@ -2205,6 +2205,9 @@ fn enter_disposal(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value,
 
 fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_collection_native(p, native, this, args)
+#[cfg(feature = "wasm")]
+fn enter_wasm_js(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_wasm_js_routed(p, native, this, args)
 }
 
 fn enter_shadow_realm(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {

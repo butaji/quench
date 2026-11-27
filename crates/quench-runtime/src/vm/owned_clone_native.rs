@@ -310,7 +310,7 @@ impl Vm {
             .iter()
             .map(|r| self.embedding_value(*r))
             .collect::<Result<Vec<_>, _>>()?;
-        self.call_collection_native(
+        self.call_native_dispatch(
             &p,
             if map { Native::MapSet } else { Native::SetAdd },
             target,
