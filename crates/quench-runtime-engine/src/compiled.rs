@@ -5158,7 +5158,7 @@ struct PlanFlow<'a, 'b> {
     memory_slot: &'a mut Option<u32>,
     result: Option<quench_runtime::WasmType>,
     entry: AnalysisState,
-    catches: Vec<Option<wasm_catch::Catch>>,
+    catches: &'a [Option<wasm_catch::Catch>],
     bound: u16,
     /// Per pc, the entry state of its catch, set by the pc's transfer.
     raised: Vec<Option<AnalysisState>>,
@@ -5513,7 +5513,7 @@ impl Analysis<'_> {
             memory_slot,
             result,
             entry,
-            catches,
+            catches: &catches,
             bound,
             raised: vec![None; instructions.len()],
             edge_starts,
