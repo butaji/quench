@@ -1,5 +1,6 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
+use super::numeric;
 use super::scope::Scope;
 use super::value::{Word, Key, Origin, PrototypeBase, UNNAMED_ARRAYS};
 use crate::typed_ir::{Cell, Classes, Elements, Length};
@@ -115,10 +116,10 @@ fn value_of(
     state: &[Word],
     events: &mut Events,
 ) -> Word {
+    // A constant's fact is its type (`Scope::constant_type`), and the property key it names where it is a string.
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
-        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Word::atom(atom); }
-        if let Some(ty) = ctx.scope.immediates.get(index).copied().flatten() { return Word::of(ty); }
-        return ctx.scope.constants.get(index).copied().flatten().map_or(Word::UNKNOWN, Word::number);
+        let origin = ctx.scope.constant_atoms.get(index).copied().flatten().map(Origin::Atom);
+        return Word { origin, ..Word::of(ctx.scope.constant_type(index)) };
     }
     // A method read (`o.m(...)`) also writes `this`, which takes no fact (`step`): its value is the method all the same.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
@@ -178,7 +179,7 @@ fn value_of(
     // An increment or decrement defines a Number, or a BigInt off one.
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::IncDec {
         let source = state[usize::from(instruction.register_b())].cell.ty;
-        return Word::of(if source == Type::NEVER { Type::NEVER } else if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(crate::ValueType::BigInt)) });
+        return Word::of(numeric::step(source, instruction.boolean_flag() == Some(true)));
     }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return binary_value(ctx.scope, state, (instruction.operand_b(), instruction.operand_c()), instruction.binary_operator());
@@ -276,13 +277,11 @@ fn prototype_base(base: Word) -> Option<PrototypeBase> {
     }
 }
 
-/// The fact of a numeric operand: its register's, or the Number of its constant.
-fn operand_fact(scope: &Scope, state: &[Word], operand: Operand) -> Word {
+/// The fact of an operand: its register's, or the type of its constant.
+pub(super) fn operand_fact(scope: &Scope, state: &[Word], operand: Operand) -> Word {
     match (operand.register_index(), operand.kind()) {
         (Some(register), _) => state[usize::from(register)],
-        (None, Some(OperandKind::Constant)) => {
-            scope.constants.get(usize::from(operand.payload())).copied().flatten().map_or(Word::UNKNOWN, Word::number)
-        }
+        (None, Some(OperandKind::Constant)) => Word::of(scope.constant_type(usize::from(operand.payload()))),
         _ => Word::UNKNOWN,
     }
 }
@@ -306,22 +305,19 @@ fn number_value(scope: &Scope, state: &[Word], number: NumberOperation) -> Word 
         _ => Vec::new(),
     };
     if !reached(&operands) && operands.iter().all(|fact| numeric(*fact)) { return Word::of(Type::NEVER); }
+    let ty = |operand: Operand| fact(operand).cell.ty;
     match number {
-        NumberOperation::Arithmetic { left, right, .. }
-        | NumberOperation::Remainder { left, right, .. }
-        | NumberOperation::Extreme { left, right, .. }
-            if both(left, right) =>
-        {
-            Word::of(Type::NUMBER)
-        }
-        NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. }
-            if both(left, right) =>
-        {
-            Word::of(Type::INT32)
-        }
+        NumberOperation::Arithmetic { left, right, operation, .. } if both(left, right) =>
+            Word::of(numeric::arithmetic(operation, ty(left), ty(right))),
+        NumberOperation::Remainder { left, right, .. } if both(left, right) => Word::of(numeric::remainder(ty(left), ty(right))),
+        NumberOperation::Extreme { left, right, .. } if both(left, right) => Word::of(Type::NUMBER),
+        NumberOperation::Bitwise { left, right, operation, .. } if both(left, right) =>
+            Word::of(numeric::bitwise(operation, ty(left), ty(right))),
+        NumberOperation::Imul { left, right, .. } if both(left, right) => Word::of(Type::INT32),
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Word::of(Type::NUMBER),
         NumberOperation::BitwiseNot { source, .. } if one(source) => Word::of(Type::INT32),
-        NumberOperation::IncDec { source, .. } if numeric(register(source)) => Word::of(Type::NUMBER),
+        NumberOperation::IncDec { source, decrement, .. } if numeric(register(source)) =>
+            Word::of(numeric::step(register(source).cell.ty, decrement)),
         NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
         _ => Word::UNKNOWN,
     }
@@ -357,28 +353,21 @@ fn length_change(key: u32) -> (Key, Word) {
     (Key::Element(key), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
-/// The fact of what a `Binary` of `operator` defines: a comparison a Boolean whatever its operands; an
-/// arithmetic, shift or bitwise operator over Numbers a Number (an int32 for the shifts and bitwise ones, whose
-/// results ToInt32 makes); over anything else whatever its operands' coercion makes. An operand no value
+/// The fact of what a `Binary` of `operator` defines: a comparison a Boolean whatever its operands; otherwise the
+/// operator's type over the operands' types (`numeric::binary_type`: an integer range over integer ranges, a Number
+/// or an int32 over Numbers, a BigInt or a string where the operands are those), else anything. An operand no value
 /// reaches yet (the type solve's bottom) makes none either.
 fn binary_value(scope: &Scope, state: &[Word], (left, right): (Operand, Operand), operator: u32) -> Word {
     use crate::vm::operations::binary_operator as op;
-    let boolean = || Word::of(Type::language(crate::ValueType::Boolean));
-    let (left, right) = (operand_fact(scope, state, left), operand_fact(scope, state, right));
-    let number = |fact: Word| fact.cell.ty.is_subtype(Type::NUMBER);
-    if left.cell.ty == Type::NEVER || right.cell.ty == Type::NEVER {
+    let (left, right) = (operand_fact(scope, state, left).cell.ty, operand_fact(scope, state, right).cell.ty);
+    if left == Type::NEVER || right == Type::NEVER {
         return if matches!(operator, op::In | op::Instanceof) { Word::UNKNOWN } else { Word::of(Type::NEVER) };
     }
-    // A Number operand makes the other's coercion a Number too: a BigInt beside it throws. With neither known a
-    // Number, a numeric operator defines a Number or a BigInt, whatever valueOf the operands run.
-    let numeric = |ty: Type| if number(left) || number(right) { ty } else { ty.join(Type::language(crate::ValueType::BigInt)) };
-    match operator {
-        op::Equality | op::Inequality | op::StrictEquality | op::StrictInequality | op::LessThan | op::LessEqualThan | op::GreaterThan | op::GreaterEqualThan => boolean(),
-        op::ShiftLeft | op::ShiftRight | op::BitwiseOR | op::BitwiseXOR | op::BitwiseAnd => Word::of(numeric(Type::INT32)),
-        op::ShiftRightZeroFill | op::Subtraction | op::Multiplication | op::Division | op::Remainder => Word::of(numeric(Type::NUMBER)),
-        op::Addition if number(left) && number(right) => Word::of(Type::NUMBER),
-        _ => Word::UNKNOWN,
+    if matches!(operator, op::Equality | op::Inequality | op::StrictEquality | op::StrictInequality
+        | op::LessThan | op::LessEqualThan | op::GreaterThan | op::GreaterEqualThan) {
+        return Word::of(Type::language(crate::ValueType::Boolean));
     }
+    numeric::binary_type(operator, left, right).map_or(Word::UNKNOWN, Word::of)
 }
 
 /// Records the bindings `instruction` writes, from the facts before it, and the writes it makes
@@ -499,9 +488,6 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
                 events.wild_owner = true;
             }
         },
-        Some(Operation::IncDecLocal { local, .. }) => {
-            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Word::UNKNOWN);
-        }
         Some(Operation::GlobalWrite { source, atom, .. }) => {
             write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
         }

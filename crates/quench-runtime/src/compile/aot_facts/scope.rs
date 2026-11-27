@@ -2,6 +2,8 @@
 //! atoms that name the global object.
 
 use crate::bytecode::{Constant, ResidualProgram};
+use crate::typed_ir::{IntRange, Type};
+use crate::ValueType;
 
 /// Names that reach the global object as a value (`globalThis`, and Node's `global`).
 const GLOBAL_OBJECT_NAMES: [&str; 2] = ["globalThis", "global"];
@@ -14,8 +16,6 @@ const ARRAY_MUTATORS: [&str; 9] = ["push", "pop", "shift", "unshift", "splice", 
 pub(super) struct Scope {
     /// Each function's parent, by function id.
     parents: Vec<Option<u32>>,
-    /// Each constant's value where it is a Number, by constant index.
-    pub(super) constants: Vec<Option<f64>>,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
     /// The atom `prototype` interns to, if the program names it.
@@ -26,8 +26,8 @@ pub(super) struct Scope {
     mutators: Vec<u32>,
     /// Each String constant's atom, by constant index.
     pub(super) constant_atoms: Vec<Option<u32>>,
-    /// Each `null`, `undefined` or Boolean constant's type, by constant index.
-    pub(super) immediates: Vec<Option<crate::typed_ir::Type>>,
+    /// Each constant's type, by constant index (`constant_type`).
+    constant_types: Vec<Type>,
     /// Each nested field lookup's last field (`FieldSite`: `base.first.second`, or `base.first`): the field
     /// its read delivers, by site index; `None` for a site with a sink, which stores rather than reads.
     pub(super) site_reads: Vec<Option<u32>>,
@@ -42,14 +42,7 @@ impl Scope {
             parents: (0..program.function_count())
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
-            constants: program
-                .constants
-                .iter()
-                .map(|constant| match constant {
-                    Constant::Number(value) => Some(*value),
-                    _ => None,
-                })
-                .collect(),
+            constant_types: program.constants.iter().map(constant_type).collect(),
             global_objects: program
                 .atoms
                 .iter()
@@ -70,19 +63,14 @@ impl Scope {
                 Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
                 _ => None,
             }).collect(),
-            immediates: program.constants.iter().map(|constant| {
-                use crate::typed_ir::Type;
-                use crate::ValueType;
-                match constant {
-                    Constant::Null => Some(Type::language(ValueType::Null)),
-                    Constant::Undefined => Some(Type::language(ValueType::Undefined)),
-                    Constant::Boolean(_) => Some(Type::language(ValueType::Boolean)),
-                    _ => None,
-                }
-            }).collect(),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
         }
+    }
+
+    /// The type of constant `index`: what the constant is, not what a register holds (`Word`).
+    pub(super) fn constant_type(&self, index: usize) -> Type {
+        self.constant_types.get(index).copied().unwrap_or(Type::ANY)
     }
 
     pub(super) fn is_global_object(&self, atom: u32) -> bool {
@@ -97,5 +85,20 @@ impl Scope {
     /// The function owning the environment `depth` levels out from `function`, which a capture reads.
     pub(super) fn owner(&self, function: u32, depth: u16) -> Option<u32> {
         (0..=depth).try_fold(function, |owner, _| self.parents.get(owner as usize).copied().flatten())
+    }
+}
+
+/// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;
+/// a string's, a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
+fn constant_type(constant: &Constant) -> Type {
+    match constant {
+        Constant::Number(value) => crate::value::exact_int32(*value)
+            .map_or(Type::NUMBER, |int| Type::int(IntRange::singleton(i64::from(int)))),
+        Constant::Null => Type::language(ValueType::Null),
+        Constant::Undefined => Type::language(ValueType::Undefined),
+        Constant::Boolean(_) => Type::language(ValueType::Boolean),
+        Constant::String(_) | Constant::StringUnits(_) => Type::language(ValueType::String),
+        Constant::BigInt(_) => Type::language(ValueType::BigInt),
+        _ => Type::ANY,
     }
 }
