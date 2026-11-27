@@ -176,7 +176,8 @@ impl Lowering<'_, '_> {
         // A fused chain can consume an existing first-slot proof, but its guest
         // result names the final slot. Do not retain a new anonymous intermediate
         // solely for forwarding; the existing proof needs no duplicate update.
-        if let Some((owner, atom)) = field.filter(|_| single) {
+        if let Some((owner, atom)) = field.filter(|_| single)
+            && let Some(owner) = self.owner_word(state, owner) {
             let read = FieldValue { owner, atom, value, ty };
             match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
                 Some(field) => *field = read,

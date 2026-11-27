@@ -9,12 +9,26 @@ use super::super::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar};
 use quench_runtime::staged::ShapeFact;
 
-/// `owner`'s value: a register's, or the fixed `this`.
-pub(crate) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State, entry: &Entry,
-    owner: Option<Register>) -> ir::Value {
+/// `register`'s tagged word, resolved to its value: the key its proofs are kept by, so a copy or an
+/// inlined frame's `this` holding the same word shares them.
+pub(crate) fn register_word(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+    register: Register) -> ir::Value {
+    let bits = frame::register_tagged(builder, registers, state, register);
+    builder.func.dfg.resolve_aliases(bits)
+}
+
+/// The fixed `this`'s word, resolved (the key of the receiver's proofs).
+pub(crate) fn this_word(builder: &mut FunctionBuilder<'_>, this: Variable) -> ir::Value {
+    let bits = builder.use_var(this);
+    builder.func.dfg.resolve_aliases(bits)
+}
+
+/// `owner`'s word: a register's, or fixed `this`'s where the entry has a `this` variable.
+pub(crate) fn owner_word(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+    this: Option<Variable>, owner: Option<Register>) -> Option<ir::Value> {
     match owner {
-        Some(register) => frame::register_tagged(builder, registers, state, register),
-        None => builder.use_var(entry.this),
+        Some(register) => Some(register_word(builder, registers, state, register)),
+        None => Some(this_word(builder, this?)),
     }
 }
 
@@ -35,7 +49,9 @@ pub(crate) fn object_table_base(builder: &mut FunctionBuilder<'_>, entry: &Entry
 }
 
 /// A register whose object an object proof names holds a direct object from then on.
-fn refine_owner(state: &mut State, index: usize, fact: Option<VerifiedFact>) {
+fn refine_owner(state: &mut State, owner: Option<Register>, fact: Option<VerifiedFact>) {
+    let Some(register) = owner else { return };
+    let index = usize::from(register);
     // An unboxed register has no tagged view to keep: an object proof of it is a
     // contradiction its reads leave at, so the register keeps its own fact.
     if let Some(fact) = fact.filter(|_| state.values[index].tagged.current()) {
@@ -54,26 +70,27 @@ fn refine_owner(state: &mut State, index: usize, fact: Option<VerifiedFact>) {
 /// tests the family once, after which the proof is the object's.
 pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
     (entry, payload): (&Entry, ir::Value), owner: Option<Register>, read: bool, exit: ir::Block) -> ObjectHeader {
-    let index = state.header_index(owner);
     let fact = owner.map(|register| state.values[usize::from(register)].value);
-    if let Some(header) = state.proofs.headers[index] {
-        if !read && state.proofs.readable.contains(index) {
-            let bits = owner_bits(builder, registers, state, entry, owner);
+    let bits = match owner {
+        Some(register) => register_word(builder, registers, state, register),
+        None => this_word(builder, entry.this),
+    };
+    if let Some(index) = state.proofs.headers.iter().position(|(word, ..)| *word == bits) {
+        let (_, header, readable) = state.proofs.headers[index];
+        if !read && readable {
             let object = quench_runtime::staged::value::is_direct_object(&mut super::super::object_slots::emit(builder), bits);
             emit_js_guard(builder, object, exit);
-            state.proofs.readable.remove(index);
-            refine_owner(state, index, fact);
-            let bits = builder.func.dfg.resolve_aliases(bits);
+            state.proofs.headers[index].2 = false;
+            refine_owner(state, owner, fact);
             for record in state.proofs.records.iter_mut().filter(|(word, ..)| *word == bits) { record.2 = false; }
         }
         return header;
     }
+    let index = owner.map_or(state.values.len(), usize::from);
     let mut readable = false;
     let header = if let Some(record) = entry.records[index] {
         record.header(builder, fact)
     } else {
-        let bits = owner_bits(builder, registers, state, entry, owner);
-        let bits = builder.func.dfg.resolve_aliases(bits);
         // The record this word names, proved before (`LocalProofs::records`): by any register that holds it,
         // and before a call that retired the header's shape. The shape is read again through it, with no
         // family test or record lookup; a store of a read's proof still tests the family once.
@@ -96,36 +113,34 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
         }
         header
     };
-    state.proofs.headers[index] = Some(header);
-    state.proofs.set_readable(index, readable);
-    if !readable { refine_owner(state, index, fact); }
+    state.proofs.headers.push((bits, header, readable));
+    if !readable { refine_owner(state, owner, fact); }
     header
 }
 
-/// The staged shape guard (`ic::guard_shape`) on `owner`'s object, whose header `header` read its
-/// shape word: the shape is `expected`, else leave at `exit`. The owner's header then holds the
+/// The staged shape guard (`ic::guard_shape`) on the object `word` names, whose header `header` read its
+/// shape word: the shape is `expected`, else leave at `exit`. The header then holds the
 /// shape as that constant, under the guard's fact, which folds every later test of it.
-pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
+pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, word: ir::Value,
     header: ObjectHeader, expected: u32, exit: ir::Block) {
     let at = quench_runtime::staged::ic::Reached { shape: Some(header.shape), ..quench_runtime::staged::ic::Reached::bare(header.address) };
     let shaped = quench_runtime::staged::ic::guard_shape(&mut emit(builder), &at, expected, exit).expect("an emitted guard continues");
-    note_header_shape(builder, state, owner, (expected, shaped.fact()));
+    note_header_shape(builder, state, word, (expected, shaped.fact()));
 }
 
-/// The owner's header holds the shape `expected`, as a constant, under `fact`.
-pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
+/// The header of the object `word` names holds the shape `expected`, as a constant, under `fact`.
+pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, word: ir::Value,
     (expected, fact): (u32, ShapeFact)) {
-    let index = state.header_index(owner);
-    if let Some(proof) = &mut state.proofs.headers[index] {
+    if let Some((_, proof, _)) = state.proofs.headers.iter_mut().find(|(known, ..)| *known == word) {
         proof.shape = emit(builder).raw_const(Lane::I32, i64::from(expected));
         proof.shape_fact = Some(fact);
     }
 }
 
-/// The exact shape `owner`'s header holds as a constant, and the fact that proved it: a fact of
-/// the register's type, or an earlier guard.
-pub(crate) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, owner: Option<Register>) -> Option<(u32, ShapeFact)> {
-    let header = state.proofs.headers[state.header_index(owner)]?;
+/// The exact shape the header of the object `word` names holds as a constant, and the fact that proved
+/// it: a fact of the register's type, or an earlier guard.
+pub(crate) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, word: ir::Value) -> Option<(u32, ShapeFact)> {
+    let (_, header, _) = *state.proofs.headers.iter().find(|(known, ..)| *known == word)?;
     let fact = header.shape_fact?;
     let ir::ValueDef::Result(constant, _) = builder.func.dfg.value_def(header.shape) else { return None };
     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = builder.func.dfg.insts[constant] else { return None };

@@ -160,10 +160,6 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn define_this(&mut self, stage: &mut Emit<'_, '_>, destination: Register, this: ir::Value) {
         register_define(stage.builder, self.registers, self.written, self.state, destination, this,
             RegisterFact::definition(Type::ANY, Representation::Tagged));
-        let (index, entry) = (usize::from(destination), self.state.values.len());
-        self.state.proofs.headers[index] = self.state.proofs.headers[entry];
-        let readable = self.state.proofs.readable.contains(entry);
-        self.state.proofs.set_readable(index, readable);
         self.state.proofs.receivers.insert(destination);
     }
 
@@ -433,11 +429,9 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
     state.values[index] = fact;
     state.proofs.homed.remove(index);
-    state.proofs.headers[index] = None;
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
     state.proofs.kept_shapes.remove(&register);
-    state.proofs.fields.retain(|field| field.owner != Some(register));
     state.proofs.typed.retain(|view| view.register != register);
 }
 
@@ -450,14 +444,10 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     let value = register_read(builder, registers, state, source);
     let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
         .then(|| register_tagged(builder, registers, state, source));
-    let header = state.proofs.headers[source_index];
     let receiver = state.proofs.receivers.contains(&source);
     let kept = state.proofs.kept_shapes.get(&source).copied();
     let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
         (*owner == Some(source)).then_some((*shape, *projection))).collect();
-    let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
-        .filter(|field| field.owner == Some(source))
-        .map(|field| FieldValue { owner: Some(destination), ..*field }).collect();
     let typed: smallvec::SmallVec<[_; 2]> = state.proofs.typed.iter().filter(|view| view.register == source)
         .map(|view| super::TypedProof { register: destination, ..*view }).collect();
     register_define(builder, registers, written, state, destination, value, fact);
@@ -465,12 +455,9 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         builder.def_var(registers.tagged[usize::from(destination)], bits);
         state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
     }
-    state.proofs.headers[usize::from(destination)] = header;
-    state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(source_index));
     for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }
     if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
-    state.proofs.fields.extend(fields);
     state.proofs.typed.extend(typed);
     value
 }

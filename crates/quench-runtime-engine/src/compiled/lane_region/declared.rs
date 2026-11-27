@@ -155,19 +155,20 @@ impl Lowering<'_, '_> {
         let program = self.program;
         let Some(ty) = declared_member_type(program, start, parameter, &program.atoms[atom as usize]) else { return };
         self.conform_declared(state, pc + 1, result, ty);
-        narrow_field_read(state, base, atom, result);
+        let owner = self.owner_word(state, Some(base));
+        narrow_field_read(state, owner, atom, result);
     }
 }
 
-/// Narrows the cached read of `atom` on `base` that defined `result` to `result`'s conformed fact,
+/// Narrows the cached read of `atom` on the object `owner` (`base`'s word) that defined `result` to `result`'s conformed fact,
 /// the declared type the check just proved of that same value. A later read of the member on this
 /// path then takes that type from the cache (`define_field_read`) and emits no second conform. A
 /// call clears the cache (`call_effect`), and a join keeps only entries both arrivals hold (`join_states`).
-fn narrow_field_read(state: &mut State, base: Register, atom: Atom, result: Register) {
+fn narrow_field_read(state: &mut State, owner: Option<ir::Value>, atom: Atom, result: Register) {
     let fact = state.values[usize::from(result)];
     let TaggedView::Value(value) = fact.tagged else { return };
     if let Some(field) = state.proofs.fields.iter_mut()
-        .find(|field| field.owner == Some(base) && field.atom == atom && field.value == value) {
+        .find(|field| Some(field.owner) == owner && field.atom == atom && field.value == value) {
         field.ty = fact.value.ty;
     }
 }
