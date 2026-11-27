@@ -360,11 +360,30 @@ fn math<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     Step::Value(result)
 }
 
-/// `Math.max` or `Math.min` of two Numbers, a double; any other operand leaves.
+/// The int32 word of an operand the frame proves an int32 (a register its type fixes, or an int32 constant), with no
+/// test; `None` for any other operand, which the caller reads as a double.
+#[inline(always)]
+fn proven_int_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand) -> Option<S::Word> {
+    match frame.constant_operand(operand) {
+        Some(value) => Some(super::Int32::constant(stage, value.as_int()?).word()),
+        None => frame.held_int(stage, operand).map(super::Int32::word),
+    }
+}
+
+/// `Math.max` or `Math.min` of two Numbers, a double; any other operand leaves. Two int32s, which the frame proves, give
+/// the int32 their order selects (`Math.max` of int32s is the greater of them, never NaN or a signed zero).
 #[inline(always)]
 fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, (left, right): (Operand, Operand), maximum: bool,
 ) -> Step<S::Word, F::Control> {
+    if let (Some(x), Some(y)) = (proven_int_word(stage, frame, left), proven_int_word(stage, frame, right)) {
+        let greater = stage.relation(NumberRelation::GreaterThan, Domain::Int32, x, y);
+        let chosen = if maximum { stage.select(greater, x, y) } else { stage.select(greater, y, x) };
+        let chosen = frame.int_result(stage, chosen);
+        let fact = frame.int_fact();
+        frame.write(stage, destination, chosen, fact);
+        return Step::Value(chosen);
+    }
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Float64) else { return Step::Unresolved };
     let result = super::math::extreme(stage, maximum, left, right);
     let fact = frame.number_fact();
