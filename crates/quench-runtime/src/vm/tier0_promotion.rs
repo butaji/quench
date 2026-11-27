@@ -34,7 +34,12 @@ impl Vm {
     /// record as a frame, which costs more than its view: the callee lowers where nothing keeps
     /// it unlowered and derives at once, its deferred runs skipped.
     pub fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
-        let now = self.runs_windows_in_lane();
+        self.call_derives_in_lane(program, function, self.runs_windows_in_lane())
+    }
+
+    /// `call_may_derive_in_lane`, deriving at once where `now`: an activation recovery must
+    /// make (an inlined frame's, `body_inlined_activation_in_lane`) whatever runs it saw.
+    pub fn call_derives_in_lane(&self, program: ProgramId, function: u32, now: bool) -> bool {
         let blocked = self.programs.residual(program).is_some_and(|code| {
             if now {
                 self.promote_tier0_now(code, function);

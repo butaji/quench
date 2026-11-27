@@ -972,8 +972,9 @@ pub(super) fn body_inlined_activation_in_lane(
         let target = vm.script_call_entry(callee)
             // SAFETY: copy the current cache row before any cache mutation.
             .map(|target| unsafe { *target })
-            .or_else(|| vm.resolve_script_call_target(code, callee))
-            .expect("an inlined callee resolves");
+            .or_else(|| vm.resolve_call_target_in_lane(code, callee, true))
+            .unwrap_or_else(|| panic!("an inlined callee resolves: {:#x} (frame {index} of {}, callee register {}, parent {parent}, function {}, call {})",
+                callee.to_bits(), frames.len(), call.callee_register, call.target.function, call.call));
         // SAFETY: the record is the call's in its parent's view.
         let (target, record) = (&target, unsafe { records.add(call.call as usize) });
         let this = call_this_in_lane(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
