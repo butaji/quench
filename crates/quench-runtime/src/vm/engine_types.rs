@@ -346,20 +346,22 @@ pub struct PlannedSite {
 }
 
 /// One class of a planned site: the function its method is (`function`), the class's header cell
-/// (`ProgramStore::class_header`, 0 until its first construction records it) and the target the
-/// arm's first call resolved (`PlannedTarget`).
+/// (`ProgramStore::class_header`, 0 until its first construction records it, which is also when its
+/// target is resolved) and the target slot the arm enters (`PlannedTarget`), which the program store holds.
 pub struct PlannedArm {
     pub function: u32,
     pub header: *const std::cell::Cell<u32>,
-    pub target: std::cell::Cell<PlannedTarget>,
+    pub target: *const PlannedTarget,
 }
 
-/// The script call target an arm's calls enter, with the `ScriptTargets::epoch` it was resolved at. Valid while
-/// that epoch holds; a null target is no resolution yet.
-#[derive(Clone, Copy)]
+/// The target an arm of class `C` enters, keyed by (`C`, `function`) in the program store
+/// (`ProgramStore::planned_targets`). Resolved once, at the edge that records `C`'s header
+/// (`layer_hooks::planned_class_recorded`), from the method `method` that `C`'s prototype holds: the
+/// prototype's layout is proven, so nothing rebinds the method and the target stays the arm's.
+/// The program store keeps the slot with the program, so no lane-stack regeneration reaches it.
 pub struct PlannedTarget {
-    pub epoch: u32,
-    pub target: *const ScriptCallTarget,
+    pub method: u32,
+    pub target: std::cell::Cell<ScriptCallTarget>,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI
@@ -1212,17 +1214,13 @@ pub type ScriptGeneration = u32;
 /// A script call cache (`LaneStack::script_targets`, `cross_targets`): sets of
 /// `SCRIPT_TARGET_WAYS` entries, growing from `SCRIPT_CALL_TARGETS_INITIAL` entries.
 /// Entry pointers (`Vm::script_call_entry`) are not held across a resolution, which is
-/// where it grows. A planned call arm holds one across calls (`PlannedTarget`), so every event that
-/// moves, replaces or un-proves an entry advances `epoch`, which retires the arm's pointer.
+/// where it grows. Planned arms hold no entry: their targets live in the program store (`PlannedTarget`).
 pub struct ScriptTargets {
     pub entries: Box<[ScriptCallTarget]>,
     /// Live targets displaced from their set since it last grew.
     pub displaced: usize,
     /// The hash shift of its sets (`shape_memo::direct_mapped_shift`), derived with its size.
     pub set_shift: u32,
-    /// Advanced by every event that changes what an entry holds or where it lives: a resolution
-    /// that writes one, a growth, a clear, a proof withdrawn. Kept across growth.
-    pub epoch: u32,
 }
 
 /// What a function's body fixes about a frameless call target of it
@@ -2577,6 +2575,9 @@ pub struct ConstructPlan {
     /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
     /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
     pub super_parent: Value,
+    /// Whether the class's header is recorded (`Vm::record_class_header`), set at that edge: a
+    /// construction of a recorded class allocates its receiver alone.
+    pub recorded: bool,
 }
 
 /// What a `GetField` reads: named fields one after another from a root receiver (`this` or
@@ -3915,6 +3916,7 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     forwarded: None,
     nested: None,
     super_parent: Value::UNDEFINED,
+    recorded: false,
 };
 
 pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -3971,7 +3973,6 @@ impl ScriptTargets {
             entries: vec![EMPTY_SCRIPT_CALL_TARGET; len].into_boxed_slice(),
             displaced: 0,
             set_shift: crate::vm::shape_memo::direct_mapped_shift(len / SCRIPT_TARGET_WAYS),
-            epoch: 0,
         }
     }
 }
@@ -5132,7 +5133,6 @@ impl ScriptTargets {
     pub fn clear(&mut self) {
         self.entries.fill(EMPTY_SCRIPT_CALL_TARGET);
         self.displaced = 0;
-        self.epoch = self.epoch.wrapping_add(1);
     }
 }
 

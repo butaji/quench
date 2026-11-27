@@ -173,14 +173,16 @@ impl Vm {
     }
 
     /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
-    /// (`ProgramStore::class_header`). The header is recorded once per class: a class whose instances keep one layout
-    /// (`AotFacts::class_layout`) takes it from its first instance, and a planned call site (`planned_call_row`)
-    /// reads a receiver's class from that header. A class with no recorded header keeps its sites' own paths.
+    /// (`ProgramStore::class_header`), once per class, and resolves the class's planned arms at that edge
+    /// (`layer_hooks::planned_class_recorded`). A class whose instances keep one layout (`AotFacts::class_layout`)
+    /// takes it from its first instance, and a planned call site (`planned_call_row`) reads a receiver's class from
+    /// that header: no receiver reaches such a site before its class's header is recorded.
     pub fn record_class_header(&mut self, constructor: Value, this: Value) {
         let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
         let Some(layout) = self.object_data(this).map(|object| object.layout_id()) else { return };
         if let Some(header) = self.programs.class_header(program, class).filter(|header| header.get() == 0) {
             header.set(layout);
+            layer_hooks::planned_class_recorded(self, program, class, this);
         }
     }
 

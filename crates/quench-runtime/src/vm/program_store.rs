@@ -669,6 +669,11 @@ struct ProgramEntry {
     /// Per class (a constructor's function id): the layout id its constructed instances hold, 0 until the first
     /// construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
     class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
+    /// The planned arms' targets by (class, function), each boxed so its address is the arm's for the program's life
+    /// (`planned_target`). Entries are added, never removed.
+    planned_targets: std::cell::RefCell<std::collections::BTreeMap<(u32, u32), Box<crate::vm::engine_types::PlannedTarget>>>,
+    /// Whether every function's planned sites have registered their arms' targets (`register_planned_targets`).
+    planned_registered: std::cell::Cell<bool>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -939,24 +944,63 @@ impl ProgramStore {
         headers.get(class as usize)
     }
 
-    /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) names a
-    /// closed union of classes and misses on nothing (`Miss::None`), with one arm per class, that class's header cell
-    /// and the function its method is. Plans of one callee (no class) keep their own rows. A site's record dispatches
-    /// on its receiver's header (`planned_call_row`).
+    /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) is a framed
+    /// method call (`CallForm::Framed`, the entry form the plan's signature decides) over a closed union of classes
+    /// and misses on nothing (`Miss::None`), with one arm per class, that class's header cell, and the arm's target
+    /// slot (`planned_target`). Plans of one callee (no class) keep their own rows. A site's record dispatches on its
+    /// receiver's header (`planned_call_row`).
     pub fn planned_call_sites(&self, id: ProgramId, function: u32) -> Vec<crate::vm::engine_types::PlannedSite> {
-        use crate::compile::call_plan::Miss;
-        use crate::vm::engine_types::{PlannedArm, PlannedSite, PlannedTarget};
+        use crate::compile::call_plan::{CallForm, Miss};
+        use crate::vm::engine_types::{PlannedArm, PlannedSite};
         let (Some(entry), Some(facts)) = (self.entry(id), self.aot_facts(id)) else { return Vec::new() };
-        let unresolved = PlannedTarget { epoch: 0, target: std::ptr::null() };
         facts.call_plans(&entry.residual, function).into_iter()
-            .filter(|(_, plan)| plan.miss == Miss::None && !plan.arms.is_empty())
+            .filter(|(_, plan)| plan.miss == Miss::None && plan.form == CallForm::Framed && plan.method.is_some() && !plan.arms.is_empty())
             .filter_map(|(pc, plan)| {
+                let method = plan.method?;
                 let arms = plan.arms.iter().map(|arm| {
-                    let header = Self::class_header_cell(entry, arm.class?)?;
-                    Some(PlannedArm { function: arm.function, header: std::ptr::from_ref(header), target: std::cell::Cell::new(unresolved) })
+                    let class = arm.class?;
+                    let header = Self::class_header_cell(entry, class)?;
+                    Some(PlannedArm { function: arm.function, header: std::ptr::from_ref(header), target: Self::planned_target(entry, class, arm.function, method) })
                 }).collect::<Option<Box<[PlannedArm]>>>()?;
                 Some(PlannedSite { pc, arms })
             })
+            .collect()
+    }
+
+    /// The slot of the target of class `class`'s arm `function` (`method`, the property it reads), made on first use.
+    fn planned_target(entry: &ProgramEntry, class: u32, function: u32, method: u32) -> *const crate::vm::engine_types::PlannedTarget {
+        let mut targets = entry.planned_targets.borrow_mut();
+        let slot = targets.entry((class, function)).or_insert_with(|| Box::new(crate::vm::engine_types::PlannedTarget {
+            method,
+            target: std::cell::Cell::new(crate::vm::engine_types::EMPTY_SCRIPT_CALL_TARGET),
+        }));
+        std::ptr::from_ref(&**slot)
+    }
+
+    /// Makes every planned arm of program `id` register its target slot (`planned_call_sites` of each function), so
+    /// that a class's arms are all known when its header is recorded. Once per program.
+    pub fn register_planned_targets(&self, id: ProgramId) {
+        let Some(entry) = self.entry(id) else { return };
+        if entry.planned_registered.get() { return; }
+        entry.planned_registered.set(true);
+        for function in 0..entry.residual.functions.len() {
+            drop(self.planned_call_sites(id, function as u32));
+        }
+    }
+
+    /// Marks program `id`'s roots pending after one of its planned arms' targets is set, so the next collection traces
+    /// the target's values (`extend_roots`).
+    pub fn planned_target_set(&mut self, id: ProgramId) {
+        self.entry_mut(id);
+    }
+
+    /// The arms of class `class` in program `id`, registered (`register_planned_targets`): each arm's function, the
+    /// property its method is read from, and its target slot.
+    pub fn planned_targets_of_class(&self, id: ProgramId, class: u32) -> Vec<(u32, u32, *const crate::vm::engine_types::PlannedTarget)> {
+        let Some(entry) = self.entry(id) else { return Vec::new() };
+        let targets = entry.planned_targets.borrow();
+        targets.range((class, 0)..=(class, u32::MAX))
+            .map(|(&(_, function), slot)| (function, slot.method, std::ptr::from_ref(&**slot)))
             .collect()
     }
 
@@ -1377,6 +1421,8 @@ impl ProgramStore {
             aot_facts: std::cell::OnceCell::new(),
             call_graph: std::cell::OnceCell::new(),
             class_headers: std::cell::OnceCell::new(),
+            planned_targets: Default::default(),
+            planned_registered: std::cell::Cell::new(false),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),
@@ -2912,6 +2958,12 @@ impl ProgramStore {
             roots.extend(entry.regexp_arguments.values().flat_map(|share| [share.object, share.realm, share.constructor]));
             roots.extend(entry.module_environment);
             roots.extend(entry.root_constants.environment.get());
+            // A planned arm's target holds its closure, its environment and its lexical `this`, which the arm
+            // enters while the program lives (`PlannedTarget`).
+            for slot in entry.planned_targets.borrow().values() {
+                let target = slot.target.get();
+                roots.extend([target.callee, target.env, target.lexical_this]);
+            }
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,
