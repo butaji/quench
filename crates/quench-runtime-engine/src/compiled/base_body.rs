@@ -199,7 +199,7 @@ impl Vm {
         SiteFacts {
             constructors: self.instanceof_constructors(program, code, parameters),
             presences: self.membership_facts(code),
-            globals: Some(self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base)),
+            globals: Some(self.global_table(program, function, &super::lane_unit::whole_function(body), GlobalTable::Base)),
         }
     }
 

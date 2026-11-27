@@ -328,11 +328,6 @@ impl LoopSite {
         count.set(count.get().saturating_add(1));
     }
 
-    /// Counts an attempt that entered nothing for `reason`, and returns the interpreter's jump at the header.
-    fn declined(&self, reason: RegionDecline) -> LoopContinuation {
-        self.count_decline(reason);
-        LoopContinuation::Jump
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::LoopSite;
@@ -341,22 +336,10 @@ pub(crate) use quench_runtime::vm::engine_types::LoopSite;
 impl LoopSite {
     pub(crate) fn function(&self) -> u32 { self.function }
 
-    /// Whether native code may still run the loop: its runs have paid for their entries, its
-    /// entries are not declining, and it has code or may compile it. A site without it
-    /// retires at its next backward jump (`loop_retire_in_lane`).
-    fn may_run_natively(&self, vm: &quench_runtime::vm::Vm) -> bool {
-        self.enters() && self.tier.borrow().may_run(self.tiers, vm)
-    }
-
     fn enters(&self) -> bool {
         self.entering.get()
     }
 
-    /// Whether its loop runs in a region entered from the lane: a closed one that still enters and
-    /// has run natively (a region that never ran makes none of the loop's work native).
-    pub(crate) fn runs_region(&self) -> bool {
-        self.call_boundary_pcs.is_empty() && self.active_region().is_some() && self.enters() && self.tier.borrow().runs() > 0
-    }
 }
 
 use quench_runtime::vm::engine_types::Ip;
@@ -527,7 +510,6 @@ use operand_feedback::note_operands;
 pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
 pub(crate) mod loop_tier;
-use loop_tier::loop_compile_in_lane;
 use lane_leaves::LaneLeaves;
 
 
@@ -2387,7 +2369,6 @@ pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
 pub(crate) mod loop_body;
-pub(crate) mod loop_resume;
 use loop_body::LoopBody;
 use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
@@ -4008,9 +3989,7 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 
 script_handler! {
     /// A loop's backward jump in compiled execution (`LoopSite`): the jump's safepoint, then
-    /// the loop's native code once the jump is hot and the region compiled. Native code
-    /// resumes the lane where control leaves the region, or leaves to the general path at an
-    /// instruction outside its subset; a run its entry guards decline takes the jump.
+    /// the loop's lane body once the jump is hot and the body is ready (`loop_body::enter_loop_body`).
     fn loop_jump_miss<>(cx, r, ip, i, view) {
         let site = i.loop_site();
         if site.diagnostics {
@@ -4019,9 +3998,6 @@ script_handler! {
         }
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
-        // SAFETY: the region carries its validated header and latch PCs, and
-        // every instruction record remains contiguous in this lane view.
-        let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
         if script_fuel_out(cx) {
             return safepoint_at(ip, header, Slot::unset());
         }
@@ -4029,92 +4005,27 @@ script_handler! {
         if site.refused_now() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
-        // such loop takes the region (`install_loop_sites`), and this one neither warms up nor enters its own.
-        if site.inside_admitted_loop() && loop_tier::defers_to_enclosing(site) {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
         if site.interprets() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A site backing off after declined entries runs the header as a declined entry does
-        // (`LoopSite::note_decline`).
-        if site.skips_entry() {
-            lane_at_header!(cx, r, header, site)
-        }
-        // The header rule (`enter_loop_body`): a ready body first, then the region.
+        // The header rule (`enter_loop_body`): a ready body first.
         if let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site) {
             lane_attempt!(cx, r, attempt);
         }
-        // A loop whose body is still to come keeps its backward jump, which a loop no region
-        // runs would otherwise retire before the body is planned.
-        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() && site.region.get().is_none() {
+        // A loop whose body is still to come keeps its backward jump, which a loop with no body
+        // would otherwise retire before the body is planned.
+        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A loop no region runs takes its plain jump from now on.
-        if site.promotion_only {
-            loop_retire_in_lane(cx, ip, site);
+        // A loop whose calls no body inlines yet is offered a body once (`offer_body`).
+        if loop_body::offer_body(cx, r, site) {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        if site.analysis_failure.is_some_and(|failure| !failure.is_call_boundary()) {
-            // An instruction no region runs leaves the loop to a body, which runs what it can
-            // natively and leaves at the rest (`loop_body::offer_body`).
-            if loop_body::offer_body(cx, r, site) { next!(cx, r, header, Carried::script_in(cx, view)) }
-            if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_rejected(cx, site); }
-            loop_retire_in_lane(cx, ip, site);
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        if !site.may_run_natively(unsafe { vm(cx) }) {
-            loop_retire_in_lane(cx, ip, site);
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        let region = match site.region.get() {
-            Some(region) => region,
-            // The calls do not run inlined: the loop leaves at them, as at any other call.
-            None => match inlining_region_in_lane(cx, r, site).or_else(|| {
-                let _ = site.inline_region.set(None);
-                loop_tier::method_call_region_in_lane(cx, site)
-            }) {
-                Some(region) => site.region.get_or_init(|| region),
-                // A call no region runs (a native's, a callee the inliner cannot take) is a
-                // loop body's: the body planner inlines what it knows (`native_calls`) and
-                // starts at the header, so the loop runs natively without a function entry.
-                None if loop_body::offer_body(cx, r, site) => next!(cx, r, header, Carried::script_in(cx, view)),
-                None => {
-                    site.entering.set(false);
-                    loop_retire_in_lane(cx, ip, site);
-                    next!(cx, r, header, Carried::script_in(cx, view))
-                }
-            },
-        };
-        let region = if !site.call_boundary_pcs.is_empty() && region.inlining.is_none() {
-            site.inline_region.get_or_init(|| inlining_region_in_lane(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
-        } else { region };
-        match loop_native_in_lane(cx, r, ip, header, site, region) {
-            LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
-            LoopAttempt::At(next) => next!(cx, r, next, Carried::script_in(cx, view)),
-            LoopAttempt::Leave(next) => next,
-            LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
-            LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
-        }
+        // A loop with no body takes its plain jump from now on.
+        loop_retire_in_lane(cx, ip, site);
+        next!(cx, r, header, Carried::script_in(cx, view))
     }
 }
-
-/// The header record's own handler at `header`, as the interpreter runs it: the one `site`
-/// holds while it holds the record (`loop_header_miss`), which the backward jump thus does
-/// not try again.
-macro_rules! lane_at_header {
-    ($cx:expr, $r:expr, $header:expr, $site:expr) => {{
-        let held = $site.header_handler.get();
-        if held.is_null() || held == RETIRED_HEADER {
-            next!($cx, $r, $header, Carried::script($cx))
-        }
-        // SAFETY: the site holds the record's handler, which has the shared signature.
-        let handler: Handler = unsafe { std::mem::transmute::<*const (), Handler>(held) };
-        sibling!(handler, $r, $header, Carried::script($cx))
-    }};
-}
-use lane_at_header;
 
 /// Continues the lane as a loop site's attempt says, or falls through where it declined.
 macro_rules! lane_attempt {
@@ -4149,37 +4060,6 @@ enum LoopAttempt {
 
 
 
-script_handler! {
-    /// A loop's header record while its site holds it (`loop_hold_header_in_lane`): arriving at
-    /// the header enters the loop's native code as its backward jump does, and otherwise
-    /// runs the record's own handler.
-    fn loop_header_miss<>(cx, r, ip, i, view) {
-        // SAFETY: a record runs this handler only while a site holds it.
-        let site = unsafe { &*header_site_in_lane(ip) };
-        if !script_below_floor(cx)
-            && let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site)
-        {
-            lane_attempt!(cx, r, attempt);
-        }
-        if !script_below_floor(cx)
-            && site.enters()
-            && let Some(region) = site.active_region()
-        {
-            match loop_native_in_lane(cx, r, ip, ip, site, region) {
-                LoopAttempt::Declined => {}
-                LoopAttempt::At(next) => next!(cx, r, next, Carried::script_in(cx, view)),
-                LoopAttempt::Leave(next) => return next,
-                LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
-                LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
-            }
-        }
-        lane_at_header!(cx, r, ip, site)
-    }
-}
-
-
-
-
 #[quench_macros::ext(DispatchFastVm)]
 impl Vm {
     /// `LaneStack::unprove_view_entries` on every lane stack that may run again: the live one,
@@ -4195,37 +4075,6 @@ impl Vm {
     }
 }
 
-
-/// Restore the semantic header at the event that replaces its native owner.
-/// `LoopSite::header_handler` of a retired site (`loop_retire_in_lane`): no record, so the site
-/// never holds its header again.
-pub(crate) const RETIRED_HEADER: *const () = std::ptr::without_provenance(1);
-
-
-/// Where the lane goes after a loop site's native attempt.
-pub(crate) enum LoopContinuation {
-    /// Take the backward jump in the interpreter.
-    Jump,
-    Resume(u32),
-    /// The general path executes the instruction at this PC.
-    Exit(u32),
-    /// The general path executes callee PC `pc` of inlined frame `frame`, in the activation
-    /// its call makes (`LaneExit::Inlined`).
-    Inlined { frame: usize, pc: u32 },
-    /// Native code of a stitched region left inside an inlined callee, and the lane recovered the
-    /// activations around it (`inlined_continuation_in_lane`).
-    Recovered(LaneBodyLeft),
-    /// The backward jump's safepoint ends the execution termination stopped.
-    Safepoint,
-    /// The region's code compiles: take the jump, which declines nothing.
-    Compiling,
-    /// The region completed its activation with this value at this record.
-    Completed(u32, Value),
-    /// The region raised the exception in `Vm::lane_raised` at this record: unwind from it.
-    Threw(u32),
-    /// A call activated the callee's lane body: leave the run in that activation.
-    Callee,
-}
 
 
 

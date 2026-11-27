@@ -1025,13 +1025,8 @@ pub struct LoopSite {
     pub header: u32,
     pub backedge: u32,
     pub jump: isize,
-    /// The header record's own handler while the site holds that record
-    /// (`loop_header_miss`), which enters the loop's native code wherever control arrives at
-    /// the header; null otherwise.
-    pub header_handler: std::cell::Cell<*const ()>,
-    /// Whether the site may hold its header record (`loop_hold_header_in_lane`): one that is
-    /// no call record, whose `call_link` names a call target, and the header of no other
-    /// site. The record's `call_link` then names the site.
+    /// Whether the header record names this site in its `call_link` (its distance to the jump):
+    /// one that is no call record, and the header of no other site.
     pub hookable: bool,
     /// Backward jumps taken in the interpreter, counted up to `needed`, and one past it once the
     /// tier model has admitted the compile (`LoopSite::interprets`).

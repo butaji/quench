@@ -837,3 +837,15 @@ pub(crate) fn renamed(
     Some(WideInstruction::new(op, a, b, c, imm))
 }
 
+/// The function's full decoded code as a plain lane unit, whose PCs are the function's.
+pub(crate) fn whole_function(function: &Function) -> Unit {
+    let instructions: Vec<_> = function.instructions().collect();
+    let count = instructions.len();
+    Unit {
+        instructions,
+        origins: (0..count).map(|pc| Origin::Caller(pc as u32)).collect(),
+        frames: Vec::new(), markers: Vec::new(),
+        caller_registers: function.registers, registers: function.registers,
+        end: count as u32,
+    }
+}

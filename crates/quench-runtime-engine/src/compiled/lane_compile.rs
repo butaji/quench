@@ -495,7 +495,7 @@ impl Vm {
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
         // The element reads observed, and the direct calls whose results their callees' summaries type.
-        let mut number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
+        let mut number_reads = observed_reads(&program, unit, arrays, &[], left_at);
         number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions));
         // A typed element read the interpreter's record observed types its result by the kind (`body_views::typed_reads`).
         let typed = super::body_views::typed_reads(self, function, unit);
@@ -931,3 +931,33 @@ pub(crate) mod dependencies;
 pub(crate) use dependencies::LaneDependencies;
 
 #[cfg(test)] #[path = "lane_compile/tests.rs"] pub(crate) mod tests;
+
+/// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
+/// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
+/// that is not one. A lane body's observation is its entry activation's array parameters.
+pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
+    abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
+    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
+        .filter(|(pc, instruction)| {
+            // A read of a frame local's base (`ElementReadOperand`) has no register array to type.
+            let read = matches!(crate::compiled::decoded_completed(*instruction), Some(quench_runtime::staged::Operation::ElementRead { .. }));
+            read && !abandoned.contains(pc)
+        })
+        .filter_map(|(pc, instruction)| {
+            let register = instruction.operand_b().register_index()?;
+            let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
+            // An inlined callee's reads are Numbers whatever the entry showed: its registers
+            // hold nothing at entry that the sample could have seen. So is a read that left
+            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
+            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { quench_runtime::typed_ir::Type::NUMBER };
+            Some(super::facts::ObservedRead { pc, ty, kind: None })
+        }).collect();
+    // A register's `length` read defines an int32: the region reads it as one
+    // (`Lowering::array_length`), leaving where it is not.
+    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
+        && instruction.result_flags() == 0
+        && matches!(instruction.field_lookup(), Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
+        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32, kind: None }));
+    reads.sort_by_key(|read| read.pc);
+    reads
+}

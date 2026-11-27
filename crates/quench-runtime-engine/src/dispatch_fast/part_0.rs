@@ -74,14 +74,8 @@ pub(super) fn entry_fill_known(function: &Function) -> u16 {
 #[inline(always)]
 pub(super) fn requicken(ip: Ip, handler: Handler) {
     // SAFETY: `ip` comes from `LaneView::records`, whose records live in `UnsafeCell`s; the
-    // lane runs on the view's thread, and no reference to the handler field is live. A
-    // header record a loop site holds keeps `loop_header_miss`, and the site the handler.
+    // lane runs on the view's thread, and no reference to the handler field is live.
     unsafe {
-        if (*ip).handler == loop_header_miss as Handler as *const () {
-            let site = header_site_in_lane(ip);
-            (*site).header_handler.set(handler as *const ());
-            return;
-        }
         // A record whose result carries flags keeps its edge's general step (`derive_lane_view`).
         if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
             return;
