@@ -159,8 +159,6 @@ impl WasmModuleCompile {
     /// (one round) / this (median of 3): argon2 55.9 / 51.5, gcc-loops 78.0 / 68.3, quicksort
     /// 106.6 / 88.8, tsf 28.0 / 29.3, zlib 35.6 / 33.0 (Linux x86_64, 4 vCPU, 2026-10-27).
     pub(super) const ADAPTIVE: Self = Self { work: WASM_MODULE_WORK_BUDGET };
-    /// Never compile whole: hot roots only (`QUENCH_DEV=wasm-selective`, for A/B runs).
-    const NEVER: Self = Self { work: u32::MAX };
     /// Compile at the first entry, as eager compilation does: a conformance run that
     /// exercises every module's compiled code, and tests of module-wide code.
     pub(super) const EAGER: Self = Self { work: 1 };
@@ -561,8 +559,8 @@ impl JitTierManager {
     /// still waiting to compile whole runs interpreted until then: a short use (an npm
     /// package's one source-map parse) runs faster in the interpreter than through root
     /// compiles, and a long one would throw them away at its whole compile.
-    fn wasm_promotes_roots(&self, policy: WasmModuleCompile) -> bool {
-        !self.wasm_module_declined() && (policy == WasmModuleCompile::NEVER || !self.wasm_module_selective())
+    fn wasm_promotes_roots(&self) -> bool {
+        !self.wasm_module_declined() && !self.wasm_module_selective()
     }
 
     fn wasm_module_declined(&self) -> bool {
@@ -896,11 +894,7 @@ impl Default for ProgramStore {
             jit_code_cache: JitCodeCacheBudget::default(),
             // TOD-191's correctness oracle may force hot candidates past the payback model so
             // guarded exits can be tested independently of profitability (diagnostic only).
-            wasm_module_compile: if crate::vm::engine_calls::jit_wasm_selective_enabled() {
-                WasmModuleCompile::NEVER
-            } else {
-                WasmModuleCompile::ADAPTIVE
-            },
+            wasm_module_compile: WasmModuleCompile::ADAPTIVE,
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_lane_methods_enabled: tiers.stress,
             warming_ticks: std::cell::Cell::new(0),
@@ -1935,7 +1929,7 @@ impl ProgramStore {
     pub fn wasm_root_admissible(&self, id: ProgramId, function: u32) -> bool {
         self.entry(id).is_some_and(|entry| {
             entry.residual.kind == crate::bytecode::ProgramKind::Wasm
-                && entry.jit_tiers.wasm_promotes_roots(self.wasm_module_compile)
+                && entry.jit_tiers.wasm_promotes_roots()
                 && entry.residual.function_get(function as usize).is_some_and(|function| {
                     function.code.len() <= crate::vm::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                 })
@@ -1965,7 +1959,7 @@ impl ProgramStore {
         let (policy, tiers) = (self.wasm_module_compile, self.tiers);
         if let Some(entry) = self.entry_mut(id) {
             entry.jit_tiers.note_wasm_module_work(1, policy);
-            if entry.jit_tiers.wasm_promotes_roots(policy) {
+            if entry.jit_tiers.wasm_promotes_roots() {
                 entry.jit_tiers.note_wasm_backedges(tiers, function);
             }
         }
@@ -1978,12 +1972,11 @@ impl ProgramStore {
         self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(1, policy))
     }
 
-    /// Whether Wasm module `id` starts in the interpreter at its first entry: always under the
-    /// selective A/B arm, else when it is too large to compile whole at once as cheaply as
+    /// Whether Wasm module `id` starts in the interpreter at its first entry: when it is too large to
+    /// compile whole at once as cheaply as
     /// waiting (`TIERS.wasm.eager_module_bytecodes`).
     pub fn wasm_module_starts_interpreted(&self, id: ProgramId) -> bool {
-        self.wasm_module_compile == WasmModuleCompile::NEVER
-            || self.entry(id).is_some_and(|entry| {
+        self.entry(id).is_some_and(|entry| {
                 let code = &entry.residual;
                 (0..code.functions.len())
                     .filter_map(|index| code.function_get(index))
@@ -1999,25 +1992,16 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_module_selective())
     }
 
-    /// Whether Wasm modules compile whole at their first entry: not under a selective A/B arm that
-    /// keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
-    pub fn wasm_modules_compile_at_first_entry(&self) -> bool {
-        self.wasm_module_compile != WasmModuleCompile::NEVER
-    }
-
-    /// Compile every Wasm module whole at its first entry (`WasmModuleCompile::EAGER`), unless
-    /// a selective A/B arm keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
+    /// Compile every Wasm module whole at its first entry (`WasmModuleCompile::EAGER`).
     pub fn compile_wasm_modules_at_first_entry(&mut self) {
-        if self.wasm_module_compile != WasmModuleCompile::NEVER {
-            self.wasm_module_compile = WasmModuleCompile::EAGER;
-        }
+        self.wasm_module_compile = WasmModuleCompile::EAGER;
     }
 
-    /// Keep every Wasm module to its hot roots (`WasmModuleCompile::NEVER`): tests of root
+    /// Keep every Wasm module to its hot roots (a budget no module reaches): tests of root
     /// promotion.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn keep_wasm_modules_selective(&mut self) {
-        self.wasm_module_compile = WasmModuleCompile::NEVER;
+        self.wasm_module_compile = WasmModuleCompile { work: u32::MAX };
     }
 
     /// Compile a Wasm module whole at `work`: a deterministic test policy.
@@ -3342,7 +3326,7 @@ mod jit_code_cache_tests {
         assert!(!policy.due(policy.work - 1));
         assert!(policy.due(policy.work));
         assert!(Policy::EAGER.due(1));
-        assert!(!Policy::NEVER.due(u32::MAX - 1));
+        assert!(!Policy { work: u32::MAX }.due(u32::MAX - 1));
     }
 
     #[test]

@@ -25,7 +25,7 @@ impl NativeJsProgram {
     /// Publish `program` as one AOT image of the functions the tier policy runs in AOT mode
     /// (`tier_policy::body_tier`, u-jit over every function). The one publication entry point.
     pub fn publish(program: ResidualProgram) -> Result<Self, String> {
-        let _admitted = crate::compiled::admission::ahead_unit(0).ok_or_else(|| "publication was declined".to_string())?;
+        let _admitted = crate::compiled::admission::ahead_unit();
         #[cfg(feature = "jit")]
         {
             let images = quench_runtime::vm::engine_types::AheadImages::compile(&program)?;

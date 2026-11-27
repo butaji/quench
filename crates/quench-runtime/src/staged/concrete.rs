@@ -15,8 +15,6 @@ unsafe extern "Rust" {
     fn quench_staged_class_space_base(heap: *const ()) -> u64;
     fn quench_staged_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
     fn quench_staged_held_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
-    fn quench_staged_immediate_store_unlogged(heap: *const ()) -> bool;
-    safe fn quench_staged_rc_counts_seen() -> bool;
     fn quench_staged_owner_table_bases(heap: *const ()) -> [u64; 3];
     fn quench_staged_published(watch: u64) -> bool;
     fn quench_staged_fill_registers(top: *mut u64, count: usize, undefined: u64);
@@ -219,12 +217,8 @@ impl Stage for Concrete {
     }
     #[inline(always)]
     fn immediate_store_open(&mut self) -> bool {
-        if self.heap.is_null() {
-            // A stage that holds no heap (the interpreter's rows) reads whether any heap counts.
-            return !quench_staged_rc_counts_seen();
-        }
-        // SAFETY: a stage that stores holds its live heap.
-        unsafe { quench_staged_immediate_store_unlogged(self.heap) }
+        // Old records keep no reference counts, so an immediate store needs no barrier log.
+        true
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {

@@ -231,10 +231,9 @@ pub trait Stage: crate::projection::Sealed {
         self.store_gate(space, record_id, value)
     }
     /// Whether a store of a value the frame proved immediate needs no barrier log: such a store
-    /// skips `store_gate`, which is right unless old records keep reference counts, where
-    /// overwriting a reference with any value deletes an edge (`RecordSpace::store_logs`). The
-    /// interpreter reads the heap (`Heap::immediate_store_unlogged`), native code the counts bit
-    /// of the gate word (`STORE_WATCH_COUNTS`).
+    /// skips `store_gate`, which is right, since no heap keeps reference counts, so an immediate
+    /// overwrite deletes no edge. Always open; the query stays for the stencils and native code
+    /// that read it.
     fn immediate_store_open(&mut self) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the

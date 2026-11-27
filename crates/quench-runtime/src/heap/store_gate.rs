@@ -35,29 +35,18 @@ impl Heap {
         !self.space_store_logs(space, record_id, value)
     }
 
-    /// Recomputes `store_watched` after a gate input changed: the snapshot barrier
-    /// reference counts (`set_rc`) or slot observation (`track_slot_representations`).
+    /// Recomputes `store_watched` after a gate input changed: slot observation
+    /// (`track_slot_representations`).
     pub(super) fn refresh_store_watch(&mut self) {
-        self.store_watched = self.rc_active || self.properties.tracks();
+        self.store_watched = self.properties.tracks();
     }
 
     /// The word native stores read as their gate (`JsStepHead::store_watch`): `store_watched`,
-    /// split into its inputs, slot observation (`STORE_WATCH_TRACKS`) and reference counts
-    /// (`STORE_WATCH_COUNTS`). Zero exactly when `store_watched` is clear.
+    /// as slot observation (`STORE_WATCH_TRACKS`). Zero exactly when `store_watched` is clear.
     #[inline(always)]
     pub fn store_watch_word(&self) -> usize {
-        use crate::staged::layout_offsets::{STORE_WATCH_COUNTS, STORE_WATCH_TRACKS};
-        let tracks = if self.properties.tracks() { STORE_WATCH_TRACKS } else { 0 };
-        let counts = if self.rc_active { STORE_WATCH_COUNTS } else { 0 };
-        (tracks | counts) as usize
-    }
-
-    /// Whether a store of a value that names no heap record needs no barrier log: always, unless
-    /// old records keep counts (`RecordSpace::store_logs`). What a staged store proved immediate
-    /// still asks (`staged::Stage::immediate_store_open`).
-    #[inline(always)]
-    pub(crate) fn immediate_store_unlogged(&self) -> bool {
-        !self.rc_active
+        use crate::staged::layout_offsets::STORE_WATCH_TRACKS;
+        (if self.properties.tracks() { STORE_WATCH_TRACKS } else { 0 }) as usize
     }
 
     /// Whether an add of `value` at `slot` of `shape` (the add's after-shape) changes no slot

@@ -111,7 +111,7 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
-pub(crate) mod fallback_sites;
+pub(crate) mod body_leave;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
@@ -1821,96 +1821,6 @@ use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
 use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
-fn jit_root_override() -> Result<Option<usize>, ()> {
-    #[cfg(test)]
-    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return Ok(mode.root);
-    }
-    quench_runtime::trace::Dev::WasmRoot.value().map(|root| root.parse::<usize>().map_err(|_| ())).transpose()
-}
-
-/// Whether Wasm modules stay selective for good, compiling only their hot roots
-/// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
-/// whole.
-pub(crate) fn jit_wasm_selective_enabled() -> bool {
-    quench_runtime::trace::Dev::WasmSelective.on()
-}
-
-fn jit_wasm_root_only_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return mode.root_only;
-    }
-    quench_runtime::trace::Dev::WasmRootOnly.on()
-}
-
-fn jit_wasm_root_first_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return mode.root_first;
-    }
-    quench_runtime::trace::Dev::WasmRootFirst.on()
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Default)]
-struct WasmJitModeTestOverride {
-    root_only: bool,
-    root_first: bool,
-    root: Option<usize>,
-}
-
-#[cfg(test)]
-thread_local! {
-    static WASM_JIT_MODE_TEST_OVERRIDE: std::cell::Cell<Option<WasmJitModeTestOverride>> =
-        const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn with_wasm_jit_mode_for_test<R>(
-    root_only: bool,
-    root_first: bool,
-    root: Option<usize>,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<WasmJitModeTestOverride>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WASM_JIT_MODE_TEST_OVERRIDE.with(|override_mode| override_mode.set(self.0));
-        }
-    }
-
-    let previous = WASM_JIT_MODE_TEST_OVERRIDE.with(|override_mode| {
-        override_mode.replace(Some(WasmJitModeTestOverride {
-            root_only,
-            root_first,
-            root,
-        }))
-    });
-    let _restore = Restore(previous);
-    run()
-}
-
-fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
-    if root.is_none() {
-        return Ok("speed");
-    }
-    parse_jit_root_opt_level(root_only, quench_runtime::trace::Dev::WasmRootOptLevel.value())
-}
-
-fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
-    let Some(level) = level else {
-        return Ok(if root_only { "none" } else { "speed" });
-    };
-    match level {
-        "none" => Ok("none"),
-        "speed" => Ok("speed"),
-        "speed_and_size" => Ok("speed_and_size"),
-        _ => Err(()),
-    }
-}
-
 /// Linux process RSS and high-water mark, in KiB, for opt-in JIT diagnostics.
 #[cfg(target_os = "linux")]
 fn jit_memory_snapshot() -> Option<(u64, u64)> {
@@ -2821,7 +2731,7 @@ fn compiled_reference_target(
 }
 
 /// A Wasm program's compile (`compile_wasm_program`), the route `jit_routes` installs.
-pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, Option<usize>, bool, admission::CompiledUnit) -> Option<CompiledProgram>;
+pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, Option<usize>, admission::CompiledUnit) -> Option<CompiledProgram>;
 pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
 use quench_runtime::vm::engine_types::WasmJitDiagnostics;
@@ -5249,9 +5159,6 @@ struct Analysis<'a> {
     /// `unreachable` is enabled only for a bounded, explicitly selected root
     /// experiment until its compile-time memory cost is measured.
     experimental_root_compilation: bool,
-    /// A root-only function may call out only while callouts are safe for its
-    /// current memory view. A VM callee can grow unguarded memory.
-    root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
     /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
@@ -5270,7 +5177,7 @@ impl<'a> Analysis<'a> {
     /// root experiment, no diagnostics, no unrolling, growth unknown, bindings read from `env`.
     fn new(vm: &'a Vm, program: ProgramId, code: &'a ResidualProgram, env: Value) -> Self {
         Self {
-            vm, program, code, env, callouts: true, experimental_root_compilation: false, root_only: false,
+            vm, program, code, env, callouts: true, experimental_root_compilation: false,
             compile_rejections: None, unrolls: false, grows_memory: quench_runtime::bitset::BitSet::default(), declared: None,
         }
     }
@@ -7608,16 +7515,11 @@ impl Vm {
     #[cfg(test)]
     pub(crate) fn methods_enrolled_in_lane(&self) -> bool { admission::lane_bodies_enrolled(self) }
 
-    /// Whether the runtime compiles Wasm modules whole at their first entry.
-    pub(crate) fn wasm_compile_at_first_entry(&self) -> bool {
-        self.programs.wasm_modules_compile_at_first_entry()
-    }
-
-    /// The unit of a Wasm program's module compile at `root` (`UnitKind::WasmModule`); `None` where
-    /// the program is missing, not Wasm, or a root-only compile names no root.
-    pub(crate) fn wasm_module_unit(&self, program: ProgramId, root: Option<usize>, root_only: bool) -> Option<admission::CompiledUnit> {
+    /// The unit of a Wasm program's module compile (`UnitKind::WasmModule`); `None` where the
+    /// program is missing or not Wasm.
+    pub(crate) fn wasm_module_unit(&self, program: ProgramId) -> Option<admission::CompiledUnit> {
         let code = self.programs.get(program)?;
-        let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, root_ok: !(root_only && root.is_none()), ..Default::default() };
+        let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() };
         admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
     }
 
@@ -8119,8 +8021,7 @@ impl Vm {
         diagnostics_enabled: bool,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
-        let root = jit_root_override().ok()?;
-        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, root, unit)
+        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, None, unit)
     }
 
     fn compile_program_with_diagnostics_and_root(
@@ -8131,41 +8032,17 @@ impl Vm {
         root: Option<usize>,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics_and_root_mode(
-            program,
-            env,
-            diagnostics_enabled,
-            root,
-            false,
-            unit,
-        )
-    }
-
-    /// Compile one explicitly selected Wasm function without its static
-    /// `CallKnown` closure. Unselected callees use the existing VM callout
-    /// path. This is an opt-in diagnostic tier; normal root compilation keeps
-    /// its current closure behavior.
-    fn compile_program_with_diagnostics_and_root_mode(
-        &self,
-        program: ProgramId,
-        env: Value,
-        diagnostics_enabled: bool,
-        root: Option<usize>,
-        root_only: bool,
-        unit: admission::CompiledUnit,
-    ) -> Option<CompiledProgram> {
         // Without the JIT's routes (`jit_routes`) the program runs in the interpreter.
-        (crate::jit_routes::jit()?.wasm)(self, program, env, diagnostics_enabled, root, root_only, unit)
+        (crate::jit_routes::jit()?.wasm)(self, program, env, diagnostics_enabled, root, unit)
     }
 
-    /// `compile_program_with_diagnostics_and_root_mode`'s route, which `jit_routes` installs.
+    /// `compile_program_with_diagnostics_and_root`'s route, which `jit_routes` installs.
     fn compile_wasm_program(
         &self,
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
         root: Option<usize>,
-        root_only: bool,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         let _ = unit;
@@ -8173,26 +8050,7 @@ impl Vm {
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
-        let allowed = if let Some(root) = root.filter(|_| root_only) {
-            let mut selected = vec![false; count];
-            let Some(function) = code.function_get(root) else {
-                if diagnostics_enabled {
-                    eprintln!("QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={root}");
-                }
-                return None;
-            };
-            if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                if diagnostics_enabled {
-                    eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={root} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                        function.code.len()
-                    );
-                }
-                return None;
-            }
-            selected[root] = true;
-            selected
-        } else if let Some(root) = root {
+        let allowed = if let Some(root) = root {
             let mut selected = vec![false; count];
             let mut pending = vec![root];
             while let Some(index) = pending.pop() {
@@ -8296,7 +8154,6 @@ impl Vm {
         };
         let mut analysis = Analysis {
             experimental_root_compilation: root.is_some(),
-            root_only,
             compile_rejections: compile_rejections.as_ref(),
             ..Analysis::new(self, program, &code, env)
         };
@@ -8351,7 +8208,7 @@ impl Vm {
         let isa = if base_only {
             None
         } else {
-            let opt_level = jit_root_opt_level(root, root_only).ok()?;
+            let opt_level = "speed";
             if diagnostics_enabled {
                 eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
             }
@@ -8647,7 +8504,7 @@ impl Vm {
         program: ProgramId,
         env: Value,
     ) -> bool {
-        let Some(compiled) = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program_with_diagnostics(program, env, true, unit))
+        let Some(compiled) = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics(program, env, true, unit))
             .map(Rc::new)
         else {
             return false;
@@ -8663,23 +8520,7 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self.wasm_module_unit(program, Some(root), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, true, Some(root), unit))
-            .map(Rc::new)
-        else {
-            return false;
-        };
-        self.programs.set_compiled(program, Some(compiled));
-        true
-    }
-
-    #[cfg(test)]
-    pub(crate) fn install_compiled_root_only_for_test(
-        &mut self,
-        program: ProgramId,
-        env: Value,
-        root: usize,
-    ) -> bool {
-        let Some(compiled) = self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true, unit))
+        let Some(compiled) = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, true, Some(root), unit))
             .map(Rc::new)
         else {
             return false;
@@ -8855,16 +8696,6 @@ impl Vm {
         if !cfg!(feature = "jit") || self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
-        let wasm_root_only = jit_wasm_root_only_enabled()
-            && self
-                .programs
-                .residual(program)
-                .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-        let wasm_root_first = jit_wasm_root_first_enabled()
-            && self
-                .programs
-                .residual(program)
-                .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
         let _decided = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
@@ -8875,35 +8706,7 @@ impl Vm {
                 {
                     self.host.before_native_compilation();
                 }
-                if wasm_root_only || wasm_root_first {
-                    // This explicit diagnostic mode compiles only the
-                    // function named by QUENCH_DEV=wasm-root=N. Root-only mode
-                    // keeps its callees in the VM; root-first mode allows a
-                    // hot callee to enter the existing bounded tier below.
-                    let diagnose = jit_diagnostics_enabled();
-                    let root = jit_root_override().ok().flatten();
-                    let compiled = root
-                        .and_then(|root| {
-                            self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, diagnose, Some(root), true, unit))
-                        })
-                        .map(Rc::new);
-                    if diagnose && compiled.is_none() {
-                        let mode_field = if wasm_root_first {
-                            "\"root_first\":true"
-                        } else {
-                            "\"root_only\":true"
-                        };
-                        eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{}}}",
-                            program.raw(),
-                            mode_field,
-                            root.map_or_else(|| "null".to_owned(), |root| root.to_string()),
-                        );
-                    }
-                    self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program);
-                    self.programs.compiled(program).flatten()
-                } else if self
+                if self
                     .programs
                     .residual(program)
                     .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm)
@@ -8919,7 +8722,7 @@ impl Vm {
                             .programs
                             .get(program)
                             .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-                    let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
+                    let compiled = self.wasm_module_unit(program).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
                     if diagnose && compiled.is_none() {
                         let total_functions = self
                             .programs
@@ -8939,7 +8742,7 @@ impl Vm {
         };
         // The program's first entry decided its whole compile above; the entry's counters and the
         // compiles they make due are the staged rule both interpreters run.
-        let mut tiers = GeneralTiers { vm: self, program, env, root_only: wasm_root_only, root_first: wasm_root_first };
+        let mut tiers = GeneralTiers { vm: self, program, env };
         match quench_runtime::staged::wasm_activation::offer_entry(&mut tiers, id) {
             quench_runtime::staged::wasm_activation::EntryOffer::Held(code) => Some(code),
             _ => None,
@@ -8959,7 +8762,7 @@ impl Vm {
             self.private_site_homes.clear();
         }
         let diagnose = jit_diagnostics_enabled();
-        let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
+        let compiled = self.wasm_module_unit(program).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
         if diagnose {
             let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
                 (0..code.functions.len())
@@ -8982,7 +8785,7 @@ impl Vm {
     fn compile_wasm_root(&mut self, program: ProgramId, env: Value, id: u32) -> bool {
         #[cfg(feature = "jit")]
         {
-            let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
+            let tier = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
             tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
         }
         #[cfg(not(feature = "jit"))]
@@ -9157,13 +8960,11 @@ impl Vm {
 }
 
 /// The general loop's tiers for one Wasm entry (`wasm_activation::offer_entry`): it makes the
-/// compiles an entry makes due in place. `root_only` and `root_first` are the diagnostic root modes.
+/// compiles an entry makes due in place.
 struct GeneralTiers<'a> {
     vm: &'a mut Vm,
     program: ProgramId,
     env: Value,
-    root_only: bool,
-    root_first: bool,
 }
 
 impl quench_runtime::staged::wasm_activation::WasmEntryTiers for GeneralTiers<'_> {
@@ -9174,7 +8975,7 @@ impl quench_runtime::staged::wasm_activation::WasmEntryTiers for GeneralTiers<'_
     }
 
     fn note_module_work(&mut self) -> bool {
-        !self.root_only && !self.root_first && matches!(self.vm.programs.compiled(self.program), Some(None))
+        matches!(self.vm.programs.compiled(self.program), Some(None))
             && self.vm.programs.note_wasm_module_entry(self.program)
     }
 
@@ -9191,13 +8992,8 @@ impl quench_runtime::staged::wasm_activation::WasmEntryTiers for GeneralTiers<'_
         self.vm.programs.wasm_tier_containing(self.program, function)
     }
 
-    /// Root-first mode earns further tiering only after its selected root produced an artifact:
-    /// where admission failed, the workload stays in the interpreter instead of silently becoming
-    /// ordinary selective tiering.
     fn root_admissible(&mut self, function: u32) -> bool {
-        !self.root_only
-            && (!self.root_first || self.vm.programs.compiled(self.program).flatten().is_some())
-            && self.vm.programs.wasm_root_admissible(self.program, function)
+        self.vm.programs.wasm_root_admissible(self.program, function)
     }
 
     fn note_root_entry(&mut self, function: u32) -> bool {
@@ -11247,19 +11043,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn root_only_jit_defaults_to_none_and_accepts_explicit_opt_level() {
-        assert_eq!(parse_jit_root_opt_level(true, None), Ok("none"));
-        assert_eq!(parse_jit_root_opt_level(false, None), Ok("speed"));
-        assert_eq!(parse_jit_root_opt_level(true, Some("none")), Ok("none"));
-        assert_eq!(parse_jit_root_opt_level(true, Some("speed")), Ok("speed"));
-        assert_eq!(
-            parse_jit_root_opt_level(true, Some("speed_and_size")),
-            Ok("speed_and_size")
-        );
-        assert_eq!(parse_jit_root_opt_level(true, Some("invalid")), Err(()));
     }
 
     #[test]

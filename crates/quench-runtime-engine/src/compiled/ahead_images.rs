@@ -97,7 +97,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     fields: &lane_region::FieldSites, target: &quench_runtime::vm::jit_backend::NativeTarget) -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
-    let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
+    let admitted = super::admission::ahead_unit();
     // An image has no run to learn from, so it lowers as a JIT body that already left at its entry
     // (`lane_region::entry_leave` in its leave set): no requirement a run may skip (an inlined call's
     // receiver under `packet != null`, a field read under a branch) is checked at its entry. Each is
@@ -447,7 +447,7 @@ impl Vm {
     /// linked to this VM at the address it runs. An image's base body installs nothing (`fbits9`):
     /// a function whose lane body this VM cannot take runs its records in the general loop.
     pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
-        // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
+        // The unit is the gate's proof that the specializer cleared `function` (`admission::ahead_unit`).
         let _ = unit;
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         let traced = quench_runtime::trace::Channel::AotLanes.on();
@@ -465,12 +465,11 @@ impl Vm {
             refuse_lane(function, "the host makes IsHTMLDDA objects, which the image's nullish tests assume absent");
             return None;
         }
-        let lanes_allowed = super::admission::within_trace_range(quench_runtime::trace::Dev::AotLanes, function);
         // An image's base body does not run a lane activation (`fbits9`), so it installs nothing:
         // a function without a usable lane body runs its records in the general loop, which
         // resumes the lane at the next record it can take (`ExecutionMode::NativeOnly` admits
         // that one step, `Vm::may_run_in_lane`).
-        let Some(method) = lanes_allowed.then(|| self.ahead_lane_method(program, &images, function)).flatten() else {
+        let Some(method) = self.ahead_lane_method(program, &images, function) else {
             if traced { eprintln!("aot-lanes: install function {function}: no lane body, its records step"); }
             return None;
         };
