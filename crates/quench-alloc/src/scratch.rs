@@ -24,7 +24,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use super::{FreeBlock, MAX_SMALL_BYTES};
+use super::MAX_SMALL_BYTES;
 
 /// log2 of the smallest scratch class: the first power of two above `MAX_SMALL_BYTES`.
 const MIN_SHIFT: u32 = MAX_SMALL_BYTES.trailing_zeros() + 1;
@@ -44,22 +44,97 @@ const ARENA_BYTES: usize = 1 << 30;
 const PARTIAL_RELEASE_SHIFT: u32 = 16;
 
 const _: () = assert!(MAX_SMALL_BYTES.is_power_of_two() && MIN_SHIFT > MAX_SMALL_BYTES.trailing_zeros());
-// One smallest-class block fills the gap below a page-aligned block.
+// A block of a page or more starts on a page: every block starts at a multiple of its size.
 const _: () = assert!(PAGE_BYTES == 2 << MIN_SHIFT);
 const _: () = assert!(ARENA_BYTES.is_multiple_of(1 << MAX_SHIFT));
 
 /// The arena's state, behind one lock: the adopting thread allocates and any thread frees.
+/// Blocks are buddies: a block of class `c` starts at an offset that is a multiple of its size,
+/// so its buddy is the offset with that size's bit flipped. A freed block whose buddy is free
+/// joins it into the next class, and a request with no free block of its class splits a larger
+/// one: a compile's growing vectors reuse the pages of their earlier, smaller blocks, so the
+/// resident span follows the compile's live bytes, not every size it ever asked for. Which
+/// blocks are free lives beside the arena (`free_bits`), never in the blocks: a free block's
+/// pages stay untouched until a request takes it.
 struct Arena {
     /// Start of the used span's unused remainder, as an offset from `BASE`.
     used: usize,
-    /// Free blocks per class, as addresses.
-    free: [usize; CLASSES],
+    /// Which blocks of each class are free, by offset over the class size (`free_word`).
+    free_bits: [u64; FREE_WORDS],
     /// Blocks handed out and not freed back.
     live: usize,
 }
 
-static ARENA: Mutex<Arena> = Mutex::new(Arena { used: 0, free: [0; CLASSES], live: 0 });
-/// The reservation's address, zero until a thread adopts it or when the host refused it.
+/// The words of class `class`'s free bits start at `bits_base(class)`.
+const fn bits_base(class: usize) -> usize {
+    let mut base = 0;
+    let mut below = 0;
+    while below < class {
+        base += (ARENA_BYTES >> (below as u32 + MIN_SHIFT)).div_ceil(64);
+        below += 1;
+    }
+    base
+}
+const FREE_WORDS: usize = bits_base(CLASSES);
+
+/// The word and bit of the block at `offset` of class `class` in `free_bits`.
+fn free_word(class: usize, offset: usize) -> (usize, u64) {
+    let index = offset >> (class as u32 + MIN_SHIFT);
+    (bits_base(class) + index / 64, 1 << (index % 64))
+}
+
+const fn class_bytes(class: usize) -> usize { 1 << (class as u32 + MIN_SHIFT) }
+
+impl Arena {
+    /// The words of class `class`'s free bits that cover the used span.
+    fn class_words(&self, class: usize) -> std::ops::Range<usize> {
+        bits_base(class)..bits_base(class) + (self.used >> (class as u32 + MIN_SHIFT)).div_ceil(64)
+    }
+
+    fn is_free(&self, class: usize, offset: usize) -> bool {
+        let (word, bit) = free_word(class, offset);
+        self.free_bits[word] & bit != 0
+    }
+
+    fn set_free(&mut self, class: usize, offset: usize, free: bool) {
+        let (word, bit) = free_word(class, offset);
+        if free { self.free_bits[word] |= bit } else { self.free_bits[word] &= !bit }
+    }
+
+    /// The offset of a free block of class `class`, taken: the lowest, so blocks pack low.
+    fn take(&mut self, class: usize) -> Option<usize> {
+        let words = self.class_words(class);
+        let first = words.start;
+        let (word, bits) = words.map(|word| (word, self.free_bits[word])).find(|(_, bits)| *bits != 0)?;
+        let offset = ((word - first) * 64 + bits.trailing_zeros() as usize) << (class as u32 + MIN_SHIFT);
+        self.set_free(class, offset, false);
+        Some(offset)
+    }
+
+    /// Frees the block at `offset` of class `class`, joined with its free buddies.
+    fn release_block(&mut self, mut class: usize, mut offset: usize) {
+        while class + 1 < CLASSES {
+            let buddy = offset ^ class_bytes(class);
+            if buddy >= self.used || !self.is_free(class, buddy) { break; }
+            self.set_free(class, buddy, false);
+            offset = offset.min(buddy);
+            class += 1;
+        }
+        self.set_free(class, offset, true);
+    }
+
+    /// Every free block of class `class`, as offsets.
+    fn free_blocks(&self, class: usize) -> impl Iterator<Item = usize> + '_ {
+        let first = self.class_words(class).start;
+        self.class_words(class).flat_map(move |word| {
+            let bits = self.free_bits[word];
+            (0..64).filter(move |bit| bits & (1 << bit) != 0)
+                .map(move |bit| ((word - first) * 64 + bit) << (class as u32 + MIN_SHIFT))
+        })
+    }
+}
+
+static ARENA: Mutex<Arena> = Mutex::new(Arena { used: 0, free_bits: [0; FREE_WORDS], live: 0 });
 static BASE: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
@@ -130,42 +205,45 @@ pub(crate) fn alloc_for(layout: Layout) -> *mut u8 {
 /// A block for `layout` (one `applies` accepted), or null when the arena is full.
 fn alloc(layout: Layout) -> *mut u8 {
     let class = pow2_class_of(layout.size());
+    let base = BASE.load(Ordering::Relaxed);
     let mut arena = lock();
-    let head = arena.free[class];
-    let block = if head != 0 {
-        // SAFETY: a free block of this class, linked through its first word.
-        arena.free[class] = unsafe { (*(head as *mut FreeBlock)).next } as usize;
-        head
-    } else {
-        let bytes = 1usize << (class as u32 + MIN_SHIFT);
-        if bytes >= PAGE_BYTES && !arena.used.is_multiple_of(PAGE_BYTES) {
-            // A block of a page or more starts on a page, or `release` could not return its
-            // pages; the gap below it (one smallest-class block) goes to that class.
-            let gap = BASE.load(Ordering::Relaxed) + arena.used;
-            // SAFETY: the gap is unused span of the smallest class's size.
-            unsafe { (*(gap as *mut FreeBlock)).next = arena.free[0] as *mut FreeBlock };
-            arena.free[0] = gap;
-            arena.used += PAGE_BYTES - arena.used % PAGE_BYTES;
+    let split = (class..CLASSES).find_map(|larger| arena.take(larger).map(|offset| (larger, offset)));
+    let offset = match split {
+        Some((mut larger, offset)) => {
+            // The halves above the request stay free, one per class.
+            while larger > class {
+                larger -= 1;
+                arena.set_free(larger, offset + class_bytes(larger), true);
+            }
+            offset
         }
-        if arena.used + bytes > ARENA_BYTES {
-            return ptr::null_mut();
+        None => {
+            let bytes = class_bytes(class);
+            // The block starts at a multiple of its size; the gap below goes to the free blocks.
+            while !arena.used.is_multiple_of(bytes) {
+                let gap = (arena.used.trailing_zeros() - MIN_SHIFT) as usize;
+                let used = arena.used;
+                arena.used += class_bytes(gap);
+                arena.release_block(gap, used);
+            }
+            if arena.used + bytes > ARENA_BYTES {
+                return ptr::null_mut();
+            }
+            arena.used += bytes;
+            arena.used - bytes
         }
-        let block = BASE.load(Ordering::Relaxed) + arena.used;
-        arena.used += bytes;
-        block
     };
     arena.live += 1;
-    block as *mut u8
+    (base + offset) as *mut u8
 }
 
-/// Returns `block` (the arena's, per `owns`) to its class. The size is the request's, which
-/// rounds to the class the block came from.
+/// Returns `block` (the arena's, per `owns`) to its class, joined with its free buddies. The
+/// size is the request's, which rounds to the class the block came from.
 pub(crate) fn free(block: *mut u8, layout: Layout) {
     let class = pow2_class_of(layout.size());
+    let base = BASE.load(Ordering::Relaxed);
     let mut arena = lock();
-    // SAFETY: a block of at least the class size, no longer in use.
-    unsafe { (*block.cast::<FreeBlock>()).next = arena.free[class] as *mut FreeBlock };
-    arena.free[class] = block as usize;
+    arena.release_block(class, block as usize - base);
     arena.live -= 1;
 }
 
@@ -190,22 +268,19 @@ fn release_from(partial_release_shift: u32) {
     if arena.live == 0 {
         // SAFETY: no block is live, so the span holds nothing in use; it reads zero after.
         unsafe { libc::madvise(base as *mut libc::c_void, arena.used, libc::MADV_DONTNEED) };
-        arena.free = [0; CLASSES];
+        for class in 0..CLASSES {
+            let words = arena.class_words(class);
+            arena.free_bits[words].fill(0);
+        }
         arena.used = 0;
         return;
     }
     for class in (partial_release_shift.max(MIN_SHIFT) - MIN_SHIFT) as usize..CLASSES {
-        let bytes = 1usize << (class as u32 + MIN_SHIFT);
-        let mut block = arena.free[class];
-        while block != 0 {
-            // SAFETY: free blocks of a page or more start on a page and hold nothing in use;
-            // the first page, which holds the link, stays.
-            unsafe {
-                if bytes > PAGE_BYTES {
-                    libc::madvise((block + PAGE_BYTES) as *mut libc::c_void, bytes - PAGE_BYTES, libc::MADV_DONTNEED);
-                }
-                block = (*(block as *mut FreeBlock)).next as usize;
-            }
+        let bytes = class_bytes(class);
+        if bytes < PAGE_BYTES { continue; }
+        for offset in arena.free_blocks(class) {
+            // SAFETY: a free block of whole pages holds nothing in use.
+            unsafe { libc::madvise((base + offset) as *mut libc::c_void, bytes, libc::MADV_DONTNEED) };
         }
     }
 }
@@ -314,6 +389,36 @@ mod tests {
         assert_eq!(alloc(layout(size)), spare, "the released block is still in its list");
         free(spare, layout(size));
         free(live, layout(size));
+        release();
+    }
+
+    #[test]
+    fn freed_buddies_join_and_serve_a_larger_request() {
+        let _guard = serial();
+        adopt();
+        let small = 1usize << MIN_SHIFT;
+        let (first, second) = (alloc(layout(small)), alloc(layout(small)));
+        free(first, layout(small));
+        free(second, layout(small));
+        let joined = alloc(layout(2 * small));
+        assert_eq!(joined, first.min(second), "two free buddies make one block of the next class");
+        free(joined, layout(2 * small));
+        release();
+    }
+
+    #[test]
+    fn a_growing_vector_reuses_its_earlier_blocks() {
+        let _guard = serial();
+        adopt();
+        let mut size = 2 * MAX_SMALL_BYTES;
+        let mut block = alloc(layout(size));
+        while size < 1 << MAX_SHIFT {
+            let grown = alloc(layout(2 * size));
+            free(block, layout(size));
+            (block, size) = (grown, 2 * size);
+        }
+        assert!(lock().used <= 4 << MAX_SHIFT, "the span stays near twice the largest block: {}", lock().used);
+        free(block, layout(size));
         release();
     }
 
