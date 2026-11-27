@@ -374,11 +374,12 @@ fn typed_rows(region: &LoopRegion, origins: &[super::super::lane_unit::Origin], 
     for (row, origin) in rows.iter_mut().zip(origins) {
         let super::super::lane_unit::Origin::Caller(pc) = origin else { continue };
         let Some(Some(kind)) = typed.get((*pc - region.header) as usize) else { continue };
-        if row.hole != 0 || quench_runtime::staged::typed_elements::NativeKind::new(*kind).is_none() { continue; }
+        let Some(native) = quench_runtime::staged::typed_elements::NativeKind::new(*kind) else { continue };
+        if row.hole != 0 { continue; }
         row.heap = match row.heap {
             // An integer kind's read delivers a double (`TYPED_INDEX_ROW`'s Float destination), which an index or
-            // bitwise use would convert back: only a float kind's read takes the typed row.
-            Some(Heap::Index) if matches!(kind, quench_runtime::tier_surface::TypedArrayKind::Float64 | quench_runtime::tier_surface::TypedArrayKind::Float32) => Some(Heap::TypedIndex(*kind as u8)),
+            // bitwise use would convert back: only a float kind's element (its type is the Number) takes the typed row.
+            Some(Heap::Index) if native.element_type() == quench_runtime::typed_ir::Type::NUMBER => Some(Heap::TypedIndex(*kind as u8)),
             Some(Heap::Store) => Some(Heap::TypedStore(*kind as u8)),
             other => other,
         };
