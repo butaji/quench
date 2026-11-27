@@ -137,7 +137,7 @@ fn class_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word
 /// `value` into field `slot` of the live class cell `cell`, once its gate admitted the store. The gate
 /// leaves no constant mark standing: a constant-marked class has no key (`Heap::live_class_key`).
 #[inline(always)]
-fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
+pub(super) fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
     let address = class_field_address(stage, cell, slot);
     stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
 }
