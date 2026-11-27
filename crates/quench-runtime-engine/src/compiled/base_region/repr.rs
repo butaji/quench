@@ -143,7 +143,7 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
         Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Some(Representation::Int32) => Some(Representation::Int32),
         Kind::Abs if !widened && operands == Some(Representation::Int32) => Some(Representation::Int32),
         Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max
-        | Kind::Fround | Kind::Sign => Some(Representation::Float64),
+        | Kind::Pow | Kind::Fround | Kind::Sign => Some(Representation::Float64),
         Kind::Imul | Kind::Clz32 => Some(Representation::Int32),
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),

@@ -27,7 +27,7 @@ type Held = BitSet;
 fn leaves_on_other(kind: Kind) -> bool {
     matches!(kind, Kind::Add | Kind::Sub | Kind::Mul | Kind::Div | Kind::And | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr
         | Kind::UShr | Kind::Neg | Kind::Rem | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round
-        | Kind::Min | Kind::Max | Kind::Imul | Kind::Clz32 | Kind::Fround | Kind::Sign | Kind::AddNoOverflow | Kind::SubNoOverflow)
+        | Kind::Min | Kind::Max | Kind::Imul | Kind::Clz32 | Kind::Pow | Kind::Fround | Kind::Sign | Kind::AddNoOverflow | Kind::SubNoOverflow)
 }
 
 /// Whether the entry at `row` checks the web `web` as a Number: the rule `entry_rows` applies to a live web.

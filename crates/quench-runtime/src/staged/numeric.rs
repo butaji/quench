@@ -399,18 +399,25 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     Step::Value(result)
 }
 
-/// `base ** exponent` where `exponent` is a program constant `power::SmallPower` names: its product on the base's double
-/// (`power::power_by`). The exponent is read from the frame's constant, not a register, so no other exponent is proved here;
-/// a base that is no Number leaves at the miss.
+/// `base ** exponent` of two Numbers: a program constant `power::SmallPower` names is its product on the base
+/// (`power::power_by`), any other exponent the power leaf (`NumericStage::float_power`). A stencil holds no call of
+/// the leaf, so there any other exponent leaves. A base or an exponent that is no Number leaves at the miss.
 #[inline(always)]
 fn power<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, base: Operand, exponent: Operand) -> Step<S::Word, F::Control> {
-    let Some(small) = frame.constant_operand(exponent).and_then(constant_number).and_then(super::power::SmallPower::of) else {
-        return Step::Unresolved;
-    };
     let miss = frame.miss();
+    let small = frame.constant_operand(exponent).and_then(constant_number).and_then(super::power::SmallPower::of);
     let Some(base) = frame.number_operand(stage, base, miss).map(super::Float64::word) else { return Step::Unresolved };
-    let result = super::power::power_by(stage, small, base);
+    let result = match small {
+        Some(small) => super::power::power_by(stage, small, base),
+        #[cfg(not(stencil_build))]
+        None => {
+            let Some(exponent) = frame.number_operand(stage, exponent, miss).map(super::Float64::word) else { return Step::Unresolved };
+            stage.float_power(base, exponent)
+        }
+        #[cfg(stencil_build)]
+        None => return Step::Unresolved,
+    };
     let fact = frame.number_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)
@@ -707,7 +714,7 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 }
 
 /// The Number operation a `Binary` of `operator` over `left` and `right` denotes, defining
-/// `destination`: an arithmetic, a remainder, a bitwise or a relation. The decode cannot see the
+/// `destination`: an arithmetic, a remainder, a power, a bitwise or a relation. The decode cannot see the
 /// operands' representations, so it names the widest domain (`Float64`; a bitwise is int32 by its
 /// operator). `None` for any other operator (equality, `in`, `instanceof`): the VM's. The operator
 /// tables are the operations' own (`NumberArithmetic::from_operator` and its siblings).
@@ -722,6 +729,9 @@ pub fn binary_operation(operator: u32, destination: Register, left: Operand, rig
         return Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Float64,
             zero: NegativeZero::Exit, divisor_nonzero: false });
     }
+    if operator == binary_operator::Exponential {
+        return Some(NumberOperation::Power { destination, base: left, exponent: right });
+    }
     if let Some(operation) = NumberBitwise::from_operator(operator) {
         return Some(NumberOperation::Bitwise { destination, left, right, operation });
     }
@@ -731,8 +741,8 @@ pub fn binary_operation(operator: u32, destination: Register, left: Operand, rig
 
 /// The Number `operator`'s `binary_operation` row (an arithmetic, the remainder or a bitwise) computes of two
 /// proved binary64s, boxed as `Value::number` boxes it: a construct plan's computed field (`plan_fields`) takes
-/// the operator from the Number step's own decode, not a table of its own. A relation, or an operator with no
-/// Number row (`**`), leaves at `miss`.
+/// the operator from the Number step's own decode, not a table of its own. A relation, or an operator whose row is
+/// no arithmetic, remainder or bitwise (`**`, a power, which has no word-only form here), leaves at `miss`.
 #[cfg(not(stencil_build))]
 #[inline(always)]
 pub fn binary64_value<S: NumericStage>(stage: &mut S, operator: u32, left: super::NumberOf<S>, right: super::NumberOf<S>,

@@ -614,6 +614,14 @@ impl NumericStage for Emit<'_, '_> {
     fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(if maximum { Binary::FloatMax } else { Binary::FloatMin }, left, right)
     }
+    /// `base ** exponent`: the product a constant exponent `SmallPower` names, else a call of the power leaf
+    /// (`EngineSlowPath::NumberPower`), which touches no VM state.
+    fn float_power(&mut self, base: ir::Value, exponent: ir::Value) -> ir::Value {
+        match self.known_double(exponent).and_then(quench_runtime::staged::power::SmallPower::of) {
+            Some(small) => quench_runtime::staged::power::power_by(self, small, base),
+            None => self.call_leaf_lanes(crate::compiled::slow_paths::EngineSlowPath::NumberPower, (&[Lane::F64, Lane::F64], Lane::F64), &[base, exponent]),
+        }
+    }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.raw_const(Lane::I32, i64::from(value)) }
     fn f64_constant(&mut self, value: f64) -> ir::Value { self.raw_const(Lane::F64, value.to_bits() as i64) }
     fn f64_from_bits(&mut self, bits: ir::Value) -> ir::Value { self.raw_unary(Unary::Bitcast(Lane::F64), bits) }

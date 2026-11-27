@@ -46,6 +46,9 @@ impl Lowering<'_, '_> {
             Number(N::Arithmetic { left, right, .. } | N::Remainder { left, right, .. } | N::RelationValue { left, right, .. }
                 | N::Bitwise { left, right, .. } | N::Extreme { left, right, .. } | N::Imul { left, right, .. }) =>
                 self.number_operand_held(*left) && self.number_operand_held(*right),
+            // The power leaf's address is no image's to embed where its helpers are not named by symbol (`remainder`).
+            Number(N::Power { base, exponent, .. }) => self.number_operand_held(*base) && self.number_operand_held(*exponent)
+                && !(self.helpers.links() && !self.helpers.names_symbols()),
             Number(N::IncDec { .. } | N::ToNumeric { .. }) => true,
             // A relation decides a branch and an int case a table's index: rows over edges, not a value.
             _ => false,
