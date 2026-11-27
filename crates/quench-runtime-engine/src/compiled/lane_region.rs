@@ -1132,6 +1132,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 let exit = self.guard_exit(state, target as u32);
                 self.int(state, register, exit);
             }
+            Representation::Int64 if held != Representation::Int64 => {
+                let exit = self.guard_exit(state, target as u32);
+                frame::register_long_value(&mut self.builder, &mut self.registers, state, register, ty, exit);
+            }
             Representation::Float64 if held != Representation::Float64 => {
                 let exit = self.guard_exit(state, target as u32);
                 let number = self.number(state, register, exit);
@@ -2146,7 +2150,7 @@ pub(crate) fn lower(
         // the same way: the solve's entry cell).
         let mut refined = false;
         for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge().iter().map(|ty| ty.machine())) {
-            if (carried == Type::INT32 || number_domains::is_double(carried)) && *input != carried {
+            if (carried == Type::INT32 || carried.int_range().is_some() || number_domains::is_double(carried)) && *input != carried {
                 *input = carried;
                 refined = true;
             }

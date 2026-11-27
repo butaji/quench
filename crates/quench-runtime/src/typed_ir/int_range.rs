@@ -48,6 +48,10 @@ impl IntRange {
 
     pub fn fits_int32(&self) -> bool { Self::FULL.contains(*self) }
 
+    /// Whether every integer of `self` is one a binary64 holds exactly (within `EXACT`): the span an
+    /// `Int64` word holds and boxes without rounding, so the criterion of `Representation::Int64`.
+    pub fn fits_exact_double(&self) -> bool { Self::EXACT.contains(*self) }
+
     /// The range of the binary64 Numbers the integers of `self` round to. Rounding to nearest
     /// is monotone, so the bounds' own are the range's: `self` within `EXACT`, wider beyond.
     pub fn rounded(self) -> Self {

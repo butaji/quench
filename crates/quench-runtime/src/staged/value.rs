@@ -496,7 +496,19 @@ pub(crate) fn int32_as_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> 
 /// fractions, nonfinite values, saturation and -0. Returns `(integer, exact)`.
 #[inline(always)]
 pub fn exact_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
-    let integer = machine.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
+    exact_integer(machine, number, Lane::I32)
+}
+
+/// The exact signed 64-bit integer of the binary64 `number`, by `exact_int32`'s test at the word's width.
+/// A Number of magnitude 2^63 or more saturates and can still round-trip, so the caller bounds the
+/// integer within `IntRange::EXACT` as well.
+#[inline(always)]
+pub fn exact_long<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+    exact_integer(machine, number, Lane::I64)
+}
+
+fn exact_integer<M: MachineScalar>(machine: &mut M, number: M::Word, lane: Lane) -> (M::Word, M::Word) {
+    let integer = machine.raw_unary(Unary::ToSignedSaturating(lane), number);
     let round_trip = machine.raw_unary(Unary::FromSigned(Lane::F64), integer);
     let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
     let round_trip_bits = machine.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
