@@ -133,6 +133,10 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), quench_runtime::staged::ic::form_of_layout),
             storage_len: load.storage_len, rep: if load.raw_double { Representation::Float64 } else { Representation::Tagged } }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
+        // An ahead image's guessed holder (`ic::SYMBOLIC_SHAPE`): the value the holder holds when
+        // the image links, a fact the loader proves and the holder's prototype-value watch retires
+        // (`ahead_images::holder_dependencies`), so the read loads neither the holder nor its slot.
+        Some(holder) if holder & quench_runtime::staged::ic::SYMBOLIC_SHAPE != 0 => vec![IcOp::HolderConstant(holder & !quench_runtime::staged::ic::SYMBOLIC_SHAPE)],
         Some(holder) => {
             // The prototype's layout id proves its shape (and storage form) in one compare where
             // the entry kept it (`holder_id`); else its shape alone is compared.

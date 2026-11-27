@@ -52,6 +52,11 @@ pub enum IcOp<'a> {
     /// The record's prototype link selects its value from these (link, value bits) pairs, else
     /// the read misses; a dependency holds each prototype's value. It ends the read.
     PrototypeConstants(&'a [(u32, u64)]),
+    /// An ahead image's prototype method read, by its holder guard key: the value the holder
+    /// held when the image linked, for a receiver whose prototype link is the holder's, both
+    /// words the loader resolves (`stage::ImageWord`). The fact is proven at link and retired by
+    /// the holder's prototype-value watch, so the read loads neither the holder nor its slot.
+    HolderConstant(u32),
     /// The value a prototype hint recorded (`holder::holder_read`): the record's layout is
     /// `guard` (its exact shape, storage form and prototype link at once) and the watch at
     /// `watch` on the prototype's values still holds, else the read misses. It ends the read.
@@ -171,6 +176,7 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         IcOp::LoadSlot { slot, form, storage_len, rep } => return Break(load_slot(stage, at, (slot, rep), form, storage_len, miss)),
         IcOp::LoadPrototypeSlot(slot) => return Break(prototype_slot(stage, at.shaped.expect("a prototype slot read follows the guard of the holder's shape"), slot, miss)),
         IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.shaped.expect("a prototype's constants follow the guard of the receiver's shape"), values, miss)),
+        IcOp::HolderConstant(key) => return Break(holder_constant(stage, at.shaped.expect("a holder's constant follows the guard of the receiver's shape"), key, miss)),
         IcOp::Held { guard, watch, value } => return Break(holder_read(stage, at.record, guard, watch, value, miss)),
         IcOp::OwnConstant { record, watch, value } => return Break(own_constant_read(stage, at.record, record, watch, value, miss)),
         IcOp::ArrayLength { records } => {

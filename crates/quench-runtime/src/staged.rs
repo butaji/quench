@@ -268,7 +268,7 @@ pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_global_field_hit, concrete_hint
 pub use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
+pub use stage::{fill_by_rows, ImageWord, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
 #[allow(unused_imports)]

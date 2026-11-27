@@ -220,6 +220,18 @@ pub(super) fn prototype_constants<S: Stage>(stage: &mut S, receiver: Shaped<S::W
     Some(read)
 }
 
+/// `IcOp::HolderConstant`: the value the image linked for holder `key`, where `receiver`'s
+/// prototype link is the holder's.
+#[inline(always)]
+pub(super) fn holder_constant<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, key: u32, miss: S::Miss) -> Option<S::Word> {
+    let link = proto_link(stage, receiver.record());
+    let holder = stage.image_word(super::stage::ImageWord::HolderLink, key);
+    let same = stage.eq_imm(link, holder);
+    stage.guard(same, miss)?;
+    let value = stage.image_word(super::stage::ImageWord::HolderValue, key);
+    Some(stage.imm_word(value))
+}
+
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.
 #[inline(always)]
 pub(super) fn prototype_slot<S: Stage>(stage: &mut S, holder: Shaped<S::Word>, slot: u16, miss: S::Miss) -> Option<S::Word> {
