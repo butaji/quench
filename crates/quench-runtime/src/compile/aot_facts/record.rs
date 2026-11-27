@@ -21,14 +21,18 @@ pub(crate) struct ElementStore {
     pub(crate) indices: Indices,
 }
 
-/// The indices an element store through `index` touches in `function`. A Number that is parameter `p` on entry
+/// The indices an element store through `index` at `pc` touches in `function`. A Number that is parameter `p` on entry
 /// (`Origin::Parameter`, which a write to the register retires, and a join with any other origin drops) is the one
-/// index `p`: `Span { start: p, len: 1 }`. Any other index may be any index: `Whole`.
-pub(super) fn indices_of(function: u32, index: Word) -> Indices {
+/// index `p`: `Span { start: p, len: 1 }`. A store the previous round proved covers the parameters `start .. start + len`
+/// (`Feedback::spans`) is that span. Any other index may be any index: `Whole`.
+pub(super) fn indices_of(ctx: &Ctx<'_>, pc: u32, index: Word) -> Indices {
     match index.origin {
-        Some(Origin::Parameter { function: owner, index: parameter }) if owner == function && index.is_number() =>
+        Some(Origin::Parameter { function: owner, index: parameter }) if owner == ctx.id && index.is_number() =>
             Indices::Span { start: Affine::parameter(parameter), len: Affine::constant(1) },
-        _ => Indices::Whole,
+        _ => match ctx.spans.get(&(ctx.id, pc)) {
+            Some(&(start, len)) => Indices::Span { start: Affine::parameter(start), len: Affine::parameter(len) },
+            None => Indices::Whole,
+        },
     }
 }
 
@@ -165,7 +169,7 @@ impl Record {
         // An element store writes the elements of its array's class, at the indices its index register holds.
         if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
-            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx.id, index) });
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index) });
         }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {

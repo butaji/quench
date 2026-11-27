@@ -199,10 +199,11 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function)?.bound_below(pc, index)
     }
 
-    /// Whether the step at `pc` may resize an array of any class (a call that may write elements, a mutator, guest code, or an
-    /// element store the relations do not prove within its array). Where the solve recorded no lengths, the step may resize.
-    pub fn may_resize_length(&self, pc: u32) -> bool {
-        self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize(pc))
+    /// Whether the step at `pc` may resize an array of element class `array` (a call that may write its elements, a mutator, guest
+    /// code, or an element store the relations do not prove within its array), for the arrays the function's registers hold.
+    /// Where the solve recorded no lengths, the step may resize.
+    pub fn may_resize_length(&self, pc: u32, array: ElementClass) -> bool {
+        self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize(pc, array))
     }
 
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).

@@ -38,6 +38,14 @@ pub(in crate::compile::aot_facts) enum Relation {
     /// `first` and `second` hold the same value. Two loads of one field from one base, both holding, read the same value. `first`
     /// is the lower register, so a pair has one relation whichever way it was recorded.
     Equal { first: Register, second: Register },
+    /// `(a - base_a) + (b - base_b)` is the sum of the pending changes (`Delta`) of `a` and `b`, where `base_a` and `base_b` are the
+    /// parameters (their indices) whose entry values `a` and `b` hold. Both hold their parameters at the entry, so the sum is zero
+    /// there; a loop that steps `a` up and `b` down by one each iteration keeps it zero at every back edge (`Lengths::meet`).
+    SumInvariant { a: Register, b: Register, base_a: u16, base_b: u16 },
+    /// `reg` has changed by `d` since the sum it pairs in (`SumInvariant`) was last zero: the pending step of an iteration.
+    Delta { reg: Register, d: i64 },
+    /// `index` holds a Number at least zero: a loop's counter that its test found not below zero (`refine` of `index >= 0`).
+    NonNegative { index: Register },
 }
 
 impl Relation {
@@ -59,6 +67,9 @@ impl Relation {
             Self::Complete { array } => array == register,
             Self::Loaded { dest, base, .. } => dest == register || base == register,
             Self::Equal { first, second } => first == register || second == register,
+            Self::SumInvariant { a, b, .. } => a == register || b == register,
+            Self::Delta { reg, .. } => reg == register,
+            Self::NonNegative { index } => index == register,
         }
     }
 
@@ -68,6 +79,8 @@ impl Relation {
         match self {
             Self::Within { index, array, reach } if index == register => Some(Self::Within { index, array, reach: reach - by }),
             Self::Sum { sum, index, offset } if sum == register => Some(Self::Sum { sum, index, offset: offset + by }),
+            // The index of a sum moves and the sum does not: the sum is the new index plus the offset less the move.
+            Self::Sum { sum, index, offset } if index == register => Some(Self::Sum { sum, index, offset: offset - by }),
             Self::Less { index, .. } if index == register && by <= 0 => Some(self),
             Self::Less { bound, .. } if bound == register && by >= 0 => Some(self),
             Self::Twice { sum, .. } if sum == register && by <= 0 => Some(self),
@@ -77,6 +90,8 @@ impl Relation {
             Self::AtLeast { bound, .. } if bound == register && by <= 0 => Some(self),
             // A fill prefix through `index` steps by one into the prefix through the new index: `[0, index]` is `[0, index')`.
             Self::FilledThrough { array, index } if index == register && by == 1 => Some(Self::Filled { array, index }),
+            // A counter at least zero steps up and stays so; a step down may leave it below zero.
+            Self::NonNegative { index } if index == register && by >= 0 => Some(self),
             _ => None,
         }
     }
@@ -100,6 +115,9 @@ impl Relation {
             Self::Complete { array } => Self::Complete { array: swap(array) },
             Self::Loaded { dest, base, key } => Self::Loaded { dest: swap(dest), base: swap(base), key },
             Self::Equal { first, second } => Self::equal(swap(first), swap(second)),
+            Self::NonNegative { index } => Self::NonNegative { index: swap(index) },
+            // A sum and its pending changes are not carried by a copy: the copy's value is not the one the sum relates.
+            Self::SumInvariant { .. } | Self::Delta { .. } => return None,
         })
     }
 }
@@ -125,13 +143,57 @@ pub(in crate::compile::aot_facts) fn proves_below(relations: &[Relation], index:
 /// below the length one less. `depth` cuts off a cycle of links, which no consistent set holds.
 fn below(relations: &[Relation], index: Register, array: Register, offset: i64, depth: usize) -> bool {
     relations.iter().any(|relation| match *relation {
-        Relation::Within { index: held, array: held_array, reach } => held == index && held_array == array && reach > offset,
+        Relation::Within { index: held, array: held_array, reach } => same(relations, held, index) && held_array == array && reach > offset,
         Relation::Length { length: held, array: held_array } => same(relations, held, index) && held_array == array && offset < 0,
         Relation::Sum { sum, index: base, offset: by } => sum == index && depth > 0 && below(relations, base, array, by + offset, depth - 1),
         Relation::Less { index: held, bound } => held == index && depth > 0 && below(relations, bound, array, offset - 1, depth - 1),
         Relation::Twice { .. } | Relation::Filled { .. } | Relation::FilledThrough { .. } | Relation::AtLeast { .. } | Relation::Complete { .. }
-        | Relation::Loaded { .. } | Relation::Equal { .. } => false,
+        | Relation::Loaded { .. } | Relation::Equal { .. } | Relation::SumInvariant { .. } | Relation::Delta { .. }
+        | Relation::NonNegative { .. } => false,
     })
+}
+
+/// The pending change `register` has since its sum was zero (`Relation::Delta`), 0 where no `Delta` names it.
+pub(super) fn delta(relations: &[Relation], register: Register) -> i64 {
+    relations.iter().find_map(|relation| match *relation {
+        Relation::Delta { reg, d } if reg == register => Some(d),
+        _ => None,
+    }).unwrap_or(0)
+}
+
+/// Which way a sum's registers step, where their pending changes are zero or net to zero: `Some(true)` where `a` steps up and `b`
+/// down, `Some(false)` where `b` steps up and `a` down, `None` where neither steps. A loop's sum keeps one way round, so the count
+/// it steps moves monotonically (`store_span`), and a join of the two ways drops the sum.
+pub(super) fn way(relations: &[Relation], a: Register, b: Register) -> Option<bool> {
+    let (up_a, up_b) = (delta(relations, a), delta(relations, b));
+    if up_a > 0 || up_b < 0 {
+        Some(true)
+    } else if up_a < 0 || up_b > 0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// The parameters (`start`, `len`) that an element store through `key` covers, where `relations` prove it. `key` is a sum partner
+/// `index` plus an offset (`Sum`, or `index` itself), where `index` counts up from parameter `start` and `other` counts down from
+/// parameter `len` (`SumInvariant`), and `other` is at least zero after this iteration's decrement. Then `index + offset` is
+/// `start + k` where `k`, the iterations before this one, is at least zero, and `k <= len - other - 1 <= len - 1`: the store lies in
+/// `[start, start + len)`. The step this iteration takes of `index` must cancel the offset (`delta(index) + offset = 0`), and
+/// `other` must have stepped down (`delta(other) = -1`), so that the sum is `-1`.
+pub(super) fn store_span(relations: &[Relation], key: Register) -> Option<(u16, u16)> {
+    let through = relations.iter().filter_map(|relation| match *relation {
+        Relation::Sum { sum, index, offset } if sum == key => Some((index, offset)),
+        _ => None,
+    }).chain(std::iter::once((key, 0)));
+    through.find_map(|(index, offset)| relations.iter().find_map(|relation| match *relation {
+        Relation::SumInvariant { a, b, base_a, base_b } if a == index || b == index => {
+            let (other, start, len) = if a == index { (b, base_a, base_b) } else { (a, base_b, base_a) };
+            let stepped = delta(relations, index) + offset == 0 && delta(relations, other) == -1;
+            (stepped && relations.contains(&Relation::NonNegative { index: other })).then_some((start, len))
+        }
+        _ => None,
+    }))
 }
 
 

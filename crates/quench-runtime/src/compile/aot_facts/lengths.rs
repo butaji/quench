@@ -10,6 +10,10 @@
 //! world may define, or through the conversion of a key that is no Number or string (`element_runs_guest_code`).
 //! A call resizes only the arrays of the element classes its resolved callees may write (`Types::call_writes`).
 //!
+//! Sums: two parameters a loop steps in opposite directions, one up by one and one down by one each iteration, keep their sum
+//! zero at the back edge (`Relation::SumInvariant`, with the pending `Delta` of an iteration). An element store through the index
+//! then covers the parameters the count runs over (`store_span`), so a store of `w[j++]` in `while (--n >= 0)` covers `j .. j + n`.
+//!
 //! The relations are one fact per register set, held beside the registers' words in each block's state: a
 //! join intersects them (`Lengths::meet`), so a relation holds at a point only if every path proves it. The
 //! set is finite (its relations name registers and the program's constants), so the solve settles without
@@ -18,14 +22,14 @@ mod relations;
 mod transfer;
 
 use super::effects::{Ctx, Events};
-use super::value::{Key, Word};
+use super::value::{Key, Origin, Word};
 use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::Length;
-use relations::{holds_array, is_string};
+use relations::{delta, holds_array, is_string, way};
 use transfer::{Resize, moves_bits, shift_kind, step_of_constant, sum_of_registers};
 
-pub(super) use relations::{Relation, proves_below};
+pub(super) use relations::{Relation, proves_below, store_span};
 pub(super) use transfer::{advance, refine};
 
 /// The most relations a point holds. A relation past it is not recorded, which only loses facts.
@@ -52,16 +56,57 @@ impl Lengths {
         }
     }
 
-    /// `self` met with `other` at a join: a relation the other point does not hold is lost. Whether one was.
+    /// `self` met with `other` at a join: a relation the other point does not hold is lost. A sum survives only where both points
+    /// have the same pending change of it: the same pending changes to its registers, or both sums zero and the steps going the
+    /// same way round (`way`). Whether one was lost.
     pub(super) fn meet(&mut self, other: &Lengths) -> bool {
         let before = self.relations.len();
-        self.relations.retain(|relation| other.relations.contains(relation));
+        let kept: Vec<Relation> = self.relations.iter().copied().filter(|relation| other.relations.contains(relation)
+            && match *relation {
+                Relation::SumInvariant { a, b, .. } => {
+                    let pending = |relations: &[Relation]| delta(relations, a) + delta(relations, b);
+                    let (here, there) = (pending(&self.relations), pending(&other.relations));
+                    here == there && if here == 0 {
+                        let (one, two) = (way(&self.relations, a, b), way(&other.relations, a, b));
+                        one.is_none() || two.is_none() || one == two
+                    } else {
+                        [a, b].into_iter().all(|reg| delta(&self.relations, reg) == delta(&other.relations, reg))
+                    }
+                }
+                _ => true,
+            }).collect();
+        self.relations = kept;
+        self.prune_deltas();
         self.relations.len() != before
     }
 
-    /// Retires every relation that names `register`.
+    /// Retires every relation that names `register`, and the pending changes no sum is left to hold.
     fn kill(&mut self, register: Register) {
         self.relations.retain(|relation| !relation.names(register));
+        self.prune_deltas();
+    }
+
+    /// Retires each `Delta` no `SumInvariant` names: a pending change is only meaningful to the sum it is part of.
+    fn prune_deltas(&mut self) {
+        let sums: Vec<Relation> = self.relations.iter().copied().filter(|relation| matches!(relation, Relation::SumInvariant { .. })).collect();
+        self.relations.retain(|relation| match *relation {
+            Relation::Delta { reg, .. } => sums.iter().any(|sum| sum.names(reg)),
+            _ => true,
+        });
+    }
+
+    /// Records that every two registers which hold parameters of this function on entry, unchanged (`Origin::Parameter`, Numbers),
+    /// sum to zero against them (`Relation::SumInvariant`): none of them has been stepped yet, so both differences are zero.
+    pub(super) fn pair_parameters(&mut self, ctx: &Ctx<'_>, words: &[Word]) {
+        let parameters: Vec<(Register, u16)> = words.iter().enumerate().filter_map(|(register, word)| match word.origin {
+            Some(Origin::Parameter { function, index }) if function == ctx.id && word.is_number() => Some((register as Register, index)),
+            _ => None,
+        }).collect();
+        for (position, &(a, base_a)) in parameters.iter().enumerate() {
+            for &(b, base_b) in &parameters[position + 1..] {
+                self.insert(Relation::SumInvariant { a, b, base_a, base_b });
+            }
+        }
     }
 
     /// Records that `index` holds 0: every array the registers hold has an empty prefix `[0, 0)` written (`Filled`).
@@ -74,16 +119,31 @@ impl Lengths {
     }
 
     /// Shifts `register` by `by`: the relations that name it move with it (`Relation::shifted`), and the ones that survive
-    /// are returned for the caller to keep.
+    /// are returned for the caller to keep. A sum the register is part of stays while its pending change stays within one
+    /// step, and the step is recorded as that change (`Delta`), so the sum is zero again once its partner steps back.
     fn rebase(&mut self, register: Register, by: i64) -> Vec<Relation> {
+        let pending = delta(&self.relations, register) + by;
+        let partnered = self.relations.iter().any(|relation| matches!(relation, Relation::SumInvariant { .. }) && relation.names(register));
+        let sums_hold = pending.abs() <= 1;
         let mut shifted = Vec::new();
         self.relations.retain(|relation| {
             if !relation.names(register) {
                 return true;
             }
-            shifted.extend(relation.shifted(register, by));
+            match *relation {
+                Relation::Delta { .. } => {}
+                Relation::SumInvariant { .. } => {
+                    if sums_hold {
+                        shifted.push(*relation);
+                    }
+                }
+                _ => shifted.extend(relation.shifted(register, by)),
+            }
             false
         });
+        if partnered && sums_hold && pending != 0 {
+            shifted.push(Relation::Delta { reg: register, d: pending });
+        }
         shifted
     }
 
@@ -97,14 +157,18 @@ impl Lengths {
     /// registers, or shifts a sum. True where the registers' writes are taken here; false where the caller retires every
     /// register the instruction writes.
     fn define(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, words: &[Word]) -> bool {
-        if instruction.result_flags() != 0 {
+        // An increment or a conversion may write a numeric local (its result flag), which is the register it writes all the same.
+        let numeric_step = matches!(instruction.op(), crate::bytecode::Op::IncDec | crate::bytecode::Op::ToNumeric) && instruction.writes_numeric_local();
+        if instruction.result_flags() != 0 && !numeric_step {
             return false;
         }
         if let Some(Operation::Move { destination, source }) = Operation::<u64, ()>::of(instruction) {
             let copies = self.copies(destination, source);
-            // A move of `index + k` into the index itself steps the index by `k`: its bounds shift with it.
+            // A move of `index + k` into the index itself steps the index by `k`: its bounds shift with it. The index may be a copy
+            // of the destination (`copy = index`, as `ToNumeric` makes one), which the move's step carries too.
             let stepped = self.relations.iter().find_map(|relation| match *relation {
-                Relation::Sum { sum, index, offset } if sum == source && index == destination => Some(offset),
+                Relation::Sum { sum, index, offset } if sum == source
+                    && (index == destination || self.relations.contains(&Relation::Sum { sum: index, index: destination, offset: 0 })) => Some(offset),
                 _ => None,
             });
             let kept = match stepped {
@@ -119,11 +183,28 @@ impl Lengths {
             }
             return true;
         }
-        // `i++` and `i--` in place: the index steps by one.
-        if instruction.op() == crate::bytecode::Op::IncDec && instruction.result_register() == instruction.register_b() {
+        // `i++` and `i--`: in place, the index steps by one; into another register, that register is the index plus one.
+        if instruction.op() == crate::bytecode::Op::IncDec {
             let by = if instruction.boolean_flag() == Some(true) { -1 } else { 1 };
-            for relation in self.rebase(instruction.result_register(), by) {
-                self.insert(relation);
+            let (destination, source) = (instruction.result_register(), instruction.register_b());
+            if destination == source {
+                for relation in self.rebase(destination, by) {
+                    self.insert(relation);
+                }
+            } else {
+                self.kill(destination);
+                if words.get(usize::from(source)).is_some_and(|word| word.is_number()) {
+                    self.insert(Relation::Sum { sum: destination, index: source, offset: by });
+                }
+            }
+            return true;
+        }
+        // `ToNumeric` of a Number is the Number: the copy is the source with no offset.
+        if instruction.op() == crate::bytecode::Op::ToNumeric {
+            let (destination, source) = (instruction.result_register(), instruction.register_b());
+            self.kill(destination);
+            if destination != source && words.get(usize::from(source)).is_some_and(|word| word.is_number()) {
+                self.insert(Relation::Sum { sum: destination, index: source, offset: 0 });
             }
             return true;
         }
@@ -208,7 +289,8 @@ impl Lengths {
                 words.get(usize::from(array)).is_some_and(|word| is_string(word) || !(every || resize.touches(word)))
             }
             Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } | Relation::AtLeast { .. }
-            | Relation::Loaded { .. } | Relation::Equal { .. } => true,
+            | Relation::Loaded { .. } | Relation::Equal { .. } | Relation::SumInvariant { .. } | Relation::Delta { .. }
+            | Relation::NonNegative { .. } => true,
         });
         if !self.define(ctx, instruction, words) {
             for register in instruction.written_registers() {
