@@ -106,57 +106,6 @@ impl Native {
         )
     }
 
-    pub(crate) fn is_typed_array_method(self) -> bool {
-        matches!(
-            self,
-            Self::Uint8ArraySet
-                | Self::Uint8ArrayReverse
-                | Self::Uint8ArrayFill
-                | Self::Uint8ArrayCopyWithin
-                | Self::Uint8ArraySubarray
-                | Self::Uint8ArraySlice
-                | Self::Uint8ArrayIncludes
-                | Self::Uint8ArrayIndexOf
-                | Self::Uint8ArrayJoin
-                | Self::Uint8ArrayToString
-                | Self::TypedArrayForEach
-                | Self::TypedArrayMap
-                | Self::TypedArrayFilter
-                | Self::TypedArraySome
-                | Self::TypedArrayEvery
-                | Self::TypedArrayFind
-                | Self::TypedArrayFindIndex
-                | Self::TypedArrayFindLast
-                | Self::TypedArrayFindLastIndex
-                | Self::TypedArrayReduce
-                | Self::TypedArrayReduceRight
-                | Self::TypedArrayLastIndexOf
-                | Self::TypedArraySort
-                | Self::TypedArrayAt
-                | Self::TypedArrayToReversed
-                | Self::TypedArrayToSorted
-                | Self::TypedArrayWith
-                | Self::TypedArrayToLocaleString
-                | Self::ArrayBufferIsView
-                | Self::Uint8ArrayFromBase64
-                | Self::Uint8ArrayFromHex
-                | Self::Uint8ArraySetFromBase64
-                | Self::Uint8ArraySetFromHex
-                | Self::Uint8ArrayToBase64
-                | Self::Uint8ArrayToHex
-        )
-    }
-    pub(crate) fn is_uint8_array_base64_method(self) -> bool {
-        matches!(
-            self,
-            Self::Uint8ArrayFromBase64
-                | Self::Uint8ArrayFromHex
-                | Self::Uint8ArraySetFromBase64
-                | Self::Uint8ArraySetFromHex
-                | Self::Uint8ArrayToBase64
-                | Self::Uint8ArrayToHex
-        )
-    }
     pub(crate) fn is_typed_array_constructor(self) -> bool {
         matches!(
             self,
@@ -175,31 +124,6 @@ impl Native {
                 | Self::Float64Array
         )
     }
-    pub(crate) fn is_typed_array_iterator(self) -> bool {
-        matches!(
-            self,
-            Self::Uint8ArrayKeys | Self::Uint8ArrayValues | Self::Uint8ArrayEntries
-        )
-    }
-    pub(crate) fn is_atomics_native(self) -> bool {
-        matches!(
-            self,
-            Self::AtomicsLoad
-                | Self::AtomicsStore
-                | Self::AtomicsAdd
-                | Self::AtomicsSub
-                | Self::AtomicsAnd
-                | Self::AtomicsOr
-                | Self::AtomicsXor
-                | Self::AtomicsExchange
-                | Self::AtomicsCompareExchange
-                | Self::AtomicsIsLockFree
-                | Self::AtomicsNotify
-                | Self::AtomicsWait
-                | Self::AtomicsWaitAsync
-                | Self::AtomicsPause
-        )
-    }
 
     pub(crate) fn is_bigint_native(self) -> bool {
         matches!(
@@ -209,36 +133,6 @@ impl Native {
                 | Self::BigIntToLocaleString
                 | Self::BigIntAsIntN
                 | Self::BigIntAsUintN
-        )
-    }
-    pub(crate) fn is_data_view_native(self) -> bool {
-        matches!(
-            self,
-            Self::DataViewGetUint8
-                | Self::DataViewSetUint8
-                | Self::DataViewGetInt8
-                | Self::DataViewSetInt8
-                | Self::DataViewGetUint16
-                | Self::DataViewSetUint16
-                | Self::DataViewGetInt16
-                | Self::DataViewSetInt16
-                | Self::DataViewGetUint32
-                | Self::DataViewSetUint32
-                | Self::DataViewGetInt32
-                | Self::DataViewSetInt32
-                | Self::DataViewGetFloat32
-                | Self::DataViewSetFloat32
-                | Self::DataViewGetFloat64
-                | Self::DataViewSetFloat64
-                | Self::DataViewGetFloat16
-                | Self::DataViewSetFloat16
-                | Self::DataViewGetBigInt64
-                | Self::DataViewSetBigInt64
-                | Self::DataViewGetBigUint64
-                | Self::DataViewSetBigUint64
-                | Self::DataViewBufferGetter
-                | Self::DataViewByteLengthGetter
-                | Self::DataViewByteOffsetGetter
         )
     }
 }

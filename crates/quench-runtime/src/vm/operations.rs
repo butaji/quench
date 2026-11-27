@@ -715,17 +715,6 @@ impl Vm {
         self.call_native_dispatch(p, native, this, args)
     }
 
-    /// The reaction natives of async iteration (`native_entry`'s async reaction entry), by kind.
-    fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
-        match native {
-            Native::AsyncFromSyncValue => self.async_from_sync_value(args),
-            Native::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
-            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
-            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
-            _ => self.async_generator_delegate_return_start(p, args),
-        }
-    }
-
     /// The natives no family above claims, by kind.
     fn call_native_table(
         &mut self,
@@ -735,20 +724,9 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
-            Native::IntlInitialize => {
-                let (global, object_prototype) = (self.realm.globals, self.object_proto);
-                layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)
-            }
-            #[cfg(feature = "wasm")]
-            Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
-            #[cfg(not(feature = "wasm"))]
-            Native::WebAssemblyInitialize => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
             Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
-            Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
             Native::IsHTMLDDA => Ok(Value::NULL),
-            Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
             Native::AbstractModuleSourceToStringTag => {
                 Ok(self.abstract_module_source_to_string_tag(this))
             }
@@ -782,86 +760,6 @@ impl Vm {
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => self.console_write(p, args, CapabilityId::WriteLine),
             Native::PrintError => self.console_write(p, args, CapabilityId::WriteErr),
-            Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDurationFormat => {
-                Err(self.type_error(p, "constructor requires new".into()))
-            }
-            Native::IntlListFormat => Err(self.type_error(p, "constructor requires new".into())),
-            Native::Date => self.date_call(),
-            Native::DateNow => Ok(self.date_now()),
-            Native::DateGetTime
-            | Native::DateValueOf
-            | Native::DateGetTimezoneOffset
-            | Native::DateGetFullYear
-            | Native::DateGetMonth
-            | Native::DateGetDate
-            | Native::DateGetDay
-            | Native::DateGetHours
-            | Native::DateGetMinutes
-            | Native::DateGetSeconds
-            | Native::DateGetMilliseconds
-            | Native::DateGetUTCFullYear
-            | Native::DateGetUTCMonth
-            | Native::DateGetUTCDate
-            | Native::DateGetUTCDay
-            | Native::DateGetUTCHours
-            | Native::DateGetUTCMinutes
-            | Native::DateGetUTCSeconds
-            | Native::DateGetUTCMilliseconds
-            | Native::DateGetYear
-            | Native::DateSetTime
-            | Native::DateSetFullYear
-            | Native::DateSetMonth
-            | Native::DateSetUTCMonth
-            | Native::DateSetDate
-            | Native::DateSetUTCDate
-            | Native::DateSetUTCFullYear
-            | Native::DateSetHours
-            | Native::DateSetMinutes
-            | Native::DateSetSeconds
-            | Native::DateSetMilliseconds
-            | Native::DateSetUTCHours
-            | Native::DateSetUTCMinutes
-            | Native::DateSetUTCSeconds
-            | Native::DateSetUTCMilliseconds
-            | Native::DateSetYear
-            | Native::DateToString
-            | Native::DateToDateString
-            | Native::DateToTimeString
-            | Native::DateToUTCString
-            | Native::DateToLocaleString
-            | Native::DateToLocaleDateString
-            | Native::DateToLocaleTimeString
-            | Native::DateToISOString
-            | Native::DateToJSON
-            | Native::DateToPrimitive
-            | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
-            Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
-            Native::RegExpCompile => self.regexp_compile_native(p, this, args),
-            Native::RegExpExec => self.regexp_builtin_exec(p, this, args),
-            Native::RegExpTest => self.regexp_test(p, this, args),
-            Native::RegExpEscape => self.regexp_escape_native(p, args),
-            Native::RegExpSymbolMatch => self.regexp_symbol_match(p, this, args),
-            Native::RegExpSymbolSearch => self.regexp_symbol_search(p, this, args),
-            Native::RegExpSymbolReplace => self.regexp_symbol_replace(p, this, args),
-            Native::RegExpSymbolMatchAll => self.regexp_symbol_match_all(p, this, args),
-            Native::RegExpSymbolSplit => self.regexp_symbol_split(p, this, args),
-            Native::RegExpToString => self.regexp_to_string_native(p, this),
-            Native::RegExpSpecies => Ok(this),
-            Native::RegExpLegacyGetter => self.regexp_legacy_getter_native(p, this),
-            Native::RegExpLegacySetter => self.regexp_legacy_setter_native(p, this, args),
-            Native::RegExpGlobal
-            | Native::RegExpIgnoreCase
-            | Native::RegExpMultiline
-            | Native::RegExpDotAll
-            | Native::RegExpUnicode
-            | Native::RegExpUnicodeSets
-            | Native::RegExpSticky
-            | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
-            Native::RegExpSource => self.regexp_slot_native(p, native, this),
-            Native::RegExpFlags => self.regexp_flags_native(p, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let key_value =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -965,66 +863,6 @@ impl Vm {
                 let number = self.to_number(p, value)?;
                 Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
-            // Each argument converted in order, then the one numeric body (`number::math_numbers`).
-            Native::MathLog | Native::MathPow => {
-                let a = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let x = self.to_number(p, a)?;
-                let y = if native == Native::MathPow {
-                    self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?
-                } else {
-                    f64::NAN
-                };
-                let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
-                Ok(Value::number(result.unwrap_or(f64::NAN)))
-            Native::ArrayPush => self.array_push_native(p, this, args),
-            Native::ArrayIsArray => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.is_array(p, value)? {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::ArrayPop => self.array_pop_native(p, this),
-            Native::ArraySlice => self.array_slice_native(p, this, args),
-            Native::ArrayIncludes => self.array_includes_native(p, this, args),
-            Native::ArrayJoin => self.array_join_native(p, this, args),
-            Native::ArrayConcat => self.array_concat_native(p, this, args),
-            Native::ArrayFlat => self.array_flatten_native(p, native, this, args),
-            Native::ArrayReverse => self.array_reverse_native(p, this),
-            Native::ArrayShift => self.array_shift_native(p, this),
-            Native::ArrayUnshift => self.array_unshift_native(p, this, args),
-            Native::ArraySplice => self.array_splice_native(p, this, args),
-            Native::ArrayFill => self.array_fill_native(p, this, args),
-            Native::ArrayAt
-            | Native::ArrayLastIndexOf
-            | Native::ArrayIndexOf
-            | Native::ArrayCopyWithin
-            | Native::ArrayWith
-            | Native::ArrayForEach
-            | Native::ArrayMap
-            | Native::ArrayFilter
-            | Native::ArraySome
-            | Native::ArrayEvery
-            | Native::ArrayFind
-            | Native::ArrayFindIndex
-            | Native::ArrayFindLast
-            | Native::ArrayFindLastIndex
-            | Native::ArrayGroup
-            | Native::ArrayGroupToMap
-            | Native::ArrayFlatMap
-            | Native::ArrayReduce
-            | Native::ArrayReduceRight => self.array_indexed_native(p, native, this, args),
-            Native::ArrayToReversed
-            | Native::ArrayToSpliced
-            | Native::ArraySort
-            | Native::ArrayToSorted
-            | Native::ArrayToString
-            | Native::ArrayToLocaleString
-            | Native::ArraySpecies => self.array_modern_native(p, native, this, args),
-            Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
-                self.array_iterator_native(p, native, this)
-            }
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args, false),
             Native::SharedArrayBufferSlice => self.array_buffer_slice_native(p, this, args, true),
             Native::ArrayBufferTransfer => {
@@ -1099,45 +937,16 @@ impl Vm {
             | Native::NumberIsFinite
             | Native::NumberIsInteger
             | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
-            Native::String => {
-                let argument = self.string_constructor_argument(args);
-                let text = if let Some(description) = self.heap.symbol_data(argument) {
-                    JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
-                } else {
-                    self.coerce_js_string(p, argument)?
-                };
-                Ok(self.heap.alloc_string(text))
-            }
-            Native::NumberFixed => self.number_format(p, this, args, native),
-            Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString
             | Native::SymbolToPrimitive
             | Native::SymbolValueOf
             | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::TemporalPlainMonthDayToString
-            | Native::TemporalPlainMonthDayToJSON
-            | Native::TemporalPlainMonthDayToLocaleString
-            | Native::TemporalPlainYearMonthToString
-            | Native::TemporalPlainYearMonthToJSON
-            | Native::TemporalPlainYearMonthToLocaleString => {
-                layer_hooks::intl_temporal_call(self, p, native, this, args)
-            }
             Native::Array
-            Native::Object
-            | Native::Array
-            | Native::Map
-            | Native::Set
-            | Native::WeakMap
-            | Native::WeakSet
-            | Native::WeakRef
-            | Native::DisposableStack
-            | Native::AsyncDisposableStack => self.construct_native(p, native, args),
             Native::Object | Native::Array | Native::Map | Native::Set => {
                 self.construct_native(p, native, args)
             }
-            Native::RegExp => self.construct_regexp_native(p, args, None),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
             }
@@ -1814,8 +1623,7 @@ pub fn exponentiate(base: f64, exponent: f64) -> f64 {
 /// family after them. The natives' table (`native_table::NativeTable::all`) holds each entry,
 /// built once from here.
 pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
-    head_entry(native)
-        .or_else(|| super::generator::entry(native))
+    super::generator::entry(native)
         .or_else(|| method_entry(native))
         .or_else(|| realm_entry(native))
         .or_else(|| super::promise::entry(native))
@@ -1827,19 +1635,12 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .unwrap_or(enter_table)
 }
 
-/// The natives that enter before every other family: wasm exports.
-fn head_entry(native: Native) -> Option<native_table::NativeFn> {
-    match native {
-        Native::WasmExportedFunction => super::wasm_js::entry(native),
-        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => Some(enter_generator),
-        Native::WasmExportedFunction => Some(enter_wasm_export),
-        _ => None,
-    }
-}
-
-/// The method families: string, array callbacks, HTML, the collections and the other keyed families.
+/// The method families: RegExp, string, array callbacks, finalization, disposal, the collections
+/// and the WebAssembly JS API.
 fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if let Some(entry) = super::regexp::natives::entry(native) {
+        return Some(entry);
+    }
     if let Some(entry) = super::primitives::string_entry(native) {
         return Some(entry);
     }
@@ -1869,81 +1670,23 @@ fn realm_entry(native: Native) -> Option<native_table::NativeFn> {
     if let Some(entry) = super::finalization::weak_entry(native) {
         return Some(entry);
     }
-    if native.is_typed_array_method() || native.is_typed_array_iterator() {
-        return Some(enter_typed_array);
-    }
-    if native.is_typed_array_constructor() {
-        return Some(enter_typed_array_called);
-    }
-    if native.is_atomics_native() {
-        return Some(enter_atomics);
-    }
-    None
+    super::typed_array::entry(native).or_else(|| super::atomics::entry(native))
 }
 
-/// The value families: Test262's agent, BigInt, Promise, async reactions, Object statics, lazy
+/// The value families: Test262's agent, BigInt, Object statics, lazy
 /// properties, proxy revocation and DataView.
 fn value_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
-        Native::Test262Agent => return Some(enter_test262_agent),
-        _ if native.is_bigint_native() => return Some(enter_bigint),
-        _ if native.is_promise_native() => return Some(enter_promise),
-        Native::AsyncFromSyncValue
-        | Native::AsyncFromSyncValueRejected
-        | Native::AsyncGeneratorReturnFulfilled
-        | Native::AsyncGeneratorReturnRejected
-        | Native::AsyncGeneratorDelegateReturnStart => return Some(enter_async_reaction),
-        _ if let Some(entry) = super::object_static::entry(native) => return Some(entry),
-        _ if let Some(entry) = super::lazy_data_property::entry(native) => return Some(entry),
-        _ if let Some(entry) = super::proxy::entry(native) => return Some(entry),
-        _ if native.is_object_static() => return Some(enter_object_static),
-        Native::LazyDataProperty => return Some(enter_lazy_data_property),
-        Native::ProxyRevoke => return Some(enter_proxy_revoke),
-        _ if native.is_data_view_native() => return Some(enter_data_view),
-        _ => None,
+        Native::Test262Agent => Some(enter_test262_agent),
+        _ if native.is_bigint_native() => Some(enter_bigint),
+        _ if let Some(entry) = super::object_static::entry(native) => Some(entry),
+        _ if let Some(entry) = super::lazy_data_property::entry(native) => Some(entry),
+        _ if let Some(entry) = super::proxy::entry(native) => Some(entry),
+        _ => super::data_view::entry(native),
     }
 }
 
-// The entries `native_entry` names: each runs one family's dispatch, as the family match did.
-
-fn enter_generator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.generator_prototype_method(p, native, this, args)
-fn enter_wasm_export(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_wasm_exported_function(p, args)
-}
-
-fn enter_array_callback(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.array_callback_native(p, native, this, args)
-}
-
-fn enter_finalization(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_finalization_registry_native(p, native, this, args)
-}
-
-fn enter_disposal(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_disposal_native(p, native, this, args)
-fn enter_string_html(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.string_html_method(p, native, this, args).expect("an HTML method's family is its own")
-}
-
-fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_collection_native(p, native, this, args)
-#[cfg(feature = "wasm")]
-fn enter_wasm_js(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_wasm_js_routed(p, native, this, args)
-}
-
-fn enter_typed_array(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.maybe_call_typed_array_native(p, native, this, args).expect("a typed array method's family is its own")
-}
-
-fn enter_typed_array_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Err(vm.type_error(p, "typed array constructor requires new".into()))
-}
-
-fn enter_atomics(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.atomics_native(p, native, args)
-}
+// The entries `native_entry` names for the families that have no module of their own yet.
 
 fn enter_test262_agent(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_test262_agent(p, args)
@@ -1951,31 +1694,6 @@ fn enter_test262_agent(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this:
 
 fn enter_bigint(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.bigint_native(p, native, this, args)
-}
-
-fn enter_promise(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_promise_native(p, native, this, args)
-}
-
-fn enter_async_reaction(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_async_reaction_native(p, native, args)
-fn enter_object_static(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_object_native(p, native, args)
-}
-
-fn enter_lazy_data_property(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.lazy_data_property_access(p, this, args)
-}
-
-fn enter_proxy_revoke(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    let callee = vm
-        .active_native_callable()
-        .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-    vm.proxy_revoke(callee)
-}
-
-fn enter_data_view(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.data_view_native(p, native, this, args)
 }
 
 fn enter_table(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
