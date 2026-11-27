@@ -160,5 +160,8 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             facts.numbers.insert(id, flow.numbers.clone());
         }
     }
+    if crate::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} constructions", facts.call_targets.len(), facts.guessed_calls.len(), facts.construct_targets.len());
+    }
     facts
 }
