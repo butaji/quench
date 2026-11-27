@@ -3,7 +3,10 @@
 
 use super::flow::FunctionFlow;
 use super::value::{Fact, Key, Origin, PrototypeBase};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The most closures a method read's closed set may hold (`candidates`): a test per arm.
+pub(crate) const MAX_CANDIDATES: usize = 8;
 
 /// Every binding write of the program, counted.
 pub(super) struct Census {
@@ -15,8 +18,8 @@ pub(super) struct Census {
     wild_owner: Vec<bool>,
     /// Whether a store through a key the analysis cannot name may write a named property.
     member_wild: bool,
-    /// Per named property, the one closure its stores of closures write, or `None` where they write two.
-    members: BTreeMap<u32, Option<u32>>,
+    /// Per named property, the closures its stores of closures write: a method read's closed set of callees.
+    members: BTreeMap<u32, BTreeSet<u32>>,
     /// Per class and property (static or prototype), the one closure every store of it writes.
     members_on: BTreeMap<(u32, bool, u32), Option<u32>>,
 }
@@ -29,7 +32,7 @@ impl Census {
             entry.0 += 1;
             entry.1 = fact;
         }
-        let mut members: BTreeMap<u32, Option<u32>> = BTreeMap::new();
+        let mut members: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
         let mut members_on: BTreeMap<(u32, bool, u32), Option<u32>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let stored = fact.ty.body_index();
@@ -37,10 +40,7 @@ impl Census {
                 // A method read's guess is the one closure stored under its name: a store of anything else (an
                 // instance's data field of the same name, `this.queue = q`) is never the callee a call reaches, and the
                 // call's record guards the callee it does reach (`target`).
-                Key::Member(atom) => if let Some(closure) = stored {
-                    let entry = members.entry(atom).or_insert(Some(closure));
-                    if *entry != Some(closure) { *entry = None; }
-                }
+                Key::Member(atom) => if let Some(closure) = stored { members.entry(atom).or_default().insert(closure); }
                 Key::MemberOn { class, instance, atom } => {
                     let entry = members_on.entry((class, instance, atom)).or_insert(stored);
                     if *entry != stored { *entry = None; }
@@ -105,10 +105,19 @@ impl Census {
             // A method read: the one closure every store of its name writes. The call's record still guards the
             // callee it reaches (a builtin's property of that name, a closure made again, a store through a computed
             // key, `member_wild`), so the proof only picks the callee its direct row tries first.
-            Origin::Member(atom) => self.members.get(&atom).copied().flatten(),
+            Origin::Member(atom) => self.members.get(&atom).filter(|set| set.len() == 1).and_then(|set| set.first().copied()),
             Origin::MemberOn { class, instance, atom } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
             _ => None,
         }
+    }
+
+    /// The closed set of functions a method read's callee may be, where it is more than one: every closure stored
+    /// under its name (`members`), as `target`'s one closure is. The call's records still guard the callee each
+    /// arm reaches, and a callee none names takes the VM's call.
+    pub(super) fn candidates(&self, callee: Fact) -> Option<&BTreeSet<u32>> {
+        if callee.ty.body_index().is_some() { return None; }
+        let Some(Origin::Member(atom)) = callee.origin else { return None };
+        self.members.get(&atom).filter(|set| (2..=MAX_CANDIDATES).contains(&set.len()))
     }
 
     /// The function whose `prototype` a `prototype` read off `base` takes.

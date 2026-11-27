@@ -1896,8 +1896,9 @@ pub(crate) fn lower_body(
 /// its pinned registers), and a base body leaves the same way.
 #[derive(Clone, Copy)]
 pub(crate) struct AheadLeaves<'a> {
-    /// By unit PC, the calls the closed world proves whose records the body reads (`ProvenCall`).
-    pub(crate) calls: &'a BTreeMap<usize, ProvenCall>,
+    /// By unit PC, the calls the closed world proves whose records the body reads (`ProvenCall`): one, or one per
+    /// function of a method read's closed set (`AotFacts::call_targets`).
+    pub(crate) calls: &'a BTreeMap<usize, Vec<ProvenCall>>,
     /// By constant pool slot, the heap value key (`HeapValueRecipe::String`) of each string
     /// constant the unit loads.
     pub(crate) strings: &'a BTreeMap<usize, u32>,
@@ -3789,7 +3790,8 @@ impl Lowering<'_, '_> {
         let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
         // An image's call the closed world proves reads its callee's words from the site's record (`ProvenCall`): a
         // construction takes the VM's call, as the proven callee is not a construction's.
-        let proven = self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc).copied()).filter(|_| !site.constructs());
+        let arms: &[ProvenCall] = self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc)).filter(|_| !site.constructs()).map_or(&[], Vec::as_slice);
+        let proven = arms.first().copied().filter(|_| arms.len() == 1);
         // The declared result the call's completion conforms to: the callee's, where every candidate declares the same one.
         let returns = callees.iter().filter(|_| !site.constructs())
             .map(|callee| declared::declared_return(self.program, callee.target.function))
@@ -3800,6 +3802,8 @@ impl Lowering<'_, '_> {
         match site.callee {
             quench_runtime::staged::forms::Callee::Register(register) if callees.len() >= 2 && !site.constructs() =>
                 self.polymorphic_call(state, site, record, register, &callees, (completed, missed, raised)),
+            quench_runtime::staged::forms::Callee::Register(register) if callees.is_empty() && arms.len() >= 2 =>
+                self.closed_set_call(state, site, record, register, arms, (completed, missed, raised)),
             _ => {
                 let owned = callees.first().copied();
                 let callee = owned.map(DirectSite::Owned).or(proven.map(DirectSite::Proven));
@@ -3919,6 +3923,38 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(fallback);
         let miss = cold_block(&mut self.builder);
         let call = CallSite { callee: None, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
+        self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+    }
+
+    /// A call of a register callee that the closed world proves is one of a closed set of functions (`arms`, an image's
+    /// method read whose name the program stores each of them under): a chain of tests of the callee register against
+    /// the identity each arm's record holds, each leading to that arm's direct call, and the last to the VM's call,
+    /// which binds the record of the function it reaches (`rebind_ahead_call`). As `polymorphic_call`, with identities
+    /// read from the records rather than known when the body compiles. The last arm's guard is the last test.
+    fn closed_set_call(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, register: Register,
+        arms: &[ProvenCall], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        use quench_runtime::staged::{CallOperation, Operation};
+        let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
+        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
+        // A record is bound by the VM's call, which runs between this body's runs and inside its calls out: read it at each test.
+        let record_flags = regions::flags(quench_runtime::staged::Region::EntryCell.mutable());
+        let Some((&last, tested)) = arms.split_last() else { return };
+        for &arm in tested {
+            let at = crate::symbol_words::symbol_address(&mut self.builder, arm.record.0, arm.record.1);
+            let identity = self.raw_load(Lane::I64, record_flags, at, std::mem::offset_of!(quench_bjit::call_record::CallRecord, callee) as i32);
+            let matched = self.raw_compare(Relation::Equal, word, identity);
+            let (taken, next) = (self.builder.create_block(), self.builder.create_block());
+            self.branch_if(matched, (taken, &[]), (next, &[]));
+            self.builder.switch_to_block(taken);
+            let miss = cold_block(&mut self.builder);
+            let call = CallSite { callee: Some(DirectSite::Proven(arm)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+            self.builder.switch_to_block(next);
+        }
+        // The last arm's own identity guard is the chain's last test: its miss is the VM's call, which binds the record
+        // of whichever function of the set it reaches (`rebind_ahead_call`), as a one-target call's miss does.
+        let miss = cold_block(&mut self.builder);
+        let call = CallSite { callee: Some(DirectSite::Proven(last)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 

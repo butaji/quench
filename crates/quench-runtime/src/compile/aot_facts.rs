@@ -41,6 +41,9 @@ pub struct AotFacts {
     /// row that guards the callee it reaches takes one (`FunctionFacts::call_target`); one that drops
     /// the guard takes the proven ones only (`FunctionFacts::proven_call_target`).
     pub(crate) guessed_calls: std::collections::BTreeSet<(u32, u32)>,
+    /// `(function, pc)` of a method call whose name the program stores two or more closures under → that closed set
+    /// (`Census::candidates`), each a guess the call's records guard.
+    pub(crate) call_candidates: BTreeMap<(u32, u32), Box<[u32]>>,
     /// `(function, pc)` of a construction (`new`) → the function it always constructs.
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
     /// Function id → register → the Number representation it always holds.
@@ -58,7 +61,7 @@ impl AotFacts {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.call_targets.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
+        self.call_targets.is_empty() && self.call_candidates.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
     }
 
     /// The functions some construction (`new`) always constructs.
@@ -83,6 +86,14 @@ impl<'a> FunctionFacts<'a> {
     /// A row taking it guards the callee it reaches.
     pub fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
+    }
+
+    /// The functions the call at `pc` may call: its one target, or the closed set of a method read (`call_candidates`).
+    pub fn call_targets(&self, pc: u32) -> Vec<u32> {
+        match self.facts.call_candidates.get(&(self.function, pc)) {
+            Some(set) => set.to_vec(),
+            None => self.call_target(pc).into_iter().collect(),
+        }
     }
 
     /// The function the plain call at `pc` always calls, proven: a row may drop its callee guard for it.
@@ -142,6 +153,9 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
         for call in &flow.calls {
+            if !call.construct && let Some(set) = census.candidates(call.callee) {
+                facts.call_candidates.insert((id, call.pc), set.iter().copied().collect());
+            }
             let Some(target) = census.target(call.callee) else { continue };
             let guessed = census.guessed(call.callee);
             if call.construct {
@@ -161,7 +175,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         }
     }
     if crate::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} constructions", facts.call_targets.len(), facts.guessed_calls.len(), facts.construct_targets.len());
+        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len());
     }
     facts
 }

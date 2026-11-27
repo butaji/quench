@@ -97,8 +97,13 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
     let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
+    // An image has no run to learn from, so it lowers as a JIT body that already left at its entry
+    // (`lane_region::entry_leave` in its leave set): no requirement a run may skip (an inlined call's
+    // receiver under `packet != null`, a field read under a branch) is checked at its entry. Each is
+    // checked where the run reaches it; what every run needs is the closed world's to prove.
+    let entry = [lane_region::entry_leave(unit)];
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, fields,
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
+        global_reads, facts, &entry, &BTreeMap::new(), &[], None, &[], Default::default(), admitted).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = quench_runtime::vm::jit_backend::ahead_lane_isa(target).ok_or("no lane ISA")?;
@@ -155,7 +160,10 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
-        frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
+        frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of),
+        // An image runs only in a VM whose host makes no IsHTMLDDA object (`install_ahead_body`), so `== null`
+        // decides by the word: an object of any record family is not nullish.
+        html_dda: false, ..VmFacts::STATIC };
     let crosses = crosses_bodies(unit, |pc| proven.contains_key(&pc));
     let (code, fault_poll, exits) = lowered_code(program, unit, function, (facts, &global_reads), &fields, target)?;
     // A lane body's call through the VM's call helper steps its callee's records, where the base
@@ -185,11 +193,13 @@ fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, call
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !(means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall)) || !super::base_region::callees::chains(*instruction) { continue; }
         let Some(Origin::Caller(record)) = unit.origins.get(pc).copied() else { continue };
-        let Some(callee) = facts.call_target(record) else { continue };
-        let named = |site: &aot_image::CallSite| site.function == function && site.pc == record;
-        if calls.iter().any(named) || sites.iter().any(named) { continue; }
-        sites.push(aot_image::CallSite { function, pc: record, callee,
-            record: quench_bjit::call_record::CallRecord { callee: aot_image::unbound_callee(), ..Default::default() } });
+        // One record per function the call may reach: its one target, or each of a method read's closed set.
+        for callee in facts.call_targets(record) {
+            let named = |site: &aot_image::CallSite| site.function == function && site.pc == record && site.callee == callee;
+            if calls.iter().any(named) || sites.iter().any(named) { continue; }
+            sites.push(aot_image::CallSite { function, pc: record, callee,
+                record: quench_bjit::call_record::CallRecord { callee: aot_image::unbound_callee(), ..Default::default() } });
+        }
     }
     sites
 }
@@ -236,7 +246,7 @@ fn crosses_bodies(unit: &lane_unit::Unit, proven: impl Fn(usize) -> bool) -> boo
 /// but a member read of a global name (`Math.sqrt(x)`), which is a native wherever the program
 /// writes no such member (the base body would call it through the same helper).
 #[cfg(feature = "jit")]
-fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) -> bool {
+fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, Vec<lane_region::ProvenCall>>) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};
     let defined = |register, before: usize| (0..before).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == register));
     let global_member = |pc: usize, callee| defined(callee, pc).is_some_and(|read| {
@@ -251,7 +261,7 @@ fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::Pr
 
 /// The `QUENCH_TRACE=aot-lanes` list of `unit`'s calls `proven` does not name, each with the name its callee was read by.
 #[cfg(feature = "jit")]
-fn trace_unproven_calls(program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>, (facts, calls): (&AotFacts, &[aot_image::CallSite])) {
+fn trace_unproven_calls(program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, proven: &BTreeMap<usize, Vec<lane_region::ProvenCall>>, (facts, calls): (&AotFacts, &[aot_image::CallSite])) {
     use quench_runtime::staged::meaning::{means, Meaning};
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !(means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall)) || proven.contains_key(&pc) { continue; }
@@ -296,24 +306,29 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver.
 #[cfg(feature = "jit")]
 fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], symbols: &mut SymbolTable)
-    -> BTreeMap<usize, lane_region::ProvenCall> {
+    -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
     (0..unit.origins.len()).filter_map(|pc| {
-        let (site, callee, this) = proven_site(program, unit, function, calls, pc)?;
-        let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc });
-        Some((pc, lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record }))
+        let arms: Vec<_> = proven_sites(program, unit, function, calls, pc).into_iter().map(|(site, callee, this)| {
+            let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc, callee: site.callee });
+            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record }
+        }).collect();
+        (!arms.is_empty()).then_some((pc, arms))
     }).collect()
 }
 
 /// The call at unit pc `pc` of `function`'s unit, where the image proves it (`calls`) and its row
 /// reads the callee's words from the site's record: its site, callee and callee's `this` form. A
 /// lexical-`this` callee is not proven, as its `this` is no receiver the row binds.
-fn proven_site<'a>(program: &'a ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &'a [aot_image::CallSite], pc: usize)
-    -> Option<(&'a aot_image::CallSite, &'a quench_runtime::bytecode::Function, super::base_region::callees::ThisForm)> {
-    let Origin::Caller(record) = *unit.origins.get(pc)? else { return None };
-    let site = calls.iter().find(|site| site.function == function && site.pc == record)?;
-    let callee = program.function_get(site.callee as usize)?;
-    let this = super::base_region::callees::ThisForm::of(callee);
-    (!this.lexical).then_some((site, callee, this))
+/// Every function of a closed set has its own site; the call is proven only where each of them is.
+fn proven_sites<'a>(program: &'a ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &'a [aot_image::CallSite], pc: usize)
+    -> Vec<(&'a aot_image::CallSite, &'a quench_runtime::bytecode::Function, super::base_region::callees::ThisForm)> {
+    let Some(Origin::Caller(record)) = unit.origins.get(pc).copied() else { return Vec::new() };
+    let arms: Option<Vec<_>> = calls.iter().filter(|site| site.function == function && site.pc == record).map(|site| {
+        let callee = program.function_get(site.callee as usize)?;
+        let this = super::base_region::callees::ThisForm::of(callee);
+        (!this.lexical).then_some((site, callee, this))
+    }).collect();
+    arms.unwrap_or_default()
 }
 
 pub use quench_runtime::vm::engine_types::AheadImages;
@@ -426,6 +441,12 @@ impl Vm {
             if traced { eprintln!("aot-lanes: install function {function}: refused, no image for the program"); }
             return None;
         };
+        // An image's lane bodies test `== null` by the value's word alone (`VmFacts::html_dda` false in
+        // `closed_lane_image`): a host that makes IsHTMLDDA objects (`document.all`) runs none of them.
+        if self.vm_facts().html_dda {
+            refuse_lane(function, "the host makes IsHTMLDDA objects, which the image's nullish tests assume absent");
+            return None;
+        }
         let lanes_allowed = super::admission::within_trace_range(quench_runtime::trace::Dev::AotLanes, function);
         // An image's base body does not run a lane activation (`fbits9`), so it installs nothing:
         // a function without a usable lane body runs its records in the general loop, which
@@ -485,7 +506,7 @@ impl Vm {
         // Closed (`LaneMethod::closed`): every call it makes that is no inlined frame's is a proven one, which a direct
         // caller's native frames admit as a JIT body's direct calls; its entry cell then publishes it, which the
         // proven calls of other image bodies enter. A body with any other call takes the VM's helper there.
-        let closed = !crosses_bodies(&unit, |pc| proven_site(program, &unit, function, &images.image.calls, pc).is_some());
+        let closed = !crosses_bodies(&unit, |pc| !proven_sites(program, &unit, function, &images.image.calls, pc).is_empty());
         let facts = lane_compile::LaneMethodFacts {
             unit, stable: lane_region::StableFacts { roots, slots, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(),
@@ -523,14 +544,13 @@ impl Vm {
     fn rebound_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, crate::dispatch_fast::ScriptCallTarget)) -> &'static str {
         let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
         let Some(live) = images.linked.as_ref() else { return "unlinked" };
-        let Some(key) = live.calls.key((function, pc)) else { return "unproven-site" };
-        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.world));
-        if facts.function_facts(function).call_target(pc) != Some(target.function) { return "other-function" }
+        // A call of a closed set has a record per function of the set: the one of the callee's function binds.
+        let Some(key) = live.calls.key((function, pc, target.function)) else { return "unproven-site" };
         let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
         let Some(view) = views.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return "no-view" };
         let Some(mut direct) = crate::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return "no-direct" };
         (direct.method, direct.body) = (None, None);
-        if live.calls.names(key, direct.callee) { return "already-named" }
+        if live.calls.names(key, direct.callee) { return if live.calls.refresh(key) { "refreshed" } else { "already-named" } }
         if !admits_proven(program, target.function, &direct) { return "not-admitted" }
         live.calls.bind(key, direct, self);
         "bound"

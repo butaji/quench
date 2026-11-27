@@ -138,6 +138,8 @@ pub(crate) unsafe fn body_call_status(context: u64, call_pc: u64) -> (u64, bool)
     let cx = context as usize as *mut LaneContext;
     if quench_runtime::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
     let vm = unsafe { vm(cx) };
+    // Whether the running body's run admitted direct calls: a completed call binds them again (`rearm_direct_calls`).
+    let armed = vm.lane_stack.plain_depth_limit.get() != 0;
     // `in_innermost_frame`'s own steps: link the native frames, materialize a running leaf, and install the
     // innermost native frame's caller state where one stands (any depth, not only the top).
     vm.link_natives(cx);
@@ -155,6 +157,8 @@ pub(crate) unsafe fn body_call_status(context: u64, call_pc: u64) -> (u64, bool)
     };
     // SAFETY: `context` is the running lane's.
     unsafe { refresh_body_bases(context) };
+    let vm = unsafe { self::vm(cx) };
+    if armed && status == LANE_CALL_COMPLETED && vm.lane_stack.plain_depth_limit.get() == 0 { vm.rearm_direct_calls(); }
     note_call_status(cx, "call", call_pc, status);
     (status, in_place)
 }

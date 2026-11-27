@@ -61,6 +61,7 @@ const TRANSITIONS: &[(TierState, TierEvent, TierState)] = &[
     (Compiling, Publish(Tier::Base), BJit),
     (Compiling, Publish(Tier::Quick), QJit),
     (Compiling, Publish(Tier::Ultra), UJit),
+    (Compiling, Publish(Tier::Ahead), UJit),
     (Compiling, Abandon, Warming),
     (BJit, Demote, Warming),
     (QJit, Demote, Warming),
@@ -97,10 +98,10 @@ pub(super) fn transition(from: TierState, event: TierEvent) -> Option<TierState>
     TRANSITIONS.iter().find(|(state, on, _)| *state == from && *on == event).map(|row| row.2)
 }
 
-/// Publishes `method` to `cell` as the effect of `Publish` from `from`; the new state, or
+/// Publishes `method`, a body of `tier`, to `cell` as the effect of `Publish` from `from`; the new state, or
 /// `None` (nothing published) where the machine does not take the transition.
-pub fn publish(cell: &EntryCell, from: TierState, method: &PublishedLaneMethod) -> Option<TierState> {
-    let to = transition(from, Publish(crate::vm::tier_policy::body_tier_in_lane()))?;
+pub fn publish(cell: &EntryCell, from: TierState, tier: Tier, method: &PublishedLaneMethod) -> Option<TierState> {
+    let to = transition(from, Publish(tier))?;
     cell.publish(method);
     Some(to)
 }

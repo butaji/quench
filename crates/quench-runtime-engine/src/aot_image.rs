@@ -99,7 +99,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
 
 /// The image of `program`: its `functions`, with what their bodies name (`symbols`), each named call
 /// record resolved to the call site a base body planned (`sites`). The one assembly every lowering ends in.
-fn assemble(program: &ResidualProgram, functions: Vec<AotFunction>, symbols: symbols::Finished, sites: &std::collections::BTreeMap<(u32, u32), CallSite>)
+fn assemble(program: &ResidualProgram, functions: Vec<AotFunction>, symbols: symbols::Finished, sites: &std::collections::BTreeMap<(u32, u32, u32), CallSite>)
     -> Result<AotImage, String> {
     let symbols::Finished { shapes, heap_values, atoms, labels, calls } = symbols;
     let calls = calls.into_iter().map(|site| sites.get(&site).copied().ok_or("a body names a call record no base body planned"))
@@ -181,7 +181,7 @@ fn lower_function(
     (facts, frozen): (&AotFacts, &crate::compiled::ClosedFrozen),
     target: &ImageTarget,
     id: u32,
-    (symbols, sites): (&mut symbols::SymbolTable, &mut std::collections::BTreeMap<(u32, u32), CallSite>),
+    (symbols, sites): (&mut symbols::SymbolTable, &mut std::collections::BTreeMap<(u32, u32, u32), CallSite>),
 ) -> Result<AotFunction, String> {
     let (mut base, calls) = base::lower(program, target, id, symbols)?;
     let (mut lane, lane_calls) = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?;
@@ -190,7 +190,7 @@ fn lower_function(
     if let Some(lane) = &mut lane {
         crate::aot_image::page::rewrite(&mut lane.code)?;
     }
-    sites.extend(calls.into_iter().chain(lane_calls).map(|call| ((call.function, call.pc), call)));
+    sites.extend(calls.into_iter().chain(lane_calls).map(|call| ((call.function, call.pc, call.callee), call)));
     Ok(AotFunction { id, base, lane })
 }
 

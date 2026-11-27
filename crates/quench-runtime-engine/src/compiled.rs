@@ -3912,6 +3912,17 @@ impl Vm {
     /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
     /// helper ends with it, so a row after one reads current bases and checks none.
+    /// Binds the running body's direct-call stack words again (`stack_entry_in_lane`) after a helper's call that
+    /// completed: the call's frames pushed and popped through the general loop (`LaneStack::frames_changed`), which
+    /// zeroed the plain depth limit, and without a new binding every later direct call of the run would refuse to
+    /// the helper row too. Only for a run that admitted direct calls at its entry (`armed`).
+    pub(crate) fn rearm_direct_calls(&mut self) {
+        let entry = self.stack_entry_in_lane(SHADOW_FRAMES);
+        let lane = frame_in_lane();
+        // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
+        unsafe { entry.bind(&mut (*lane).dispatch) };
+    }
+
     pub(crate) fn refresh_body_bases(&mut self) {
         let lane = frame_in_lane();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
