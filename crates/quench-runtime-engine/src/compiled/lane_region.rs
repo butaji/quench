@@ -1851,7 +1851,7 @@ pub(crate) fn lower_body(
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
-    let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
+    let abi = scalar::ScalarAbi::of(program, function_id, unit, direct, vm.facts).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
     let region = RegionSpecializer { facts: VmFacts { scalar: abi.filter(|_| scalar.is_some()), ..vm }, ..body }.specialize(program)
         .inspect_err(|_| if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
@@ -2104,11 +2104,10 @@ pub(crate) fn lower(
     if let Coverage::Loop { header, backedge, .. } = coverage {
         seed_constant_entries(&instructions, program, (header, backedge), &mut initial);
     }
-    let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls, &lowering.raises);
     if !numeric {
-        scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
-        scalar::declared_entry_types(function, &lowering.written, &mut initial);
-        int_inputs::closed_entry_types(vm, function_id, function, &mut initial);
+        if let Some(caller) = match unit.origins.get(entry_pc) { Some(super::lane_unit::Origin::Caller(pc)) => Some(*pc), _ => None } {
+            int_inputs::solved_entry_types(vm.facts, function_id, function, caller, &lowering.written, &mut initial);
+        }
         lowering.declared_definitions = declared::declared_local_types(program, function);
         int_inputs::closed_local_types(vm, function_id, function, &mut lowering.declared_definitions);
         lowering.declared_this = declared::declared_this(program, function);
@@ -2143,7 +2142,7 @@ pub(crate) fn lower(
         // proves the external input once; every subsequent edge carries the
         // same verified SSA view. This is an admission requirement, not a fact
         // assumed about the source program (a declared parameter type is checked
-        // the same way: `scalar::declared_entry_types`).
+        // the same way: the solve's entry cell).
         let mut refined = false;
         for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge().iter().map(|ty| ty.machine())) {
             if (carried == Type::INT32 || number_domains::is_double(carried)) && *input != carried {

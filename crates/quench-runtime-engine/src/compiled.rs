@@ -1543,7 +1543,7 @@ pub(crate) struct VmFacts<'a> {
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
     /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
     /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::plan_call`),
-    /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
+    /// its Number registers are entry types (`int_inputs::solved_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
