@@ -136,7 +136,9 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
             // A store into an object of no one class may land in any class's instance (`Key::MemberAny`).
             let key = match owner.class_site() { Some((class, true, _)) => Key::MemberOn { class, instance: true, atom }, _ => Key::MemberAny(atom) };
-            events.writes.push((key, state[usize::from(value)]));
+            // A store of an accessor's name may run its setter instead of storing the value (`accessor_call`): no class's field holds it.
+            let stored = if ctx.accessors.contains(&atom) { Word::UNKNOWN } else { state[usize::from(value)] };
+            events.writes.push((key, stored));
         }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Word::UNKNOWN));

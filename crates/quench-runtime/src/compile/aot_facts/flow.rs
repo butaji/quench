@@ -147,7 +147,7 @@ struct Arrival {
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, types: Option<&super::types::Types>) -> FunctionFlow {
+    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let whole = whole_literals(function);
@@ -162,6 +162,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         types,
         decode,
         records,
+        accessors,
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];

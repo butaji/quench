@@ -35,6 +35,9 @@ pub(super) struct Ctx<'a> {
     pub(super) decode: crate::staged::DecodeContext<'a>,
     /// The registers the method sites list as their arguments (`ResidualProgram::method_arguments`).
     pub(super) records: &'a [crate::bytecode::Register],
+    /// The names some accessor definition defines (`accessors::names_of`): a store of one may run its setter, so it is a
+    /// guest run (`runs_guest_code`), and no class's field takes the stored value (`fields::member_stores`).
+    pub(super) accessors: &'a std::collections::BTreeSet<u32>,
 }
 
 /// What an instruction does beyond its registers: the bindings it writes, and whether it makes
@@ -78,8 +81,9 @@ pub(super) fn settled(ctx: &Ctx<'_>, word: Word) -> Cell {
 /// Whether the instruction at a point may run guest code with the objects it touches: a call or construction, a getter,
 /// setter or proxy trap, a conversion that runs `valueOf`. It is the operation's effect row (`Effects::may_call_js`),
 /// met with what the facts before it (`state`) prove: a Number or binary operation over Numbers runs none, and a
-/// captured or environment binding's read runs none. A store through `this` is not counted: it is the constructor's
-/// own store, whose setter `class_layout` does not model. Whatever does not decode runs guest code.
+/// captured or environment binding's read runs none. A store through `this` runs none unless its name is an accessor's
+/// (`Ctx::accessors`): then it may be the setter's call, which the class layout reads as a call. Whatever does not decode
+/// runs guest code.
 pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> bool {
     if crate::staged::Invocation::of(instruction, ctx.decode).is_some() {
         return true;
@@ -87,6 +91,7 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
     let operation = Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or_else(|| decoded(instruction));
     match operation {
         None => true,
+        Some(Operation::SetField { atom, .. }) if ctx.accessors.contains(&atom) => true,
         Some(Operation::SetField { base: None, .. }) => false,
         Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
         Some(Operation::Number(number)) => !numbers_over_numbers(ctx, state, number),

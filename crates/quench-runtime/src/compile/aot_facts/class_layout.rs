@@ -11,6 +11,7 @@
 //! store of `this` on a sealed path leaves no order. A derived constructor, which binds `this` through
 //! `super()`, has no instance layout: the parent's stores are its fields too.
 
+use super::accessors::Accessors;
 use super::blocks::Blocks;
 use super::census::Census;
 use super::flow::FunctionFlow;
@@ -38,8 +39,8 @@ pub(super) fn of_program(program: &ResidualProgram, flows: &[FunctionFlow], cens
     let mut layouts = ClassLayouts::default();
     for &class in classes {
         let flow = &flows[class as usize];
-        let body = program.with_record(class as usize, |function| body_fields(function, flow, class, &proofs));
-        if let Some(fields) = body.filter(|fields| !shapes().any(|shape| reshapes_instance(shape, class, fields))) {
+        let body = program.with_record(class as usize, |function| body_fields(function, flow, class, &proofs, &census.accessors));
+        if let Some(fields) = body.filter(|fields| !shapes().any(|shape| reshapes_instance(shape, class, fields, &census.accessors))) {
             layouts.instances.insert(class, fields.into_boxed_slice());
         }
         let fields = names.get(&class).map_or(&[][..], Vec::as_slice);
@@ -74,9 +75,19 @@ fn outside(change: Change, fields: &[u32]) -> bool {
 }
 
 /// Whether `shape` may add, change or remove a property of an instance of `class` that `fields` does not name.
-/// Any such change, by any code, breaks the proof: the constructor's order is the instances' whole shape.
-fn reshapes_instance(shape: &Shape, class: u32, fields: &[u32]) -> bool {
-    shape.owner.classes().is_some_and(|classes| classes.may_hold(class)) && outside(shape.change, fields)
+/// Any such change, by any code, breaks the proof: the constructor's order is the instances' whole shape. A setter call
+/// (`claimed_store`) adds no property of its own, so it is no such change.
+fn reshapes_instance(shape: &Shape, class: u32, fields: &[u32], accessors: &Accessors) -> bool {
+    shape.owner.classes().is_some_and(|classes| classes.may_hold(class)) && outside(shape.change, fields) && !claimed_store(shape, class, accessors)
+}
+
+/// Whether `shape` is a store of `class`'s instances that an accessor claims (`Accessors::claims`): a setter call, which
+/// creates no field of the instance.
+fn claimed_store(shape: &Shape, class: u32, accessors: &Accessors) -> bool {
+    match (shape.owner, shape.change) {
+        (Owner::This(classes), Change::Field(atom)) => classes.single().is_some_and(|(only, _)| only == class) && accessors.claims(class, atom),
+        _ => false,
+    }
 }
 
 /// Whether `shape` may change the prototype of `class`, whose names are `fields`: its object may be a prototype
@@ -95,12 +106,12 @@ fn reshapes_prototype(shape: &Shape, class: u32, fields: &[u32], census: &Census
 /// The named fields the body of constructor `class` stores on `this`, in order, on every path to its end; None
 /// where the paths disagree, where the body changes an object it cannot order (`BodyOrder::step`), or where the
 /// body is derived (`super()` binds `this`, so the parent's stores are fields of the instance too).
-fn body_fields(function: &Function, flow: &FunctionFlow, class: u32, proofs: &Proofs) -> Option<Vec<u32>> {
+fn body_fields(function: &Function, flow: &FunctionFlow, class: u32, proofs: &Proofs, accessors: &Accessors) -> Option<Vec<u32>> {
     if (0..function.code.len()).any(|pc| function.instruction_at(pc).op().binds_this()) {
         return None;
     }
     let blocks = Blocks::of(&Successors::of_code(function), function.code.len());
-    let mut order = BodyOrder { class, blocks: &blocks, shapes: &flow.shapes[..], guest_runs: &flow.guest_runs[..], quiet: &flow.quiet[..], proofs };
+    let mut order = BodyOrder { class, blocks: &blocks, shapes: &flow.shapes[..], guest_runs: &flow.guest_runs[..], quiet: &flow.quiet[..], proofs, accessors };
     let inputs = solve(&mut order);
     let exit = (0..blocks.ranges.len())
         .filter(|&block| blocks.targets[block].is_empty())
@@ -150,6 +161,8 @@ struct BodyOrder<'a> {
     /// The proofs that a point runs no guest code (`FunctionFlow::quiet`), by PC.
     quiet: &'a [(u32, Quiet)],
     proofs: &'a Proofs,
+    /// The accessors, and the this-stores they claim as setter calls (`Accessors::claims`).
+    accessors: &'a Accessors,
 }
 
 impl BodyOrder<'_> {
@@ -193,6 +206,8 @@ impl BodyOrder<'_> {
             return Order::Fields { fields, sealed };
         };
         match (shape.owner, shape.change) {
+            // A setter call adds no field, and its guest run sealed the path (`guest_runs`): no own store may follow it.
+            _ if claimed_store(shape, self.class, self.accessors) => Order::Fields { fields, sealed: true },
             (Owner::This(_), Change::Field(atom)) if !sealed && classes.single().is_some_and(|(class, _)| class == self.class) => {
                 if !fields.contains(&atom) {
                     fields.push(atom);

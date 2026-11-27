@@ -63,6 +63,6 @@ pub(super) fn mask_bounds(ctx: &Ctx<'_>, instruction: WideInstruction, masks: &m
 
 /// The mask bound a store writes to the keys it stores to: a value the instruction reads that holds one (`mask_bounds`).
 pub(super) fn stored_bounds(instruction: WideInstruction, writes: &[(Key, Word)], masks: &[Option<i64>], record: &mut Record) {
-    let Some(bound) = used_registers(instruction).find_map(|register| masks[usize::from(register)]) else { return };
+    let Some(bound) = used_registers(instruction).into_iter().find_map(|register| masks[usize::from(register)]) else { return };
     record.bounds.extend(writes.iter().map(|&(key, _)| (key, bound)));
 }
