@@ -15,7 +15,7 @@
 use super::records::{AddressRange, RecordSpace};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
-    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT,
+    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, REGION_MASK, REGION_SHIFT, departed_header,
 };
 use crate::value::Value;
 use std::mem::{MaybeUninit, size_of};
@@ -151,6 +151,13 @@ impl ClassSpace {
     pub(super) fn stub_cursor_address(&self) -> usize {
         std::ptr::addr_of!(self.regions.0.cursor) as usize
     }
+
+    /// Frees the unallocated rest of region 0's cursor run and empties the cursor, returning how many stubs
+    /// that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps this run, so every
+    /// collection retires it with the record cursors, before occupancy or a snapshot reads region 0.
+    pub(super) fn retire_stub_cursor(&mut self) -> usize {
+        self.regions.0.retire_cursor()
+    }
 }
 
 /// The record id of the ordinary object whose stub is granule `g` in the class space at `base`: the
@@ -207,11 +214,6 @@ pub(crate) const fn region_capacity(granule: u32) -> u32 {
 /// The header word of a live class cell: the class id in the low half, zero above.
 pub(super) const fn live_header(class: u32) -> u64 {
     class as u64
-}
-
-/// The header word of a departed object: `DEPARTED_CLASS` in the low half, its record id above.
-pub(super) const fn departed_header(record: u32) -> u64 {
-    DEPARTED_CLASS as u64 | ((record as u64) << CLASS_RECORD_SHIFT)
 }
 
 pub(super) const fn header_class(header: u64) -> u32 {
