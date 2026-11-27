@@ -720,7 +720,6 @@ pub(super) fn install_loop_sites<'live>(
                     header,
                     backedge: pc as u32,
                     jump: records[pc].jump(),
-                    header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     taken: std::cell::Cell::new(0),
                     needed: std::cell::Cell::new(tiers.loops.warmup_taken),
@@ -750,7 +749,7 @@ pub(super) fn install_loop_sites<'live>(
     let mut sites = sites;
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
-        // The header names its site by the distance to the site's jump (`header_site_in_lane`).
+        // The header names its site by the distance to the site's jump.
         site.hookable &= headers.iter().filter(|header| **header == site.header).count() == 1
             && u16::try_from(*pc - site.header as usize).is_ok_and(|distance| distance < NO_CALL_LINK);
     }

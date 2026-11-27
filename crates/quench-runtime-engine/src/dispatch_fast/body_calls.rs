@@ -500,7 +500,7 @@ fn body_activate_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptC
 fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, registers: Registers) -> u64 {
     let vm = unsafe { vm(cx) };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
-    // lies outside its records: a loop region's `Callee` exit (`loop_native_in_lane`) leaves the
+    // lies outside its records: a loop body's `Callee` exit leaves the
     // lane there and needs its PC. The warming below takes the prologue's step.
     let start = unsafe { (*cx).base };
     // The activation's index among every frame, which `finish` finds it at where it is.

@@ -10,7 +10,6 @@ use crate::compiled::{LaneBodyOutcome, LaneExit};
 use crate::compiled::LaneBodyWork;
 
 pub(crate) use quench_runtime::vm::engine_types::LoopBody;
-pub(crate) use crate::compiled::loop_tier_up::{header_for_tier_up, left_for_tier_up};
 #[cfg(feature = "jit")]
 use crate::compiled::loop_tier_up::raise_tier_up;
 
@@ -260,18 +259,5 @@ pub(crate) fn loop_attempt(cx: *mut LaneContext, ip: Ip, resumed: LaneBodyLeft) 
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(raised_exit_in_lane(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane(cx, record, value)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::tier_up_resume;
-
-    #[test]
-    fn a_leave_at_a_held_loops_backedge_resumes_at_its_header() {
-        assert_eq!(tier_up_resume(4, 9, 9, true, true), Some(4));
-        assert_eq!(tier_up_resume(4, 9, 7, true, true), None, "a guard inside the loop keeps its own PC");
-        assert_eq!(tier_up_resume(4, 9, 9, false, true), None, "an unheld header would not dispatch");
-        assert_eq!(tier_up_resume(4, 9, 9, true, false), None, "no published body to dispatch");
     }
 }

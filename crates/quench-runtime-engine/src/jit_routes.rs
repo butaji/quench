@@ -19,8 +19,6 @@ pub(crate) struct JitRoutes {
     pub(crate) body: crate::compiled::lane_compile::BodyWork,
     /// A numeric function's image (`js_compiled::start`).
     pub(crate) numeric: crate::js_compiled::NumericStart,
-    /// A hot loop's region (`compiled::start_osr_region`).
-    pub(crate) region: crate::compiled::RegionStart,
     /// A Wasm program's code (`compile_program_with_diagnostics_and_root_mode`).
     pub(crate) wasm: crate::compiled::WasmCompile,
     /// The compiler of hot regexp programs (`regexp_native::enable`).
@@ -52,7 +50,6 @@ fn quench_layer_enable_jit() {
         lane: crate::dispatch_fast::jit_lane_body,
         body: <quench_runtime::vm::Vm as crate::compiled::lane_compile::CompiledLaneCompileVm>::compile_body_work,
         numeric: crate::js_compiled::start_numeric,
-        region: crate::compiled::compile_osr_region,
         wasm: <quench_runtime::vm::Vm as crate::compiled::CompiledVm4>::compile_wasm_program,
         regexp: crate::regexp_native::enable_compiler,
         // Chains, the target back edges, then pairs (`derive_lane_view`); an image, whose bodies leave to the
