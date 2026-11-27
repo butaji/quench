@@ -143,7 +143,8 @@ pub(super) fn construct_keeping_activation_in_lane(
             // one of its functions (`script_target_in_lane`).
             let code = unsafe { &*(*cx).code };
             let argument = construct_argument_in_lane(r, i);
-            if let Some(fields) = construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument) {
+            let read = construct_plan::field_reader(vm, callee);
+            if let Some(fields) = construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read) {
                 if let Some(fields) = fields {
                     record_forwarded_fields_in_lane(vm, callee, (forwarded.program(), forwarded.function), this, &fields);
                 }
