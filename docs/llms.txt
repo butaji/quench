@@ -9,7 +9,7 @@ Key measured facts (interpreter only in every engine: quench --no-jit, node --ji
 - JetStream 3, 17 Nov 2026, 56 tests all three finish: score 34.3 (Node 39.7, Bun 32.2); peak memory 28.5 MB (Node 110.1 MB, Bun 47.7 MB).
 - Test262: 53,353 passing, 0 failing, 53 waived (Node-identical failures, still counted as failures). WebAssembly spec: 67,124 of 67,124.
 - AOT, 25 Nov 2026: quench compile --strict-aot evaluates a program at build time up to its first run-time input. Hello world compiles to a 4,896-byte executable, 0.96 ms startup, 1.3 MB peak RSS (C: 14 KB, 0.89 ms, 1.36 MB; Node 22: 27.5 ms, 36 MB). Programs that read input fall back to a full image (readline REPL: 71.3 MB, 6.2 ms, 4.42 MB); shrinking that is in progress.
-- V8 v7, 25 Nov 2026 (commit 37fbb34909), geomean of 8: no-jit 2,986 vs Node --jitless 2,098 / Bun no-JIT 1,675 (1.42x), peak RSS 11.0 MB vs 24.7 MB (0.45x). JIT on (Quench default): 3,222 vs Node 25,093 / Bun 32,514 (0.10x), 27.2 MB vs 51.6 MB (0.53x). Target in every mode: 1.5x score at 0.5x RSS.
+- V8 v7, 27 Nov 2026 (commit 0505e2a326), geomean of 8: no-jit 3,467 vs Node --jitless 2,473 / Bun no-JIT 1,737 (1.40x), peak RSS 10.0 MB vs 24.6 MB (0.41x). JIT on (Quench default): 2,776 vs Node 29,757 / Bun 35,588 (0.08x), 17.3 MB vs 52.5 MB (0.33x). Target in every mode: 1.5x score at 0.5x RSS. Tier-order gate: 26 violations (shrink-only).
 - TypeScript types are never erased: annotations (and JSDoc in JavaScript) become facts checked once and trusted by every tier.
 - Native hot module replacement: quench --hmr app.ts; import.meta.hot / module.hot accept, dispose, decline, invalidate; unaccepted edits restart the process.
 - Daily progress posts: https://quench.run/blog/ (feed https://quench.run/blog/feed.xml)
