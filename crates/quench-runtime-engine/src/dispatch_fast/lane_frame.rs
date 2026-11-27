@@ -2237,6 +2237,12 @@ impl<const OP: u16, const FLAG: u8> LaneFields<'_, OP, FLAG> {
     const RESULT_A: bool = matches!(Self::OPCODE.field_layout(quench_runtime::bytecode::InstructionField::A),
         quench_runtime::bytecode::FieldLayout::ResultRegister);
     const REGISTER_A: bool = Self::OPCODE.field_layout(quench_runtime::bytecode::InstructionField::A).is_register_field();
+    /// A call whose immediate carries eval flags: in a lane record those bits are the lane's own
+    /// result marks (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`, `_AWAITED_FLAG`), since no
+    /// eval call runs as a lane call (`call_fits_in_lane`).
+    const CALL_MARKS: bool = matches!(Self::OPCODE.immediate_layout(),
+        quench_runtime::bytecode::ImmediateLayout::CallWindowWithEvalFlags
+            | quench_runtime::bytecode::ImmediateLayout::SingleArgumentCallWindowWithEvalFlags);
 }
 
 impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneFields<'_, OP, FLAG> {
@@ -2274,6 +2280,9 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
             // The view proved the immediate's high half zero (`row_near`): a capture of the running
             // function's own scope, whose depth then folds.
             (false, FLAG_SET) => self.0.imm() & u32::from(u16::MAX),
+            // A lane call's result marks are no eval flags: the decode reads the window alone.
+            (false, _) if Self::CALL_MARKS => self.0.imm() & !(quench_runtime::bytecode::ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG
+                | quench_runtime::bytecode::ImmediateLayout::LANE_CALL_RESULT_AWAITED_FLAG),
             (false, _) => self.0.imm(),
         };
         // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's, and a returning
