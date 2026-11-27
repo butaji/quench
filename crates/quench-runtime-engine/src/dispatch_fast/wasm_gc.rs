@@ -4,7 +4,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::dispatch_wasm::{wasm_gc_allocates, wasm_gc_reads_instance};
-use quench_runtime::staged::wasm_call::Call;
+use quench_runtime::staged::wasm_call::{Call, call_of};
 
 /// The running program's signature pool, cached on the lane for the program it was found for
 /// (`LaneContext::signatures`). `None` where the program has none; the general path raises that.
@@ -62,7 +62,7 @@ pub(crate) unsafe fn wasm_gc_in_lane<const OP: u16>(cx: *mut LaneContext, r: Reg
     // The row's opcode, a constant of the instantiation, so the step keeps only its arm.
     let op = const { opcode(OP) };
     let instruction = WideInstruction::new(op, instruction.a(), instruction.b(), instruction.c(), instruction.imm());
-    let value = if const { matches!(Call::of(opcode(OP)), Some(Call::IndirectTarget)) } {
+    let value = if const { matches!(call_of(opcode(OP)), Some(Call::IndirectTarget)) } {
         Some(indirect_target_in_lane(cx, vm, instruction, next, r)?)
     } else {
         // SAFETY: the context outlives the lane run.

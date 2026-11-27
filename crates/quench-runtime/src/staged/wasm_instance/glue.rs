@@ -3,20 +3,19 @@ use super::*;
 use crate::bytecode::{Class, Op, WideInstruction};
 use std::ops::Range;
 
-impl Instance {
-    /// The instance step `op` is (`Decoder::WasmInstance`), or none for an opcode it does not name.
-    pub const fn of(op: Op) -> Option<Self> {
-        match op.class() {
-            Class::Move => Some(Self::Move),
-            Class::LoadConst => Some(Self::Constant),
-            Class::WasmFillRegisters => Some(Self::Fill),
-            Class::WasmInstanceBinding => Some(Self::Binding),
-            Class::WasmGlobalGet => Some(Self::GlobalGet),
-            Class::WasmGlobalSet => Some(Self::GlobalSet),
-            Class::LoadLocal => Some(Self::LoadLocal),
-            Class::StoreLocal => Some(Self::StoreLocal),
-            _ => None,
-        }
+/// The instance step `op` is (`Decoder::WasmInstance`), or none for an opcode it does not name. A
+/// const fn, so a free fn: an inherent impl of `Instance` cannot live outside quench-staged.
+pub const fn instance_of(op: Op) -> Option<Instance> {
+    match op.class() {
+        Class::Move => Some(Instance::Move),
+        Class::LoadConst => Some(Instance::Constant),
+        Class::WasmFillRegisters => Some(Instance::Fill),
+        Class::WasmInstanceBinding => Some(Instance::Binding),
+        Class::WasmGlobalGet => Some(Instance::GlobalGet),
+        Class::WasmGlobalSet => Some(Instance::GlobalSet),
+        Class::LoadLocal => Some(Instance::LoadLocal),
+        Class::StoreLocal => Some(Instance::StoreLocal),
+        _ => None,
     }
 }
 

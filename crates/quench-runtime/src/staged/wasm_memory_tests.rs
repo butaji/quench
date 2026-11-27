@@ -4,8 +4,9 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::{
-    Access, AccessWasmMemoryExt, Memory, MemoryWasmMemoryExt, WasmMemory, WasmMemoryWrite, copy,
-    fill, load, size, store,
+    Access, AccessWasmMemoryExt, Memory, MemoryWasmMemoryExt, WasmMemory, WasmMemoryWrite,
+    access_of_load, access_of_store, copy, fill, load, memory_load_direct_op, memory_of,
+    memory_store_direct_op, size, store,
 };
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
@@ -26,14 +27,14 @@ fn pattern() -> Vec<u8> {
 fn scalar_loads() -> impl Iterator<Item = (MemoryLoad, Access)> {
     (0..)
         .map_while(MemoryLoad::from_tag)
-        .filter_map(|load| Some((load, Access::of_load(load)?)))
+        .filter_map(|load| Some((load, access_of_load(load)?)))
 }
 
 fn scalar_stores() -> impl Iterator<Item = (MemoryStore, Access)> {
     (0..)
         .map_while(MemoryStore::from_tag)
         .filter(|store| store.value_type() != WasmType::V128)
-        .map(|store| (store, Access::of_store(store)))
+        .map(|store| (store, access_of_store(store)))
 }
 
 fn instance(memory: &mut [u8]) -> ConcreteInstance<'_> {
@@ -271,24 +272,24 @@ fn memory_size_shifts_the_length_by_the_page_bits() {
 #[test]
 fn the_table_names_every_direct_access_and_bulk_operation() {
     for (operator, access) in scalar_loads() {
-        let Some(op) = operator.direct_op() else {
+        let Some(op) = memory_load_direct_op(operator) else {
             panic!("{operator:?} has a scalar access but no direct opcode");
         };
-        assert_eq!(Memory::of(op), Some(Memory::Load(access)), "{operator:?}");
+        assert_eq!(memory_of(op), Some(Memory::Load(access)), "{operator:?}");
     }
     for (operator, access) in scalar_stores() {
-        if let Some(op) = operator.direct_op() {
-            assert_eq!(Memory::of(op), Some(Memory::Store(access)), "{operator:?}");
+        if let Some(op) = memory_store_direct_op(operator) {
+            assert_eq!(memory_of(op), Some(Memory::Store(access)), "{operator:?}");
         }
     }
-    assert_eq!(Memory::of(Op::WasmMemorySize), Some(Memory::Size));
-    assert_eq!(Memory::of(Op::WasmMemoryFill), Some(Memory::Fill));
-    assert_eq!(Memory::of(Op::WasmMemoryCopy), Some(Memory::Copy));
-    assert_eq!(Memory::of(Op::WasmI32Add), None);
-    assert_eq!(Access::of_load(MemoryLoad::V128Load), None);
+    assert_eq!(memory_of(Op::WasmMemorySize), Some(Memory::Size));
+    assert_eq!(memory_of(Op::WasmMemoryFill), Some(Memory::Fill));
+    assert_eq!(memory_of(Op::WasmMemoryCopy), Some(Memory::Copy));
+    assert_eq!(memory_of(Op::WasmI32Add), None);
+    assert_eq!(access_of_load(MemoryLoad::V128Load), None);
     assert!(Step::of(Op::WasmI64Load32S, 0).is_some_and(Step::reads_memory));
     assert!(!Step::of(Op::WasmI32Add, 0).is_some_and(Step::reads_memory));
-    let narrow = Memory::of(Op::WasmI64Load32S);
+    let narrow = memory_of(Op::WasmI64Load32S);
     assert_eq!(
         narrow,
         Some(Memory::Load(Access {
@@ -348,7 +349,7 @@ fn an_address_that_wraps_the_word_is_out_of_bounds() {
 
 #[test]
 fn a_growth_names_its_memory_and_page_count_and_calls_out() {
-    assert_eq!(Memory::of(Op::WasmMemoryGrow), Some(Memory::Grow));
+    assert_eq!(memory_of(Op::WasmMemoryGrow), Some(Memory::Grow));
     let grow = WideInstruction::new(Op::WasmMemoryGrow, 1, 2, 3, 0);
     assert_eq!(Memory::Grow.memories(grow), [Some(2), None]);
     assert_eq!(Memory::Grow.operands(grow), [Some(3), None, None]);
