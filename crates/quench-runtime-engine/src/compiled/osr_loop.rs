@@ -248,7 +248,7 @@ fn held_registers(
     let definitions = |register: Register| {
         instructions.iter().copied().filter(move |instruction| number_definition(*instruction) == Some(register))
     };
-    let mut pending: std::collections::BTreeSet<Register> = instructions
+    let pending: std::collections::BTreeSet<Register> = instructions
         .iter()
         .copied()
         .filter_map(object_reads)
@@ -260,36 +260,43 @@ fn held_registers(
         })
         .collect();
     // A path through a register still pending waits for it; a register whose definitions
-    // read different paths, or wait on one another, holds no field.
-    loop {
-        let mut decided = Vec::new();
-        for register in pending.iter().copied() {
-            let mut paths = Vec::new();
-            for instruction in definitions(register) {
-                let waits = field_base(instruction, sites).and_then(FieldBase::register_index);
-                if waits.is_some_and(|base| pending.contains(&base)) {
-                    paths.clear();
-                    break;
+    // read different paths, or wait on one another, holds no field. Each pass decides the
+    // registers no pending one blocks, and records their paths in `held`.
+    let mut rounds = Passes {
+        pass: |pending: &std::collections::BTreeSet<Register>| {
+            let mut decided = Vec::new();
+            for register in pending.iter().copied() {
+                let mut paths = Vec::new();
+                for instruction in definitions(register) {
+                    let waits = field_base(instruction, sites).and_then(FieldBase::register_index);
+                    if waits.is_some_and(|base| pending.contains(&base)) {
+                        paths.clear();
+                        break;
+                    }
+                    paths.push(field_path(instruction, sites, &held));
                 }
-                paths.push(field_path(instruction, sites, &held));
+                if paths.is_empty() {
+                    continue;
+                }
+                let first = paths[0].clone();
+                let one = first.as_ref().filter(|first| paths.iter().all(|path| path.as_ref().is_some_and(|path| path.reads_as(first))));
+                decided.push((register, one.cloned()));
             }
-            if paths.is_empty() {
-                continue;
+            let mut next = pending.clone();
+            for (register, path) in decided {
+                next.remove(&register);
+                if let Some(path) = path {
+                    held.insert(register, path);
+                }
             }
-            let first = paths[0].clone();
-            let one = first.as_ref().filter(|first| paths.iter().all(|path| path.as_ref().is_some_and(|path| path.reads_as(first))));
-            decided.push((register, one.cloned()));
-        }
-        if decided.is_empty() {
-            return held;
-        }
-        for (register, path) in decided {
-            pending.remove(&register);
-            if let Some(path) = path {
-                held.insert(register, path);
-            }
-        }
-    }
+            next
+        },
+        edge: [0],
+        initial: pending,
+    };
+    quench_runtime::dataflow::solve(&mut rounds);
+    drop(rounds);
+    held
 }
 
 pub(crate) use quench_runtime::vm::engine_types::FieldUse;
@@ -480,19 +487,64 @@ fn tagged_registers_with_failure(
     Ok(tagged)
 }
 
+/// A fixpoint of one whole-loop pass: `pass` maps a state to the next, and the states settle once a
+/// pass returns the state it was given. The one block flows into itself (`dataflow::solve`).
+struct Passes<S, F> {
+    pass: F,
+    edge: [usize; 1],
+    initial: S,
+}
+
+impl<S: Clone + PartialEq, F: FnMut(&S) -> S> quench_runtime::dataflow::Dataflow for Passes<S, F> {
+    type State = S;
+    fn blocks(&self) -> usize {
+        1
+    }
+    fn edges(&self, _block: usize) -> &[usize] {
+        &self.edge
+    }
+    fn entry_state(&self, _block: usize) -> Option<S> {
+        Some(self.initial.clone())
+    }
+    /// Takes the newer pass's state, where it differs: each pass only grows or shrinks what it
+    /// reads, so the states settle.
+    fn join(&self, into: &mut S, incoming: &S) -> bool {
+        let changed = into != incoming;
+        if changed {
+            into.clone_from(incoming);
+        }
+        changed
+    }
+    fn transfer(&mut self, _block: usize, state: &S) -> S {
+        (self.pass)(state)
+    }
+}
+
 /// Extends `tagged` along moves and type tests to the fixed point where every number definition
 /// of a tagged register is one that may carry a boxed value; the offset of one that cannot.
 fn propagate_tagged(instructions: &[WideInstruction], constants: &[Value], header: u32, tagged: &mut std::collections::BTreeSet<Register>) -> Result<(), usize> {
     let boxed = boxed(instructions);
-    loop {
-        let before = tagged.len();
-        for (offset, instruction) in instructions.iter().copied().enumerate().rev() {
-            tag_definition(instruction, offset, (constants, header, &boxed), tagged)?;
-        }
-        if tagged.len() == before {
-            return Ok(());
-        }
+    let mut failure = None;
+    let mut sweeps = Passes {
+        pass: |state: &std::collections::BTreeSet<Register>| {
+            let mut next = state.clone();
+            for (offset, instruction) in instructions.iter().copied().enumerate().rev() {
+                if let Err(at) = tag_definition(instruction, offset, (constants, header, &boxed), &mut next) {
+                    failure = Some(at);
+                    return state.clone();
+                }
+            }
+            next
+        },
+        edge: [0],
+        initial: tagged.clone(),
+    };
+    let fixed = quench_runtime::dataflow::solve(&mut sweeps).pop().flatten();
+    if let Some(at) = failure {
+        return Err(at);
     }
+    *tagged = fixed.expect("the one block is seeded");
+    Ok(())
 }
 
 /// What one number definition adds to `tagged`, or the offset where it cannot be admitted.
@@ -2341,18 +2393,14 @@ fn exits_before_effects(instruction: WideInstruction) -> bool { !lowered_nativel
 /// The register a native run defines at an instruction: an exit's definition is the VM's.
 fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at)) }
 
-/// The region PCs control continues at from the instruction at `pc`, and the PCs outside it
-/// where the lane resumes; as lowered.
-fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
+/// Visits the region PCs control continues at from the instruction at `pc`, and the PCs outside
+/// it where the lane resumes; as lowered. An instruction that exits before its effects has none.
+fn for_each_successor(region: &LoopRegion, pc: u32, mut visit: impl FnMut(u32)) {
     let instruction = region.instructions[(pc - region.header) as usize];
     if exits_before_effects(instruction) {
-        return Vec::new();
+        return;
     }
-    let mut successors = Vec::with_capacity(2);
-    quench_runtime::bytecode::for_each_instruction_successor(pc as usize, instruction, |successor| {
-        successors.push(successor as u32);
-    });
-    successors
+    quench_runtime::bytecode::for_each_instruction_successor(pc as usize, instruction, |successor| visit(successor as u32));
 }
 
 fn webs(region: &LoopRegion) -> Webs {
@@ -2378,9 +2426,9 @@ fn webs(region: &LoopRegion) -> Webs {
         for (word, kill) in out.iter_mut().zip(&written[&register]) { *word &= !kill; }
         quench_runtime::webs::set(out, entries + offset);
     };
-    let next = |offset: usize, deliver: &mut dyn FnMut(quench_runtime::webs::Next)| for pc in successors(region, region.header + offset as u32) {
+    let next = |offset: usize, deliver: &mut dyn FnMut(quench_runtime::webs::Next)| for_each_successor(region, region.header + offset as u32, |pc| {
         deliver(if inside(pc) { quench_runtime::webs::Next::Row((pc - region.header) as usize) } else { quench_runtime::webs::Next::Leave(pc) });
-    };
+    });
     let flow = quench_runtime::webs::solve(count, bits, &seed, &transfer, &next, false);
     let mut webs = Webs { flow, written, sets: quench_runtime::webs::DefSets::new(bits), leaves: BTreeMap::new(), entry_read: vec![false; entries] };
     let mut reads: Vec<Definition> = Vec::new();
@@ -2417,11 +2465,11 @@ fn webs(region: &LoopRegion) -> Webs {
             }
         };
         leave(&mut webs, pc, false, &mut reads);
-        for successor in successors(region, pc).into_iter().filter(|pc| !inside(*pc)) {
-            // A fallthrough exit sees this instruction's completed definition;
-            // an exit before its effects sees the incoming web instead.
+        // A fallthrough exit sees this instruction's completed definition;
+        // an exit before its effects sees the incoming web instead.
+        for_each_successor(region, pc, |successor| if !inside(successor) {
             leave(&mut webs, successor, true, &mut reads);
-        }
+        });
     }
     let read_webs: BTreeSet<Definition> = reads.iter().map(|definition| webs.find(*definition)).collect();
     webs.entry_read = (0..entries).map(|entry| read_webs.contains(&webs.find(entry))).collect();
