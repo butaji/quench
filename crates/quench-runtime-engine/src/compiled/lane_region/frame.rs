@@ -396,6 +396,8 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     mut fact: RegisterFact) {
     let index = usize::from(register);
     written.insert(index);
+    // The definition names another value: a kept receiver aliasing the register lets go of it.
+    super::virtual_objects::aliases::release_alias(&mut state.virtuals, register);
     let variable = match fact.value.representation {
         Representation::Tagged => registers.tagged[index],
         Representation::Int32 => register_int(builder, registers, index),
