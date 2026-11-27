@@ -9,10 +9,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::bytecode::{ResidualProgram, Traits};
+use crate::bytecode::{Register, ResidualProgram, Traits};
 use crate::staged::effects::{call_form, CallForm, Signature};
 use crate::staged::{Callee, DecodeContext, Invocation};
-use crate::typed_ir::{Classes, FactKey};
+use crate::typed_ir::{Cell, Classes, FactKey};
 
 use super::aot_facts::AotFacts;
 use super::signatures::Signatures;
@@ -68,51 +68,67 @@ fn form_of(arms: &[Arm], inlinable: impl Fn(u32) -> bool, signature: impl Fn(u32
     call_form(callee, false)
 }
 
-/// The plan of a call with the one target `function`: proven, so no key is read and no miss path exists.
-fn single_target(function: u32, signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
+/// The plan of a call with the one target `function` and the miss `miss` (`Miss::None` where no key the call
+/// reads is live): its one arm, and its form (`form_of`).
+fn single_target(function: u32, miss: Miss, signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
     let arms = vec![Arm { class: None, function }].into_boxed_slice();
     let form = form_of(&arms, inlinable, |function| signatures.of(function));
-    CallPlan { form, arms, miss: Miss::None }
+    CallPlan { form, arms, miss }
 }
 
-/// The plan of the call at `pc` of `caller`, or None where the site keeps its own path.
-///
-/// A method call (`method_atom: Some(atom)`) whose receiver's classes (`access_classes`) are a closed union
-/// gets one arm per class, each the body of that class's own method `atom` (`FactKey::Field`). Any other
-/// call gets one arm for its one proven target (`proven_call_target`). A guessed target is no plan: a guess
-/// is guarded by the call's record, and the key it was read from is not carried to this site, so the plan
-/// could not name the miss. A union with a class that has no single body, a receiver of no closed union
-/// and a call with several targets keep the site's own path.
-pub fn plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, method_atom: Option<u32>, inlinable: impl Fn(u32) -> bool) -> Option<CallPlan> {
-    let site = facts.function_facts(caller);
-    let (arms, keys): (Box<[Arm]>, Vec<FactKey>) = match method_atom {
-        Some(atom) => {
-            let classes = site.access_classes(pc);
-            if !matches!(classes, Classes::Set { .. }) {
-                return None;
-            }
-            let ids = classes.ids();
-            let arms = class_arms(ids, |class| facts.cell(FactKey::Field { class, instance: true, atom })?.ty.body_index())?;
-            let keys = ids.iter().map(|&class| FactKey::Field { class, instance: true, atom }).collect();
-            (arms, keys)
-        }
-        None => {
-            let targets = site.call_targets(pc);
-            let &[function] = targets.as_slice() else { return None };
-            if site.proven_call_target(pc) != Some(function) {
-                return None;
-            }
-            (vec![Arm { class: None, function }].into_boxed_slice(), Vec::new())
-        }
-    };
+/// The one closure body a call reaches when its callee holds `cell` (`Type::body_index`), with the miss of the
+/// keys the callee was read from (`miss_of`): a live key the call subscribes to. None where `cell` names no single
+/// body, so the site keeps its own path.
+fn target_of(cell: Cell, keys: &[FactKey], live: impl Fn(FactKey) -> bool) -> Option<(u32, Miss)> {
+    let function = cell.ty.body_index()?;
+    Some((function, miss_of(keys, live)))
+}
+
+/// The plan of the method call at `pc` of `caller` that names `atom`. Its receiver's classes (`access_classes`)
+/// must be a closed union: one arm per class, each the body of that class's own method `atom` (`FactKey::Field`),
+/// and a miss on the first of those fields the world keeps live. A union with a class that has no single body,
+/// or a receiver of no closed union, keeps the site's own path.
+fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, atom: u32, inlinable: impl Fn(u32) -> bool) -> Option<CallPlan> {
+    let classes = facts.function_facts(caller).access_classes(pc);
+    if !matches!(classes, Classes::Set { .. }) {
+        return None;
+    }
+    let ids = classes.ids();
+    let arms = class_arms(ids, |class| facts.cell(FactKey::Field { class, instance: true, atom })?.ty.body_index())?;
+    let keys: Vec<FactKey> = ids.iter().map(|&class| FactKey::Field { class, instance: true, atom }).collect();
     let miss = miss_of(&keys, |key| facts.live(key));
     let form = form_of(&arms, &inlinable, |function| signatures.of(function));
     Some(CallPlan { form, arms, miss })
 }
 
+/// The plan of the call at `pc` of `caller` whose callee is in `register`, or None where the site keeps its own
+/// path. Three facts name its one target, in order:
+///
+/// - the key the callee was read from (`call_key`): the key's settled cell names the closure body, and the miss is
+///   that key while it is live (a store that may write another closure there);
+/// - else the register's settled cell at `pc` (`cell_at`) names one body: nothing the call reads is a key, so no miss;
+/// - else the census's proof of the call (`proven_call_target`).
+fn register_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, register: Register, inlinable: impl Fn(u32) -> bool) -> Option<CallPlan> {
+    let site = facts.function_facts(caller);
+    let live = |key: FactKey| facts.live(key);
+    if let Some((_, key)) = site.call_key(pc) {
+        let (function, miss) = target_of(facts.cell(key)?, &[key], live)?;
+        return Some(single_target(function, miss, signatures, &inlinable));
+    }
+    if let Some((function, miss)) = site.cell_at(pc, register).and_then(|cell| target_of(cell, &[], live)) {
+        return Some(single_target(function, miss, signatures, &inlinable));
+    }
+    let &[function] = site.call_targets(pc).as_slice() else { return None };
+    if site.proven_call_target(pc) != Some(function) {
+        return None;
+    }
+    Some(single_target(function, Miss::None, signatures, &inlinable))
+}
+
 /// The plans of every call `function` makes, by pc. A known function's call and a construction (`new`) with
-/// its one constructed function are proven single targets; a method call is planned by its name (`Callee::Method`);
-/// a register callee is planned from its one proven target. A call no plan covers is absent from the map.
+/// its one constructed function are proven single targets (`Miss::None`); a method call is planned by its name
+/// (`Callee::Method`, `method_plan`); a register callee by the target its key or its cell names (`register_plan`).
+/// A call no plan covers is absent from the map.
 pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Signatures, function: u32, inlinable: impl Fn(u32) -> bool) -> BTreeMap<u32, CallPlan> {
     let decode = DecodeContext::of(program);
     let calls: Vec<(u32, bool, Invocation)> = program.with_record(function as usize, |record| {
@@ -123,12 +139,12 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
     });
     calls.into_iter().filter_map(|(pc, construct, invocation)| {
         let site_plan = if construct {
-            facts.function_facts(function).construct_target(pc).map(|target| single_target(target, signatures, &inlinable))
+            facts.function_facts(function).construct_target(pc).map(|target| single_target(target, Miss::None, signatures, &inlinable))
         } else {
             match invocation.callee {
-                Callee::Known(known) => Some(single_target(u32::from(known), signatures, &inlinable)),
-                Callee::Method { atom, .. } => plan(facts, signatures, function, pc, Some(atom), &inlinable),
-                Callee::Register(_) => plan(facts, signatures, function, pc, None, &inlinable),
+                Callee::Known(known) => Some(single_target(u32::from(known), Miss::None, signatures, &inlinable)),
+                Callee::Method { atom, .. } => method_plan(facts, signatures, function, pc, atom, &inlinable),
+                Callee::Register(register) => register_plan(facts, signatures, function, pc, register, &inlinable),
             }
         };
         site_plan.map(|site_plan| (pc, site_plan))
@@ -138,6 +154,7 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::typed_ir::Type;
 
     #[test]
     fn a_closed_union_of_four_classes_is_four_arms() {
@@ -176,6 +193,21 @@ mod tests {
         assert_eq!(form_of(&arms, |_| true, |_| Signature::ANY), CallForm::Inline);
         assert_eq!(form_of(&arms, |function| function == 1, |_| Signature::NEVER), CallForm::Frameless);
         assert_eq!(form_of(&arms, |_| false, |function| if function == 2 { Signature::ANY } else { Signature::NEVER }), CallForm::Framed);
+    }
+
+    #[test]
+    fn a_keyed_call_names_its_cells_body_and_subscribes_to_the_key_while_live() {
+        let key = FactKey::Global(5);
+        let cell = Cell::of(Type::function_body(7));
+        assert_eq!(target_of(cell, &[key], |_| true), Some((7, Miss::Edge(key))));
+        assert_eq!(target_of(cell, &[key], |_| false), Some((7, Miss::None)));
+    }
+
+    #[test]
+    fn a_register_callee_with_no_key_names_its_cells_body_with_no_miss() {
+        assert_eq!(target_of(Cell::of(Type::function_body(7)), &[], |_| true), Some((7, Miss::None)));
+        assert_eq!(target_of(Cell::of(Type::INT32), &[], |_| true), None);
+        assert_eq!(target_of(Cell::ANY, &[], |_| true), None);
     }
 
     #[test]
