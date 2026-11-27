@@ -87,6 +87,52 @@ pub(crate) const FRAME_ARMS: [FrameArm; Op::COUNT] = {
     table
 };
 
+/// The arm of the frame loop's general dispatch, once the fast arms declined: a return, a call, or
+/// the general step. The step arm splits by the catalog's `Traits::MAY_ALLOCATE`, so only an op that
+/// may allocate reaches the cell-debt service after it (`Vm::serviced`), and an op
+/// that cannot pays nothing: the split is in this table, not a test in the loop.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum GeneralArm {
+    /// The general step of an op that cannot allocate.
+    Step,
+    /// The general step of an op that may allocate, then the cell-debt service.
+    Allocating,
+    /// `Return`.
+    Return,
+    /// `Call`: an inline call where allowed, else the general step; then the cell-debt service.
+    Call,
+}
+
+/// The general arm of `op`.
+pub(crate) const fn general_arm(op: Op) -> GeneralArm {
+    match frame_arm(op) {
+        FrameArm::Return => GeneralArm::Return,
+        FrameArm::Call => GeneralArm::Call,
+        _ if op.traits().has(crate::bytecode::Traits::MAY_ALLOCATE) => GeneralArm::Allocating,
+        _ => GeneralArm::Step,
+    }
+}
+
+/// `general_arm` of every opcode, indexed by the opcode's catalog index.
+pub(crate) const GENERAL_ARMS: [GeneralArm; Op::COUNT] = {
+    let mut table = [GeneralArm::Allocating; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(op) = Op::from_index(index) {
+            table[index] = general_arm(op);
+        }
+        index += 1;
+    }
+    table
+};
+
+/// The general arm of an instruction's opcode: one indexed load of `GENERAL_ARMS`.
+#[inline(always)]
+pub(crate) fn general(op: Op) -> GeneralArm {
+    GENERAL_ARMS[op as usize]
+}
+
 /// The loop arm of an instruction's opcode: one indexed load of `FRAME_ARMS`.
 #[inline(always)]
 pub(crate) fn arm(op: Op) -> FrameArm {

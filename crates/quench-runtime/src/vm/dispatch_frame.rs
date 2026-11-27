@@ -1,7 +1,7 @@
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
-use crate::staged::frame_arm::FrameArm;
+use crate::staged::frame_arm::{FrameArm, GeneralArm};
 mod loop_stack;
 mod interpreter_frame;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun};
@@ -2416,20 +2416,26 @@ impl Vm {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            match crate::staged::frame_arm::arm(ins.op()) {
+            match crate::staged::frame_arm::general(ins.op()) {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = returned_in_lane.take() => Ok(StepResult::Return(value)),
-                FrameArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                FrameArm::Call if allow_inline_calls => {
-                    match self.try_inline_reflect_apply(p, frame, ins, pc) {
+                GeneralArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                GeneralArm::Step => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                GeneralArm::Call if allow_inline_calls => {
+                    let result = match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {
                             Some(result) => result,
                             None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
                         },
-                    }
+                    };
+                    self.serviced(frame, pc, unsafe { &*executing_residual }, result)
                 }
-                _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                GeneralArm::Call | GeneralArm::Allocating => {
+                    let result = self.step(p, frame, ins, &mut pc, allow_inline_calls);
+                    // SAFETY: as for `p` at the top of the loop.
+                    self.serviced(frame, pc, unsafe { &*executing_residual }, result)
+                }
             }
             };
             // The frame a generator's activation became yields (or an in-place request's awaits)
@@ -2547,16 +2553,8 @@ impl Vm {
                     return Ok(FrameOutcome::Complete(value));
                     }
                 },
-                Ok(StepResult::Continue) => {
-                    // Cell debt is serviced at the op boundary: the op stored its result, and the
-                    // frame's PC names the next instruction, whose root map is the live set before it.
-                    // Natives and call ops reach here after their value is in the frame.
-                    if self.heap.should_collect() {
-                        self.frames[frame].pc = pc;
-                        self.frames[frame].pc_is_resume = false;
-                        self.service_allocation_debt(unsafe { &*executing_residual });
-                    }
-                }
+                // Cell debt was serviced in the dispatch, after an op that may allocate (`serviced`).
+                Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame { destination, call_guard, completion }) => {
                     // A callee of another program became active; the loop runs it until it returns.
                     let callee_program = self.frames[frame + 1].program;

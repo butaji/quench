@@ -704,7 +704,7 @@ impl Vm {
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = false;
                 // The back edge is a poll: it collects byte debt only (cell debt is serviced
-                // at the next op boundary, `service_allocation_debt`).
+                // at the next op boundary, `Vm::serviced` after an op that may allocate).
                 self.poll_byte_debt(p);
             }
         }
