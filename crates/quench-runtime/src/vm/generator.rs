@@ -210,6 +210,10 @@ impl Vm {
                 None,
                 None,
             );
+            // A captured run took this frame into its chain (`capture_chain_parked`): none is left to pop.
+            if result.as_ref().is_err_and(JsError::is_captured) {
+                return Err(result.err().expect("checked above"));
+            }
             frame = self.frames.pop().expect("generator parameter frame exists");
             match result {
                 Ok(FrameOutcome::ParameterInitializationComplete) => {}

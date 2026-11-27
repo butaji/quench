@@ -82,7 +82,7 @@ fn math_sum_precise_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _t
 
 fn math_random(vm: &mut Vm, _p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     if crate::clock::input_edge_armed() {
-        return Err(vm.capture_input_native(Native::MathRandom, this, args));
+        return Err(vm.capture_input_native(Native::MathRandom, None, this, args));
     }
     let mut state = vm.random_state;
     state ^= state << 13;

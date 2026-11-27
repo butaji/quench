@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 pub mod native_operands;
+pub mod exit;
 pub mod jit_backend;
 pub mod tier_policy;
 pub mod tier_queries;
@@ -2939,7 +2940,7 @@ impl Vm {
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
         }
-        self.run_main(program, drain_jobs)
+        self.run_main(program, drain_jobs).map_err(JsError::from)
     }
 
     #[quench_macros::test_visible]
@@ -2955,7 +2956,7 @@ impl Vm {
 
     /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
     /// `program`: the host resumes its installation where the snapshot left it.
-    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, exit::Exit> {
         self.resume_restored()?;
         self.run_main(program, false)
     }
@@ -2969,7 +2970,7 @@ impl Vm {
 
     /// Runs the main program of an installed realm: its module graph, its declarations and
     /// its body, then optionally its jobs.
-    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
+    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, exit::Exit> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -2988,7 +2989,7 @@ impl Vm {
         let result = self.call_root(program, root, this);
         self.finish_main_module(program, &result)?;
         // A captured run stops at its native call: its jobs wait for the run that resumes it.
-        if drain_jobs && !result.as_ref().is_err_and(JsError::is_captured) {
+        if drain_jobs && !matches!(result, Err(exit::Exit::Captured(_))) {
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;

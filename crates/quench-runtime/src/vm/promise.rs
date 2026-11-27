@@ -1312,7 +1312,7 @@ impl Vm {
     pub(super) fn finish_main_module(
         &mut self,
         p: &ResidualProgram,
-        result: &Result<Value, JsError>,
+        result: &Result<Value, super::exit::Exit>,
     ) -> Result<(), JsError> {
         if !p.is_module() {
             return Ok(());
@@ -1321,6 +1321,12 @@ impl Vm {
         if !self.realm.promise.modules.contains_key(&key) {
             return Ok(());
         }
+        // A captured module has not finished: its promise settles in the run that resumes it.
+        let result = match result {
+            Err(super::exit::Exit::Captured(_)) => return Ok(()),
+            Err(super::exit::Exit::Threw(error)) => Err(error),
+            Ok(value) => Ok(value),
+        };
         match result {
             Ok(value)
                 if p.functions
