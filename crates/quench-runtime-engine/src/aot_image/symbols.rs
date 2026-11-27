@@ -337,6 +337,11 @@ impl GuardAccess {
     }
 }
 
+/// The shape recipe guard key `key` guards a slot of (`guard_key`).
+pub(crate) fn guard_recipe(key: u32) -> u32 {
+    key >> GUARD_SLOT_BITS
+}
+
 /// The key of the guard of `access` of `slot` of shape recipe `recipe`: the recipe above the
 /// access and the slot. `None` where either does not fit.
 fn guard_key(recipe: u32, slot: u16, access: GuardAccess) -> Option<u32> {

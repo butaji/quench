@@ -2966,13 +2966,13 @@ impl Lowering<'_, '_> {
         self.facts.reached(pc) && !self.generic.contains(&entry_leave(self.unit))
     }
 
-    /// `invariant_field_records`, unless the body left at its entry: it binds no receiver record
-    /// there, the reads it hoisted ran under a branch (`packet != null`) and the run declined at
-    /// its start.
+    /// `invariant_field_records`; a body that left at its entry binds only its own receiver's
+    /// record there (an object on every run of a method): the reads of a register it hoisted ran
+    /// under a branch (`packet != null`) and the run declined at its start.
     fn entry_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
         object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
-        if self.generic.contains(&entry_leave(self.unit)) { return vec![None; usize::from(self.unit.registers) + 1]; }
-        self.invariant_field_records(instructions, receiver, object_table, miss)
+        let receiver_only = self.generic.contains(&entry_leave(self.unit));
+        self.invariant_field_records(instructions, receiver, object_table, miss, receiver_only)
     }
 
     /// The register (or `unit.registers` for `this`) whose object the field access at `pc` reads or
@@ -3000,7 +3000,7 @@ impl Lowering<'_, '_> {
     /// Bind physical receiver facts once. The expanded unit's write set owns
     /// invariance, including renamed callee registers and synthesized returns.
     fn invariant_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
-        object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
+        object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>, receiver_only: bool) -> Vec<Option<ObjectRecord>> {
         let count = usize::from(self.unit.registers);
         let mut owners: BitSet = BitSet::with_capacity(count + 1);
         let mut reachable = false;
@@ -3009,7 +3009,7 @@ impl Lowering<'_, '_> {
             if !reachable { continue; }
             let owner = self.field_owner(pc, *instruction);
             if let Some(owner) = owner.filter(|owner| *owner == count
-                || (*owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
+                || (!receiver_only && *owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
                 owners.insert(owner);
             }
             if instruction.returns_from_frame() || instruction.op().control_flow_layout() == ControlFlowLayout::Terminal {

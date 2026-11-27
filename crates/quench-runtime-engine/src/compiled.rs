@@ -3864,6 +3864,8 @@ impl Vm {
         let frame = frame_in_lane();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        // SAFETY: as above.
+        let admits_frames = unsafe { (*frame).admits_frames };
         let moved_from = self.cache_epochs.field_entries;
         // Reentrant entries lend the same TLS context. Preserve the outer
         // recovery landing and its binding before the inner entry overwrites them.
@@ -3886,6 +3888,7 @@ impl Vm {
             // binds none of them again (`BodyRunContext::bind_run`); the per-entry words go back.
             let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
+            (*frame).admits_frames = admits_frames;
             if self.cache_epochs.field_entries != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
@@ -3915,10 +3918,13 @@ impl Vm {
     /// Binds the running body's direct-call stack words again (`stack_entry_in_lane`) after a helper's call that
     /// completed: the call's frames pushed and popped through the general loop (`LaneStack::frames_changed`), which
     /// zeroed the plain depth limit, and without a new binding every later direct call of the run would refuse to
-    /// the helper row too. Only for a run that admitted direct calls at its entry (`armed`).
+    /// the helper row too. Only for a run whose body names direct calls (`admits_frames`), whether or not it entered
+    /// as a leaf: the helper's call materialized the leaf (`materialize_running_leaf_in_lane`).
     pub(crate) fn rearm_direct_calls(&mut self) {
-        let entry = self.stack_entry_in_lane(SHADOW_FRAMES);
         let lane = frame_in_lane();
+        // SAFETY: as below.
+        if !unsafe { (*lane).admits_frames } || self.lane_stack.plain_depth_limit.get() != 0 { return; }
+        let entry = self.stack_entry_in_lane(SHADOW_FRAMES);
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
         unsafe { entry.bind(&mut (*lane).dispatch) };
     }
@@ -4056,6 +4062,9 @@ struct BodyRunContext {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
+    /// Whether the running body's entry admitted direct-call frames (`bind_body_entry`): a helper's completed call
+    /// binds them again for it (`Vm::rearm_direct_calls`). A nested entry keeps its caller's (`run_nested_lane_method`).
+    admits_frames: bool,
 }
 
 impl BodyRunContext {
@@ -4099,6 +4108,7 @@ impl BodyRunContext {
             context,
             dispatch: JsStepDispatch::idle(),
             scratch: Vec::new(),
+            admits_frames: false,
         }
     }
 }
