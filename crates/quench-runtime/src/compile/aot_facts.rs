@@ -23,6 +23,7 @@ mod copies;
 mod effects;
 mod escapes;
 mod flow;
+mod frozen;
 mod function;
 mod gate;
 mod length_settle;
@@ -53,6 +54,7 @@ use class_layout::ClassLayouts;
 use readers::Readers;
 use record::ElementStore;
 pub use class_layout::{FieldDefault, UnionField, UnionLayout};
+pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
 pub use pipeline::{analyze, analyze_as, world};
@@ -149,6 +151,9 @@ pub struct AotFacts {
     /// The union layouts of the constructed classes the closed world proves one for (`class_layout::unions_of`), read by
     /// `AotFacts::class_union_layout`.
     unions: BTreeMap<u32, UnionLayout>,
+    /// The keys the root writes exactly once, with an immediate, where that store dominates every read of the key
+    /// (`frozen::root_stores`), read by `AotFacts::dominated_root_store`. Empty unless the world is closed.
+    root_stores: BTreeMap<crate::typed_ir::FactKey, RootStore>,
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
@@ -185,6 +190,7 @@ impl AotFacts {
             signatures: None,
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
+            root_stores: BTreeMap::new(),
             readers: None,
         }
     }

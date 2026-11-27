@@ -135,7 +135,7 @@ fn reached(program: &ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, 
 /// The functions code the call graph does not record may start: the program's roots, its class constructors, accessors, the
 /// closures named properties hold (`escapes::mark`: a closure a conversion or the host may call), the escaped functions, and,
 /// for a Module, the functions its root declares (the host imports them).
-fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
+pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
     let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
     let mut named = BTreeSet::new();
     for flow in flows {

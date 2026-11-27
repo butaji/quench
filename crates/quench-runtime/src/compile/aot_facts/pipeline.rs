@@ -13,6 +13,7 @@ use super::copies;
 use super::escapes;
 use super::phase;
 use super::flow::{self, FunctionFlow};
+use super::frozen;
 use super::gate::{self, World};
 use super::length_settle;
 use super::readers::Readers;
@@ -268,6 +269,8 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
         facts.prototype_indices_absent = facts.index_accessors_absent && gate::prototype_writes_absent(&settled_flows);
         facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
+        // The frozen facts read the settled call graph and the settled flows, so they are solved after the calls settle.
+        facts.root_stores = frozen::root_stores(program, world, &settled_flows, &facts, &census, &open_escapes);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
