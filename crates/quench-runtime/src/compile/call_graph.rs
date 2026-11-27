@@ -12,6 +12,9 @@ use super::aot_facts::AotFacts;
 /// The `cycle` entry of a function that is in no call cycle.
 const NO_CYCLE: u32 = u32::MAX;
 
+/// The `stack_subtree` entry of a function whose calls reach a call cycle or an unnamed call.
+const UNBOUNDED: u64 = u64::MAX;
+
 /// The call graph of one program, with its call cycles, its loop-or-cycle facts and its call sites.
 pub struct CallGraph {
     /// Per function, the index into `cycles` of its call cycle, `NO_CYCLE` where it is in none.
@@ -24,6 +27,9 @@ pub struct CallGraph {
     sites: Box<[u32]>,
     /// Whether the facts are closed (`AotFacts::closed`): only then does a site they do not name not exist.
     closed: bool,
+    /// Per function, the instructions of every function its calls reach (itself included), each counted once per
+    /// path; `UNBOUNDED` where a call cycle or a call with no named callee is reached, so depth below it is unbounded.
+    stack_subtree: Box<[u64]>,
 }
 
 impl CallGraph {
@@ -34,6 +40,8 @@ impl CallGraph {
         let mut own_loop = vec![false; count];
         let mut called_in_loop = vec![false; count];
         let mut sites = vec![0u32; count];
+        let mut size = vec![0u64; count];
+        let mut unnamed = vec![false; count];
         for function in 0..count {
             let mut out: Vec<usize> = Vec::new();
             if let Some(body) = program.function_get(function) {
@@ -41,7 +49,10 @@ impl CallGraph {
                 own_loop[function] = !backward.is_empty();
                 let calls = facts.function_facts(function as u32);
                 for (pc, instruction) in body.instructions().enumerate() {
+                    size[function] += 1;
                     let at = pc as u32;
+                    // A method call's callee is not an edge here, so it is unnamed for stack depth too.
+                    if means(instruction, Meaning::MethodCall) { unnamed[function] = true; }
                     let mut targets: Vec<u32> = if means(instruction, Meaning::Construct) {
                         calls.construct_target(at).into_iter().collect()
                     } else if means(instruction, Meaning::Call) {
@@ -49,6 +60,7 @@ impl CallGraph {
                     } else {
                         continue;
                     };
+                    if targets.is_empty() { unnamed[function] = true; }
                     targets.sort_unstable();
                     targets.dedup();
                     let looped = may_repeat(&backward, pc);
@@ -73,12 +85,23 @@ impl CallGraph {
         for out in &callees { for &callee in out.iter() { has_caller[callee] = true; } }
         let states = dataflow::solve(&mut ColdReach { local: &local, callees: &callees, has_caller: &has_caller });
         let loop_or_cycle: Box<[bool]> = (0..count).map(|function| local[function] || states[function] != Some(true)).collect();
+        let stack_subtree = stack_subtrees(&callees, &cycle, &unnamed, &size);
         Self {
             cycle: cycle.into_boxed_slice(),
             cycles: members.into_iter().map(Vec::into_boxed_slice).collect(),
             loop_or_cycle,
             sites: sites.into_boxed_slice(),
             closed: facts.closed(),
+            stack_subtree,
+        }
+    }
+
+    /// The instructions of the functions `function`'s calls reach, when they are a finite acyclic set of named
+    /// bodies: `None` where a call cycle or an unnamed call is reached, so the depth below `function` is unbounded.
+    pub fn stack_subtree_instructions(&self, function: u32) -> Option<u64> {
+        match self.stack_subtree.get(function as usize) {
+            Some(&total) if total != UNBOUNDED => Some(total),
+            _ => None,
         }
     }
 
@@ -193,3 +216,44 @@ impl Dataflow for ColdReach<'_> {
         *state && !self.local[block]
     }
 }
+
+/// The `CallGraph::stack_subtree` of every function: a function reaching a call cycle (`cycle`) or an unnamed call
+/// (`unnamed`) is `UNBOUNDED`. The rest reach an acyclic set of named bodies, whose instructions (`size`) sum over
+/// that DAG; a shared callee is counted once per path, which only overstates the bound.
+fn stack_subtrees(callees: &[Box<[usize]>], cycle: &[u32], unnamed: &[bool], size: &[u64]) -> Box<[u64]> {
+    let count = callees.len();
+    // A function reaches a bad one where a reverse walk from the bad functions over caller edges reaches it.
+    let mut callers: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (caller, out) in callees.iter().enumerate() {
+        for &callee in out.iter() { callers[callee].push(caller); }
+    }
+    let mut bad: Vec<bool> = (0..count).map(|function| cycle[function] != NO_CYCLE || unnamed[function]).collect();
+    let mut pending: Vec<usize> = (0..count).filter(|&function| bad[function]).collect();
+    while let Some(function) = pending.pop() {
+        for &caller in &callers[function] {
+            if !bad[caller] {
+                bad[caller] = true;
+                pending.push(caller);
+            }
+        }
+    }
+    let mut total = vec![UNBOUNDED; count];
+    let mut done = vec![false; count];
+    for root in (0..count).filter(|&function| !bad[function]) {
+        if done[root] { continue; }
+        // Post-order over the acyclic reach of `root`: each function's callees are finished before it.
+        let mut walk: Vec<(usize, usize)> = vec![(root, 0)];
+        while let Some(&(function, edge)) = walk.last() {
+            if let Some(&callee) = callees[function].get(edge) {
+                walk.last_mut().expect("the walk's top").1 += 1;
+                if !done[callee] { walk.push((callee, 0)); }
+            } else {
+                walk.pop();
+                total[function] = callees[function].iter().fold(size[function], |sum, &callee| sum.saturating_add(total[callee]));
+                done[function] = true;
+            }
+        }
+    }
+    total.into_boxed_slice()
+}
+
