@@ -4,6 +4,7 @@
 use super::blocks::Blocks;
 use super::effects::{Ctx, Events, step};
 use super::scope::Scope;
+use super::shape::{self, Shape};
 use super::value::{Word, Key, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
@@ -51,6 +52,8 @@ pub(super) struct FunctionFlow {
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
     pub(super) registers: RegisterCells,
+    /// The changes its instructions and calls make to named properties, in PC order (`shape`).
+    pub(super) shapes: Vec<Shape>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -208,6 +211,7 @@ struct Record {
     unsafe_reads: Vec<bool>,
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     registers: RegisterCells,
+    shapes: Vec<Shape>,
 }
 
 impl Record {
@@ -223,6 +227,7 @@ impl Record {
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
+            shapes: Vec::new(),
         }
     }
 
@@ -263,7 +268,9 @@ impl Record {
                 },
                 _ => Word::UNKNOWN,
             };
-            self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
+            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
+            self.calls.push(call);
         }
     }
 
@@ -273,6 +280,7 @@ impl Record {
         self.wild_global |= events.wild_global;
         self.wild_member |= events.wild_member;
         self.writes.extend(events.writes);
+        self.shapes.extend(events.shape);
         self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -297,6 +305,7 @@ impl Record {
             prototype_writes: self.prototype_writes,
             field_owners: self.field_owners,
             registers: self.registers,
+            shapes: self.shapes,
             arity,
         }
     }

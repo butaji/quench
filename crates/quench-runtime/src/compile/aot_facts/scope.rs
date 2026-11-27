@@ -6,6 +6,10 @@ use crate::bytecode::{Constant, ResidualProgram};
 /// Names that reach the global object as a value (`globalThis`, and Node's `global`).
 const GLOBAL_OBJECT_NAMES: [&str; 2] = ["globalThis", "global"];
 
+/// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
+/// object, which the closed world must treat as changed (`shape::of_call`).
+const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
+
 /// The program-wide tables the per-function analyses read.
 pub(super) struct Scope {
     /// Each function's parent, by function id.
@@ -14,6 +18,8 @@ pub(super) struct Scope {
     pub(super) constants: Vec<Option<f64>>,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
+    /// The atoms of the builtins that add properties to the objects they are given (`PROPERTY_ADDERS`).
+    property_adders: Vec<u32>,
     /// The atom `prototype` interns to, if the program names it.
     pub(super) prototype: Option<u32>,
     /// Each String constant's atom, by constant index.
@@ -49,6 +55,13 @@ impl Scope {
                 .filter(|(_, name)| GLOBAL_OBJECT_NAMES.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
+            property_adders: program
+                .atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, name)| PROPERTY_ADDERS.contains(name))
+                .map(|(atom, _)| atom as u32)
+                .collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             constant_atoms: program.constants.iter().map(|constant| match constant {
                 Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
@@ -71,6 +84,11 @@ impl Scope {
 
     pub(super) fn is_global_object(&self, atom: u32) -> bool {
         self.global_objects.contains(&atom)
+    }
+
+    /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).
+    pub(super) fn adds_properties(&self, atom: u32) -> bool {
+        self.property_adders.contains(&atom)
     }
 
     /// The function owning the environment `depth` levels out from `function`, which a capture reads.

@@ -40,6 +40,8 @@ pub(super) struct Events {
     pub(super) wild_member: bool,
     /// The named property a store writes into a function's `prototype` (`Origin::Prototype`).
     pub(super) prototype_write: Option<(PrototypeBase, u32)>,
+    /// The change the instruction makes to a named property or a key the analysis cannot name (`shape`).
+    pub(super) shape: Option<super::shape::Shape>,
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -74,6 +76,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     if let Some(local) = instruction.numeric_local_target() {
         write(ctx, pc, true, &mut events, Key::Slot { owner: ctx.id, slot: local }, value);
     }
+    events.shape = super::shape::of_instruction(ctx, pc, instruction, operation.as_ref(), state);
     writes(ctx, pc, instruction, operation, state, &mut events);
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -244,7 +247,7 @@ pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
 }
 
 /// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
-fn this_fact(ctx: &Ctx<'_>) -> Word {
+pub(super) fn this_fact(ctx: &Ctx<'_>) -> Word {
     ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id)))
 }
 
