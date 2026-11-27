@@ -3,6 +3,11 @@
 
 use crate::typed_ir::{Cell, Representation, Type};
 
+/// The elements key of the arrays no field names (an alias, a local, an array an opaque store reaches): every
+/// element read joins its cell (`types::Types::unnamed_elements`), so no array's element type or length is
+/// trusted past a store that names no field.
+pub(super) const UNNAMED_ARRAYS: u32 = u32::MAX;
+
 /// A binding: a global name (by atom), or a slot of the environment or frame of `owner`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Key {
@@ -111,6 +116,15 @@ impl Word {
         match self.origin {
             Some(Origin::Prototype(PrototypeBase::Closure(class)) | Origin::Instance(class)) => Some((class, true, false)),
             _ => self.cell.classes.single().map(|(class, proven)| (class, true, !proven)),
+        }
+    }
+
+    /// The `Key::Element` an element store into the array `self` names: the field the array was read from, else
+    /// `UNNAMED_ARRAYS`.
+    pub(super) fn elements_key(self) -> u32 {
+        match self.origin {
+            Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => atom,
+            _ => UNNAMED_ARRAYS,
         }
     }
 

@@ -84,6 +84,19 @@ impl Effects {
     pub const fn clears_stores(self) -> bool {
         self.may_call_js
     }
+
+    /// Whether a step with this row can leave the activation on its own, by its row alone: it may throw,
+    /// run guest code or collect. The facts decide a step's leave before this row rule is used
+    /// (`signatures::step_leave`); a step the facts leave open has its leave flags cleared.
+    pub(crate) const fn can_leave(self) -> bool {
+        self.may_throw || self.may_call_js || self.may_collect
+    }
+
+    /// The row with its leave flags cleared: the effects a step keeps once the facts decide it cannot leave.
+    /// Reads, writes and allocation stay, since the step still touches what it touches.
+    pub(crate) const fn without_leaves(self) -> Self {
+        Self { may_collect: false, may_call_js: false, may_throw: false, ..self }
+    }
 }
 
 /// How far a step can take the running activation out of native code (a leave). The lattice is a
@@ -107,12 +120,11 @@ impl Leaves {
     }
 }
 
-/// Whether a step with effect row `effects` can leave the activation, and how, given whether an
-/// earlier step of the same function wrote or allocated. A step that may throw, run guest code or
-/// collect can leave. Before any write or allocation nothing the call did is visible, so the call
-/// restarts from its entry; after one, the frame must be rebuilt. Every tier reads this one rule.
-const fn leave_of(effects: Effects, written_before: bool) -> Leaves {
-    let can_leave = effects.may_throw || effects.may_call_js || effects.may_collect;
+/// How a step that can leave (`can_leave`, decided by the settled facts or, where no fact decides it,
+/// by its row) leaves, given whether an earlier step of the same function wrote or allocated. Before any
+/// write or allocation nothing the call did is visible, so the call restarts from its entry; after one,
+/// the frame must be rebuilt. Every tier reads this one rule.
+const fn leave_of(can_leave: bool, written_before: bool) -> Leaves {
     match (can_leave, written_before) {
         (false, _) => Leaves::Never,
         (true, false) => Leaves::RestartCall,
@@ -120,11 +132,12 @@ const fn leave_of(effects: Effects, written_before: bool) -> Leaves {
     }
 }
 
-/// One step of a function's code as the fold sees it: an operation's own effect row, or a call,
-/// which stands for the signature joined over the callees it may reach.
+/// One step of a function's code as the fold sees it: an operation's own effect row with whether the
+/// settled facts let it leave (`signatures::step_leave`), or a call, which stands for the signature
+/// joined over the callees it may reach.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
-    Row(Effects),
+    Row { effects: Effects, can_leave: bool },
     Call(Signature),
 }
 
@@ -156,7 +169,7 @@ impl Signature {
         let mut written = false;
         for step in steps {
             let (leaves, effects) = match step {
-                Step::Row(effects) => (leave_of(effects, written), effects),
+                Step::Row { effects, can_leave } => (leave_of(can_leave, written), effects),
                 Step::Call(callee) => {
                     let leaves = match callee.leaves {
                         Leaves::Never => Leaves::Never,

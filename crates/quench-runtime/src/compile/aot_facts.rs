@@ -28,7 +28,9 @@ mod tests;
 use std::collections::BTreeMap;
 
 use crate::bytecode::ResidualProgram;
+use crate::staged::effects::{CallForm, Signature};
 use crate::typed_ir::Representation;
+use super::signatures::{self, Signatures};
 use census::Census;
 use flow::FunctionFlow;
 use scope::Scope;
@@ -71,6 +73,14 @@ pub struct AotFacts {
     /// Per function, the cells its registers hold at every point of the settled solve (`flow::RegisterCells`):
     /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
     pub(crate) registers: BTreeMap<u32, flow::RegisterCells>,
+    /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
+    pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
+    /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
+    /// that key: what a call plan's miss subscribes to (`call_plan::Miss::Edge`).
+    pub(crate) call_keys: BTreeMap<(u32, u32), (Option<u32>, crate::typed_ir::FactKey)>,
+    /// The composed effect signatures of the program's functions and call forms, solved over the settled facts
+    /// above (`signatures::solve`); none where the type solve did not settle, so no signature is taken from it.
+    pub(crate) signatures: Option<Signatures>,
 }
 
 impl AotFacts {
@@ -87,6 +97,10 @@ impl AotFacts {
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
             access_classes: BTreeMap::new(),
+            registers: BTreeMap::new(),
+            dependencies: BTreeMap::new(),
+            call_keys: BTreeMap::new(),
+            signatures: None,
         }
     }
 
@@ -147,6 +161,36 @@ impl AotFacts {
     }
 }
 
+/// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`): every key its steps
+/// read (`flow::FunctionFlow::reads`), a name-wide field read standing for every class's field of that name and
+/// the stores into objects of no one class, the returns of every function its calls may reach, its parameters
+/// and its receiver. A sound over-approximation of each cell's provenance, per function.
+fn dependencies(facts: &AotFacts, reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>>, found: &types::Types)
+    -> BTreeMap<u32, Box<[crate::typed_ir::FactKey]>> {
+    use crate::typed_ir::FactKey;
+    let mut fields: BTreeMap<u32, Vec<FactKey>> = BTreeMap::new();
+    for key in facts.cells.keys() {
+        if let FactKey::Field { atom, .. } = *key { fields.entry(atom).or_default().push(*key); }
+    }
+    reads.into_iter().map(|(function, keys)| {
+        let mut set: std::collections::BTreeSet<FactKey> = std::collections::BTreeSet::new();
+        for key in keys {
+            set.insert(census::fact_key(key));
+            if let value::Key::Member(atom) = key { set.extend(fields.get(&atom).into_iter().flatten().copied()); }
+        }
+        for (&(caller, pc), _) in facts.call_targets.range((function, 0)..=(function, u32::MAX)) {
+            set.extend(facts.function_facts(caller).call_targets(pc).into_iter().map(FactKey::Return));
+        }
+        for (_, set_of) in facts.call_candidates.range((function, 0)..=(function, u32::MAX)) {
+            set.extend(set_of.iter().copied().map(FactKey::Return));
+        }
+        let params = found.param_count(function);
+        set.extend((0..params).map(|index| FactKey::Parameter { function, index: index as u16 }));
+        set.insert(FactKey::Receiver(function));
+        (function, set.into_iter().collect())
+    }).collect()
+}
+
 /// The facts of one function.
 pub struct FunctionFacts<'a> {
     facts: &'a AotFacts,
@@ -193,6 +237,18 @@ impl<'a> FunctionFacts<'a> {
         self.facts.registers.get(&self.function)?.entry(pc)
     }
 
+    /// The keys every cell of this function's settled solve was read from (`AotFacts::dependencies`): a unit that
+    /// trusts `cell_at`/`block_entry` of the function subscribes exactly the live ones (`AotFacts::live`); in a
+    /// closed world none is live, so it subscribes nothing and keeps no exit.
+    pub fn dependencies(&self) -> &'a [crate::typed_ir::FactKey] {
+        self.facts.dependencies.get(&self.function).map_or(&[], |keys| keys)
+    }
+
+    /// The method name and key the callee of the call at `pc` was read from (`AotFacts::call_keys`).
+    pub fn call_key(&self, pc: u32) -> Option<(Option<u32>, crate::typed_ir::FactKey)> {
+        self.facts.call_keys.get(&(self.function, pc)).copied()
+    }
+
     /// The classes of the objects the named field access at `pc` reads or stores, or of the receiver the call at
     /// `pc` passes (`AotFacts::access_classes`): a closed union a class switch dispatches on, a guess.
     pub fn access_classes(&self, pc: u32) -> crate::typed_ir::Classes {
@@ -212,6 +268,23 @@ impl<'a> FunctionFacts<'a> {
     /// Per register, the Number representation it always holds.
     pub fn numbers(&self) -> Option<&'a [Option<Representation>]> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
+    }
+
+    /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the
+    /// effects they have. The same settled facts that answer this file's queries decide it, and the same edges
+    /// retire it. Top where the type solve did not settle.
+    pub fn signature(&self) -> Signature {
+        self.facts.signatures.as_ref().map_or(Signature::ANY, |signatures| signatures.of(self.function))
+    }
+
+    /// The call form of the call at `pc` (`staged::effects::call_form`): inlined where `inlinable`, else frameless
+    /// where the callees the facts name cannot leave, collect or run guest code, else framed. The same settled facts
+    /// decide it, and the same edges retire it. Framed where the type solve did not settle.
+    pub fn call_form(&self, pc: u32, inlinable: bool) -> CallForm {
+        match self.facts.signatures.as_ref() {
+            Some(signatures) => signatures.call_form(self.function, pc, inlinable),
+            None => crate::staged::effects::call_form(Signature::ANY, inlinable),
+        }
     }
 }
 
@@ -273,10 +346,13 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // The field, return, parameter and binding types, solved from the bottom (`types`): each pass reads
     // the types the one before found, and the call targets the passes above proved; the least solution is
     // the first pass that changes nothing. A solve that does not settle in `TYPE_PASSES` keeps no type.
+    // A pass whose integer range still grows after `WIDENING_ROUNDS` widens it (`Types::widen`), so a counter that
+    // climbs settles at int32's span rather than one step a pass.
     let mut found = types::Types::of(&flows, &facts, &census).bottom();
     let mut settled = false;
+    let mut grown = BTreeMap::new();
     for _ in 0..types::TYPE_PASSES {
-        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census);
+        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census).widen(&found, &mut grown);
         settled = next == found;
         found = next;
         if settled { break; }
@@ -292,10 +368,21 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // A method read off a value whose class the solve found (`crate::typed_ir::Classes`, a field holding instances of one
     // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
     // take it from a flow over the settled types.
+    let mut reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>> = BTreeMap::new();
     if settled {
         for (id, mut flow) in analyze_typed(&resolved, Some(&found)).into_iter().enumerate() {
             let id = id as u32;
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
+            reads.insert(id, std::mem::take(&mut flow.reads));
+            for call in &flow.calls {
+                let keyed = match call.callee.origin {
+                    Some(value::Origin::Binding(key)) => Some((None, census::fact_key(key))),
+                    Some(value::Origin::Member(atom)) => Some((Some(atom), crate::typed_ir::FactKey::AnyField(atom))),
+                    Some(value::Origin::MemberOn { class, instance, atom, .. }) => Some((Some(atom), crate::typed_ir::FactKey::Field { class, instance, atom })),
+                    _ => None,
+                };
+                if let Some(keyed) = keyed { facts.call_keys.insert((id, call.pc), keyed); }
+            }
             for (&pc, &classes) in &flow.field_owners {
                 if matches!(classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, pc), classes); }
             }
@@ -316,6 +403,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     if settled {
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
+        facts.dependencies = dependencies(&facts, reads, &found);
+        // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
+        // (`signatures::solve`).
+        facts.signatures = Some(signatures::solve(program, &facts));
     }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());

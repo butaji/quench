@@ -173,6 +173,8 @@ pub mod naming;
 pub mod call; pub mod frame;
 pub mod forms;
 pub mod protocol;
+/// The exit status of an activation (`staged/exit.rs`), mounted by the b-jit call record.
+pub use quench_bjit::call_record::exit;
 pub(crate) mod native_frame;
 pub mod call_keeping;
 pub mod call_environment;

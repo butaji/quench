@@ -202,6 +202,24 @@ impl Type {
         }
     }
 
+    /// The value of this type with `null` and `undefined` removed: what an edge proving the value is not
+    /// nullish carries (a truthy test, a loose `!=` against `null`). A nullable direct object is a direct
+    /// object there, and a shape keeps its record without its nullish alternatives.
+    pub fn not_nullish(self) -> Self {
+        match self.0 {
+            TypeKind::Language(kinds) => Self::languages(kinds & !Self::NULLISH.kinds()),
+            TypeKind::NullableDirectObjectFamily(_) => Self::DIRECT_OBJECT_FAMILY,
+            TypeKind::DirectObjectShape { shape, .. } => Self::direct_object(shape),
+            _ => self,
+        }
+    }
+
+    /// `self` met with `Type::NULLISH`: the nullish alternatives of this type, what an edge proving the
+    /// value is `null` or `undefined` carries. A type with no nullish alternative meets to `Type::NEVER`.
+    pub fn nullish_part(self) -> Self {
+        Self::languages(self.kinds() & Self::NULLISH.kinds())
+    }
+
     /// Whether nothing narrower than a Number is known: what an int32 contract of a loop may narrow.
     pub fn is_any_or_number(self) -> bool { matches!(self, Self::ANY | Self::NUMBER) }
 

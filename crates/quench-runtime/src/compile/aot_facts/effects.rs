@@ -1,8 +1,8 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::{Cell, Classes};
+use super::value::{Word, Key, Origin, PrototypeBase, UNNAMED_ARRAYS};
+use crate::typed_ir::{Cell, Classes, Elements, Length};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -20,6 +20,9 @@ pub(super) struct Ctx<'a> {
     /// Bindings the census proved hold one closure, so their loads carry its fact too.
     pub(super) resolved: &'a std::collections::BTreeMap<Key, u32>,
     pub(super) registers: usize,
+    /// Per PC, whether the `MakeArray` there is a literal whose element definitions cover every index, so it
+    /// holds no hole (`flow::whole_literals`).
+    pub(super) whole_literals: &'a [bool],
     /// The field and return types the pass before found (`types`), which this pass's field reads
     /// and calls take; `None` in the passes that find call targets, which read them as any value.
     pub(super) types: Option<&'a super::types::Types>,
@@ -59,7 +62,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         Some(_) => Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or(operation),
         None => operation,
     };
-    let mut value = value_of(ctx, instruction, typed_operation, state, &mut events);
+    let mut value = value_of(ctx, pc, instruction, typed_operation, state, &mut events);
     // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
     if let Some(types) = ctx.types && let Some(cell) = types.call(ctx.id, pc as u32) {
         value = Word::of_cell(cell);
@@ -75,6 +78,13 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         write(ctx, pc, true, &mut events, Key::Slot { owner: ctx.id, slot: local }, value);
     }
     writes(ctx, pc, instruction, operation, state, &mut events);
+    // A literal's element definition joins the element type of the array it defines into (`MakeArray`).
+    if instruction.op() == crate::bytecode::Op::DefineArrayElement {
+        let element = state[usize::from(instruction.register_a())].cell;
+        let array = usize::from(instruction.register_b());
+        state[array].cell.elements = state[array].cell.elements
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never });
+    }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
         state[usize::from(register)] = if Some(register) == defined { value } else { Word::UNKNOWN };
@@ -99,6 +109,7 @@ fn resolved(ctx: &Ctx<'_>, key: Key) -> Word {
 /// The fact of the value `instruction` defines, read from the facts before it.
 fn value_of(
     ctx: &Ctx<'_>,
+    pc: usize,
     instruction: WideInstruction,
     operation: Option<Operation<(), ()>>,
     state: &[Word],
@@ -152,6 +163,16 @@ fn value_of(
     if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
         return Word::closure(function);
     }
+    // An array of `length` elements: its length is fixed by its literal, and its element type is what the
+    // definitions that follow join in (`step`). A literal that leaves an index undefined holds a hole, which reads `undefined`.
+    if ctx.types.is_some() && let Some((_, Allocation::Array { length, .. })) = Allocation::decode(instruction, &[]) {
+        let hole = if ctx.whole_literals.get(pc).copied().unwrap_or(false) { Type::NEVER } else { Type::language(crate::ValueType::Undefined) };
+        return Word::of_cell(Cell {
+            ty: Type::language(crate::ValueType::Object),
+            classes: Classes::Many,
+            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length) },
+        });
+    }
     // A `Binary` record, whatever operation it decodes to (none over a constant operand, a numeric one over
     // registers): its operator and operands are the record's.
     // An increment or decrement defines a Number, or a BigInt off one.
@@ -184,12 +205,10 @@ fn value_of(
         Some(Operation::Void { .. }) => Word::of(Type::language(crate::ValueType::Undefined)),
         // An indexed read of the array a field holds: the field's element type, or `undefined` for a hole or an
         // index past its length.
-        _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex => element_value(ctx, state[usize::from(instruction.register_b())]),
-        Some(Operation::ElementRead { base, .. }) => match (state[usize::from(base)].origin, ctx.types) {
-            (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-                Word::of_cell(types.cell(Key::Element(atom)).join(Cell::of(Type::language(crate::ValueType::Undefined)))),
-            _ => Word::UNKNOWN,
-        },
+        _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex =>
+            element_value(ctx, state[usize::from(instruction.register_b())], state[usize::from(instruction.register_c())]),
+        Some(Operation::ElementRead { base, key, .. }) if ctx.types.is_some() =>
+            element_value(ctx, state[usize::from(base)], operand_fact(ctx.scope, state, key)),
         Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
         _ => Word::UNKNOWN,
     }
@@ -308,14 +327,34 @@ fn number_value(scope: &Scope, state: &[Word], number: NumberOperation) -> Word 
     }
 }
 
-/// The fact of an indexed read of `base`: the element type of the field it was read from (`Key::Element`) or
-/// `undefined` (a hole, an index past the length); any value off anything else.
-fn element_value(ctx: &Ctx<'_>, base: Word) -> Word {
-    match (base.origin, ctx.types) {
-        (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-            Word::of_cell(types.cell(Key::Element(atom)).join(Cell::of(Type::language(crate::ValueType::Undefined)))),
-        _ => Word::UNKNOWN,
+/// The fact of an indexed read of `base` at `index`: the elements `base`'s cell names (`Elements::element`), joined with
+/// those no field names (`Types::unnamed_elements`), and with `undefined` unless the index is within a fixed length
+/// (`within_length`), where a hole may read. Any value where the types are not solved yet.
+fn element_value(ctx: &Ctx<'_>, base: Word, index: Word) -> Word {
+    let Some(types) = ctx.types else { return Word::UNKNOWN };
+    let elements = base.cell.elements.join(types.unnamed_elements());
+    let element = elements.element();
+    if within_length(elements.length, index.cell.ty) {
+        Word::of_cell(element)
+    } else {
+        Word::of_cell(element.join(Cell::of(Type::language(crate::ValueType::Undefined))))
     }
+}
+
+/// Whether an index of type `index` stays within an array of length `length`: a fixed length, and an integer range
+/// inside `[0, length)`.
+fn within_length(length: Length, index: Type) -> bool {
+    match (length, index.int_range()) {
+        (Length::Fixed(count), Some(range)) => range.min >= 0 && range.max < i64::from(count),
+        _ => false,
+    }
+}
+
+/// The write that makes the length of the arrays `key` names (`Key::Element`) unknown: a length write, a method that
+/// changes an array, an index store past the length, a `delete`.
+fn length_change(key: u32) -> (Key, Word) {
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+    (Key::Element(key), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
 /// The fact of what a `Binary` of `operator` defines: a comparison a Boolean whatever its operands; an
@@ -367,17 +406,28 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
             events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
         }
     }
-    // An indexed store (`SetIndex a=value b=base c=key`) into the array a field holds joins the field's element
-    // type (`Key::Element`), whatever form it decodes to.
-    if instruction.op() == crate::bytecode::Op::SetIndex
-        && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
-    {
-        events.writes.push((Key::Element(atom), state[usize::from(instruction.register_a())]));
-    }
     match operation {
+        // An indexed store of a Number into the array `base` names (`SetIndex`): its value joins the elements of the
+        // field the array was read from (`Key::Element`), and its length becomes unknown unless the index is within it.
+        Some(Operation::ElementWrite { value, base, key, .. }) if state[usize::from(key)].is_number() => {
+            let (array, index, stored) = (state[usize::from(base)], state[usize::from(key)], state[usize::from(value)]);
+            let length = array.cell.elements.length;
+            let length = if length == Length::Never || within_length(length, index.cell.ty) { Length::Never } else { Length::Any };
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length };
+            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
+        }
+        // A store through a computed key that is no Number, a helper or a `delete` may store any value into any array
+        // and change its length: every element read joins the cell of the arrays no field names.
+        Some(Operation::ElementWrite { .. } | Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => {
+            events.wild_member = true;
+            events.writes.push((Key::Element(UNNAMED_ARRAYS), Word::of_cell(Cell::ANY)));
+        }
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));
             let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
+            if ctx.scope.length == Some(atom) {
+                events.writes.push(length_change(owner.elements_key()));
+            }
             if let Some(Origin::Prototype(prototype)) = owner.origin {
                 events.prototype_write = Some((prototype, atom));
             }
@@ -391,12 +441,16 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Word::UNKNOWN));
             events.writes.push((Key::MemberAny(atom), Word::UNKNOWN));
+            if ctx.scope.length == Some(atom) {
+                events.writes.push(length_change(UNNAMED_ARRAYS));
+            }
         }
-        Some(Operation::ElementWrite { key, .. }) if !state[usize::from(key)].is_number() => events.wild_member = true,
-        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => events.wild_member = true,
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
             events.writes.push((Key::Member(instruction.atom_index()), Word::UNKNOWN));
             events.writes.push((Key::MemberAny(instruction.atom_index()), Word::UNKNOWN));
+            if ctx.scope.length == Some(instruction.atom_index()) {
+                events.writes.push(length_change(UNNAMED_ARRAYS));
+            }
         }
         _ => {}
     }

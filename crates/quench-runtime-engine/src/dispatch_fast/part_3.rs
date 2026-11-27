@@ -942,55 +942,25 @@ pub(super) fn body_inlined_activation_in_lane(
         // Only the frames' own reach: the scratch window may be wider (another code's), past this storage.
         Vm::adopt_window_in_lane(r.0.cast_const(), usize::from(run.caller_registers), crate::compiled::window_width(frames, run.caller_registers));
     }
-    let mut chain = vec![frame];
-    while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
-        chain.push(parent);
-    }
-    let (mut registers, mut records) = (r, base);
-    let mut view = std::ptr::null::<LaneView>();
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    for (depth, &index) in chain.iter().enumerate().rev() {
-        let call = frames[index];
-        let vm = unsafe { vm(cx) };
-        // Cache eviction is not invalidation of an immutable callee binding: a lifecycle
-        // edge retires the body first (`ProgramStore::retire_dead_native_calls`). Resolve
-        // only when recovery needs the activation, rather than scanning at entry.
-        // A frame bound by its function (closed world) names no closure: its callee register holds it,
-        // live through the frame (`lane_region`'s liveness).
-        let parent = call.parent_base(frames);
-        let callee = call.target.identity().unwrap_or_else(|| registers.get(call.callee_register - parent));
-        let target = vm.script_call_entry(callee)
-            // SAFETY: copy the current cache row before any cache mutation.
-            .map(|target| unsafe { *target })
-            .or_else(|| vm.resolve_call_target_in_lane(code, callee, true))
-            .unwrap_or_else(|| panic!("an inlined callee resolves: {:#x} (frame {index} of {}, callee register {}, parent {parent}, function {}, call {})",
-                callee.to_bits(), frames.len(), call.callee_register, call.target.function, call.call));
-        // SAFETY: the record is the call's in its parent's view.
-        let (target, record) = (&target, unsafe { records.add(call.call as usize) });
-        let this = call_this_in_lane(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
-        // The frame's own window and count: a call through `call` passes past its receiver
-        // (`lane_unit::InlinedCall::function_call`).
-        // SAFETY: the call's window of `registers` holds its values.
-        let passed = unsafe { registers.0.add(usize::from(call.window - parent)).cast_const() };
-        let (callee, _) = push_passed_in_lane::<false, false>(cx, registers, record, target, passed, call.arguments, this, false);
-        // The frame's registers live where it stands, the leave's PC or its inner frame's
-        // call; the exit wrote only those (`lane_region`), the rest keep the activation's.
-        let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
-        let live = code.register_root_masks(call.target.function);
-        let scratch = usize::from(call.base - run.caller_registers);
-        Vm::scratch_in_lane(scratch, usize::from(call.registers), |register, value| {
-            if live.is_none_or(|live| live.is_live(at as usize, register)) {
-                callee.set(register, value);
-            }
-        });
-        // The activation's records start at the context's base, past any tier prologue its
-        // entry record is.
-        (registers, records, view) = (callee, unsafe { (*cx).base }, target.view);
-    }
-    // SAFETY: the innermost activation's view holds a record for each of its function's PCs.
-    let resume = unsafe { records.add(pc as usize) };
-    (registers, resume, carried_at_in_lane(cx, view, registers, pc))
+    let caller_registers = run.caller_registers;
+    super::inlined_views::materialize(cx, r, base, frames, frame, pc,
+        // Cache eviction is not invalidation of an immutable callee binding: a lifecycle edge retires
+        // the body first (`ProgramStore::retire_dead_native_calls`), so a miss resolves the callee again.
+        // Resolved now: the activation recovery makes is one whose runs all ran inlined, so none
+        // counted toward the callee's view (`resolve_call_target_in_lane`).
+        |vm, code, callee| vm.resolve_call_target_in_lane(code, callee, true),
+        // The registers native code held for the frame, which the leave's PC `at` keeps live; the
+        // rest the activation keeps (`lane_region`'s liveness).
+        |call, at, sink| {
+            let live = code.register_root_masks(call.target.function);
+            Vm::scratch_in_lane(usize::from(call.base - caller_registers), usize::from(call.registers), |register, value| {
+                if live.is_none_or(|live| live.is_live(at as usize, register)) {
+                    sink(register, value);
+                }
+            });
+        })
 }
 
 /// What an activation carries into the record at `pc` of its function's `view`: the script

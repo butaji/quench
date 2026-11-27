@@ -18,8 +18,8 @@
 
 use super::census::Census;
 use super::flow::FunctionFlow;
-use super::value::{Key, Origin};
-use crate::typed_ir::{Cell, Classes};
+use super::value::{Key, Origin, UNNAMED_ARRAYS};
+use crate::typed_ir::{Cell, Classes, Elements, WIDENING_ROUNDS};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -104,8 +104,13 @@ impl Types {
     }
 
     /// The cell a read of `key` holds: the join of its writes', its class a guess; `unseen` where none is seen.
+    /// A field's cell also names the elements its arrays keep (`with_elements`).
     pub(super) fn cell(&self, key: Key) -> Cell {
-        self.cells.get(&key).copied().unwrap_or(self.unseen).guessed()
+        let cell = self.cells.get(&key).copied().unwrap_or(self.unseen).guessed();
+        match key {
+            Key::Member(atom) | Key::MemberAny(atom) => self.with_elements(atom, cell),
+            _ => cell,
+        }
     }
 
     /// The cell a read of field `atom` off class `class`'s instances (`instance`) or static object holds: the
@@ -113,7 +118,50 @@ impl Types {
     /// (`Key::MemberAny`), either of which may land in such an object. None where the class stores no `atom`.
     pub(super) fn cell_on(&self, class: u32, instance: bool, atom: u32) -> Option<Cell> {
         let own = self.cells.get(&Key::MemberOn { class, instance, atom })?;
-        Some(own.join(self.cells.get(&Key::MemberAny(atom)).copied().unwrap_or(Cell::NEVER)).guessed())
+        let cell = own.join(self.cells.get(&Key::MemberAny(atom)).copied().unwrap_or(Cell::NEVER)).guessed();
+        Some(self.with_elements(atom, cell))
+    }
+
+    /// `cell` with the elements the stores into field `atom`'s arrays made (`Key::Element(atom)`): their type and
+    /// classes, and the length, which an edge that may change it made `Length::Any`. A field's cell so names what
+    /// its arrays hold, whichever store put the array there.
+    fn with_elements(&self, atom: u32, cell: Cell) -> Cell {
+        Cell { elements: cell.elements.join(self.stored_elements(Key::Element(atom))), ..cell }
+    }
+
+    /// The elements the writes of `key` (`Key::Element`) name: the type and classes of the values stored, and the
+    /// length they leave (`Elements::length`), none where no such write is seen.
+    fn stored_elements(&self, key: Key) -> Elements {
+        let stored = self.cells.get(&key).copied().unwrap_or(Cell::NEVER);
+        Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length }
+    }
+
+    /// The elements every array may hold that no field names (`UNNAMED_ARRAYS`): an element read joins them, since
+    /// an alias may store through an array the field read does not name.
+    pub(super) fn unnamed_elements(&self) -> Elements {
+        self.stored_elements(Key::Element(UNNAMED_ARRAYS))
+    }
+
+    /// Widens the integer ranges `self` found against the pass before (`previous`), so the solve settles
+    /// (`TYPE_PASSES`). A key whose range still grows after `WIDENING_ROUNDS` passes takes the widened range
+    /// (`Type::widen`: the int32 span, then `IntRange::WORD`); a range the widening does not cover drops to
+    /// `Type::NUMBER`, which holds every Number. `grown` counts, per key, the passes its range grew in.
+    /// A pass that changes nothing widens nothing, so the least fixpoint is unchanged.
+    pub(super) fn widen(mut self, previous: &Types, grown: &mut BTreeMap<Key, u8>) -> Self {
+        for (key, cell) in self.cells.iter_mut() {
+            let Some(before) = previous.cells.get(key).copied() else { continue };
+            let (Some(old), Some(new)) = (before.ty.int_range(), cell.ty.int_range()) else { continue };
+            if old.contains(new) { continue; }
+            let rounds = grown.entry(*key).or_insert(0);
+            *rounds = rounds.saturating_add(1);
+            if *rounds < WIDENING_ROUNDS { continue; }
+            let widened = before.ty.widen(cell.ty);
+            cell.ty = match widened.int_range() {
+                Some(range) if range.contains(new) => widened,
+                _ => Type::NUMBER,
+            };
+        }
+        self
     }
 
     /// Every settled cell by its key in the one lattice's key space (`typed_ir::FactKey`): a class's own field
@@ -127,7 +175,11 @@ impl Types {
             Key::Return(function) => (FactKey::Return(function), self.cell(*key)),
             Key::Global(atom) => (FactKey::Global(atom), self.cell(*key)),
             Key::Slot { owner, slot } => (FactKey::Slot { owner, slot }, self.cell(*key)),
-            Key::Element(atom) => (FactKey::Elements(atom), self.cell(*key)),
+            Key::Element(UNNAMED_ARRAYS) => return None,
+            Key::Element(atom) => {
+                let elements = self.with_elements(atom, Cell::NEVER).elements;
+                (FactKey::Elements(atom), Cell { ty: elements.ty, classes: elements.classes, elements })
+            }
             Key::Member(_) => return None,
         }));
         let params = self.params.iter().flat_map(|(function, cells)| cells.iter().enumerate()
@@ -159,6 +211,11 @@ impl Types {
     }
 
     /// The parameter types of every function they type, for the solve's trace.
+    /// How many parameters of `function` the solve types (`parameters`): none for one whose calls do not bind them.
+    pub(super) fn param_count(&self, function: u32) -> usize {
+        self.params.get(&function).map_or(0, Vec::len)
+    }
+
     pub(super) fn parameter_types(&self) -> BTreeMap<u32, Vec<Type>> {
         self.params.iter().map(|(function, cells)| (*function, cells.iter().map(|cell| cell.ty).collect())).collect()
     }
