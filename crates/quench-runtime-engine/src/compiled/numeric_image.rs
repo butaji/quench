@@ -24,7 +24,7 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32, admitted: c
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
         kinds: &[],
-        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Full,
+        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
     Some(NumericLowering { params: usize::from(function.params), number_result: region.number_result?, function: region.function, isa })

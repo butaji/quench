@@ -1722,11 +1722,6 @@ pub struct LoopTier {
     /// The field stores the code left at often enough once, which the next compilation planned
     /// again from their sites' caches (`left_store`), sorted.
     pub refed: Vec<usize>,
-    /// Entries the published code's guards declined in a row, and whether the next compilation
-    /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
-    /// bound misses every versioned entry.
-    pub entry_misses: u16,
-    pub unbounded: bool,
     /// Runs in a row that left inside the loop before its first backward edge (`LoopTier::weigh_run`): code that
     /// pays its entry for no iteration, whose site gives up its native code past `widen_after_leaves` of them.
     pub fruitless: u16,

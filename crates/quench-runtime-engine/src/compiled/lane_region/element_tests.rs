@@ -25,7 +25,7 @@ fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &generic, &BTreeMap::new(), &[], &*isa, &[], Coverage::PrefixFrom(header), Completion::Body, views, true).expect("a loop region").function
+        &generic, &BTreeMap::new(), &[], &*isa, &[], Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
 }
 
 /// The instructions of `function`'s loop blocks.

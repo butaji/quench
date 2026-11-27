@@ -710,8 +710,6 @@ pub(crate) struct Lowering<'a, 'f> {
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<Register, ArrayVariables>,
     views: ElementViews,
-    /// Whether loops version their bounds on entry (`RegionPlan::entry_bounds`).
-    entry_bounds: bool,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
@@ -1746,9 +1744,6 @@ pub(crate) struct RegionPlan {
     pub(crate) coverage: Coverage,
     pub(crate) completion: Completion,
     pub(crate) views: ElementViews,
-    /// Whether loops may version their bounds on entry (`int_ranges::prove_loops`): an OSR site
-    /// whose entries kept missing compiles again without (`LoopTier::missed_entry`).
-    pub(crate) entry_bounds: bool,
 }
 
 /// The proved loads of each field-cache site, flat and indexed by the site (`site_loads`).
@@ -1795,7 +1790,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.kinds, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.kinds, self.plan.coverage, self.plan.completion, self.plan.views)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1849,7 +1844,7 @@ pub(crate) fn lower_body(
     MISMATCH.with(|mismatch| mismatch.set(false));
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, kinds, admitted,
-        plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
+        plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct, vm.facts).filter(|_| entry.is_none());
@@ -1912,7 +1907,6 @@ pub(crate) fn lower(
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
-    entry_bounds: bool,
 ) -> Option<LoweredRegion> {
     // A loop entry may take the rotated residual of its proven condition.
     let residual = super::static_loops::specialize(program, unit, coverage.entry())
@@ -2079,7 +2073,6 @@ pub(crate) fn lower(
         loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), pending_unit: None, loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
-        entry_bounds,
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         ranges: int_ranges::IntRanges::new(0),
@@ -2682,6 +2675,31 @@ impl Lowering<'_, '_> {
             (self.origin_local(unit_pc, index), self.origin_local(unit_pc, array)) else { return false };
         let non_negative = self.cell_before(unit_pc, index).ty.int_range().is_some_and(|range| range.min >= 0);
         non_negative && facts.function_facts(function).below_length(pc, index_local, array_local)
+    }
+
+    /// The register the solve names as the one unit register `index` is below before the unit instruction at `unit_pc`
+    /// (`FunctionFacts::bound_below`), in the unit's registers. A loop's counter is below its bound at the sum that indexes an
+    /// array, so its entry compares the bound's reach with the length once (`loop_versions::plan`).
+    pub(crate) fn bound_below(&self, unit_pc: usize, index: Register) -> Option<Register> {
+        let facts = self.vm.facts?;
+        let (function, pc, index_local) = self.origin_local(unit_pc, index)?;
+        let bound = facts.function_facts(function).bound_below(pc, index_local)?;
+        match self.unit.origins.get(unit_pc)? {
+            super::lane_unit::Origin::Caller(_) => Some(bound),
+            super::lane_unit::Origin::Inlined { frame, .. } => self.unit.frames[*frame].base.checked_add(bound),
+        }
+    }
+
+    /// Whether the unit instruction at `unit_pc` may resize an array of any class, as the solve reads its step
+    /// (`FunctionFacts::may_resize_length`). An instruction the solve has no origin for may resize.
+    pub(crate) fn may_resize(&self, unit_pc: usize) -> bool {
+        let Some(facts) = self.vm.facts else { return true };
+        let (function, pc) = match self.unit.origins.get(unit_pc) {
+            Some(super::lane_unit::Origin::Caller(pc)) => (self.function_id, *pc),
+            Some(super::lane_unit::Origin::Inlined { frame, pc }) => (self.unit.frames[*frame].target.function, *pc),
+            None => return true,
+        };
+        facts.function_facts(function).may_resize_length(pc)
     }
 
     fn solved_cell(&self, unit_pc: usize, register: Register, after: bool) -> quench_runtime::typed_ir::Cell {

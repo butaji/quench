@@ -16,7 +16,7 @@ fn lowered(source: &str, name: &str) -> ir::Function {
     let addresses = LaneHelper::addresses();
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
-        &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).expect("loop region");
+        &[], Coverage::Full, Completion::Body, ElementViews::Dense).expect("loop region");
     cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
     region.function
 }

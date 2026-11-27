@@ -24,7 +24,7 @@ fn sum_loop() -> (ir::Function, usize) {
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)), true)
+        &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)))
         .expect("the loop lowers");
     (region.function, written.len())
 }

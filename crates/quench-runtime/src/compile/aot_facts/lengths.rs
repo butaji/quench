@@ -275,6 +275,15 @@ enum Resize<'a, 'b> {
 }
 
 impl Resize<'_, '_> {
+    /// Whether the step may resize some array, of any class.
+    fn may_resize(self) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::Every => true,
+            Self::Calls { facts, pc } => facts.may_write_any_elements(pc),
+        }
+    }
+
     /// Whether the step may resize the array `word` holds.
     fn touches(self, word: &Word) -> bool {
         match self {
@@ -347,19 +356,23 @@ fn below(relations: &[Relation], index: Register, array: Register, offset: i64, 
     })
 }
 
-/// Advances `lengths` over the instruction at `pc`. `run` steps the register words over it (`effects::step`) and returns its events.
-/// The relations are read from the words before the instruction (a call's callee, the bounds an element store meets, a resize's
-/// keys and receivers) and after it (the arrays' kinds, the registers it defines).
+/// Advances `lengths` over the instruction at `pc`. `run` steps the register words over it (`effects::step`) and returns its events,
+/// with whether the step may resize an array: a call or guest code that may write an array's elements, a mutator, or an element
+/// store the relations do not prove within its array. The relations are read from the words before the instruction (a call's
+/// callee, the bounds an element store meets, a resize's keys and receivers) and after it (the arrays' kinds, the registers it defines).
 pub(super) fn advance(ctx: &Ctx<'_>, facts: &FunctionFacts<'_>, pc: usize, instruction: WideInstruction, lengths: &mut Lengths,
-    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> Events {
+    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> (Events, bool) {
     let resize = resize_of(ctx, facts, pc, instruction, words);
     let stored_below = match Operation::<u64, ()>::of(instruction) {
         Some(Operation::ElementWrite { base, key, .. }) => proves_below(lengths.relations(), key, base, 0),
         _ => false,
     };
     let events = run(words);
+    let grows = events.wild_elements
+        || (!stored_below && events.writes.iter().any(|(key, word)| matches!(key, Key::Element(_)) && word.cell.elements.length != Length::Never));
+    let may_resize = grows || resize.may_resize();
     lengths.write(ctx, instruction, words, &events, resize, stored_below);
-    events
+    (events, may_resize)
 }
 
 /// The relations the edge of the conditional jump `instruction` carries, from the state `lengths` and `words` the jump
@@ -392,9 +405,9 @@ pub(super) fn refine(ctx: &Ctx<'_>, instruction: WideInstruction, to_target: boo
     if let Some((array, reach)) = bound_of(&lengths.relations, big) {
         refined.insert(Relation::Within { index, array, reach: offset + slack + reach });
     }
-    // `index < bound` between Numbers, where the bound is named by a relation: `proves_below` follows it through the bound's own.
-    let named = lengths.relations.iter().any(|held| held.names(big));
-    if slack == 1 && offset == 0 && named && words.get(usize::from(big)).is_some_and(|word| word.is_number()) {
+    // `index < bound` between Numbers: `proves_below` follows it through the bound's own relations, and `bound_below` reads
+    // the bound an index is below (a loop's counter against its bound, whichever length the bound is at most).
+    if slack == 1 && offset == 0 && words.get(usize::from(big)).is_some_and(|word| word.is_number()) {
         refined.insert(Relation::Less { index, bound: big });
     }
     refined
