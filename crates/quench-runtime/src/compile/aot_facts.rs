@@ -19,6 +19,8 @@ mod census;
 mod effects;
 mod flow;
 mod gate;
+mod record;
+mod registers;
 mod scope;
 mod types;
 mod value;
@@ -35,7 +37,7 @@ use census::Census;
 use flow::FunctionFlow;
 use scope::Scope;
 pub use gate::World;
-pub use flow::RegisterCells;
+pub use registers::{RegisterCells, Source};
 
 /// The facts of one program, solved in `world`.
 pub struct AotFacts {
@@ -70,9 +72,9 @@ pub struct AotFacts {
     /// `(function, pc)` of a named field access → the classes of the objects it reads or stores, and of a call →
     /// the classes of its receiver, where the settled cells list them (`typed_ir::Classes::Set`): a guess.
     pub(crate) access_classes: BTreeMap<(u32, u32), crate::typed_ir::Classes>,
-    /// Per function, the cells its registers hold at every point of the settled solve (`flow::RegisterCells`):
+    /// Per function, the cells and sources its registers hold at every point of the settled solve (`registers::RegisterCells`):
     /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
-    pub(crate) registers: BTreeMap<u32, flow::RegisterCells>,
+    pub(crate) registers: BTreeMap<u32, RegisterCells>,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
@@ -232,9 +234,23 @@ impl<'a> FunctionFacts<'a> {
         self.facts.registers.get(&self.function)?.at(pc, register)
     }
 
+    /// The source of the value register `register` holds just before the instruction at `pc` (`RegisterCells::source_at`),
+    /// where the solve settled: a binding it was loaded from or a property it was read off, else `Computed`. Computed also
+    /// where no path reaches `pc` or the solve did not settle, the answer that assumes nothing about the value's origin.
+    pub fn source_at(&self, pc: u32, register: u16) -> Source {
+        self.facts.registers.get(&self.function).and_then(|cells| cells.source_at(pc, register)).unwrap_or(Source::Computed)
+    }
+
     /// The cells of every register at the entry of the block starting at `pc` (`RegisterCells::entry`).
     pub fn block_entry(&self, pc: u32) -> Option<&'a [crate::typed_ir::Cell]> {
         self.facts.registers.get(&self.function)?.entry(pc)
+    }
+
+    /// The cell the function's returns join to (`FactKey::Return`): a call of the function defines it, since a call's
+    /// result is the join of the returns of the callees it may reach (`types::Types::call`). Any value where the solve
+    /// did not settle, so a caller that reads it assumes no more than that.
+    pub fn return_cell(&self) -> crate::typed_ir::Cell {
+        self.facts.cell(crate::typed_ir::FactKey::Return(self.function)).unwrap_or(crate::typed_ir::Cell::ANY)
     }
 
     /// The keys every cell of this function's settled solve was read from (`AotFacts::dependencies`): a unit that

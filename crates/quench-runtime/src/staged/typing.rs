@@ -210,11 +210,37 @@ pub fn step(source: Type, decrement: bool) -> Type {
     if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(ValueType::BigInt)) }
 }
 
-/// The type a backedge carries into a loop's header (`flow::Solver::transfer_edge_at`): an integer range within int32
-/// widens to int32's whole span, and one beyond int32 to a Number. The header then joins finitely many types, so a
-/// counter a loop steps settles: an int32 while its stepped range stays in int32 (`step`), else a Number.
-pub fn settle(ty: Type) -> Type {
-    if ty.is_int32() { Type::INT32 } else if ty.int_range().is_some() { Type::NUMBER } else { ty }
+/// The integer bounds a loop header widens its ranges to (`widen`): int32's two bounds, and each constant a relational
+/// jump compares a value against, one below and one above it, since a strict and a non-strict comparison step a counter
+/// one past the constant. Sorted and distinct, so the nearest one above or below a bound is a search.
+pub fn thresholds(bounds: impl IntoIterator<Item = i64>) -> Vec<i64> {
+    let mut all: Vec<i64> = bounds.into_iter().flat_map(|bound| [bound - 1, bound, bound + 1])
+        .chain([IntRange::FULL.min, IntRange::FULL.max]).collect();
+    all.sort_unstable();
+    all.dedup();
+    all
+}
+
+/// The type a loop header holds once its join has changed `rounds` times past `WIDENING_ROUNDS` (`flow::Solver::join`):
+/// `joined` (the join of `known` and the incoming type) with each integer bound that grew moved to its nearest threshold
+/// (`thresholds`), so the header's ranges reach a fixed bound in finitely many joins and stay within the thresholds a
+/// relational edge compares against. Types that are not both integer ranges keep their join.
+pub fn widen(thresholds: &[i64], known: Type, joined: Type) -> Type {
+    match (known.int_range(), joined.int_range()) {
+        (Some(known), Some(joined)) => Type::int(widen_range(thresholds, known, joined)),
+        _ => joined,
+    }
+}
+
+/// `joined`, a hull of `known` and an incoming range, with a bound that `known` did not reach moved to the nearest
+/// threshold beyond it, or to `IntRange::WORD`'s bound where no threshold lies beyond (a value a word holds exactly).
+fn widen_range(thresholds: &[i64], known: IntRange, joined: IntRange) -> IntRange {
+    let up = |value: i64| thresholds.iter().copied().find(|&bound| bound >= value).unwrap_or(IntRange::WORD.max);
+    let down = |value: i64| thresholds.iter().rev().copied().find(|&bound| bound <= value).unwrap_or(IntRange::WORD.min);
+    IntRange {
+        min: if joined.min < known.min { down(joined.min) } else { joined.min },
+        max: if joined.max > known.max { up(joined.max) } else { joined.max },
+    }
 }
 
 /// The ranges a relational jump proves of its operands `left` and `right` on the edge taken where the relation holds
@@ -293,5 +319,39 @@ mod tests {
         assert_eq!(relation_edge(NumberRelation::LessThan, true, counter, limit), Some([span(0, 9), span(10, 10)]));
         // Where it fails the counter is at least the limit.
         assert_eq!(relation_edge(NumberRelation::LessThan, false, counter, limit), Some([span(10, 100), span(10, 10)]));
+    }
+
+    /// One loop's solve over a single register: the header joins its backedge for `WIDENING_ROUNDS` rounds, then widens
+    /// (as `flow::Solver::join` does), and one descending pass recomputes the header from its backedge without widening.
+    fn solve_header(entry: Type, mut step_body: impl FnMut(Type) -> Type) -> Type {
+        let thresholds = thresholds([]);
+        let mut header = entry;
+        for round in 0..=u32::from(crate::typed_ir::WIDENING_ROUNDS) {
+            let joined = header.join(step_body(header));
+            header = if round >= u32::from(crate::typed_ir::WIDENING_ROUNDS) { widen(&thresholds, header, joined) } else { joined };
+        }
+        entry.join(step_body(header))
+    }
+
+    #[test]
+    fn a_counted_loop_counter_stays_within_its_bound() {
+        // `for (i = 0; i < n; i++)` with n in [0, 100]: the body sees i below n, so the header's back edge carries [1, n].
+        let (entry, n) = (span(0, 0), span(0, 100));
+        let header = solve_header(Type::int(entry), |header| {
+            let [counter, _] = relation_edge(NumberRelation::LessThan, true, header.int_range().unwrap(), n).unwrap();
+            step(Type::int(counter), false)
+        });
+        assert_eq!(header, range(0, 100));
+    }
+
+    #[test]
+    fn a_carry_recurrence_reaches_a_bounded_fixed_point_inside_int32() {
+        // `c = (c + x) >>> 15` with x in [0, 2^30): the carry is at most 2^15 once the sum is shifted, and it never leaves int32.
+        let (x, shift) = (span(0, (1 << 30) - 1), Type::int(IntRange::singleton(15)));
+        let carry = solve_header(Type::int(IntRange::singleton(0)), |carry| {
+            bitwise(NumberBitwise::ShiftRightUnsigned, arithmetic(NumberArithmetic::Add, carry, Type::int(x)), shift)
+        });
+        assert!(carry.is_int32(), "the carry stays an int32: {carry:?}");
+        assert!(carry.int_range().unwrap().max <= 1 << 15 || carry == Type::INT32, "{carry:?}");
     }
 }
