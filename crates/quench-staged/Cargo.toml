@@ -12,6 +12,8 @@ doctest = false
 [features]
 # The per-operation profile counters, forwarded by quench-runtime's feature of the same name.
 profile-aggregate = []
+# Test-only items that quench-runtime's tests call (enabled by its dev-dependency); no shipped code reads it.
+test-support = []
 
 [dependencies]
 # Used by the cargo flavor only: the stencil build compiles this crate's sources with rustc directly.
