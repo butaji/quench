@@ -21,6 +21,7 @@ mod effects;
 mod flow;
 mod gate;
 mod numeric;
+mod quiet;
 mod scope;
 mod shape;
 mod types;

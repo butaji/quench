@@ -4,6 +4,7 @@
 use crate::bytecode::{Constant, ResidualProgram};
 use crate::typed_ir::{IntRange, Type};
 use crate::ValueType;
+use super::quiet::{Arguments, BUILTINS};
 
 /// Names that reach the global object as a value (`globalThis`, and Node's `global`).
 const GLOBAL_OBJECT_NAMES: [&str; 2] = ["globalThis", "global"];
@@ -39,6 +40,8 @@ pub(super) struct Scope {
     /// Each nested field lookup's base and fields (`base.first.second`), by site index, which a read's
     /// classes follow field by field (`effects::member_type`); `None` for a site with a sink.
     pub(super) site_paths: Vec<Option<(crate::bytecode::FieldBase, u32, Option<u32>)>>,
+    /// The builtins of `quiet::BUILTINS` the program names, as (object atom, name atom, arguments).
+    builtins: Vec<(Option<u32>, u32, Arguments)>,
 }
 
 impl Scope {
@@ -77,6 +80,14 @@ impl Scope {
             }).collect(),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
+            builtins: BUILTINS.iter().filter_map(|builtin| {
+                let name = atom_named(program, builtin.name)?;
+                let object = match builtin.object {
+                    Some(object) => Some(atom_named(program, object)?),
+                    None => None,
+                };
+                Some((object, name, builtin.arguments))
+            }).collect(),
         }
     }
 
@@ -99,10 +110,23 @@ impl Scope {
         self.property_adders.contains(&atom)
     }
 
+    /// The arguments the builtin `name` of `object` (a global, for a method) runs no guest code for, if the program names it.
+    pub(super) fn builtin(&self, object: Option<u32>, name: u32) -> Option<Arguments> {
+        self.builtins.iter().find(|(o, n, _)| *o == object && *n == name).map(|(_, _, arguments)| *arguments)
+    }
+
     /// The function owning the environment `depth` levels out from `function`, which a capture reads.
     pub(super) fn owner(&self, function: u32, depth: u16) -> Option<u32> {
         (0..=depth).try_fold(function, |owner, _| self.parents.get(owner as usize).copied().flatten())
     }
+}
+
+/// The atom whose name is `text`, if the program names it.
+fn atom_named(program: &ResidualProgram, text: &str) -> Option<u32> {
+    program.atoms.iter().position(|atom| {
+        let atom: &str = atom.as_ref();
+        atom == text
+    }).map(|atom| atom as u32)
 }
 
 /// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;

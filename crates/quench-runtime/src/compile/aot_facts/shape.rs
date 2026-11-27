@@ -37,9 +37,10 @@ impl Owner {
 pub(super) enum Change {
     /// A named property `atom` is stored, defined or added.
     Field(u32),
-    /// A property whose key the analysis cannot name is stored or deleted, or a builtin that adds
-    /// properties is given the object.
+    /// A property whose key the analysis cannot name is stored or deleted.
     Any,
+    /// A builtin that defines properties on the object it is given (`Object.defineProperty`): it may define an accessor.
+    Define,
 }
 
 /// One change to an object's properties, made at instruction `pc`.
@@ -73,13 +74,13 @@ pub(super) fn of_instruction(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruct
 }
 
 /// The shape the call `call` at `pc` makes: for a builtin that adds properties to the objects it is given
-/// (`Scope::adds_properties`), an `Any` change of its arguments. Code a call runs is not a shape (`runs_guest_code`).
+/// (`Scope::adds_properties`), a `Define` change of its arguments. Code a call runs is not a shape (`runs_guest_code`).
 pub(super) fn of_call(ctx: &Ctx<'_>, pc: u32, call: &Call) -> Option<Shape> {
     if !callee_name(call).is_some_and(|atom| ctx.scope.adds_properties(atom)) {
         return None;
     }
     let arguments = call.arguments.iter().fold(Classes::Never, |classes, argument| classes.join(argument.cell.classes));
-    Some(Shape { pc, owner: Owner::Object(arguments), change: Change::Any })
+    Some(Shape { pc, owner: Owner::Object(arguments), change: Change::Define })
 }
 
 /// The owner a store through register `base` (`None`: the function's `this`) writes to: a prototype object

@@ -168,3 +168,39 @@ fn a_derived_constructor_has_no_instance_layout() {
     let d = function_named(&program, "D") as u32;
     assert_eq!(facts.class_layout(d), None, "super() runs the parent's stores on the instance");
 }
+
+#[test]
+fn a_constructor_that_makes_an_array_of_a_declared_size_last_keeps_its_layout() {
+    let program = program("var DATA_SIZE = 4; function Packet(l) { this.link = l; this.id = 1; this.a2 = new Array(DATA_SIZE); } function make() { return new Packet(null); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "Packet") as u32;
+    assert_eq!(
+        facts.class_layout(p),
+        Some(&[atom_named(&program, "link"), atom_named(&program, "id"), atom_named(&program, "a2")][..]),
+        "Array(n) of a Number runs no guest code, and a declared global read runs none"
+    );
+}
+
+#[test]
+fn a_conditional_on_null_keeps_a_constructors_layout() {
+    let program = program("var A = 1; var B = 2; function Tcb(q) { this.packet = q; this.state = q == null ? A : B; } function make() { return new Tcb(null); } make();");
+    let facts = analyze(&program);
+    let t = function_named(&program, "Tcb") as u32;
+    assert_eq!(facts.class_layout(t), Some(&[atom_named(&program, "packet"), atom_named(&program, "state")][..]));
+}
+
+#[test]
+fn a_read_of_a_field_the_path_stored_keeps_a_constructors_layout() {
+    let program = program("function P(x) { this.a = x; this.b = this.a; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), Some(&[atom_named(&program, "a"), atom_named(&program, "b")][..]));
+}
+
+#[test]
+fn a_call_to_an_unknown_function_before_the_last_store_has_no_layout() {
+    let program = program("function P(x) { this.a = x; unknownHostFn(); this.b = 2; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), None);
+}

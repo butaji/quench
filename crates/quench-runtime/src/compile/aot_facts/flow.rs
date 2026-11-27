@@ -2,7 +2,8 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Ctx, Events, operand_fact, runs_guest_code, step};
+use super::effects::{Ctx, Events, is_global_load, operand_fact, runs_guest_code, step};
+use super::quiet::{self, Quiet};
 use super::numeric;
 use super::scope::Scope;
 use super::shape::{self, Shape};
@@ -61,6 +62,8 @@ pub(super) struct FunctionFlow {
     pub(super) shapes: Vec<Shape>,
     /// The PCs, in order, of the instructions that may run guest code with the objects they touch (`effects::runs_guest_code`).
     pub(super) guest_runs: Vec<u32>,
+    /// The proofs a guest-run point may hold (`quiet::Quiet`), by PC, in order.
+    pub(super) quiet: Vec<(u32, Quiet)>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -369,6 +372,7 @@ struct Record {
     reads: std::collections::BTreeSet<Key>,
     shapes: Vec<Shape>,
     guest_runs: Vec<u32>,
+    quiet: Vec<(u32, Quiet)>,
 }
 
 impl Record {
@@ -386,6 +390,7 @@ impl Record {
             reads: std::collections::BTreeSet::new(),
             shapes: Vec::new(),
             guest_runs: Vec::new(),
+            quiet: Vec::new(),
         }
     }
 
@@ -405,6 +410,7 @@ impl Record {
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
         }
+        self.note_quiet(ctx, instruction, pc as u32);
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
             let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
             *joined = joined.join(owner.cell.classes);
@@ -450,6 +456,9 @@ impl Record {
             }
             let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
             self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
+            if let Some(proof) = quiet::of_call(ctx.scope, &call) {
+                self.quiet.push((pc as u32, proof));
+            }
             self.calls.push(call);
         }
     }
@@ -479,10 +488,29 @@ impl Record {
         }
     }
 
+    /// Notes the proofs `instruction` at `pc` may hold that it runs no guest code: a global name read (`Declared`, and
+    /// `Intrinsic` for a builtin the table names) unless it is an invocation, and a read of field off `this` (`OwnField`).
+    fn note_quiet(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32) {
+        if is_global_load(instruction) && crate::staged::Invocation::of(instruction, ctx.decode).is_none() {
+            let atom = instruction.atom_index();
+            self.quiet.push((pc, Quiet::Declared(atom)));
+            if ctx.scope.builtin(None, atom).is_some() {
+                self.quiet.push((pc, Quiet::Intrinsic { object: None, name: atom }));
+            }
+        }
+        if matches!(instruction.op().class(), crate::bytecode::Class::GetField)
+            && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
+            && base == crate::bytecode::FieldBase::THIS
+        {
+            self.quiet.push((pc, Quiet::OwnField(atom)));
+        }
+    }
+
     fn finish(mut self, arity: Option<u16>) -> FunctionFlow {
         // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
+        self.quiet.sort_by_key(|(pc, _)| *pc);
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -501,6 +529,7 @@ impl Record {
             reads: self.reads,
             shapes: self.shapes,
             guest_runs: self.guest_runs,
+            quiet: self.quiet,
             arity,
         }
     }

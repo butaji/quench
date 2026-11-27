@@ -1,0 +1,138 @@
+//! The points that run no guest code, as the closed world proves it. A constructor's body may run guest code
+//! at a point only if that point may hand code the instance; a point the proofs here cover does not. The flow
+//! records each candidate proof at its PC (`Quiet`), with the facts of its operands; `Proofs` decides the
+//! program-wide part: the global names the program leaves alone, and the builtins' properties it never stores.
+//! `BUILTINS` is the one table of the builtins a call may name, with the arguments each runs no guest code for.
+
+use super::flow::{Call, FunctionFlow, Target};
+use super::scope::Scope;
+use super::shape::Change;
+use super::value::{Key, Origin, Word};
+use std::collections::BTreeSet;
+
+/// The argument types a builtin runs no guest code for: a conversion of an object runs `valueOf`, of a Number none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Arguments {
+    /// No argument.
+    Nothing,
+    /// No argument, or one Number (`Array(n)` makes an array of length `n`).
+    NothingOrNumber,
+    /// Every argument is a Number.
+    Numbers,
+}
+
+/// A builtin a call names: a global function (`object: None`) or a method of a global object, and the arguments it
+/// runs no guest code for.
+pub(super) struct Builtin {
+    pub(super) object: Option<&'static str>,
+    pub(super) name: &'static str,
+    pub(super) arguments: Arguments,
+}
+
+/// The builtins the proofs cover. A call of one the program never rebinds runs no guest code for those arguments.
+pub(super) const BUILTINS: &[Builtin] = &[
+    Builtin { object: None, name: "Array", arguments: Arguments::NothingOrNumber },
+    Builtin { object: None, name: "Object", arguments: Arguments::Nothing },
+    Builtin { object: Some("Math"), name: "abs", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "ceil", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "floor", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "max", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "min", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "round", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "sqrt", arguments: Arguments::Numbers },
+    Builtin { object: Some("Math"), name: "trunc", arguments: Arguments::Numbers },
+];
+
+/// A point that may run guest code and the proof that it does not, as the flow found it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Quiet {
+    /// A read of global name `atom` by name, which is a data property the program declares or stores (`Proofs::proves`).
+    Declared(u32),
+    /// A call or read of a builtin: global `name` (`object: None`), or method `name` of global `object`.
+    Intrinsic { object: Option<u32>, name: u32 },
+    /// A read of field `atom` off `this`: an own data property once a store of the constructor made it, so the
+    /// read runs no getter on the path that stored it (decided by the body, `class_layout`).
+    OwnField(u32),
+}
+
+/// Whether the arguments `words` of a builtin satisfy its condition.
+fn arguments_quiet(arguments: Arguments, words: &[Word]) -> bool {
+    let numbers = words.iter().all(|word| word.is_number());
+    match arguments {
+        Arguments::Nothing => words.is_empty(),
+        Arguments::NothingOrNumber => words.len() <= 1 && numbers,
+        Arguments::Numbers => numbers,
+    }
+}
+
+/// The proof of a call's point, if its callee is a builtin the table covers for its arguments: a global function
+/// the callee register names, or a method the receiver's global object names.
+pub(super) fn of_call(scope: &Scope, call: &Call) -> Option<Quiet> {
+    let (object, name) = match (call.target, call.callee.origin) {
+        (Target::Method(name), _) => match call.receiver.origin {
+            Some(Origin::Binding(Key::Global(object))) => (Some(object), name),
+            _ => return None,
+        },
+        (Target::Register, Some(Origin::Binding(Key::Global(name)))) => (None, name),
+        _ => return None,
+    };
+    let arguments = scope.builtin(object, name)?;
+    arguments_quiet(arguments, &call.arguments).then_some(Quiet::Intrinsic { object, name })
+}
+
+/// What the program does to the global object and the builtins, over all its functions.
+#[derive(Default)]
+pub(super) struct Proofs {
+    /// Some code reaches a name the analysis cannot follow (`with`, `eval`, sloppy declarations).
+    wild: bool,
+    /// Some write reaches the global object by a key the analysis cannot name, or the global object is read.
+    global_wild: bool,
+    /// Some call defines properties on the objects it is given (`Change::Define`).
+    defined: bool,
+    /// Some store names a key the analysis cannot name (`Change::Any`).
+    any_change: bool,
+    /// The global names the program writes.
+    written: BTreeSet<u32>,
+    /// The property names the program stores or defines by name.
+    stored: BTreeSet<u32>,
+}
+
+impl Proofs {
+    pub(super) fn of(flows: &[FunctionFlow]) -> Self {
+        let mut proofs = Self::default();
+        for flow in flows {
+            proofs.wild |= flow.wild_owner;
+            proofs.global_wild |= flow.global_wild;
+            proofs.written.extend(flow.writes.iter().filter_map(|(key, _)| match key {
+                Key::Global(atom) => Some(*atom),
+                _ => None,
+            }));
+            for shape in &flow.shapes {
+                match shape.change {
+                    Change::Field(atom) => {
+                        proofs.stored.insert(atom);
+                    }
+                    Change::Any => proofs.any_change = true,
+                    Change::Define => proofs.defined = true,
+                }
+            }
+        }
+        proofs
+    }
+
+    /// Whether the proof `quiet` holds for the whole program. An own-field read is decided by the body, not here.
+    pub(super) fn proves(&self, quiet: Quiet) -> bool {
+        match quiet {
+            Quiet::Declared(atom) => !self.wild && !self.defined && self.written.contains(&atom),
+            Quiet::Intrinsic { object: None, name } => self.intrinsic(name),
+            Quiet::Intrinsic { object: Some(object), name } => self.intrinsic(object) && !self.stored.contains(&name) && !self.any_change,
+            Quiet::OwnField(_) => false,
+        }
+    }
+
+    /// Whether global `atom` is still the builtin the host installed: the program never writes it, nor reaches the
+    /// global object by a name it cannot follow, nor defines a property.
+    fn intrinsic(&self, atom: u32) -> bool {
+        !self.wild && !self.global_wild && !self.defined && !self.written.contains(&atom)
+    }
+}

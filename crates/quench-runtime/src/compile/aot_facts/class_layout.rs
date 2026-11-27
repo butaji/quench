@@ -14,6 +14,7 @@
 use super::blocks::Blocks;
 use super::census::Census;
 use super::flow::FunctionFlow;
+use super::quiet::{Proofs, Quiet};
 use super::shape::{Change, Owner, Shape};
 use crate::bytecode::{ControlEdge, Function, ResidualProgram, Successors};
 use crate::dataflow::{Dataflow, solve};
@@ -33,10 +34,11 @@ pub(crate) struct ClassLayouts {
 pub(super) fn of_program(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, classes: &BTreeSet<u32>) -> ClassLayouts {
     let shapes = || flows.iter().flat_map(|flow| flow.shapes.iter());
     let names = prototype_names(flows, census);
+    let proofs = Proofs::of(flows);
     let mut layouts = ClassLayouts::default();
     for &class in classes {
         let flow = &flows[class as usize];
-        let body = program.with_record(class as usize, |function| body_fields(function, flow, class));
+        let body = program.with_record(class as usize, |function| body_fields(function, flow, class, &proofs));
         if let Some(fields) = body.filter(|fields| !shapes().any(|shape| reshapes_instance(shape, class, fields))) {
             layouts.instances.insert(class, fields.into_boxed_slice());
         }
@@ -67,7 +69,7 @@ fn prototype_names(flows: &[FunctionFlow], census: &Census) -> BTreeMap<u32, Vec
 fn outside(change: Change, fields: &[u32]) -> bool {
     match change {
         Change::Field(atom) => !fields.contains(&atom),
-        Change::Any => true,
+        Change::Any | Change::Define => true,
     }
 }
 
@@ -93,12 +95,12 @@ fn reshapes_prototype(shape: &Shape, class: u32, fields: &[u32], census: &Census
 /// The named fields the body of constructor `class` stores on `this`, in order, on every path to its end; None
 /// where the paths disagree, where the body changes an object it cannot order (`BodyOrder::step`), or where the
 /// body is derived (`super()` binds `this`, so the parent's stores are fields of the instance too).
-fn body_fields(function: &Function, flow: &FunctionFlow, class: u32) -> Option<Vec<u32>> {
+fn body_fields(function: &Function, flow: &FunctionFlow, class: u32, proofs: &Proofs) -> Option<Vec<u32>> {
     if (0..function.code.len()).any(|pc| function.instruction_at(pc).op().binds_this()) {
         return None;
     }
     let blocks = Blocks::of(&Successors::of_code(function), function.code.len());
-    let mut order = BodyOrder { class, blocks: &blocks, shapes: &flow.shapes[..], guest_runs: &flow.guest_runs[..] };
+    let mut order = BodyOrder { class, blocks: &blocks, shapes: &flow.shapes[..], guest_runs: &flow.guest_runs[..], quiet: &flow.quiet[..], proofs };
     let inputs = solve(&mut order);
     let exit = (0..blocks.ranges.len())
         .filter(|&block| blocks.targets[block].is_empty())
@@ -145,6 +147,9 @@ struct BodyOrder<'a> {
     shapes: &'a [Shape],
     /// The PCs of the instructions that may run guest code (`FunctionFlow::guest_runs`), in order.
     guest_runs: &'a [u32],
+    /// The proofs that a point runs no guest code (`FunctionFlow::quiet`), by PC.
+    quiet: &'a [(u32, Quiet)],
+    proofs: &'a Proofs,
 }
 
 impl BodyOrder<'_> {
@@ -153,13 +158,29 @@ impl BodyOrder<'_> {
         self.blocks.ranges[block].clone().fold(order, |order, pc| self.at(pc, order))
     }
 
-    /// The order after the instruction at `pc`: sealed first where it may run guest code, then changed by the shapes it makes.
+    /// The order after the instruction at `pc`: sealed first where it may run guest code no proof covers, then changed by
+    /// the shapes it makes.
     fn at(&self, pc: usize, order: Order) -> Order {
         let at = pc as u32;
         let from = self.shapes.partition_point(|shape| shape.pc < at);
         let to = self.shapes.partition_point(|shape| shape.pc <= at);
-        let order = if self.guest_runs.binary_search(&at).is_ok() { order.seal() } else { order };
+        let order = if self.unproven_run(at, &order) { order.seal() } else { order };
         self.shapes[from..to].iter().fold(order, |order, shape| self.step(order, shape))
+    }
+
+    /// Whether the instruction at `at` may run guest code that no proof covers on the path that stored `order`'s fields.
+    /// A read of a field the path stored is an own data property, so it runs no getter.
+    fn unproven_run(&self, at: u32, order: &Order) -> bool {
+        let Order::Fields { fields, .. } = order else { return false };
+        if self.guest_runs.binary_search(&at).is_err() {
+            return false;
+        }
+        let from = self.quiet.partition_point(|(pc, _)| *pc < at);
+        let to = self.quiet.partition_point(|(pc, _)| *pc <= at);
+        !self.quiet[from..to].iter().any(|(_, proof)| match proof {
+            Quiet::OwnField(atom) => fields.contains(atom),
+            proof => self.proofs.proves(*proof),
+        })
     }
 
     /// The order after `shape`. An object that may be an instance of the class changes in order only through

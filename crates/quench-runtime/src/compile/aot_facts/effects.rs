@@ -7,7 +7,7 @@ use crate::typed_ir::{Cell, Classes, Elements, Length};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
-use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
+use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -62,6 +62,11 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
         Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
         Some(Operation::Number(number)) => !numbers_over_numbers(ctx.scope, state, number),
         Some(Operation::Binary { left, right, .. }) => !(is_number(ctx.scope, state, left) && is_number(ctx.scope, state, right)),
+        // Strict equality runs nothing; loose equality runs nothing when an operand is null or undefined (no ToPrimitive).
+        Some(Operation::Equality { strict, left, right, .. }) => !strict && !(is_nullish(ctx.scope, state, left) || is_nullish(ctx.scope, state, right)),
+        Some(Operation::CompareJump { comparison: Comparison::Equality { strict, .. }, left, right, .. }) =>
+            !strict && !(is_nullish(ctx.scope, state, left) || is_nullish(ctx.scope, state, right)),
+        Some(Operation::CompareJump { comparison, .. }) => comparison.runs_guest_code(),
         Some(operation) => operation.effects().may_call_js,
     }
 }
@@ -75,6 +80,12 @@ fn numbers_over_numbers(scope: &Scope, state: &[Word], number: NumberOperation) 
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => state[usize::from(source)].is_number(),
         _ => false,
     }
+}
+
+/// Whether operand `operand` is exactly null or undefined on the facts before it.
+fn is_nullish(scope: &Scope, state: &[Word], operand: Operand) -> bool {
+    let ty = operand_fact(scope, state, operand).cell.ty;
+    ty == Type::language(crate::ValueType::Null) || ty == Type::language(crate::ValueType::Undefined)
 }
 
 /// Whether operand `operand` is a Number on the facts before it.
@@ -131,7 +142,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
 }
 
 /// Whether `instruction` reads a global name plainly (`LoadName`, `LoadNameCall`).
-fn is_global_load(instruction: WideInstruction) -> bool {
+pub(super) fn is_global_load(instruction: WideInstruction) -> bool {
     let traits = instruction.op().traits();
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
 }
