@@ -44,8 +44,8 @@ pub(crate) enum RelocKind {
     /// The layout id of the instances the shape recipe `key` builds (`staged::ImageWord::ClassLayout`): an id no
     /// record has where the recipe's prototype does not resolve.
     ClassLayout,
-    /// The method vector of the class the shape recipe `key` builds (`Symbol::ClassMethods`): filled by the loader
-    /// into `layouts::class_methods`, which compiled code reads at `layouts::class_methods_base`.
+    /// The base of the class method table (`layouts::class_methods_base`), which a closed-set indirect call reads each
+    /// class's method vector from. Keyed 0.
     ClassMethods,
 }
 
