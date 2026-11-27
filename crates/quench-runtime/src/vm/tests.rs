@@ -23329,7 +23329,7 @@ fn leaf_call_output(source: &str, name: &str) -> (Vec<String>, u64) {
 
 #[test]
 fn lane_leaf_calls_follow_callee_redefinition() {
-    // A site that called leaves (`CallEntry::Leaf`, `CallEntry::ContextLeaf`) and meets another
+    // A site that called leaves (`CallEntry::frameless(Frameless::Leaf)`, `CallEntry::frameless(Frameless::ContextLeaf)`) and meets another
     // callee calls it, whatever it captures (expected values from Node).
     let source = r#"
       var f = function (x) { return (x + 1) | 0; };
@@ -23438,7 +23438,7 @@ fn lane_leaf_calls_survive_collections_their_getters_make() {
 
 #[test]
 fn lane_capture_leaf_calls_keep_binding_semantics() {
-    // Leaves reading and storing captures (`CallEntry::CaptureLeaf`, a store followed by a
+    // Leaves reading and storing captures (`CallEntry::frameless(Frameless::CaptureLeaf)`, a store followed by a
     // read of its capture as one record): shared captures, per-iteration and wide per-iteration
     // bindings, TDZ and constant stores, sloppy `this`, `arguments` and direct eval beside
     // them, closures recreated after warm-up, and a throw's frames and receiver (expected

@@ -942,7 +942,7 @@ pub(super) fn activate_getter_in_lane(
         .script_call_entry(getter)
         .or_else(|| vm.cross_call_entry(getter))
         .map(|target| unsafe { *target })
-        .filter(|target| target.entry == CallEntry::Environment && !constructing_in_lane(vm, getter));
+        .filter(|target| target.entry == CallEntry::framed(Framed::Environment) && !constructing_in_lane(vm, getter));
     if let Some(target) = environment {
         let Some(this) = call_this_in_lane(vm, &target, base) else {
             return Err(exit(ip));

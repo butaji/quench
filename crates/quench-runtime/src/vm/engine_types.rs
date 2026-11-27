@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::bytecode::InstructionField;
+use crate::staged::effects::CallForm;
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -1956,7 +1957,7 @@ pub enum Completion {
     /// the caller goes on past them, the result object unmade. Made a frame, it is `Generates`.
     StepReads(ForOfTest),
     /// A plain call of a non-suspending async function of the caller's program
-    /// (`CallEntry::Settles`): its return resolves the promise the call made, which its side
+    /// (`CallEntry::framed(Framed::Settles)`): its return resolves the promise the call made, which its side
     /// record keeps (`SidePayload::Settles`), and the call yields that promise. Made a frame, its
     /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
@@ -3640,7 +3641,7 @@ pub enum LaneRoot {
     Job(JobRoot),
 }
 
-/// A running leaf call (`CallEntry::Leaf`): what its activation would hold that the context
+/// A running leaf call (`CallEntry::frameless(Frameless::Leaf)`): what its activation would hold that the context
 /// does not. The context's registers and records are the callee's; what its form makes its
 /// own (`LeafForm`) of the receiver and environment is the callee's, the rest the caller's.
 /// Laid out as the staged leaf row's record (`staged::call_leaf::LEAF_*_AT`), which writes
@@ -3706,7 +3707,7 @@ pub struct ScriptActivation {
     /// The register past its registers that holds the first value it kept (`forwards`), its
     /// function's register count, so a read of them looks up no function; 0 when it keeps none.
     pub kept: u16,
-    /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
+    /// Its environment and frame locals follow its registers (`CallEntry::framed(Framed::Environment)`).
     pub environment: bool,
     /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
     /// `lane_roots`), which the lane's name lookups read the dynamic bindings of; null for any
@@ -3944,7 +3945,7 @@ pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     lexical_this: Value::UNDEFINED,
     forms: 0,
     fill: 0,
-    entry: CallEntry::Activates,
+    entry: CallEntry::framed(Framed::Activates),
     capture: std::ptr::null(),
     forwarded_method: NO_FORWARDED_METHOD,
 };
@@ -4031,26 +4032,23 @@ pub const SCRIPT_TARGET_WAYS: usize = 2;
 /// below the record space's capacity, 2^24).
 pub const UNPROVEN: u64 = crate::value::ValueLayout::DIRECT_FUNCTION_TAG | u32::MAX as u64;
 
-/// How a plain lane call enters a frameless target (`ScriptCallTarget::entry`), one byte so the
-/// call tests it once. The kinds exclude each other: a body that is one read keeps nothing.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// How a lane call enters its target (`ScriptCallTarget::entry`). One call protocol, three forms
+/// (`CallForm`): the form is the one `staged::effects::call_form` gives the callee's composed
+/// signature, in every tier. `Frameless` for a callee that cannot leave its activation, collect,
+/// or run guest code; `Framed` for any other. The shape says which frameless answer
+/// (`Frameless`) or which activation layout (`Framed`) the target takes. The lane has no
+/// `CallForm::Inline` entry: an inlinable callee is spliced into its caller's unit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct CallEntry(u8);
+
+/// The shape of a `CallForm::Frameless` entry: which answer a call gets without an activation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum CallEntry {
-    /// Its activation holds its registers alone (`activate_in_lane`).
-    Activates,
-    /// It keeps the values it was passed for a forwarded `arguments`
-    /// (`CallPlan::forwards_arguments`, `activate_keeping_in_lane`).
-    Keeps,
-    /// It keeps them, and its rest parameter, in the register after the others, starts as
-    /// the array of those past the others (`activate_keeping_in_lane`).
-    Gathers,
+pub enum Frameless {
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
-    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
-    /// activation): a call takes `frame_call_in_lane`. Only the cache and the call's own
-    /// out-of-line form see such a target (`script_target_in_lane` leaves it out).
-    Frame,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
     /// parameter, and returns it (`element_read_body`), which a call answers likewise.
     ReadsElement,
@@ -4064,21 +4062,12 @@ pub enum CallEntry {
     /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
     /// compiles, which a call answers with the receiver it binds.
     ReadsThis,
-    /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
-    /// activation's window holds its environment and locals after its registers
-    /// (`activate_environment_in_lane`). Only a plain call activates it.
-    Environment,
-    /// An async function whose body never suspends, laid out as its registers
-    /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
-    /// it (`script_call_settles_miss`), whose promise its return settles
-    /// (`Completion::SettlesPromise`).
-    Settles,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
     /// a window of the lane stack without an activation (`script_call_leaf_prove_miss`), which
     /// anything observing activations makes first (`materialize_leaf_in_lane`). Any other
-    /// call activates it as `Activates`.
+    /// call activates it as `Framed::Activates`.
     Leaf,
-    /// A leaf whose records read its captures and not its receiver (`CAPTURE_LEAF`), so its
+    /// A leaf whose records read their captures and not their receiver (`CAPTURE_LEAF`), so its
     /// call makes the context's environment its own, which its return restores.
     CaptureLeaf,
     /// A leaf whose records read its receiver (`CONTEXT_LEAF`), so its call makes the
@@ -4090,6 +4079,53 @@ pub enum CallEntry {
     /// A proven conditional append to a captured binding, completed without activation
     /// (`capture_append::run`).
     AppendsCapture,
+}
+
+/// The shape of a `CallForm::Framed` entry: which activation layout a call makes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Framed {
+    /// Its activation holds its registers alone (`activate_in_lane`).
+    Activates,
+    /// It keeps the values it was passed for a forwarded `arguments`
+    /// (`CallPlan::forwards_arguments`, `activate_keeping_in_lane`).
+    Keeps,
+    /// It keeps them, and its rest parameter, in the register after the others, starts as
+    /// the array of those past the others (`activate_keeping_in_lane`).
+    Gathers,
+    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
+    /// activation): a call takes `frame_call_in_lane`. Only the cache and the call's own
+    /// out-of-line form see such a target (`script_target_in_lane` leaves it out).
+    Frame,
+    /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
+    /// activation's window holds its environment and locals after its registers
+    /// (`activate_environment_in_lane`). Only a plain call activates it.
+    Environment,
+    /// An async function whose body never suspends, laid out as its registers
+    /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
+    /// it (`script_call_settles_miss`), whose promise its return settles
+    /// (`Completion::SettlesPromise`).
+    Settles,
+}
+
+impl CallEntry {
+    /// The form bit: set for a `CallForm::Framed` entry, clear for a `CallForm::Frameless` one.
+    /// The low bits hold the shape, so the entry stays one byte (`ScriptCallTarget` is 64 bytes).
+    const FRAMED: u8 = 1 << 7;
+
+    /// The entry of a frameless shape.
+    #[inline(always)]
+    pub const fn frameless(shape: Frameless) -> Self { Self(shape as u8) }
+
+    /// The entry of a framed shape.
+    #[inline(always)]
+    pub const fn framed(shape: Framed) -> Self { Self(Self::FRAMED | shape as u8) }
+
+    /// The form of the call this entry takes: `Frameless` or `Framed`, never `Inline`.
+    #[inline(always)]
+    pub const fn form(self) -> CallForm {
+        if self.0 & Self::FRAMED == 0 { CallForm::Frameless } else { CallForm::Framed }
+    }
 }
 
 impl Admission {

@@ -195,9 +195,9 @@ pub(super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
         let body = code.function_get(target.function as usize)?;
         let plan = body.call_plan(code);
         Some(format!(
-            "keeping {} @{:?} entry={} argc={argc} params={} strict={} legacy={} forwards={} arguments={}",
+            "keeping {} @{:?} entry={:?} argc={argc} params={} strict={} legacy={} forwards={} arguments={}",
             body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
-            body.source_span.map(|span| span.start), target.entry as u8, target.params, body.strict,
+            body.source_span.map(|span| span.start), target.entry, target.params, body.strict,
             plan.legacy_reflection, plan.forwards_arguments, body.arguments_slot.is_some(),
         ))
     }) {
@@ -209,7 +209,7 @@ pub(super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
     // than it has parameters.
     // A rest body keeps nothing its rest array holds, unless a kept `arguments` or legacy
     // reflection reads them (`TARGET_GATHERS_KEEPING`).
-    let gathers = target.entry == CallEntry::Gathers;
+    let gathers = target.entry == CallEntry::framed(Framed::Gathers);
     // A rest view keeps them too, as `activate_gathering_in_lane` keeps them: its reads and
     // its frame, once materialized, take the values passed, never a rest array.
     let keeps = forwarder.is_some()
@@ -585,7 +585,7 @@ pub(super) fn returning_field_hit<const KIND: u8>(
     }
 }
 
-/// The value a frameless read target (`CallEntry::reads`, `CallEntry::ForwardsRead`)
+/// The value a frameless read target (`CallEntry::reads`, `CallEntry::frameless(Frameless::ForwardsRead)`)
 /// returns for a call passing `arguments.get(k)` as parameter `k` (`None` where not passed) on
 /// `this`, where the reads its records have quickened to hit. Answering it at the call
 /// leaves nothing for an activation to observe: each hit runs no guest code and allocates
@@ -604,7 +604,7 @@ pub(super) unsafe fn call_read_in_lane(
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
     // A forwarding body's answer is its method's leaf read on the field it reads, so both
     // kinds reach one leaf read, which the call handler then holds once.
-    let (target, arguments, this) = if target.entry == CallEntry::ForwardsRead {
+    let (target, arguments, this) = if target.entry == CallEntry::frameless(Frameless::ForwardsRead) {
         // SAFETY: as for `ForwardRead::of`.
         let (callee, receiver) = unsafe { ForwardRead::of(target) }?.method(vm, code, arguments, this)?;
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
@@ -620,20 +620,20 @@ pub(super) unsafe fn call_read_in_lane(
     };
     match target.entry {
         // The receiver the call binds (`direct_call_this_in_lane`), which is what it returns.
-        CallEntry::ReadsThis => Some(this),
+        _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(this),
         // SAFETY: a capture-read target of the running program.
-        CallEntry::ReadsCapture => unsafe { read_capture_in_lane(vm, target) },
+        _ if target.entry == CallEntry::frameless(Frameless::ReadsCapture) => unsafe { read_capture_in_lane(vm, target) },
         // SAFETY: as for `LeafRead::of`.
         _ => unsafe { LeafRead::of(target) }?.run(vm, code, arguments, this),
     }
 }
 
-/// The capture a `CallEntry::ReadsCapture` target's closure environment holds, read as its
+/// The capture a `CallEntry::frameless(Frameless::ReadsCapture)` target's closure environment holds, read as its
 /// frameless activation's `LoadCapture` would (`load_capture_walk_miss`); an uninitialized
 /// binding misses.
 ///
 /// # Safety
-/// `target` is a `CallEntry::ReadsCapture` target of the running program, whose view holds
+/// `target` is a `CallEntry::frameless(Frameless::ReadsCapture)` target of the running program, whose view holds
 /// its `LoadCapture` record first.
 #[inline(never)]
 pub(super) unsafe fn read_capture_in_lane(vm: &mut Vm, target: &ScriptCallTarget) -> Option<Value> {
@@ -670,7 +670,7 @@ pub(super) unsafe fn answered_call_in_lane(
     // SAFETY: the caller's contract.
     let value = unsafe { read_answer_in_lane(cx, target, arguments, this) };
     // A mutating operation must never enter the pure read memo.
-    if value.is_some() && target.entry != CallEntry::AppendsCapture {
+    if value.is_some() && target.entry != CallEntry::frameless(Frameless::AppendsCapture) {
         note_read_in_lane(cx, site, target, arguments, this);
     }
     value
@@ -688,7 +688,7 @@ pub(super) unsafe fn read_answer_in_lane(
     arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
-    if target.entry == CallEntry::AppendsCapture {
+    if target.entry == CallEntry::frameless(Frameless::AppendsCapture) {
         return unsafe { capture_append::run(cx, target, arguments) };
     }
     unsafe { call_read_in_lane(cx, target, arguments, this) }
@@ -790,7 +790,7 @@ pub(super) fn memoize_read_in_lane(
     if target.this_binding == ThisBinding::Lexical {
         return;
     }
-    let read = if target.entry == CallEntry::ForwardsRead {
+    let read = if target.entry == CallEntry::frameless(Frameless::ForwardsRead) {
         // SAFETY: as for `ForwardRead::of`.
         let Some(forward) = (unsafe { ForwardRead::of(target) }) else {
             return;

@@ -15,32 +15,32 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
 
 /// The entry a target's body takes before what its call needs (a frame, an environment,
 /// kept arguments) decides further: the first form it has of those a call answers without
-/// activating it, else `CallEntry::Activates`. A class constructor's calls throw on the
+/// activating it, else `CallEntry::framed(Framed::Activates)`. A class constructor's calls throw on the
 /// general path, so they take a frame; only its constructions activate frameless
 /// (`script_construct_miss`).
 pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> CallEntry {
     if body.is_class_constructor {
-        CallEntry::Frame
+        CallEntry::framed(Framed::Frame)
     } else if body.code.first().is_some_and(|packed| returning_kind(body.widened(*packed)) == Some(RETURNING_FIELD)) {
-        CallEntry::Reads
+        CallEntry::frameless(Frameless::Reads)
     } else if element_read_body(body) {
-        CallEntry::ReadsElement
+        CallEntry::frameless(Frameless::ReadsElement)
     } else if forwarding_read_body(body) {
-        CallEntry::ForwardsRead
+        CallEntry::frameless(Frameless::ForwardsRead)
     } else if capture_read_body(body) {
-        CallEntry::ReadsCapture
+        CallEntry::frameless(Frameless::ReadsCapture)
     } else if this_read_body(body) {
-        CallEntry::ReadsThis
+        CallEntry::frameless(Frameless::ReadsThis)
     } else if super::capture_append::recognizes(body, constants) {
-        CallEntry::AppendsCapture
+        CallEntry::frameless(Frameless::AppendsCapture)
     } else {
-        CallEntry::Activates
+        CallEntry::framed(Framed::Activates)
     }
 }
 
 /// Whether `body` is `GetField` of `this` or a parameter, `GetField` of a method of that,
 /// moves of its parameters in order into a call window, and the call of that method on the
-/// first field returning its completion (`CallEntry::ForwardsRead`), as `at(i) { return
+/// first field returning its completion (`CallEntry::frameless(Frameless::ForwardsRead)`), as `at(i) { return
 /// this.items.at(i); }` compiles.
 #[cold]
 #[inline(never)]
@@ -105,7 +105,7 @@ fn calls_method(call: WideInstruction, method: WideInstruction, field: WideInstr
 }
 
 /// Whether `body` is `GetField` of `this` or a parameter, `GetIndex` of its result by a
-/// parameter, and `Return` of that (`CallEntry::ReadsElement`), as `at(i) { return
+/// parameter, and `Return` of that (`CallEntry::frameless(Frameless::ReadsElement)`), as `at(i) { return
 /// this.items[i]; }` compiles.
 fn element_read_body(body: &Function) -> bool {
     let [field, element, done, ..] = body.code.as_slice() else {
@@ -130,7 +130,7 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
     Some([first, second].map(|packed| body.widened(*packed)))
 }
 
-/// Whether `body` is `LoadCapture` and `Return` of it (`CallEntry::ReadsCapture`), as
+/// Whether `body` is `LoadCapture` and `Return` of it (`CallEntry::frameless(Frameless::ReadsCapture)`), as
 /// `() => binding` compiles.
 fn capture_read_body(body: &Function) -> bool {
     leading_pair(body).is_some_and(|[load, done]| {
@@ -138,7 +138,7 @@ fn capture_read_body(body: &Function) -> bool {
     })
 }
 
-/// Whether `body` is `LoadThis` and `Return` of it (`CallEntry::ReadsThis`): a function's own
+/// Whether `body` is `LoadThis` and `Return` of it (`CallEntry::frameless(Frameless::ReadsThis)`): a function's own
 /// `this`, which neither an arrow's lexical one nor a constructor's binding complicates.
 fn this_read_body(body: &Function) -> bool {
     !body.is_arrow
@@ -161,7 +161,7 @@ fn keeps_frame_state(body: &Function) -> bool {
         || body.has_dynamic_scope_access()
 }
 
-/// Whether `body` is a leaf (`CallEntry::Leaf`), and then what its records read of the
+/// Whether `body` is a leaf (`CallEntry::frameless(Frameless::Leaf)`), and then what its records read of the
 /// context (`LeafForm`): every instruction's lane record writes registers, captures or
 /// nothing, reads no frame state and no activation, and leaves the lane for anything else
 /// (its general path), or activates a getter, which makes the leaf an activation first; no
