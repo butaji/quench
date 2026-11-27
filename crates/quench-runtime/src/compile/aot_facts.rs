@@ -37,6 +37,7 @@ mod record;
 mod registers;
 mod scope;
 mod shape;
+mod shapes;
 mod types;
 mod value;
 #[cfg(test)]
@@ -55,7 +56,7 @@ use class_layout::ClassLayouts;
 use quiet::{Proofs, Quiet};
 use readers::Readers;
 use record::ElementStore;
-pub use class_layout::{FieldDefault, UnionField, UnionLayout};
+pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
@@ -157,6 +158,9 @@ pub struct AotFacts {
     /// The keys the root writes exactly once, with an immediate, where that store dominates every read of the key
     /// (`frozen::root_stores`), read by `AotFacts::dominated_root_store`. Empty unless the world is closed.
     root_stores: BTreeMap<crate::typed_ir::FactKey, RootStore>,
+    /// The constructed classes whose instances never depart their union layout (`shapes::never_departs`), read by
+    /// `AotFacts::class_never_departs`. Only where the closed world proves the union layout.
+    never_departs: std::collections::BTreeSet<u32>,
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
@@ -202,6 +206,7 @@ impl AotFacts {
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
             root_stores: BTreeMap::new(),
+            never_departs: std::collections::BTreeSet::new(),
             readers: None,
             builtins: None,
             closures_once: std::collections::BTreeSet::new(),
@@ -348,6 +353,30 @@ impl AotFacts {
     /// None otherwise.
     pub fn class_union_layout(&self, class: u32) -> Option<UnionLayout> {
         self.unions.get(&class).cloned()
+    }
+
+    /// The settled cell of the values stored into field `atom` of class `class`'s instances: the union layout's field of that
+    /// name (`class_union_layout`). None where the class has no union layout or the layout names no such field. A store of
+    /// the field writes a value of this cell's type in a closed world.
+    pub fn slot_domain(&self, class: u32, atom: u32) -> Option<crate::typed_ir::Cell> {
+        self.unions.get(&class)?.fields.iter().find(|(name, _)| *name == atom).map(|(_, field)| field.cell)
+    }
+
+    /// Whether instances of class `class` never depart their union layout (`shapes`): in a closed world, no delete, no store
+    /// under a name the analysis cannot list, no builtin that defines or re-describes properties reaches one of them.
+    /// Its shape is then the one its union layout names for good, so an instance's slots are the union's slots.
+    pub fn class_never_departs(&self, class: u32) -> bool {
+        self.never_departs.contains(&class)
+    }
+
+    /// The classes of `this` in `function`: the join of the receivers its recorded calls pass (`FactKey::Receiver`, settled in
+    /// `cells`). `Classes::Many` where new code may call the function (`live`), or where the solve kept no cell.
+    pub fn this_classes(&self, function: u32) -> crate::typed_ir::Classes {
+        let key = crate::typed_ir::FactKey::Receiver(function);
+        match self.cell(key) {
+            Some(cell) if !self.live(key) => cell.classes,
+            _ => crate::typed_ir::Classes::Many,
+        }
     }
 
     /// Whether two element classes are apart: no link of the program joins them, so an array of one class is never an array

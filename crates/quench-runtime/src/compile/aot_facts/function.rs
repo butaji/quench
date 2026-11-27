@@ -158,9 +158,10 @@ impl<'a> FunctionFacts<'a> {
         self.facts.access_classes.get(&(self.function, pc)).copied().unwrap_or(crate::typed_ir::Classes::Many)
     }
 
-    /// The class of every `this` the function's recorded calls pass (`AotFacts::this_classes`): a guess.
-    pub fn this_class(&self) -> Option<u32> {
-        self.facts.cell(crate::typed_ir::FactKey::Receiver(self.function)).and_then(|cell| cell.classes.single()).map(|(class, _)| class)
+    /// The classes of `this` in the function, settled in a closed world (`AotFacts::this_classes`): the join of the receivers
+    /// of the calls that reach it (`FactKey::Receiver`), so a method only ever called on its class's instances reads that class.
+    pub fn this_classes(&self) -> crate::typed_ir::Classes {
+        self.facts.this_classes(self.function)
     }
 
     /// The slot of named field `atom` in instances of `class` (its index in `AotFacts::class_layout`), where the layout is
