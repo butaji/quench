@@ -263,7 +263,7 @@ use super::*;
 use crate::staged::machine::MachineStage;
 use crate::staged::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
 use crate::staged::wasm_concrete::ConcreteWasm;
-use crate::staged::wasm_operation::WasmOperation;
+use crate::staged::wasm_operation::{WasmOperation, wasm_operation_of};
 use crate::staged::{Concrete, Operation};
 use crate::bytecode::{ImmediateLayout, Op, Register, WideInstruction};
 
@@ -308,7 +308,7 @@ impl WasmFloatOperation {
             return Some(Self::Select { destination, condition, chosen: b, other: c });
         }
         let raw = raw_float(op);
-        Some(match WasmOperation::of(op, instruction.imm())? {
+        Some(match wasm_operation_of(op, instruction.imm())? {
             WasmOperation::FloatBinary { operator, float } => Self::Binary { destination, left: b, right: c, operator, float, raw },
             WasmOperation::FloatUnary { operator, float } => Self::Unary { destination, source: b, operator, float, raw },
             WasmOperation::Convert { operator } => Self::Convert { destination, source: b, operator },
