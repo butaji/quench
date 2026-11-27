@@ -1692,15 +1692,6 @@ pub struct LoopTier {
     pub pending: Option<Box<dyn std::any::Any>>,
     pub wait: u16,
     pub compilations: u32,
-    /// Each operation the code left at, with its leaves so far; and those whose int32
-    /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
-    pub leaves: Vec<(usize, u16)>,
-    pub widened: Vec<usize>,
-    /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
-    pub abandoned: Vec<usize>,
-    /// The field stores the code left at often enough once, which the next compilation planned
-    /// again from their sites' caches (`left_store`), sorted.
-    pub refed: Vec<usize>,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
