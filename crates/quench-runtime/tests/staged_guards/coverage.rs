@@ -266,7 +266,7 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     // no staged step of its opcode: it neither names `staged::` nor calls a family step
     // (`step_of`, `step_local_of`, ...), one of the staged Wasm operators of `STAGED_WASM_STEPS` or
     // one of the regexp `Machine`'s rows of `STAGED_REGEXP_ROWS`.
-    // A call of a staged accessor or helper alone (`object_record_at`, `string_length::..`) is a
+    // A call of a staged accessor or helper alone (`object_record_of`, `string_length::..`) is a
     // hand-written row built from staged parts, and still counts. The stencils name rows by code
     // numbers, not opcodes, so the terms above cannot see them.
     // A row may run its step through a function of its own file (a numeric row's `number`, an add

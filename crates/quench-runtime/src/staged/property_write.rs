@@ -156,7 +156,7 @@ fn layout_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (ow
     (id, slot): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
     frame.store_admitted(stage, miss)?;
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
-    let record_id = stage.and_imm(object, u64::from(u32::MAX));
+    let record_id = super::value::direct_object_id(stage, object);
     own_store(stage, at.record, record_id, id, true, slot, value, miss)
 }
 
@@ -170,7 +170,7 @@ fn held_store<S: Stage, F: PropertyFrame<S>, const HELD: u8>(stage: &mut S, fram
     (id, slot): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
     frame.store_admitted(stage, miss)?;
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
-    let record_id = stage.and_imm(object, u64::from(u32::MAX));
+    let record_id = super::value::direct_object_id(stage, object);
     let payload = super::slot_store::held_payload::<S, HELD>(stage, at.record, record_id, (id, slot), value, miss)?;
     super::slot_store::store_flat(stage, payload, slot, (value, Representation::Tagged));
     Some(())
@@ -255,7 +255,7 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
         let admitted = stage.any(named, quiet);
         stage.guard(admitted, miss)?;
     }
-    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let id = super::value::direct_object_id(stage, object);
     let fact = super::slot_store::store_fact(stage, value, fact);
     super::slot_store::held_gate_open(stage, id, (value, fact), miss)?;
     super::slot_store::store_word(stage, address, value, crate::typed_ir::Representation::Tagged);
@@ -316,7 +316,7 @@ fn arm_store_flat<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word),
         None => fact,
     };
     admit_named(stage, named, (record, arm.slot), value, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let id = super::value::direct_object_id(stage, object);
     super::store::own_store_flat_proved(stage, record, id, arm.slot, (value, fact), miss)
 }
 
@@ -353,6 +353,6 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
         None => fact,
     };
     admit_named(stage, named, (record, arm.slot), value, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let id = super::value::direct_object_id(stage, object);
     own_store_proved(stage, record, id, arm.slot, (value, fact), miss)
 }

@@ -267,7 +267,7 @@ fn site_read_in<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word
 fn readable_record<S: Stage>(stage: &mut S, (records, functions): (S::Word, S::Word), object: S::Word, miss: S::Miss) -> Option<S::Word> {
     let direct = super::value::is_direct_object(stage, object);
     let id = super::value::direct_object_id(stage, object);
-    stage.choose_leaving(direct, #[inline(always)] |stage| Some(super::object::object_record_at(stage, records, id)), #[inline(always)] |stage| {
+    stage.choose_leaving(direct, #[inline(always)] |stage| Some(super::object::object_record_of(stage, records, object)), #[inline(always)] |stage| {
         let function = super::value::is_direct_function(stage, object);
         stage.guard(function, miss)?;
         let present = stage.ne_imm(functions, 0u32);
