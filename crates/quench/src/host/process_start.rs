@@ -26,7 +26,6 @@ pub extern "C" fn fault_only_touched_pages() {
     super::resident_pages::release_read_only_pages();
     quench_runtime::set_compile_phase_boundary(super::resident_pages::at_compile_phase);
     quench_runtime::set_record_read(super::resident_pages::release_read_record);
-    quench_runtime::set_record_built(super::resident_pages::at_record_built);
 }
 
 /// Reports the last phase's peak at exit (`resident_pages::phase_peak`).

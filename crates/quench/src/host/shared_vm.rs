@@ -2724,10 +2724,6 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::note_collection();
     }
 
-    fn before_collection(&mut self) {
-        crate::host::resident_pages::release_before_first_collection();
-    }
-
     fn after_collection(context: &mut quench_runtime::CollectionContext<'_>) {
         let shared = context.host_as::<crate::host::NodeHost>().shared_state();
         let hooks: Vec<_> = shared.borrow().armed_hooks().collect();

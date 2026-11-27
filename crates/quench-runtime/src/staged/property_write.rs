@@ -5,7 +5,7 @@
 
 use super::ic::{self, Reached};
 use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, PropertyFrame, StoreArm, StoreJoin, StorePlan};
-use super::store::{own_store, own_store_proved, own_store_raw, slot_holds};
+use super::store::{admit_named, own_store, own_store_proved, own_store_raw, slot_holds, uncallable};
 use super::Stage;
 use crate::bytecode::{FieldBase, Register};
 use crate::typed_ir::Type;
@@ -157,13 +157,14 @@ fn vm_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, join: S
     }
 }
 
-/// The in-place store of `value`, of type `fact`, to `owner`'s `object`: the method-cache
-/// admission, the receiver's record, then the arm that holds its shape. A single arm's shape
-/// guard is the owner's proof; several are a switch on the shape word.
+/// The in-place store of `value`, of type `fact`, to `owner`'s `object`: the run's admission, the
+/// receiver's record, then the arm that holds its shape. A single arm's shape guard is the
+/// owner's proof; several are a switch on the shape word. Where a method cache may name the atom,
+/// the arm admits the store once its shape is proved, if the store is quiet (`admit_named`).
 #[inline(always)]
 fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
     arms: &[StoreArm], value: Stored<S::Word>, miss: S::Miss) -> Option<()> {
-    frame.store_admitted(stage, miss)?;
+    let named = frame.store_admission(stage, miss)?;
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     match arms {
         [arm] => {
@@ -172,11 +173,11 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
                 return raw_through_layout(stage, frame, (owner, &Reached { shaped: Some(shaped), ..at }), *arm, number, miss);
             }
             if let Some(base) = kept_flat(frame, owner, *arm) {
-                return tagged_through_layout(stage, (base, object), *arm, value, miss);
+                return tagged_through_layout(stage, (base, object), *arm, value, named, miss);
             }
-            arm_store(stage, (at.record, object), *arm, value, miss)
+            arm_store(stage, (at.record, object), *arm, value, named, miss)
         }
-        arms => arm_switch(stage, (&at, object), arms, value, miss),
+        arms => arm_switch(stage, (&at, object), arms, value, named, miss),
     }
 }
 
@@ -194,7 +195,7 @@ fn kept_flat<S: Stage, F: PropertyFrame<S>>(frame: &F, owner: Owner, arm: StoreA
 /// where the slot's type may not hold the value, the barrier's gate for a reference, the word.
 #[inline(always)]
 fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::Word), arm: StoreArm,
-    (value, fact, _): Stored<S::Word>, miss: S::Miss) -> Option<()> {
+    (value, fact, _): Stored<S::Word>, named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
     let value = value?;
     let fact = match arm.holds {
         Some(holds) => {
@@ -204,10 +205,18 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
         }
         None => fact,
     };
-    let id = stage.and_imm(object, u64::from(u32::MAX));
-    super::slot_store::held_gate_open(stage, id, (value, fact), miss)?;
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
+    if let Some(named) = named {
+        // The kept run holds the slot: a quiet store writes and overwrites no callable.
+        let old = stage.load_u64(super::region::Region::ObjectSlots.mutable(), address, 0);
+        let (fresh, kept) = (uncallable(stage, value), uncallable(stage, old));
+        let quiet = stage.all(fresh, kept);
+        let admitted = stage.any(named, quiet);
+        stage.guard(admitted, miss)?;
+    }
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    super::slot_store::held_gate_open(stage, id, (value, fact), miss)?;
     super::slot_store::store_word(stage, address, value, crate::typed_ir::Representation::Tagged);
     Some(())
 }
@@ -238,17 +247,17 @@ fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
 /// guard of the whole.
 #[inline(always)]
 fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>, S::Word), arms: &[StoreArm],
-    value: Stored<S::Word>, miss: S::Miss) -> Option<()> {
+    value: Stored<S::Word>, named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
     let (arm, rest) = arms.split_first()?;
     let exact = ic::shape_word(stage, at);
     let same = { let shape = stage.shape_site(arm.shape); stage.eq_imm(exact, shape) };
     if rest.is_empty() {
         stage.guard(same, miss)?;
-        return arm_store(stage, (at.record, object), *arm, value, miss);
+        return arm_store(stage, (at.record, object), *arm, value, named, miss);
     }
     stage.choose_leaving(same,
-        #[inline(always)] |stage| arm_store(stage, (at.record, object), *arm, value, miss).map(|()| stage.constant(0)),
-        #[inline(always)] |stage| arm_switch(stage, (at, object), rest, value, miss).map(|()| stage.constant(0))).map(drop)
+        #[inline(always)] |stage| arm_store(stage, (at.record, object), *arm, value, named, miss).map(|()| stage.constant(0)),
+        #[inline(always)] |stage| arm_switch(stage, (at, object), rest, value, named, miss).map(|()| stage.constant(0))).map(drop)
 }
 
 /// The store through one arm into `record` (the record of `object`), whose shape the caller
@@ -257,7 +266,7 @@ fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>
 /// under the narrowed fact.
 #[inline(always)]
 fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm: StoreArm,
-    (value, fact, number): Stored<S::Word>, miss: S::Miss) -> Option<()> {
+    (value, fact, number): Stored<S::Word>, named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
     if arm.raw_double {
         // The arm's slot holds raw doubles: a frame with no binary64 view of the value leaves.
         let Some(number) = number else {
@@ -283,6 +292,7 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
         }
         None => fact,
     };
+    admit_named(stage, named, (record, arm.slot), value, miss)?;
     let id = stage.and_imm(object, u64::from(u32::MAX));
     own_store_proved(stage, record, id, arm.slot, (value, fact), miss)
 }

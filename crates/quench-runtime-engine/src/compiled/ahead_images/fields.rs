@@ -6,12 +6,10 @@
 //! symbol (`Symbol::GuardShape`), which the loader resolves to the shape's id, or to an id no
 //! record has where the VM builds none or the slot's words are not tagged values. A guess is
 //! never an observation: a miss asks the VM's caches (`NativeFieldLoad::probes_misses`), so a wrong
-//! guess costs a compare, never a leave. A store of the name guesses the same shapes, for each class
-//! of value it stores in place (`GuardAccess`): an int32, or a direct object or `null` (`StoreArm::of`
-//! of a slot typed as the class), the class the construction's own store of the field names
-//! (`stored_classes`), both where it names neither. Each guard resolves only where the slot's type
-//! holds every value of its class, so the store needs no join, and any other store, or a miss, takes
-//! the VM's store as it did before.
+//! guess costs a compare, never a leave. A store of the name takes the same shapes, with the one
+//! class of value every store of the name in the program writes (`field_classes`): an int32, a
+//! direct object or `null`, or any tagged word. The loader admits the slot to that class, so the
+//! store is one arm whose slot holds what it writes, and a miss takes the VM's store as before.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -23,14 +21,15 @@ use super::constructions::ADDED_FIELD;
 pub(crate) fn guessed_fields(program: &ResidualProgram, unit: &lane_unit::Unit, facts: &AotFacts, symbols: &mut SymbolTable)
     -> Vec<Option<Vec<NativeFieldLoad>>> {
     let owners = field_owners(program, facts);
+    let classes = field_classes(program);
     let inherited = prototype_owners(facts, &owners);
     if owners.is_empty() && inherited.is_empty() { return Vec::new(); }
     let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().flat_map(|instruction| accessed(program, *instruction)).filter_map(|(atom, site, store)| {
             // A name both constructions store and prototypes hold (a task's `queue` field, the
             // scheduler's `queue` method) guesses both: a read of either receiver finds its arm.
+            let access = if store { classes.get(&atom).copied().unwrap_or(GuardAccess::StoreTagged) } else { GuardAccess::Read };
             let own = owners.get(&atom).map(|owners| owners.iter()
-                .flat_map(|&owner| if store { stored_classes(program, owner.0, atom) } else { vec![GuardAccess::Read] }.into_iter().map(move |access| (owner, access)))
-                .map(|(owner, access)| guessed_load(program, owner, access, &mut *symbols)).collect::<Option<Vec<_>>>());
+                .map(|&owner| guessed_load(program, owner, access, &mut *symbols)).collect::<Option<Vec<_>>>());
             let held = inherited.get(&atom).filter(|_| !store).map(|holders| holders.iter()
                 .map(|&(function, slot, len)| guessed_holder_load(program, (function, slot, len), atom, &mut *symbols)).collect::<Option<Vec<_>>>());
             let loads: Vec<NativeFieldLoad> = match (own, held) {
@@ -117,37 +116,49 @@ fn this_fields(program: &ResidualProgram, function: u32) -> Vec<u32> {
     fields
 }
 
-/// The classes of value a store of field `atom` into an object `function` constructs stores in place
-/// (`GuardAccess`): the class of the constant each of the construction's own stores of the field
-/// writes (the staged row of a load of a constant into the stored register just before it: an
-/// int32 Number, or `null`),
-/// both classes where a store writes anything else (a parameter, a computed value), which the
-/// construction's stores do not tell; a constant of neither class, which a later store may still
-/// widen, adds none.
-fn stored_classes(program: &ResidualProgram, function: u32, atom: u32) -> Vec<GuardAccess> {
+/// By field name, the one class of value every store of that name in the program writes
+/// (`GuardAccess`), the closed world's fact where a JIT body reads its site's observations: an
+/// int32 where each store writes an int32 constant, a direct object or `null` where each writes
+/// `null`, and any tagged word where some store writes anything else (a parameter, a computed
+/// value, a nested lookup's sink) or both classes. The slot is admitted to the class at link
+/// (`symbols::guarded_shape`), so a site's store is one arm with no class guessed: the VM's own
+/// stores of other words (a keyed store) widen the slot past the class, which the arm still
+/// holds, since a class only ever joins.
+fn field_classes(program: &ResidualProgram) -> BTreeMap<u32, GuardAccess> {
     use quench_runtime::staged::{DecodeContext, Operation};
     use quench_runtime::typed_ir::Type;
-    const BOTH: [GuardAccess; 2] = [GuardAccess::StoreInt32, GuardAccess::StoreReference];
-    let Some(body) = program.function_get(function as usize) else { return BOTH.to_vec() };
+    const INT32: u8 = 1;
+    const NULL: u8 = 2;
+    const OTHER: u8 = 4;
     // The program's primitive constants as values, the table the staged row decodes a `LoadConst` from.
     let table = |index: usize| program.constants.get(index).and_then(crate::compiled::facts::immediate).map(quench_runtime::staged::Constant::untyped);
     let context = DecodeContext { constant_at: Some(&table), ..DecodeContext::EMPTY };
-    let instructions: Vec<WideInstruction> = body.instructions().collect();
-    let mut classes = Vec::new();
-    for (pc, store) in instructions.iter().enumerate().filter(|(_, instruction)| instruction.stores_to_this() && instruction.imm() == atom) {
-        let loaded = pc.checked_sub(1).and_then(|before| match Operation::<(), ()>::decode(instructions[before], context) {
-            Some(Operation::LoadConst { destination, constant }) if destination == store.register_a() => Some(Type::immediate(constant.value)),
-            _ => None,
-        });
-        let class = match loaded {
-            Some(ty) if ty.is_subtype(Type::INT32) => &[GuardAccess::StoreInt32][..],
-            Some(ty) if ty.is_subtype(Type::language(quench_runtime::ValueType::Null)) => &[GuardAccess::StoreReference][..],
-            Some(_) => &[][..],
-            None => &BOTH[..],
-        };
-        for access in class { if !classes.contains(access) { classes.push(*access); } }
+    let mut classes: BTreeMap<u32, u8> = BTreeMap::new();
+    for function in 0..program.function_count() {
+        let Some(body) = program.function_get(function) else { continue };
+        let instructions: Vec<WideInstruction> = body.instructions().collect();
+        for (pc, instruction) in instructions.iter().enumerate() {
+            let stored: Vec<(u32, u8)> = accessed(program, *instruction).into_iter().filter(|(_, _, store)| *store).map(|(atom, _, _)| {
+                // A nested lookup's sink stores a word no register names.
+                if !Operation::<u64, ()>::is_field_store(*instruction) { return (atom, OTHER); }
+                let loaded = pc.checked_sub(1).and_then(|before| match Operation::<(), ()>::decode(instructions[before], context) {
+                    Some(Operation::LoadConst { destination, constant }) if destination == instruction.register_a() => Some(Type::immediate(constant.value)),
+                    _ => None,
+                });
+                (atom, match loaded {
+                    Some(ty) if ty.is_subtype(Type::INT32) => INT32,
+                    Some(ty) if ty.is_subtype(Type::language(quench_runtime::ValueType::Null)) => NULL,
+                    _ => OTHER,
+                })
+            }).collect();
+            for (atom, class) in stored { *classes.entry(atom).or_default() |= class; }
+        }
     }
-    classes
+    classes.into_iter().map(|(atom, class)| (atom, match class {
+        INT32 => GuardAccess::StoreInt32,
+        NULL => GuardAccess::StoreReference,
+        _ => GuardAccess::StoreTagged,
+    })).collect()
 }
 
 /// The read of method `atom` of an object a construction of `function` makes, which its

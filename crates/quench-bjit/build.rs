@@ -782,11 +782,18 @@ static FAILED_ROWS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::n
 /// (2026-11-20), so a worker per core fits; a shard killed for memory is compiled again alone (`compile`).
 const SHARD_MEMORY: u64 = 3 << 30;
 
-/// How many shard rustc processes the box's available memory holds, at least one.
+/// What each other unit cargo builds beside this script may reach, in bytes: the engine crate's rustc peaked at
+/// 9.2 GB (2026-11-27, `-j2`), and starting after the shards it found their memory taken and was killed.
+const SIBLING_MEMORY: u64 = 10 << 30;
+
+/// How many shard rustc processes the box's available memory holds, at least one: what is available now, less
+/// what the other units cargo runs at once (`NUM_JOBS`, the build's `-j`) may take while the shards compile.
 fn memory_workers() -> usize {
     let available = fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
         .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()));
-    available.map_or(usize::MAX, |kib| usize::try_from((kib << 10) / SHARD_MEMORY).unwrap_or(usize::MAX).max(1))
+    let siblings = env::var("NUM_JOBS").ok().and_then(|jobs| jobs.parse::<u64>().ok()).unwrap_or(1).saturating_sub(1);
+    available.map_or(usize::MAX, |kib| usize::try_from((kib << 10).saturating_sub(siblings * SIBLING_MEMORY) / SHARD_MEMORY)
+        .unwrap_or(usize::MAX).max(1))
 }
 
 /// One row as (name, table entry), checked; adds to `counts` what `checks` counted.

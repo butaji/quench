@@ -452,6 +452,15 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn store_admitted(&mut self, _stage: &mut S, _miss: S::Miss) -> Option<()> { Some(()) }
 
+    /// `store_admitted` for an in-place store, split: what every store needs is tested here; the
+    /// test that no method cache names the atom is answered instead, for the arm to take unless
+    /// the store is quiet (`store::admit_named`). `None` inside where nothing is left to test.
+    #[inline(always)]
+    fn store_admission(&mut self, stage: &mut S, miss: S::Miss) -> Option<Option<S::Cond>> {
+        self.store_admitted(stage, miss)?;
+        Some(None)
+    }
+
     /// What `fast` stores, which leaves at the edge it is given; where it misses, `slow` (the
     /// VM's store) instead, and past the join only what both prove holds.
     #[inline(always)]
