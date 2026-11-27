@@ -1763,7 +1763,7 @@ impl Vm {
         }
         match receiver.proto_link().object_granule().map(|granule| self.heap.object_record_by_granule(granule)) {
             Some(holder) if cached_holder_matches(holder, entry.holder) =>
-                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_id: NO_FIELD_HOLDER_LAYOUT, ..entry },
+                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_cell: NO_FIELD_HOLDER_LAYOUT, ..entry },
             _ => entry,
         }
     }
@@ -1832,7 +1832,7 @@ impl Vm {
             .and_then(Object::plain_property_storage);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage, ty,
-            inherited: None, function_shape: false, formed: None, holder_id: None,
+            inherited: None, function_shape: false, formed: None, holder_cell: None,
         })
     }
 
@@ -1894,7 +1894,7 @@ impl Vm {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 inherited: crate::vm::engine_types::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
-                formed: None, holder_id: None,
+                formed: None, holder_cell: None,
             });
         }
         loads
@@ -1946,13 +1946,13 @@ impl Vm {
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
         if usize::from(entry.slot) >= storage_len { return None; }
         let ty = self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot));
-        // The holder's layout id, where the entry kept one (`FieldCache::holder_id`); the plan
+        // The holder's layout id, where the entry kept one (`FieldCache::holder_cell`); the plan
         // checks it names the holder's shape before a read guards by it.
-        let holder_id = (holder.is_some() && entry.holder_id != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_id);
+        let holder_cell = (holder.is_some() && entry.holder_cell != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_cell);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None, ty,
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
-            formed: None, holder_id,
+            formed: None, holder_cell,
         })
     }
 
@@ -3448,7 +3448,7 @@ impl Vm {
                         receiver: receiver.shape(),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
-                        holder_id: NO_FIELD_HOLDER_LAYOUT,
+                        holder_cell: NO_FIELD_HOLDER_LAYOUT,
                     },
                 );
             }
@@ -3768,13 +3768,13 @@ impl Vm {
                         receiver: receiver.shape(),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
-                        holder_id: NO_FIELD_HOLDER_LAYOUT,
+                        holder_cell: NO_FIELD_HOLDER_LAYOUT,
                     },
                 );
             }
             return Some(value);
         }
-        if let Some((holder_shape, holder_id, slot, value)) = self.immediate_prototype_data_field(object, atom)
+        if let Some((holder_shape, holder_cell, slot, value)) = self.immediate_prototype_data_field(object, atom)
             && slot < FIELD_CACHE_SLOT_CAPACITY
         {
             #[cfg(feature = "profile-lane-exits")]
@@ -3785,7 +3785,7 @@ impl Vm {
                     receiver: receiver.shape(),
                     holder: holder_shape,
                     slot: slot as u16,
-                    holder_id,
+                    holder_cell,
                 },
             );
             return Some(value);
@@ -4078,8 +4078,8 @@ impl Vm {
         if self.slot_holds_accessor(holder, slot) {
             return None;
         }
-        let holder_id = holder_layout_id(holder, holder_shape);
-        Some((holder_shape, holder_id, slot, self.heap.property_get(holder, slot)?))
+        let holder_cell = holder_layout_id(holder, holder_shape);
+        Some((holder_shape, holder_cell, slot, self.heap.property_get(holder, slot)?))
     }
     pub fn set_property(
         &mut self,
@@ -4917,7 +4917,7 @@ impl Vm {
                     receiver: data_shape,
                     holder: NO_FIELD_HOLDER,
                     slot: slot as u16,
-                    holder_id: NO_FIELD_HOLDER_LAYOUT,
+                    holder_cell: NO_FIELD_HOLDER_LAYOUT,
                 },
             );
         }
@@ -5625,7 +5625,7 @@ fn declared_field_type(p: &ResidualProgram, function: u32, atom: Atom) -> Option
 }
 
 /// The layout id of `holder` where it names exactly `shape`, else `NO_FIELD_HOLDER_LAYOUT`: the
-/// id a holder entry keeps (`FieldCache::holder_id`). Id 0 is the all-zero header and names no
+/// id a holder entry keeps (`FieldCache::holder_cell`). Id 0 is the all-zero header and names no
 /// holder, so it stays unset; `layouts::auxiliary` of an id is its shape (`layout_shape`).
 fn holder_layout_id(holder: &Object, shape: u32) -> u32 {
     let id = holder.layout_id();
