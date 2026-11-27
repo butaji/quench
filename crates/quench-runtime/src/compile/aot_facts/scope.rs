@@ -21,9 +21,31 @@ const ARRAY_MUTATORS: [&str; 9] = ["push", "pop", "shift", "unshift", "splice", 
 /// property of an element. A call of one on an array is no escape of its receiver or arguments (`escapes`, `readers`);
 /// `sort` is a mutator that calls its comparator, so it is not one.
 const ARRAY_BUILTINS: [&str; 12] = ["push", "pop", "shift", "unshift", "splice", "fill", "copyWithin", "reverse", "slice", "indexOf", "lastIndexOf", "includes"];
-/// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
-/// object, which the closed world must treat as changed (`shape::of_call`).
-const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
+/// What a builtin that touches the properties of the objects it is given does to them, one row per name (`PROPERTY_BUILTINS`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Descriptors {
+    /// It may make a property non-writable or an accessor, or an object non-extensible, so a store may fail or run a trap.
+    Change,
+    /// It does so only when given its second argument (`Object.create(proto, descriptors)`).
+    WithSecond,
+    /// It writes plain data properties only (`Object.assign`).
+    Keep,
+}
+
+/// The builtins that add, re-shape or lock the properties of the objects they are given: whether a call re-shapes its
+/// arguments (`Scope::adds_properties`, read by `shape::of_call` and the prototype-writes fact), and what it does to their
+/// descriptors (`Scope::changes_descriptors`, read by the field readers so a store that may fail is never dropped).
+const PROPERTY_BUILTINS: [(&str, bool, Descriptors); 9] = [
+    ("defineProperty", true, Descriptors::Change),
+    ("defineProperties", true, Descriptors::Change),
+    ("setPrototypeOf", true, Descriptors::Change),
+    ("assign", true, Descriptors::Keep),
+    ("freeze", false, Descriptors::Change),
+    ("seal", false, Descriptors::Change),
+    ("preventExtensions", false, Descriptors::Change),
+    ("create", false, Descriptors::WithSecond),
+    ("Proxy", false, Descriptors::Change),
+];
 /// The typed-array constructors whose kind has a native element (`TypedArrayKind::has_native_element`): a call of one
 /// allocates a typed array of that kind (`effects::typed_array_constructed`).
 const TYPED_ARRAY_CONSTRUCTORS: [(&str, TypedArrayKind); 9] = [
@@ -46,14 +68,16 @@ pub(super) struct Scope {
     module: bool,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
-    /// The atoms of the builtins that add properties to the objects they are given (`PROPERTY_ADDERS`).
-    property_adders: Vec<u32>,
+    /// The atoms of the property builtins the program names, with their row of `PROPERTY_BUILTINS`.
+    property_adders: Vec<(u32, bool, Descriptors)>,
     /// The atoms of the methods that pass a `this` (`THIS_PASSERS`) the program names.
     this_passers: Vec<u32>,
     /// The atom `prototype` interns to, if the program names it.
     pub(super) prototype: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
     pub(super) length: Option<u32>,
+    /// The atom `__proto__` interns to, if the program names it: a read of it is a builtin prototype (`Cell::prototype`).
+    proto: Option<u32>,
     /// The atom the intrinsic `Object.setPrototypeOf` class heritage calls is bound under, if the program names it
     /// (`accessors::heritage_link`).
     pub(super) set_prototype: Option<u32>,
@@ -115,12 +139,12 @@ impl Scope {
                 .atoms
                 .iter()
                 .enumerate()
-                .filter(|(_, name)| PROPERTY_ADDERS.contains(name))
-                .map(|(atom, _)| atom as u32)
+                .filter_map(|(atom, name)| PROPERTY_BUILTINS.iter().find(|row| row.0 == name.as_ref() as &str).map(|row| (atom as u32, row.1, row.2)))
                 .collect(),
             this_passers: THIS_PASSERS.iter().filter_map(|name| atom_named(program, name)).collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
+            proto: program.atoms.iter().position(|name| name == "__proto__").map(|atom| atom as u32),
             set_prototype: atom_named(program, INTRINSIC_SET_PROTOTYPE_OF_BINDING),
             mutators: program
                 .atoms
@@ -223,9 +247,24 @@ impl Scope {
         !self.module
     }
 
-    /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).
+    /// Whether `atom` names a prototype object's property a builtin reads as one: `prototype` or `__proto__` (`Cell::prototype`).
+    pub(super) fn is_prototype_name(&self, atom: u32) -> bool {
+        self.prototype == Some(atom) || self.proto == Some(atom)
+    }
+
+    /// Whether the builtin named `atom`, called with `arguments` arguments, may define a property of an object it is given, or make
+    /// one non-writable or non-extensible (`PROPERTY_BUILTINS`). `Object.create` does so only with its second argument, the descriptors.
+    pub(super) fn changes_descriptors(&self, atom: u32, arguments: usize) -> bool {
+        self.property_adders.iter().any(|&(named, _, descriptors)| named == atom && match descriptors {
+            Descriptors::Change => true,
+            Descriptors::WithSecond => arguments >= 2,
+            Descriptors::Keep => false,
+        })
+    }
+
+    /// Whether the builtin named `atom` adds or re-shapes properties of the objects it is given (`PROPERTY_BUILTINS`).
     pub(super) fn adds_properties(&self, atom: u32) -> bool {
-        self.property_adders.contains(&atom)
+        self.property_adders.iter().any(|&(named, shapes, _)| named == atom && shapes)
     }
 
     /// The arguments the builtin `name` of `object` (a global, for a method) runs no guest code for, if the program names it.

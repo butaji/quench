@@ -19,6 +19,8 @@ use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representat
 pub(crate) struct ElementStore {
     pub(crate) class: ElementClass,
     pub(crate) indices: Indices,
+    /// Whether the array the store writes may be a builtin's prototype object (`Cell::prototype`).
+    pub(crate) prototype: bool,
 }
 
 /// The indices an element store through `index` at `pc` touches in `function`. A Number that is parameter `p` on entry
@@ -48,6 +50,8 @@ pub(super) struct Record {
     plain_calls: Vec<Option<u32>>,
     reads_this: bool,
     wild_member: bool,
+    /// Whether a builtin stores an index into an object that may be a builtin's prototype (`FunctionFlow::prototype_writes`).
+    prototype_writes: bool,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Word>>,
     /// Per register, whether a read saw a value that is not a Number.
@@ -123,6 +127,7 @@ impl Record {
             plain_calls: Vec::new(),
             reads_this: false,
             wild_member: false,
+            prototype_writes: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
@@ -169,7 +174,7 @@ impl Record {
         // An element store writes the elements of its array's class, at the indices its index register holds.
         if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
-            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index) });
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index), prototype: array.cell.prototype });
         }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
@@ -243,10 +248,14 @@ impl Record {
             let method = method_atom(&call);
             // An array mutator (`push`, `splice`, ...) makes the arrays its receiver names hold its arguments, and an unknown
             // length (`Scope::is_array_mutator`).
+            // A mutator on a builtin prototype, or a property adder handed one (`Object.assign(Array.prototype, ...)`), stores
+            // a property of it that no element store records (`FunctionFlow::prototype_writes`).
+            if call.receiver.cell.prototype && method.is_some_and(|atom| ctx.scope.is_array_mutator(atom)) { self.prototype_writes = true; }
+            if method.is_some_and(|atom| ctx.scope.adds_properties(atom)) && call.arguments.iter().any(|argument| argument.cell.prototype) { self.prototype_writes = true; }
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global };
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global, prototype: stored.prototype };
                 self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
@@ -400,6 +409,7 @@ impl Record {
             plain_calls: self.plain_calls,
             reads_this: self.reads_this,
             member_wild: self.wild_member,
+            prototype_writes: self.prototype_writes,
             wild_elements: self.wild_elements,
             numbers,
             field_owners: self.field_owners,

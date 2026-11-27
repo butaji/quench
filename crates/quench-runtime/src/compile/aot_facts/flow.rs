@@ -74,6 +74,9 @@ pub(super) struct FunctionFlow {
     pub(super) reads_this: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) member_wild: bool,
+    /// Whether a store a builtin makes may write an index of an object that may be a builtin's prototype (`Cell::prototype`):
+    /// an array mutator on one, or a property adder handed one. An element store records its own (`ElementStore::prototype`).
+    pub(super) prototype_writes: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
