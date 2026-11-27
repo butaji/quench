@@ -11,8 +11,8 @@
 //!   host runs its entries under). Nothing about the program is observable at run time, so the
 //!   image is the strict replay image (`strict::fold_image`): no realm, no program, no top level.
 //! * **Captured** (`dump`): the build runs the entry to its first input. The input native's entry
-//!   captures the chain of frames that called it, parked at that call (`Vm::capture_input_native`,
-//!   `clock::store_input_capture`), before the native runs. The dump run writes the realm, the
+//!   captures the chain of frames that called it, parked at that call (`Vm::capture_input_native`;
+//!   the run returns it as its outcome, `JsError::into_captured`), before the native runs. The dump run writes the realm, the
 //!   program and that chain as the dump the image adopts; the image resumes the chain
 //!   (`image_driver_core::run`).
 //! * **Unfinished**: the entry fails, or leaves a top-level await pending, with no input read. The
@@ -148,14 +148,20 @@ pub(super) fn probe(program: &Path, tables: ClosedTables) -> Result<Reach, Strin
     let mut runtime = Runtime::new_static_with_builtins(prefix::Probe, tables.builtins, tables.execution);
     // Watch from before the first instruction: the gate notes every input the run reads.
     quench_runtime::clock::watch_inputs(runtime.execution_interrupt_handle());
-    let run = runtime.execute_deferred_jobs(&program).and_then(|()| runtime.run_host_jobs(&program));
+    // A run that reaches an input native returns its caller chain as its outcome: taken at once,
+    // before anything allocates, since the chain is not rooted in flight.
+    let run = match runtime.execute_deferred_jobs(&program).and_then(|()| runtime.run_host_jobs(&program)) {
+        Err(error) => match error.into_captured() {
+            Ok(chain) => return Ok(Reach::Captured(chain)),
+            Err(error) => Err(error),
+        },
+        ok => ok,
+    };
     let pending = match &run {
         Ok(()) => runtime.module_evaluation_pending(&program).map_err(|error| error.to_string())?,
         Err(_) => false,
     };
     Ok(match prefix::finish() {
-        // The chain at the first input decides the save point, whatever the run went on to do.
-        Residual::Captured(chain) => Reach::Captured(chain),
         Residual::Dynamic(input) => Reach::Unfinished(format!("reads {input} with no frame to capture")),
         Residual::Question(question) => Reach::Unfinished(format!("asks a question about {}", question.key())),
         Residual::Effects(_) | Residual::Waiting(..) => match run {

@@ -156,7 +156,6 @@ pub(super) fn build_rest(program: &Path, output: &Path, assumptions: &[String]) 
             fs::write(output.with_extension("effects"), serde_json::to_vec(&effects).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
         }
         super::prefix::Residual::Dynamic(input) => Err(format!("the native entry's build-time run read {input} before its first wait")),
-        super::prefix::Residual::Captured(_) => Err("the native entry's build-time run read an input before its first wait".to_owned()),
         super::prefix::Residual::Question(question) => Err(format!("the native entry's build-time run asked {} before its first wait", question.key())),
         super::prefix::Residual::Effects(_) => Err(format!("the native entry's build-time run did not wait for input ({:?})", completion.err())),
     }
