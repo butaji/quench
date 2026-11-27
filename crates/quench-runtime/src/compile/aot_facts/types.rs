@@ -16,9 +16,11 @@
 //! else, by any tier, widens the slot and retires the code: the fact is proven where the slot is
 //! written, never at the read.
 
+use super::accessors::Shadows;
 use super::census::{Census, ElementClasses};
 use super::escapes::{escapes, resolved};
 use super::flow::FunctionFlow;
+use super::gate::World;
 use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
@@ -66,6 +68,12 @@ pub(crate) struct Types {
     /// Whether a flow writes elements of arrays it cannot name (`effects::Events::wild_elements`): every class's elements
     /// are then any.
     wild_elements: bool,
+    /// The stores that may shadow a named property of an instance (`accessors::Shadows`), which bound `holder`.
+    shadows: Shadows,
+    /// Per class, the parent its prototype chain links it to (`accessors::parents_of`): the `extends` chain `holder` walks.
+    parents: BTreeMap<u32, u32>,
+    /// The world the program is solved in: a key new code can move is no fold (`World::live`).
+    world: World,
 }
 
 impl Types {
@@ -89,6 +97,9 @@ impl Types {
             elements: ElementClasses::default(),
             wild_elements: flows.iter().any(|flow| flow.wild_elements),
             thresholds: BTreeMap::new(),
+            shadows: census.accessors.shadows.clone(),
+            parents: super::accessors::parents_of(flows),
+            world: facts.world,
         };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
@@ -274,6 +285,26 @@ impl Types {
         Some(Word { cell, origin })
     }
 
+    /// The class whose own instance field `atom` an instance of `class` reads. That is `class` where it holds the field, or
+    /// where no holder is proven; else the first class up its `extends` chain (`parents`) that holds it (its own `MemberOn`
+    /// cell), when no class on the way may shadow it. A key the world can move (`World::live`) keeps the read on `class`: a
+    /// field that class gains later would shadow the holder. A name some store writes on an object of no one class, or that
+    /// a store the analysis cannot name may write, is never folded.
+    pub(super) fn holder(&self, class: u32, atom: u32) -> u32 {
+        if self.shadows.writes_any(atom) { return class; }
+        let mut current = class;
+        for _ in 0..=self.parents.len() {
+            if self.world.live(FactKey::Field { class: current, instance: true, atom }) { return class; }
+            if self.cells.contains_key(&Key::MemberOn { class: current, instance: true, atom }) { return current; }
+            if self.shadows.writes_class(current, atom) { return class; }
+            match self.parents.get(&current) {
+                Some(&parent) => current = parent,
+                None => return class,
+            }
+        }
+        class
+    }
+
     /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no
     /// recorded call reaches it.
     pub(super) fn this(&self, function: u32) -> Cell {
@@ -372,6 +403,7 @@ pub(super) fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts,
         }
         Target::Known(callee) => vec![callee],
         Target::Method(atom) => census.method_closures(atom).map(|set| set.iter().copied().collect()).unwrap_or_default(),
+        Target::Accessor { atom, setter } => super::accessors::accessor_targets(call, atom, setter, census),
     }
 }
 

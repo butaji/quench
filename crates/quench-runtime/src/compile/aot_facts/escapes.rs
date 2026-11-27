@@ -58,6 +58,15 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
     let mut read: Vec<Origin> = Vec::new();
     for (id, flow) in flows.iter().enumerate() {
         for call in &flow.calls {
+            // A named access the census proves runs its accessor, whose flow reads the operands as its parameters do. One it
+            // proves no accessor of hands its operands to the accessors of its name, which the solve does not follow.
+            if let Target::Accessor { atom, .. } = call.target {
+                if targets(id as u32, call, facts, census).is_empty() && census.accessors.defines(atom) {
+                    sinks.push(call.receiver);
+                    sinks.extend(call.arguments.iter().copied());
+                }
+                continue;
+            }
             let callees = targets(id as u32, call, facts, census);
             if resolved(call, &callees, census) || builtin_array_call(call, &callees, scope) { continue; }
             if call.target == Target::Register {
@@ -77,6 +86,8 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
     let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).copied().collect();
     // The closures an unresolved call's callee may be: the writes under the keys its reads may see (`reads`).
     let reached: Vec<Word> = writes.iter().filter(|(key, _)| read.iter().any(|&origin| reads(origin, *key))).map(|&(_, word)| word).collect();
+    // Every accessor's function, which code the solve does not see may run with any receiver where an object reaches such code.
+    let accessor_words: Vec<Word> = census.accessors.functions().map(Word::closure).collect();
     let mut escaped = BTreeSet::new();
     loop {
         let mut held = sinks.clone();
@@ -96,6 +107,7 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
         held.extend(named.into_iter()
             .filter(|(key, _)| object_reader || census.live(fact_key(*key)))
             .map(|(_, word)| word));
+        if object_reader { held.extend(accessor_words.iter().copied()); }
         let mut next = escaped.clone();
         for word in &held { mark(&word.cell, &materialized, &mut next); }
         if next == escaped {

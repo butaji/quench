@@ -63,6 +63,18 @@ pub(super) enum Origin {
     MemberOn { class: u32, instance: bool, atom: u32, guess: bool },
 }
 
+/// An accessor a definition makes: `get atom()` (a getter) or `set atom(v)` (`setter`), on the object of class `site`
+/// (its class, and whether the instances' or the static object's) where the solve proves one class, and by the function it
+/// names where the solve knows it, at instruction `pc` (`accessors::accessor_definition`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Accessor {
+    pub(super) site: Option<(u32, bool)>,
+    pub(super) atom: u32,
+    pub(super) setter: bool,
+    pub(super) function: Option<u32>,
+    pub(super) pc: u32,
+}
+
 /// What a `prototype` read was read off: a closure, or a binding the census resolves to one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum PrototypeBase {

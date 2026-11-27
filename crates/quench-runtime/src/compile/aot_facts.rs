@@ -14,6 +14,7 @@
 //! The analyses run over the bytecode (`flow`, `effects`) and reuse its dataflow driver
 //! (`dataflow.rs`), its successor table and its register uses. Owner: AOT facts.
 
+mod accessors;
 mod blocks;
 mod census;
 mod class_layout;
