@@ -30,6 +30,11 @@ pub struct FrameRecord {
     pub program: ProgramId,
     pub function: u32,
     pub pc: usize,
+    /// The frame this one returns into, when an exit materialized the callers of a suspended
+    /// frame with it (`split_caller`). The chain resumes bottom first (`Vm::push_resumed_frame`),
+    /// and the GC traces every link (`extend_roots`). No record has one until an exit
+    /// materializes a chain: a suspension of one frame, as today, has none.
+    pub(in crate::vm) caller: Option<Box<FrameRecord>>,
     pub env: Value,
     pub(in crate::vm) locals: Vec<Value>,
     pub captured: bool,
@@ -181,6 +186,7 @@ impl FrameRecord {
             program,
             function,
             pc: 0,
+            caller: None,
             env: Value::NULL,
             locals: Vec::new(),
             captured: false,
@@ -300,8 +306,15 @@ impl FrameRecord {
     pub(in crate::vm) fn into_frame(mut self: Box<Self>, with_base: usize) -> Box<Frame> {
         #[cfg(test)]
         note_frame_made();
+        debug_assert!(self.caller.is_none(), "a chain resumes through `split_caller`");
         self.settle_registers(u64::MAX);
         self.into_buffers(with_base)
+    }
+
+    /// Takes the frame this one returns into off the chain (`caller`), for the caller to push
+    /// before this frame: each link is a record with its own registers and window.
+    pub(in crate::vm) fn split_caller(&mut self) -> Option<Box<FrameRecord>> {
+        self.caller.take()
     }
 
     /// The finished activation's buffers as a frame for the pool (`Vm::pool_finished_frame`):
@@ -309,10 +322,11 @@ impl FrameRecord {
     pub(in crate::vm) fn into_buffers(self: Box<Self>, with_base: usize) -> Box<Frame> {
         let this = self.this();
         let Self {
-            receiver: _, context, cold, program, function, pc, env, locals, captured, registers, active_iterators,
+            receiver: _, context, cold, program, function, pc, caller, env, locals, captured, registers, active_iterators,
             traces_live: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _,
             resuming_generator: _, fixed_this,
         } = *self;
+        debug_assert!(caller.is_none(), "a finished chain is split before it pools");
         let FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: _ } = FrameCold::unbox(cold);
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -338,6 +352,9 @@ impl FrameRecord {
         out.extend_from_slice(&cold.original_arguments);
         out.extend_from_slice(&cold.with_objects);
         out.extend([self.env, self.this()]);
+        if let Some(caller) = &self.caller {
+            caller.extend_roots(out);
+        }
         Value::extend_heap_values(out, &self.locals);
         out.extend(cold.dynamic_bindings.iter().map(|(_, value)| *value));
         match self.live_registers() {
@@ -366,6 +383,7 @@ impl Clone for FrameRecord {
             context: self.context,
             cold: self.cold.as_deref().and_then(|cold| FrameCold { binding_site_pc: None, ..cold.clone() }.boxed()),
             pc: self.pc,
+            caller: self.caller.clone(),
             env: self.env,
             locals: self.locals.clone(),
             captured: self.captured,
@@ -406,7 +424,8 @@ impl Snap for FrameRecord {
         }
         self.active_iterators.snap(writer)?;
         cold.with_objects.snap(writer)?;
-        self.captured.snap(writer)
+        self.captured.snap(writer)?;
+        self.caller.snap(writer)
     }
 
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
@@ -418,9 +437,10 @@ impl Snap for FrameRecord {
         cold.dynamic_bindings = Snap::unsnap(reader)?;
         let (registers, active_iterators) = (Snap::unsnap(reader)?, Snap::unsnap(reader)?);
         cold.with_objects = Snap::unsnap(reader)?;
+        let captured = Snap::unsnap(reader)?;
+        let caller = Snap::unsnap(reader)?;
         Ok(Self {
-            receiver, context, cold: cold.boxed(), pc, env, locals, active_iterators,
-            captured: Snap::unsnap(reader)?,
+            receiver, context, cold: cold.boxed(), pc, env, locals, active_iterators, captured, caller,
             ..Self::at_rest(program, function, registers)
         })
     }
