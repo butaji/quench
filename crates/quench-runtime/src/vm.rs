@@ -794,6 +794,16 @@ pub struct FieldCache {
 }
 
 impl FieldCache {
+    /// The exact shape the receiver key names: a class key's class shape (`layouts::class_shape`), else the key itself.
+    #[inline(always)]
+    pub fn receiver_shape(&self) -> u32 {
+        if field_cache_layout::is_class_key(self.receiver) {
+            crate::heap::layouts::class_shape(self.receiver & !field_cache_layout::CLASS_KEY)
+        } else {
+            self.receiver
+        }
+    }
+
     /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
     #[inline(always)]
     pub const fn own(receiver: u32, slot: u16) -> Self {

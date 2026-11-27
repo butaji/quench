@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::dispatch_frame::this_is_fixed;
 use super::*;
+use crate::staged::field_cache_layout::is_class_key;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
@@ -1823,7 +1824,8 @@ impl Vm {
     #[inline(always)]
     pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
+        // A class key names a live cell, whose slots no shape-guarded native read reaches: no plan.
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER || is_class_key(cache.receiver) { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
         if usize::from(cache.slot) >= storage_len { return None; }
         let ty = self.heap.slot_type(cache.receiver, usize::from(cache.slot));
@@ -2452,25 +2454,30 @@ impl Vm {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.specialized_operations_enabled(p));
-        let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
-        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        let value = unsafe { self.heap.property_get_flat(receiver.record_only()?, cache.slot as usize) };
+        debug_assert_eq!(cache.receiver_shape(), self.heap.object(object)?.exact_shape());
+        let value = self.heap.live_class_field(object, cache.slot as usize)?;
         self.profile.field_cache_hit(0, 0);
         Some(value)
+    }
+
+    /// The receiver key an own entry of `object`, whose exact shape is `shape`, records and matches:
+    /// the live class cell's class key (`Heap::live_class_key`), else the shape itself.
+    #[inline(always)]
+    pub(super) fn own_receiver_key(&self, object: Value, shape: u32) -> u32 {
+        self.heap.live_class_key(object).unwrap_or(shape)
     }
 
     /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
     /// object records, at `site`: the receiver's layout id and the slot, where the site's own
     /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
     pub fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
-        let receiver = self.heap.object(object)?;
         let cache = self.field_cache_entry(site);
-        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
         Some((self.receiver_layout_hint(object)?, cache.slot))
@@ -3445,7 +3452,7 @@ impl Vm {
                 self.record_field_cache(
                     site,
                     FieldCache {
-                        receiver: receiver.shape(),
+                        receiver: self.own_receiver_key(prototype, receiver.shape()),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                         holder_cell: NO_FIELD_HOLDER_LAYOUT,
@@ -3765,7 +3772,7 @@ impl Vm {
                 self.record_field_cache(
                     site,
                     FieldCache {
-                        receiver: receiver.shape(),
+                        receiver: self.own_receiver_key(object, receiver.shape()),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                         holder_cell: NO_FIELD_HOLDER_LAYOUT,

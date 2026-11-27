@@ -14,6 +14,13 @@ pub(crate) const NO_HOLDER: u32 = u32::MAX;
 /// `heap::layouts::LAYOUT_CAPACITY` (1 << 22), which the layout table asserts, so they never reach this bit.
 pub(crate) const CLASS_KEY: u32 = 1 << 31;
 
+/// Whether the receiver key `key` names a class (a live direct-object cell), not a shape. The empty
+/// `NO_RECEIVER` also carries the bit and names neither.
+#[inline(always)]
+pub(crate) const fn is_class_key(key: u32) -> bool {
+    key & CLASS_KEY != 0 && key != NO_RECEIVER
+}
+
 /// The layout id of no holder: layout 0 is the all-zero header, which no holder record takes
 /// (`heap::layouts`), so a zero `holder_cell` word names no id.
 pub(crate) const NO_HOLDER_LAYOUT: u32 = 0;
