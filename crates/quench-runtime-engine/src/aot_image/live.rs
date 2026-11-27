@@ -353,8 +353,8 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
         Symbol::Attention => Some(quench_runtime::execution_interrupt::attention_address()),
         Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
         // A guard's shape is the immediate it compares (`object_slots::emit`), resolved in this VM.
-        Symbol::GuardShape(_) | Symbol::HolderLink(_) | Symbol::HolderValue(_) | Symbol::GuardLayout(_) | Symbol::ClassLayout(_) =>
-            symbols::resolve_recipe(symbol, image, vm),
+        Symbol::GuardShape(_) | Symbol::HolderLink(_) | Symbol::HolderValue(_) | Symbol::GuardLayout(_) | Symbol::ClassLayout(_)
+            | Symbol::ClassMethods(_) => symbols::resolve_recipe(symbol, image, vm),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
 }

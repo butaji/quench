@@ -338,11 +338,18 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
             let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc, callee: site.callee });
             let plan = plans.get(&site.pc);
             let class = plan.and_then(|plan| plan.arms.iter().find(|arm| arm.function == site.callee)).and_then(|arm| arm.class);
-            let layout = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols))
-                .map(|recipe| symbols.class_layout(recipe))
+            let recipe = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols));
+            // The class's layout and its method vector, both keyed by the recipe the instances build (the loader fills them).
+            let layout = recipe.clone().map(|recipe| symbols.class_layout(recipe))
                 .and_then(|symbol| match symbol { Symbol::ClassLayout(key) => Some(key), _ => None });
+            if let Some(recipe) = recipe.clone() { symbols.class_methods(recipe); }
+            // The method's slot: its index in the prototype's layout, which the class's vector is indexed by.
+            let slot = plan.and_then(|plan| plan.method).zip(class)
+                .and_then(|(atom, class)| facts.prototype_layout(class)?.iter().position(|&field| field == atom))
+                .and_then(|index| u16::try_from(index).ok());
             let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));
-            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed }
+            let inline = plan.is_some_and(quench_runtime::vm::tier_policy::arms_inline);
+            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed, slot, inline }
         }).collect();
         (!arms.is_empty()).then_some((pc, arms))
     }).collect()

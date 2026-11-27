@@ -4066,10 +4066,10 @@ impl Lowering<'_, '_> {
     }
 
     /// A call of a register callee that the closed world proves is one of a closed set of functions (`arms`, an image's
-    /// method read whose name the program stores each of them under): a chain of tests of the callee register against
-    /// the identity each arm's record holds, each leading to that arm's direct call, and the last to the VM's call,
-    /// which binds the record of the function it reaches (`rebind_ahead_call`). As `polymorphic_call`, with identities
-    /// read from the records rather than known when the body compiles. The last arm's guard is the last test.
+    /// method read whose name the program stores each of them under). The receiver's layout id is the class the call
+    /// reaches (`Symbol::ClassLayout`): with few arms whose plan inlines them, a chain of compares of that id, each arm's
+    /// direct call (`closed_set_by_layout`); otherwise the indirect call through the class's method vector
+    /// (`closed_set_indirect`). A set no arm of which has a proven layout is not closed for this lowering: the VM's call alone.
     fn closed_set_call(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, register: Register,
         arms: &[ProvenCall], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
         if quench_runtime::trace::Channel::AotLanes.on() {
@@ -4082,26 +4082,55 @@ impl Lowering<'_, '_> {
             quench_runtime::staged::Receiver::This { path: None } => self.entry.is_some(),
             _ => false,
         });
-        if let Some(keyed) = by_layout {
+        let Some(keyed) = by_layout else {
+            return self.closed_set_step(state, site, record, None, (completed, missed, raised));
+        };
+        if keyed.len() <= 3 && keyed.iter().all(|(arm, _)| arm.inline) {
             return self.closed_set_by_layout(state, site, record, &keyed, (completed, missed, raised));
         }
-        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
-        // A record is bound by the VM's call, which runs between this body's runs and inside its calls out: read it at each test.
+        self.closed_set_indirect(state, site, record, register, &keyed, (completed, missed, raised));
+    }
+
+    /// `closed_set_call` as an indirect call through the receiver class's method vector: the receiver's layout id is the
+    /// class id (`layouts::class_methods`), whose vector holds each method's `CallRecord` address at the method's slot,
+    /// and the call reads its callee's words from that record (`DirectSite::Indirect`). The arms read one slot, so a set
+    /// whose arms disagree on it is not closed for this lowering. A closed plan has no miss: the arms name every class the
+    /// receiver can have, and no test runs. Otherwise a receiver whose class has no vector takes the VM's call, and a
+    /// record whose callee is not the callee register's (the identity guard, at the miss edge only) does too.
+    fn closed_set_indirect(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, register: Register,
+        keyed: &[(ProvenCall, u32)], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        let closed = keyed.iter().all(|(arm, _)| arm.closed);
+        let slot = keyed.iter().map(|(arm, _)| arm.slot).reduce(|first, next| if first == next { first } else { None }).flatten();
+        let Some(slot) = slot else {
+            return self.closed_set_step(state, site, record, None, (completed, missed, raised));
+        };
         let record_flags = regions::flags(quench_runtime::staged::Region::EntryCell.mutable());
-        let Some((&last, tested)) = arms.split_last() else { return };
-        for &arm in tested {
-            let at = crate::symbol_words::symbol_address(&mut self.builder, arm.record.0, arm.record.1);
-            let identity = self.raw_load(Lane::I64, record_flags, at, std::mem::offset_of!(quench_bjit::call_record::CallRecord, callee) as i32);
-            let matched = self.raw_compare(Relation::Equal, word, identity);
-            let (taken, next) = (self.builder.create_block(), self.builder.create_block());
-            self.branch_if(matched, (taken, &[]), (next, &[]));
-            self.builder.switch_to_block(taken);
-            self.closed_set_step(state, site, record, Some(DirectSite::Proven(arm)), (completed, missed, raised));
-            self.builder.switch_to_block(next);
+        let loaded = self.receiver_layout(state, site.receiver, missed);
+        // The class's vector: entry `class` of the table at `class * size_of::<usize>()` past its base.
+        let base = self.raw_const(Lane::I64, quench_runtime::tier_surface::layouts::class_methods_base() as u64 as i64);
+        let offset = self.raw_binary_imm(Binary::Mul, loaded, std::mem::size_of::<usize>() as i64);
+        let entry = self.raw_binary(Binary::Add, base, offset);
+        let vector = self.raw_load(Lane::I64, record_flags, entry, 0);
+        let slot_at = i32::from(slot) * std::mem::size_of::<usize>() as i32;
+        if closed {
+            let at = self.raw_load(Lane::I64, record_flags, vector, slot_at);
+            return self.closed_set_step(state, site, record, Some(DirectSite::Indirect(at)), (completed, missed, raised));
         }
-        // The last arm's own identity guard is the chain's last test: its miss is the VM's call, which binds the record
-        // of whichever function of the set it reaches (`rebind_ahead_call`), as a one-target call's miss does.
-        self.closed_set_step(state, site, record, Some(DirectSite::Proven(last)), (completed, missed, raised));
+        let (present, vm) = (self.builder.create_block(), self.builder.create_block());
+        let has = self.raw_compare_imm(Relation::NotEqual, vector, 0);
+        self.branch_if(has, (present, &[]), (vm, &[]));
+        self.builder.switch_to_block(present);
+        let at = self.raw_load(Lane::I64, record_flags, vector, slot_at);
+        // The identity guard sits at the miss edge only: the record's callee is the callee register's.
+        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
+        let identity = self.raw_load(Lane::I64, record_flags, at, std::mem::offset_of!(quench_bjit::call_record::CallRecord, callee) as i32);
+        let matched = self.raw_compare(Relation::Equal, word, identity);
+        let taken = self.builder.create_block();
+        self.branch_if(matched, (taken, &[]), (vm, &[]));
+        self.builder.switch_to_block(taken);
+        self.closed_set_step(state, site, record, Some(DirectSite::Indirect(at)), (completed, missed, raised));
+        self.builder.switch_to_block(vm);
+        self.closed_set_step(state, site, record, None, (completed, missed, raised));
     }
 
     /// `closed_set_call` where every arm's receiver layout is proven: the receiver's layout id is compared with each arm's

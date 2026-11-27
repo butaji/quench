@@ -202,6 +202,14 @@ pub const PROTOTYPE_UNROLL_LINKS: u32 = 4;
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub const POLYMORPHISM: usize = 4;
+
+/// Whether a closed-set call's plan inlines its arms' bodies, so the call is lowered as the class-layout compare chain
+/// (`closed_set_by_layout`) rather than the indirect call through the class's method vector (`closed_set_indirect`).
+/// The inline rule of design decision 4.6 decides it; until that slice lands no plan inlines its arms.
+pub fn arms_inline(_plan: &crate::compile::call_plan::CallPlan) -> bool {
+    false
+}
+
 /// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
 /// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
 /// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and
