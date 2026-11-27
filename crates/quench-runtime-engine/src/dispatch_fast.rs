@@ -310,13 +310,6 @@ impl LaneInstruction {
         self.c = (address >> 32) as u16;
         true
     }
-
-    #[inline(always)]
-    fn vector_region(&self) -> *const vector_region::VectorRegion {
-        // SAFETY: the view writes `region` for the records it gives `vector_region_row`, the
-        // only handler that reads it.
-        unsafe { self.operand.region }
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::RegionDecline;
@@ -702,12 +695,11 @@ impl LaneView {
     }
 
 
-    /// Whether its body specializes again at its next entry: it left too often, or its quick body (an ahead
-    /// image's included) repaid the optimizing compile (`optimize_due`).
+    /// Whether its body specializes again at its next entry: it left too often (an ahead image's included).
     #[inline]
     pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0 || self.optimize_due())
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
 
     /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
@@ -4229,8 +4221,6 @@ pub(crate) enum LoopContinuation {
 
 
 
-#[path = "vector_region.rs"]
-pub(crate) mod vector_region;
 pub(crate) mod wasm_instance;
 #[cfg(feature = "jit")]
 use wasm_instance::lane_instance_binding_memory;
@@ -7963,7 +7953,6 @@ use crate::jit_routes::handler_in_lane;
 
 
 
-pub(crate) mod loop_kernel;
 pub(crate) mod int_steps;
 // Bridge until `compiled/admission.rs` (`speculation_allowed`, `retire_after_native`) and `engine_calls.rs`
 // (`note_retired`) name `int_steps` directly: the speculation latch lives there, the int32 kinds are gone.

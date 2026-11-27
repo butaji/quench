@@ -1,4 +1,4 @@
-//! Protocol misses of vector regions (`protocol_family::VECTOR`).
+//! Protocol misses of vector (SIMD) records (`protocol_family::VECTOR`).
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;

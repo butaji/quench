@@ -389,6 +389,27 @@ pub const fn language_typeof_index(languages: u16) -> Option<u64> {
     }
 }
 
+/// The index in `bytecode::TYPEOF_NAMES` of `typeof` of every value of type `ty`, where the one language set `ty` lies in
+/// decides it (`language_typeof_index`): a Number, a function, or a direct object or array. `None` for `Type::NEVER` and
+/// for a type no such set holds. The Number-only fold is `typeof_of(Type::NUMBER)`.
+#[cfg_attr(stencil_build, allow(dead_code))]
+pub fn typeof_of(ty: crate::typed_ir::Type) -> Option<u64> {
+    use crate::typed_ir::Type;
+    if ty == Type::NEVER {
+        return None;
+    }
+    [language::NUMBER, language::FUNCTION, language::OBJECT_PLAIN | language::ARRAY].into_iter()
+        .find(|&set| ty.only_languages(Type::languages(set)))
+        .and_then(language_typeof_index)
+}
+
+/// Whether `typeof` of every value of type `ty` is the name at `index` of `bytecode::TYPEOF_NAMES`, negated where `negated`
+/// (a `TypeofTest`); `None` where `typeof_of` does not decide the name.
+#[cfg_attr(stencil_build, allow(dead_code))]
+pub fn typeof_test_of(ty: crate::typed_ir::Type, index: u64, negated: bool) -> Option<bool> {
+    typeof_of(ty).map(|found| (found == index) != negated)
+}
+
 /// The tag classes `typeof` reads from a value's own word: a Number (int32 or double), a boolean,
 /// and `null`. Every `typeof` row selects its name from these.
 #[inline(always)]

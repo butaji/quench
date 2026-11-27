@@ -212,7 +212,7 @@ pub(crate) enum Event {
     BodyPlanned,
     /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
     /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
-    /// deferred, or handed to a b-jit body (base).
+    /// or deferred.
     BodyPublished,
     BodyCompiling,
     BodyUnpaid,
@@ -220,11 +220,10 @@ pub(crate) enum Event {
     BodyDeclined,
     BodyStale,
     BodyDeferred,
-    BodyBase,
 }
 
 /// How many `Event`s there are.
-const EVENT_COUNT: usize = Event::BodyBase as usize + 1;
+const EVENT_COUNT: usize = Event::BodyDeferred as usize + 1;
 
 #[cfg(test)]
 thread_local! {

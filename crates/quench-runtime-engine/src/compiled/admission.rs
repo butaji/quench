@@ -205,8 +205,7 @@ pub(crate) enum UnitKind {
 /// request so proven facts can flow through the same path.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitFacts {
-    /// The body's rows cover the stencil tier (`base_region::covers`). A loop with an interpreter
-    /// kernel runs the kernel on its entry edge (`base_region::kernel_entries`).
+    /// The body's rows cover the stencil tier (`base_region::covers`).
     pub(crate) covers: bool,
     /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
     pub(crate) amortizes: bool,
@@ -287,8 +286,6 @@ pub(crate) enum Decision<T> {
     Declined,
     /// The body does not repay its compile yet (`LaneBodyOutcome::Unpaid`).
     Unpaid,
-    /// The stencil tier serves the body (`LaneBodyOutcome::Base`).
-    Base,
 }
 
 impl<T> Decision<T> {
@@ -351,7 +348,6 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if !facts.compiles_left { return Decision::Declined; }
             match facts.pick {
                 Some(Pick::Interpreter) if !facts.called_by_regions => { record(Refusal::NotAmortized); return Decision::Unpaid; }
-                Some(Pick::Base) => return Decision::Base,
                 _ => {}
             }
             facts.looped_taken
@@ -393,11 +389,6 @@ pub(crate) use quench_runtime::jit_mode::Tier;
 /// which every other tier decision of the engine takes from here.
 #[inline]
 pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
-
-/// Whether the stencil tier runs beneath the u-jit (the default mode): a body the u-jit gives up on
-/// falls back to it (`LaneBodyHistory::base_fallback`).
-#[inline]
-pub(crate) fn stencil_below() -> bool { tier_runs(&[Tier::Base]) && tier_runs(&[Tier::Ultra]) }
 
 /// Whether the stencil tier is the only tier (`--b-jit`).
 #[inline]
@@ -460,11 +451,6 @@ pub(crate) fn loop_regions_compile(vm: &Vm) -> bool { region_unit(vm).is_some() 
 #[inline]
 fn cranelift_runs() -> bool { tier_runs(Tier::CRANELIFT) }
 
-/// Whether a loop's kernel takes a recurrence pass: a recurrence the pass interprets per iteration is routed to the
-/// loop's stencils where the stencil tier is the only tier, which run it faster (crc); folds and chains stay with the kernel.
-#[inline]
-pub(crate) fn kernel_takes_recurrence(interprets: bool) -> bool { !(stencil_only() && interprets) }
-
 /// Whether inlining regions are routed to Cranelift, the only tier that compiles them (BaseJIT declines every
 /// inlining region), so they are analyzed only where a Cranelift tier runs.
 #[inline]
@@ -478,17 +464,6 @@ pub(crate) fn unbuilt_region_declined() -> bool { !cranelift_runs() }
 /// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
 #[inline]
 pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
-
-/// Whether a lane body's start takes the tier below u-jit first: the default mode's rule, which an
-/// `admits_all` run and a body that does not start on the stencil tier do not take.
-#[inline]
-pub(crate) fn starts_base_first(starting: bool, starts_on_base: bool, tiers: &Tiers) -> bool {
-    starting && starts_on_base && !tiers.admits_all && stencil_below()
-}
-
-/// Whether a body that u-jit refused or left goes back to the stencil tier it was promoted from.
-#[inline]
-pub(crate) fn returns_to_base(left: bool, promoted: bool) -> bool { left && promoted && stencil_below() }
 
 /// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
 /// interpreter's own projection of the function, decided here as every compiled unit is.
@@ -536,16 +511,15 @@ pub(crate) enum LaneRoute {
 pub(crate) struct LaneRouteFacts {
     /// The function's program has a loaded AOT image.
     pub(crate) ahead_image: bool,
-    /// A start the default mode gives the stencil tier first (`starts_base_first`).
-    pub(crate) base_first: bool,
     /// A start whose direct callees still compile (`body_tier_in_lane::callees_compiling`).
     pub(crate) callees_compiling: bool,
 }
 
-/// The route of a function's lane body: the specializer decides it, as it decides each unit after.
+/// The route of a function's lane body, a pure function of its facts: an image body is served by the image; under
+/// `--b-jit` the stencil tier stitches it; otherwise the lane body tier plans it, after its callees still compiling.
 pub(crate) fn route_for_lane(facts: LaneRouteFacts) -> LaneRoute {
     if facts.ahead_image { LaneRoute::Ahead }
-    else if stencil_only() || facts.base_first { LaneRoute::Base }
+    else if stencil_only() { LaneRoute::Base }
     else if facts.callees_compiling { LaneRoute::Deferred }
     else { LaneRoute::Lane }
 }

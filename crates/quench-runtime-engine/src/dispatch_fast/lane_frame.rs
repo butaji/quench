@@ -3774,7 +3774,7 @@ pub(crate) mod protocol_family {
     pub(crate) const FRAME_CALL: u16 = 10 << 8;
     /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
     pub(crate) const LEAF_CALL: u16 = 11 << 8;
-    /// Vector regions (`vector_miss_of`).
+    /// Vector (SIMD) records (`vector_miss_of`).
     pub(crate) const VECTOR: u16 = 12 << 8;
     /// Generator resumes and suspensions (`generator_miss_of`).
     pub(crate) const GENERATOR: u16 = 13 << 8;

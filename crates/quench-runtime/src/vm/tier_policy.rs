@@ -321,13 +321,6 @@ impl LaneBody {
     pub fn warmup(&self) -> u16 {
         if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
     }
-
-    /// The entries before a body's first attempt where the stencil tier serves it first: under
-    /// `--b-jit`, and in the default mode until its b-jit body is promoted to u-jit
-    /// (`LaneBodyHistory::base_first`), since a stitch costs a fiftieth of a compile.
-    pub fn base_warmup(&self) -> u16 {
-        self.base_entries
-    }
 }
 
 impl Tiers {
@@ -504,7 +497,7 @@ pub const LANE_ENTRY_MIN_RUN: usize = 3;
 /// context.
 pub const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
 
-// Loop sites (dispatch_fast/loop_body, loop_runs, loop_kernel): body planning, entry backoff, kernel floor
+// Loop sites (dispatch_fast/loop_body, loop_runs): body planning, entry backoff
 /// The bodies a loop site plans, each from its predecessors' leaves.
 pub const LOOP_BODY_ATTEMPTS: u8 = 4;
 
@@ -519,12 +512,6 @@ pub const LOOP_BODY_POLL: u16 = 16;
 
 /// The widest backoff after declined entries: `2^16 - 1` entries pass untried between attempts.
 pub const MAX_ENTRY_BACKOFF: u32 = 16;
-
-/// The fewest iterations worth a kernel's entry.
-pub const KERNEL_MIN_TRIP: u64 = 16;
-
-/// Entries declined for too few iterations before the kernel stands down for good.
-pub const KERNEL_SHORT_DECLINES: u32 = 64;
 
 // Lane bodies: compile admission (compiled/lane_compile, lane_region, lane_unit)
 /// A replanned body inlines with this fraction of the budget whose compile failed.

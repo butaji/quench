@@ -378,29 +378,6 @@ pub(crate) fn derive_lane_view<'live>(
             .map(|acc| (backward, acc))
         })
     };
-    // Runs of vector instructions execute as one record each (`vector_region`): placed
-    // before the fusions below, which then leave each region's first record alone. Only a
-    // body with SIMD operators derives the liveness they read.
-    let vectors = wasm
-        && decoded.iter().any(|instruction| quench_runtime::staged::wasm_simd(instruction.op()) || quench_runtime::staged::wasm_simd_shuffle(instruction.op()));
-    let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
-        Some(live) => vector_region::vector_regions(
-            &decoded,
-            constants,
-            heap,
-            memory_register,
-            live,
-            &entries,
-            &exits,
-            &produced,
-        ),
-        None => Vec::new(),
-    }
-    .into_boxed_slice();
-    for region in &vector_regions {
-        records[region.first()].handler = vector_region::region_handler() as *const ();
-        records[region.first()].operand = LaneOperand { region };
-    }
     if wasm {
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
@@ -457,14 +434,6 @@ pub(crate) fn derive_lane_view<'live>(
         specialize_script_calls(&mut records, function.undefined_register, admits_returns);
         specialize_proved_arrays(&decoded, &mut records);
     }
-    // Loop kernels take their test records last, keeping each record's final handler.
-    // Every mode runs them: a loop a kernel takes keeps no tier site (`loop_sites`), since the
-    // compiled tiers project the interpreter's fastest form of the loop, its kernel.
-    let loop_kernels = if !wasm {
-        loop_kernel::install_loop_kernels(&decoded, constants, function, &exits, &mut records, live().map(|masks| &**masks))
-    } else {
-        Box::default()
-    };
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A plain `Binary` record with no accumulator field runs its operator's row rather than fusing
@@ -472,8 +441,7 @@ pub(crate) fn derive_lane_view<'live>(
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
     // The solve's int32 cells of this function's registers pick the operator records' proven forms (`int32_at`).
-    // A loop kernel or vector region writes its registers from its own code, under no cell.
-    let facts = facts.filter(|_| !wasm && loop_kernels.is_empty() && vector_regions.is_empty() && int32_projectable(&decoded, resolves_names));
+    let facts = facts.filter(|_| !wasm && int32_projectable(&decoded, resolves_names));
     let int32 = |pc: u32, register: u16| int32_at(facts, function_id, pc, register);
     if !wasm {
         let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
@@ -592,8 +560,6 @@ pub(crate) fn derive_lane_view<'live>(
         returns_from_entry,
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
-        vector_regions,
-        _loop_kernels: loop_kernels.into_iter().map(|kernel| kernel as Box<dyn std::any::Any>).collect(),
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
@@ -781,9 +747,6 @@ pub(super) fn install_loop_sites<'live>(
         })
         .collect();
     let mut sites = sites;
-    // The tiers run a loop the interpreter's kernel takes slower than the kernel does (`Recurrence::beats_rows`): in
-    // every mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
-    sites.retain(|(pc, site)| !loop_kernel::LoopKernel::beats_rows(decoded, constants, function, (site.header as usize, *pc), live().map(|masks| &**masks)));
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
         // The header names its site by the distance to the site's jump (`header_site_in_lane`).

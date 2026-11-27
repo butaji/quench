@@ -41,7 +41,7 @@ const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
 const TRACE_VARIABLE: &str = "QUENCH_TRACE";
-const TRACE_CHANNELS: &str = "js-jit,loop-kernel,jit-dump=";
+const TRACE_CHANNELS: &str = "js-jit,jit-dump=";
 const DEV_VARIABLE: &str = "QUENCH_DEV";
 const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 /// The longest one kernel run may take before it counts as hung.

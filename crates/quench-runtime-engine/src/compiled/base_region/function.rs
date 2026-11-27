@@ -260,8 +260,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let prototypes = sites.known.classes.to_vec();
     // The loop-invariant receivers whose entry shape is checked (`Known::shapes`, already limited to those the loop never writes).
     let shapes = sites.known.shapes.to_vec();
-    let mut stitched =stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
-    let heads = kernel_heads(ending, function, spec.known.constants, spec.known.program.register_root_masks(spec.function), &mut stitched.entries);
+    let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
@@ -316,8 +315,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
-    let mut singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
-    kernel_entries(&layout, &heads, &decoded, &reached, &mut singles, helpers)?;
+    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
         report_steps(&layout, spec.known.program, &singles);
     }
