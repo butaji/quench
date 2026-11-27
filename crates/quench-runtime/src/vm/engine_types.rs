@@ -654,7 +654,7 @@ pub struct StringCaseFilter {
 ///
 /// Two 64-byte lines whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
 /// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56,
-/// `proven` 64, `numbers` 72, `uses_this` 80, `proven_entry` 88, `proven_body` 96.
+/// `proven` 64, `numbers` 72, `uses_this` 80, `proven_entry` 88, `proven_body` 96, `stub` 104.
 /// Writers: `entry`, `scalar`, `recovery`, `body`, `rows`, `proven`, `numbers`, `uses_this`, `proven_entry` and `proven_body` by `publish`/`withdraw`;
 /// `facts` once per function (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
@@ -696,6 +696,10 @@ pub struct EntryCell {
     /// The address of the body `proven_entry` belongs to (`Rc::as_ptr`), so a call takes it only for the body whose
     /// parameter types its caller proved (`DirectCallee::body`).
     pub proven_body: std::cell::Cell<usize>,
+    /// The address of the entry stub the engine built for unpublished cells (a body-convention function that enters
+    /// nothing): `entry` takes it wherever no body is published, and `unpublish` restores it. Stored once per cell at
+    /// construction, as the engine passes it.
+    pub stub: std::cell::Cell<usize>,
 }
 
 /// What a suspended frame's windowed resumes derive from its function and environment alone,
@@ -5864,8 +5868,6 @@ pub fn header_sided(window: Registers) -> bool {
 
 impl EntryCell {
 
-    #[inline(always)] pub fn stub() -> usize { entry_stub_in_lane as BodyEntry as usize }
-
     #[inline]
 
     pub fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
@@ -5879,7 +5881,7 @@ impl EntryCell {
             // zeroed when that body retires (`PublishedCode::retire`), so a nonzero word names a live body.
             unsafe { (*(self.body.get() as *const LaneMethod)).withdraw() }
         }
-        self.entry.set(Self::stub());
+        self.entry.set(self.stub.get());
         self.rows.set(0);
         self.proven.set(0);
         self.proven_entry.set(0);
@@ -5901,7 +5903,7 @@ impl EntryCell {
         self.body.set(Rc::as_ptr(&body).addr());
         method.on_retire(&self.body, Rc::as_ptr(&body).addr(), 0);
         self.entry.set(body.entry_address());
-        method.on_retire(&self.entry, body.entry_address(), Self::stub());
+        method.on_retire(&self.entry, body.entry_address(), self.stub.get());
         self.rows.set(0);
         self.proven.set(0);
         self.numbers.set(0);
@@ -6147,9 +6149,9 @@ impl Registers {
     }
 }
 
-/// The entry no body backs: it enters nothing. Its address is the cell's unpublished state
-/// (`EntryCell::stub`), so it has exactly one instance: a tiny function is otherwise inlinable and
-/// each codegen unit may get its own copy at its own address.
+/// The entry no body backs: it enters nothing. The engine's entry stub calls it (`lane_body_abi::entry_stub`),
+/// and that stub is the cell's unpublished state (`EntryCell::stub`). This function has exactly one instance: a tiny
+/// function is otherwise inlinable and each codegen unit may get its own copy at its own address.
 #[inline(never)]
 pub unsafe extern "C" fn entry_stub_in_lane(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
