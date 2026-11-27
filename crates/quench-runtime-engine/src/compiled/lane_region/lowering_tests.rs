@@ -10,7 +10,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
         "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
         "missing-poll.js").unwrap();
     let function = program.function(1);
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let helpers = LaneHelpers::Process(LaneHelper::addresses());
     let region = lower(&program, 1, &unit, helpers, &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
@@ -45,7 +45,7 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
         }])));
     assert_eq!(fields.iter().flatten().count(), 1, "the test must exercise a profiled store");
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     for ty in [Type::INT32, Type::ANY] {
         fields.iter_mut().flatten().next().unwrap()[0].ty = ty;
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
@@ -78,7 +78,7 @@ fn a_loop_of_leaving_stores_reads_the_invalidation_word_once_on_its_entering_edg
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
             shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: Type::INT32, inherited: None, function_shape: false, formed: None, holder_id: None,
         }])));
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let (backedge, header) = unit.instructions.iter().enumerate()
         .filter_map(|(pc, instruction)| (matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Jump))
             && instruction.jump_target() as usize <= pc).then_some((pc, instruction.jump_target() as usize)))
@@ -112,7 +112,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
         VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
     let native = region.function;
@@ -136,7 +136,7 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
             shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false, formed: None, holder_id: None,
         }])));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
     let native = region.function;
@@ -169,7 +169,7 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
         VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
     let native = region.function;
@@ -203,7 +203,7 @@ fn own_field_reads_take_no_arena_bound() {
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, id as u32, program.function(id), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
         VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
     let native = region.function;
@@ -229,7 +229,7 @@ fn number_loops_keep_f64_values_and_proofs_across_the_backedge() {
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, id as u32, program.function(id), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).expect("typed Number residual");
     assert!(region.native > 0);

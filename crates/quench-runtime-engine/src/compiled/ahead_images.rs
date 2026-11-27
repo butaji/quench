@@ -69,17 +69,6 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     hash
 }
 
-/// The calls the unit of an image's lane body inlines: each call whose target the closed world
-/// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::plan_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
-/// at its call; any other leaves into its own activation, materialized from the unit's frame
-/// (`CallRecovery::Materialize`, the join's inlined leave).
-fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
-    let _ = program;
-    let target = facts.function_facts(caller).call_target(pc);
-    target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
-}
-
 /// The unit of `function`'s lane body under the closed world's call targets (`lane_unit::unit`, its
 /// default budget); `None` where a frame it inlines would leave by making the callee's activation.
 fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts, graph: &quench_runtime::compile::call_graph::CallGraph) -> Option<lane_unit::Unit> {
@@ -89,8 +78,10 @@ fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts, graph: &q
 /// `unit_of`, or why there is none.
 fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts, graph: &quench_runtime::compile::call_graph::CallGraph) -> Result<lane_unit::Unit, &'static str> {
     let body = program.function_get(function as usize).ok_or("no such function")?;
-    let unit = lane_unit::unit(program, Some(graph), function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
-        .ok_or("no lane unit")?;
+    // The unit's callees are the arms of the closed world's call plans, bound by their functions (`CallPlans::targets`).
+    let plans = lane_region::bindings::CallPlans::new(program, Some(facts), Some(graph));
+    let unit = lane_unit::unit(program, Some(graph), function, body, &|caller, pc| plans.targets(caller, pc),
+        &|caller, pc| plans.at(caller, pc), &|callee| program.function_get(callee as usize)).ok_or("no lane unit")?;
     if quench_runtime::trace::Channel::AotLanes.on() {
         let targets: Vec<_> = (0..body.code.len() as u32).filter_map(|pc| facts.function_facts(function).call_target(pc).map(|target| (pc, target))).collect();
         let frames: Vec<_> = unit.frames.iter().map(|frame| (frame.target.function, frame.call)).collect();
@@ -152,18 +143,18 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     // The calls the closed world proves that the unit keeps as calls take records of the lane's own (`lane_call_sites`).
     // The symbols name them as the lowering goes, so the image keeps them whether or not the lane lowers.
     let own = lane_call_sites(&unit, function, facts, calls);
-    let lane = lower_closed_lane(program, function, (facts, frozen), calls, &unit, &own, symbols, target);
+    let lane = lower_closed_lane(program, function, (facts, graph, frozen), calls, &unit, &own, symbols, target);
     (lane, own)
 }
 
 /// `closed_lane_image`'s lowering of `unit` with its own records `own`.
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen), calls: &[aot_image::CallSite],
+fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen), calls: &[aot_image::CallSite],
     unit: &lane_unit::Unit, own: &[aot_image::CallSite], symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
-    let proven = proven_calls(program, unit, function, &sites, facts, symbols);
+    let proven = proven_calls(program, unit, function, &sites, facts, graph, symbols);
     let plans = constructions::construct_plans(program, unit, function, facts, symbols);
     let strings = string_constants(program, unit, symbols);
     let fields = fields::class_fields(program, (unit, function), facts, symbols);
@@ -332,7 +323,7 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// layout key of its receiver class (`class_recipe`), where the call's plan names one, and whether the plan has no miss.
 #[cfg(feature = "jit")]
 fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], facts: &AotFacts,
-    symbols: &mut SymbolTable) -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
+    graph: &quench_runtime::compile::call_graph::CallGraph, symbols: &mut SymbolTable) -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
     let plans = if calls.is_empty() { BTreeMap::new() } else { facts.call_plans(program, function) };
     (0..unit.origins.len()).filter_map(|pc| {
         let arms: Vec<_> = proven_sites(program, unit, function, calls, pc).into_iter().map(|(site, callee, this)| {
@@ -346,7 +337,7 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
             // The method's selector: the index of its record in each class's method vector.
             let selector = plan.and_then(|plan| plan.method).and_then(|atom| symbols.selector(atom));
             let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));
-            let inline = plan.is_some_and(quench_runtime::vm::tier_policy::arms_inline);
+            let inline = plan.is_some_and(|plan| quench_runtime::vm::tier_policy::arms_inline(plan, graph, program));
             lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed, selector, inline }
         }).collect();
         (!arms.is_empty()).then_some((pc, arms))

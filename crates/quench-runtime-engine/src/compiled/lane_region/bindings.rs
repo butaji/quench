@@ -33,6 +33,14 @@ impl<'a> CallPlans<'a> {
         plans.get(&pc).cloned()
     }
 
+    /// The callees the call at `pc` of `function` reaches, as its plan names them: one target per arm, bound by its
+    /// function (`CalleeBinding::Function`), which the plan's miss guards. None where no plan covers the call.
+    pub(crate) fn targets(&self, function: u32, pc: u32) -> Vec<crate::compiled::CallTarget> {
+        self.at(function, pc).into_iter().flat_map(|plan| plan.arms.into_vec())
+            .map(|arm| crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Function, function: arm.function })
+            .collect()
+    }
+
     /// Every plan of `function` (`call_plans`), with inlinability from the program's bodies (`inlines_whole`).
     fn plans_of(&self, function: u32) -> std::collections::BTreeMap<u32, CallPlan> {
         let Some(facts) = self.facts else { return Default::default() };

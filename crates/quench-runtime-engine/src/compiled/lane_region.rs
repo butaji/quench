@@ -176,9 +176,6 @@ const INLINE_EDGE_REFINEMENTS: usize = 2;
 const TRUNCATION_CHAIN: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
-/// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
-/// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
-pub(crate) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3816,12 +3813,6 @@ impl Lowering<'_, '_> {
                 binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
             }).expect("an admitted callee and its dominating check");
         }
-        // A forwarded call is the call of the function it forwards to while its native is the one seen.
-        if let Some((register, through)) = inlined.function_call {
-            let native = self.tagged(state, register);
-            let seen = self.is_identity(native, through);
-            emit_js_guard(&mut self.builder, seen, exit);
-        }
         let callee = self.program.function(inlined.target.function as usize);
         self.guard_inlined_receiver(state, frame, exit);
         for register in 0..inlined.registers {
@@ -4041,7 +4032,7 @@ impl Lowering<'_, '_> {
         let Some(keyed) = by_layout else {
             return self.closed_set_step(state, site, record, None, (completed, missed, raised));
         };
-        if keyed.len() <= 3 && keyed.iter().all(|(arm, _)| arm.inline) {
+        if keyed.iter().all(|(arm, _)| arm.inline) {
             return self.closed_set_by_layout(state, site, record, &keyed, (completed, missed, raised));
         }
         self.closed_set_indirect(state, site, record, register, &keyed, (completed, missed, raised));

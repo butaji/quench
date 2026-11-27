@@ -62,7 +62,7 @@ impl TakenPlan {
     /// Whether the VM answers now what the plan took: its global reads and its fact tables.
     fn holds(&self, vm: &mut quench_runtime::vm::Vm, program: &ResidualProgram, function: u32) -> bool {
         vm.global_table(program, function, &self.unit, GlobalTable::Lane) == self.global_reads
-            && super::lane_compile::FactTables::of(vm, function, &self.unit, &self.fields, &self.global_reads, &|_, _| None) == self.tables
+            && super::lane_compile::FactTables::of(vm, function, &self.unit, &self.fields, &self.global_reads) == self.tables
     }
 }
 

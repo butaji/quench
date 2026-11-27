@@ -497,8 +497,8 @@ pub(crate) fn running_function_in_lane(cx: *mut LaneContext) -> u32 {
     vm.lane_stack.innermost_function().unwrap_or_else(|| vm.frames[unsafe { (*cx).frame() }].function)
 }
 
-/// Notes the function a forwarded call calls as the site's callee, through its native `through`, for a body that
-/// inlines it (`lane_unit::Planner::through_call`).
+/// Notes the function a forwarded call calls as the site's callee, through its native `through`, for the site's
+/// callers that read its history (`site_targets_in_lane`).
 pub(super) fn note_forwarded_in_lane(vm: &mut Vm, i: &LaneInstruction, through: Value, callee: Value) {
     if let Some((program, function, _, false)) = vm.same_realm_script_target(callee) && program == vm.active_program {
         vm.note_site_callee(&i.call_link, crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Forwarded { through, callee }, function });

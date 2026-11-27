@@ -1584,11 +1584,6 @@ pub struct InlinedCall {
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub alternative: Option<usize>,
-    /// For a call through a forwarding native (`CalleeBinding::Forwarded`), the register
-    /// holding the native and its identity, which the call guards too; the callee register
-    /// then holds the function it calls, the receiver is the first argument and the window
-    /// the rest (`Planner::through_call`).
-    pub function_call: Option<(Register, Value)>,
 }
 
 /// The most parameters an activated import passes (`JsImportPlan`).
@@ -1636,8 +1631,6 @@ pub enum LaneBody {
 #[derive(Clone, Copy, Default)]
 pub struct LaneBodyHistory {
     pub lifetimes: u8,
-    /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
-    pub shrinks: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     pub callee_recompiles: u8,
     pub late_calls: u32,
@@ -2908,7 +2901,6 @@ miss_reasons! {
     NoPlan => "no-plan",
     HelperConstructContext => "helper-construct:context",
     PlanNoUnit => "plan:no-unit",
-    PlanInvalidBindings => "plan:invalid-bindings",
     PlanFrameNotAdmitted => "plan:frame-not-admitted",
     PlanNoEntry => "plan:no-entry-instruction",
     PlanCompileBound => "plan:compile-bound",
