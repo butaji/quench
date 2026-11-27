@@ -1,6 +1,6 @@
 use super::wtf16::JsString;
 use super::*;
-use oxc_ast::ast::UnaryOperator;
+use crate::operator::UnaryOperator;
 
 #[path = "switch_selection.rs"]
 mod switch_selection;

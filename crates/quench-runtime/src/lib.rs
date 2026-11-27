@@ -73,6 +73,9 @@ pub mod webs;
 pub mod dense_map;
 #[doc(hidden)]
 pub mod bytecode;
+/// The operators an instruction's operator immediate names, in the parser's numbering.
+#[doc(hidden)]
+pub mod operator;
 #[doc(hidden)]
 pub mod compile;
 #[doc(hidden)]

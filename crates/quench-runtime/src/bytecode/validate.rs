@@ -293,7 +293,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             ),
             FieldLayout::NumericIndexOperand => numeric_index_operand_in_bounds(value, bounds),
             FieldLayout::BinaryOperator => {
-                u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
+                u32::from(value) <= crate::operator::BinaryOperator::Instanceof as u32
             }
             FieldLayout::FieldBase => match instruction.field_lookup() {
                 Some(super::FieldLookup::Site(site)) => site < bounds.field_sites,
@@ -344,13 +344,13 @@ fn immediate_domains_in_bounds(
             instruction.array_index() != super::ARRAY_INDEX_SENTINEL
         }
         super::ImmediateRole::BinaryOperator => {
-            instruction.binary_operator() <= oxc_ast::ast::BinaryOperator::Instanceof as u32
+            instruction.binary_operator() <= crate::operator::BinaryOperator::Instanceof as u32
         }
         super::ImmediateRole::AdditionOperator => {
-            instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
+            instruction.binary_operator() == crate::operator::BinaryOperator::Addition as u32
         }
         super::ImmediateRole::MultiplicationOperator => {
-            instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Multiplication as u32
+            instruction.binary_operator() == crate::operator::BinaryOperator::Multiplication as u32
         }
         #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmSimdOperator => {
@@ -429,7 +429,7 @@ fn immediate_domains_in_bounds(
             crate::wasm::integer::I32UnaryOperator::from_tag(instruction.imm()).is_some()
         }
         super::ImmediateRole::UnaryOperator => {
-            instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
+            instruction.unary_operator() <= crate::operator::UnaryOperator::Void as u32
                 || matches!(instruction.unary_operator(), super::UNARY_TO_STRING_PRIMITIVE | super::UNARY_ADD_OPERAND_STRING)
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
