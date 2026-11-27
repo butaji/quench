@@ -42,9 +42,9 @@ pub enum HelperHole {
     PackedImm = 3,
 }
 
-/// The value holes of a numeric leaf call row (`CallRow::NumericLeaf`), by position: the destination's and the two
-/// operands' frame offsets (the operands' pinned registers are spilled before the row, `call_plan::plan_leaf`), and the
-/// leaf's address (a branch's symbol on Apple AArch64). The first three are the places a `Places` row reads (hole 0 the
+/// The value holes of a numeric leaf call row (`CallRow::NumericLeaf`), by position: the destination's frame offset, the
+/// two operands' (a frame offset, or the constant the operand's place names: the operands' pinned registers are spilled
+/// before the row, `call_plan::plan_leaf`), and the leaf's address (a branch's symbol on Apple AArch64). The first three are the places a `Places` row reads (hole 0 the
 /// destination, holes 1 and 2 the operands), so the row reads its operands as any Number row does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]

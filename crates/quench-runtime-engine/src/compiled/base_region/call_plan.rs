@@ -171,10 +171,10 @@ pub(crate) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, 
     chain(spills, helper_part(pc, helper, packed)?, reloads)
 }
 
-/// The float leaf row of a numeric operation at `pc`: the leaf's address in its hole (or its symbol), and the frame
-/// offsets of the operands and the destination (`NumericLeafHole`, `steps::leaf_holes`). A non-Number operand leaves at
-/// the pc: nothing is written.
-fn leaf_part(pc: u32, leaf: HelperPlace, [left, right, dst]: [u64; 3]) -> Result<CallPart, String> {
+/// The float leaf row of a numeric operation at `pc`: the leaf's address in its hole (or its symbol), the operands' places
+/// (a frame slot, or a constant in its hole), and the holes: the operands' offsets or constants and the destination's
+/// offset (`NumericLeafHole`, `steps::leaf_operands`). A non-Number operand leaves at the pc: nothing is written.
+fn leaf_part(pc: u32, leaf: HelperPlace, operands: [Place; 2], [left, right, dst]: [u64; 3]) -> Result<CallPart, String> {
     let (address, symbols) = match leaf {
         HelperPlace::Address(0) => return Err("call: no leaf address".to_string()),
         HelperPlace::Address(address) => (address as u64, NO_SYMBOLS),
@@ -185,7 +185,7 @@ fn leaf_part(pc: u32, leaf: HelperPlace, [left, right, dst]: [u64; 3]) -> Result
     holes[NumericLeafHole::Left as usize] = left;
     holes[NumericLeafHole::Right as usize] = right;
     holes[NumericLeafHole::Leaf as usize] = address;
-    Ok(CallPart { symbols, ..part(call::stencil(CallRow::NumericLeaf)?, holes, vec![Exit::At(pc)]) })
+    Ok(CallPart { symbols, ..part(call::stencil(CallRow::NumericLeaf { left: operands[0], right: operands[1] })?, holes, vec![Exit::At(pc)]) })
 }
 
 /// The chain `middle` leads: the spills of the pinned registers live at it, `middle`, the reloads of those live after it.
@@ -198,10 +198,10 @@ fn chain(spills: &[(Place, Register)], middle: CallPart, reloads: &[(Place, Regi
     Ok(parts)
 }
 
-/// The chain of a float leaf call at `pc` (`Math.pow` of two registers, `CallRow::NumericLeaf`): the spills, the leaf row,
-/// the reloads, as `plan_step` for a helper step. `holes` are the frame offsets (`steps::leaf_holes`).
-pub(crate) fn plan_leaf(pc: u32, leaf: HelperPlace, holes: [u64; 3], spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
-    chain(spills, leaf_part(pc, leaf, holes)?, reloads)
+/// The chain of a float leaf call at `pc` (`Math.pow`, `CallRow::NumericLeaf`): the spills, the leaf row, the reloads, as
+/// `plan_step` for a helper step. `operands` and `holes` are `steps::leaf_operands`'s.
+pub(crate) fn plan_leaf(pc: u32, leaf: HelperPlace, operands: [Place; 2], holes: [u64; 3], spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+    chain(spills, leaf_part(pc, leaf, operands, holes)?, reloads)
 }
 
 /// The chain of a call (see the module doc for its layout and successors). A polymorphic site's chain
