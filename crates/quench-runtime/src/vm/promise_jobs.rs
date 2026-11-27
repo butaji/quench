@@ -547,7 +547,7 @@ impl Vm {
             // Host execution termination is not a guest throw. Return
             // through the outer realm/context cleanup, without
             // rejecting the result capability with undefined.
-            Err(error) if error.is_execution_terminated() => return Err(error),
+            Err(error) if error.is_execution_terminated() || error.is_captured() => return Err(error),
             Err(error) => (
                 PromiseState::Rejected,
                 error.thrown_value().unwrap_or(Value::UNDEFINED),
