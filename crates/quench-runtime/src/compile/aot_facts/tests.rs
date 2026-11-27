@@ -1,6 +1,7 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::{analyze, AotFacts};
+use super::{analyze, world, AotFacts};
+use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
 use crate::staged::Operation;
@@ -696,4 +697,57 @@ fn a_getter_read_through_a_subclass_instance_takes_the_superclass_getters_return
     let facts = analyze(&program);
     let f = function_named(&program, "f") as u32;
     assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the read of x on a C instance is P's getter");
+}
+
+#[test]
+fn an_unread_global_this_and_an_eval_in_a_dead_function_keep_the_world_closed() {
+    // The global object is held but never read by a computed or named key, and the eval sits in a function nothing calls:
+    // no reached code opens the closed world, so its solve verifies.
+    let program = program("var g = this; function dead() { eval('1'); } function f(a) { return a | 1; } f(2);");
+    assert_eq!(world(&program), World::Closed);
+}
+
+#[test]
+fn a_computed_read_of_a_global_this_reaches_the_global_functions_so_the_world_is_open() {
+    // `g[k]` may name any global, including `f`, and calls what it reads: the closed world cannot see that call.
+    let program = program("function f() { return 1; } var k = 'f'; var g = this; g[k]();");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_named_read_of_the_global_object_may_call_a_global_function_so_the_world_is_open() {
+    // `g.f` reads a global function off the global object by name, and the call through it is not a closed call.
+    let program = program("function f() { return 1; } var g = this; f(); g.f();");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_reached_eval_keeps_the_world_open() {
+    // The eval runs at the top level, so new code is reached and the closed world's assumption fails.
+    let program = program("function f(a) { return a | 1; } f(2); eval('1');");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_read_of_a_filled_array_below_its_length_takes_no_undefined() {
+    let program = program("function f(n, k) { var a = new Array(n); for (var i = 0; i < n; i++) a[i] = 0; if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the fill loop writes every element of the array");
+}
+
+#[test]
+fn a_read_of_an_unfilled_array_below_its_length_keeps_undefined() {
+    let program = program("function f(n, k) { var a = new Array(n); if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "no element of the array is written, so a read may find a hole");
+}
+
+#[test]
+fn a_fill_loop_that_stops_short_of_the_length_keeps_the_holes() {
+    let program = program("function f(n, k) { var a = new Array(n); for (var i = 0; i < n - 1; i++) a[i] = 0; if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the last element is never written, so a read may find a hole");
 }

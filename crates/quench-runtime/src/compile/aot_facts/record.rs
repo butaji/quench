@@ -39,6 +39,7 @@ pub(super) struct Record {
     wild_owner: bool,
     wild_global: bool,
     computed_global: bool,
+    global_keyed: bool,
     global_source: bool,
     plain_calls: Vec<Option<u32>>,
     reads_this: bool,
@@ -77,6 +78,7 @@ impl Record {
             wild_owner: false,
             wild_global: false,
             computed_global: false,
+            global_keyed: false,
             global_source: false,
             plain_calls: Vec::new(),
             reads_this: false,
@@ -187,16 +189,20 @@ impl Record {
                     Some(class) if construct => Word::instance(class),
                     _ => Word::of(Type::DIRECT_OBJECT_FAMILY),
                 },
-                _ => Word::UNKNOWN,
+                // A call with no receiver passes `undefined`: a sloppy callee's `this` is the global object, which `Call::plain`
+                // makes of the callee's `this` (`types::Types::receivers`). The receiver of any other form may be the global object.
+                crate::staged::Receiver::Undefined => Word::UNKNOWN,
+                _ => Word::of_cell(Cell::ANY.maybe_global()),
             };
-            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            let plain = matches!(invocation.receiver, crate::staged::Receiver::Undefined);
+            let call = Call { pc: pc as u32, callee, target, construct, receiver, plain, arguments };
             let method = method_atom(&call);
             // An array mutator (`push`, `splice`, ...) makes the arrays its receiver names hold its arguments, and an unknown
             // length (`Scope::is_array_mutator`).
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements };
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements, global: stored.global };
                 self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
@@ -237,6 +243,7 @@ impl Record {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.computed_global |= events.computed_store;
+        self.global_keyed |= events.global_keyed;
         self.global_source |= events.global_source;
         self.wild_member |= events.wild_member;
         self.wild_elements |= events.wild_elements;
@@ -300,6 +307,7 @@ impl Record {
             wild_owner: self.wild_owner,
             global_wild: self.wild_global,
             computed_global: self.computed_global,
+            global_keyed: self.global_keyed,
             global_source: self.global_source,
             plain_calls: self.plain_calls,
             reads_this: self.reads_this,

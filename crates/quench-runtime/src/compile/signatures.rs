@@ -431,14 +431,14 @@ mod tests {
     }
 
     #[test]
-    fn call_form_is_frameless_only_when_nothing_leaves_allocates_or_runs_guest_code() {
+    fn call_form_is_frameless_only_when_nothing_leaves_collects_or_runs_guest_code() {
         assert_eq!(call_form(Signature::NEVER, false), CallForm::Frameless);
         let throws = Signature { leaves: Leaves::Never, effects: may_throw() };
         assert_eq!(call_form(throws, false), CallForm::Frameless);
         let leaves = Signature { leaves: Leaves::RestartCall, effects: Effects::NONE };
         assert_eq!(call_form(leaves, false), CallForm::Framed);
-        let allocates = Signature { leaves: Leaves::Never, effects: Effects { allocates: true, ..Effects::NONE } };
-        assert_eq!(call_form(allocates, false), CallForm::Framed);
+        let collects = Signature { leaves: Leaves::Never, effects: Effects { may_collect: true, ..Effects::NONE } };
+        assert_eq!(call_form(collects, false), CallForm::Framed);
         let runs = Signature { leaves: Leaves::Never, effects: Effects { may_call_js: true, ..Effects::NONE } };
         assert_eq!(call_form(runs, false), CallForm::Framed);
         assert_eq!(call_form(Signature::ANY, false), CallForm::Framed);

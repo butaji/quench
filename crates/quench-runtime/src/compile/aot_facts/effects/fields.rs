@@ -80,8 +80,8 @@ pub(super) fn prototype_base(base: Word) -> Option<PrototypeBase> {
 /// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
 /// changes an array, an index store past the length, a `delete`.
 fn length_change(class: ElementClass) -> (Key, Word) {
-    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
-    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: true };
+    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown, global: false }))
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
@@ -109,8 +109,10 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             let length = settled(ctx, array).elements.length;
             let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
             let length = if in_bounds { Length::Never } else { Length::Any };
-            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
-            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
+            // A store the previous round proved hole-free leaves no hole, as its index is within the filled prefix.
+            let hole_free = ctx.hole_free_stores.contains(&(ctx.id, pc as u32));
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None, holes: !in_bounds && !hole_free };
+            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, global: stored.cell.global })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));
             events.wild_member |= !index.is_number();

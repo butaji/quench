@@ -62,30 +62,38 @@ impl Vm {
         }
     }
 
-    /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
+    /// Whether the dispatch loop may not push a call made by frame `f` at `pc` as an activation of its
     /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
     /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
-    /// call is a strict terminal one, which is a proper tail call (`call_forms`, `js_tail_call_allowed`).
+    /// call is a proper tail call, which replaces the frame (`call_forms`, `js_tail_call_allowed`).
     #[inline(always)]
-    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
+    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
         self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (i.returns_from_frame() && p.function(self.frames[f].function as usize).strict)
+            || self.js_tail_call_allowed(p, f, i, pc)
     }
 
     /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the call is a tail site of
     /// its caller (`staged::effects::tail_site`: it returns from its frame and the caller's site permits it). This
     /// is the whole decision, as `CallPlan::tail` takes it: stack depth is not observable (DESIGN.md decision
-    /// 4.4), so no host setting gates a tail call.
+    /// 4.4), so no host setting gates a tail call. `pc` is the resume PC, one past the call.
     #[inline(always)]
     pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
         crate::staged::effects::tail_site(
             i.returns_from_frame(),
-            p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32),
+            p.function(self.frames[f].function as usize).tail_site_permitted(pc.saturating_sub(1) as u32),
         )
+    }
+
+    /// Whether a tail call at `pc` of frame `f` reuses the frame for `callee`: the call is a tail site
+    /// (`js_tail_call_allowed`) and the callee's call plan says it is an ordinary body (`CallPlan::tail_callee`),
+    /// which `prepare_user_tail` can bind over the frame. A generator or async callee keeps its own activation.
+    #[inline(always)]
+    pub(super) fn tail_call_reuses_frame(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize, callee: &crate::bytecode::Function) -> bool {
+        self.js_tail_call_allowed(p, f, i, pc) && callee.call_plan(p).tail_callee
     }
 
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
@@ -102,7 +110,7 @@ impl Vm {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i) {
+        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i, pc) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -487,7 +495,7 @@ impl Vm {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i) {
+        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i, pc) {
             return None;
         }
         let callee = self.read(f, i.register_b());

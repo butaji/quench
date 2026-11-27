@@ -44,6 +44,9 @@ pub(super) struct Call {
     /// The fact of the `this` it passes its callee (`staged::Receiver`): a register's, the caller's own
     /// `this` or a field of it, an allocated object's; unknown for any other receiver.
     pub(super) receiver: Word,
+    /// Whether the call passes no receiver (`staged::Receiver::Undefined`): a sloppy callee then binds `this` to the global
+    /// object (`types::Types::receivers`).
+    pub(super) plain: bool,
     /// The facts of the arguments it passes (`staged::Invocation::arguments`), in order.
     pub(super) arguments: Vec<Word>,
 }
@@ -59,6 +62,9 @@ pub(super) struct FunctionFlow {
     pub(super) global_wild: bool,
     /// Whether a store through a non-Number key may write a name of the global object (`effects::writes_global_name`).
     pub(super) computed_global: bool,
+    /// Whether an instruction keys an access into a value that may be the global object (`effects::keyed_global`): a
+    /// computed access the closed world's call graph cannot see through.
+    pub(super) global_keyed: bool,
     /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
     /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
     pub(super) global_source: bool,
@@ -151,7 +157,8 @@ struct Arrival {
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>) -> FunctionFlow {
+    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>,
+    feedback: &super::length_settle::Feedback) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let whole = whole_literals(function);
@@ -167,6 +174,9 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         decode,
         records,
         accessors,
+        filled: &feedback.filled,
+        hole_free_stores: &feedback.hole_free_stores,
+        in_bounds_reads: &feedback.in_bounds_reads,
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];

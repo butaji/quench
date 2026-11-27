@@ -425,10 +425,10 @@ fn allocation_rows_declare_their_effects() {
     let window = RegisterWindow { base: 0, count: 1 };
     let row = |allocation| Operation::<u64, ()>::Allocate { destination: 0, allocation, proof: () }.effects();
     let (literal, closure) = (row(Allocation::ObjectLiteral { site: 0, window }), row(Allocation::Closure { function: 0 }));
-    assert!(literal.allocates && !literal.may_call_js && !literal.writes.contains(Region::Frame));
+    assert!(literal.may_alloc && !literal.may_call_js && !literal.writes.contains(Region::Frame));
     let elements = row(Allocation::ArrayOf { elements: crate::bytecode::RegisterList::collect(1, |_| 0).expect("one fits") });
-    assert!(elements.allocates && !elements.may_call_js && !elements.writes.contains(Region::Frame), "its elements are stored fresh, with no barrier");
-    assert!(closure.allocates && closure.writes.contains(Region::Frame));
+    assert!(elements.may_alloc && !elements.may_call_js && !elements.writes.contains(Region::Frame), "its elements are stored fresh, with no barrier");
+    assert!(closure.may_alloc && closure.writes.contains(Region::Frame));
     assert!(row(Allocation::Concat { window }).may_call_js, "ToString of an object runs guest code");
 }
 
