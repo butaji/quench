@@ -117,23 +117,11 @@ impl std::fmt::Write for Fnv {
     }
 }
 
-/// The static residue of `body`: its instructions, a call weighing `CALL_RESIDUE` and every other one a single unit
-/// (`tier_policy`). What the static benefit and the quick level read of a function's size.
-pub(crate) fn static_residue(body: &quench_runtime::bytecode::Function) -> u64 {
-    body.code.iter().map(|packed| if crate::compiled::meaning_compiled::is_call(body.widened(*packed)) { quench_runtime::vm::tier_policy::CALL_RESIDUE } else { 1 }).sum()
-}
-
-/// The static facts of `function`'s body (`tier_model::StaticFacts`): whether a loop or a call cycle reaches it
-/// (`CallGraph::in_loop_or_cycle`, or a loop region calls it: `called_by_loop`), and its residue.
-pub(crate) fn static_facts(program: &ResidualProgram, graph: &quench_runtime::compile::call_graph::CallGraph, function: u32, called_by_loop: bool) -> super::tier_model::StaticFacts {
-    let Some(body) = program.function_get(function as usize) else { return super::tier_model::StaticFacts::default() };
-    super::tier_model::StaticFacts { in_loop_or_cycle: called_by_loop || graph.in_loop_or_cycle(function), residue: static_residue(body) }
-}
-
-/// Whether `function`'s lane body compiles at its first entry (`tier_model::pick` over its `static_facts`), where
-/// `called_by_loop` is a loop region's call of it.
-pub(crate) fn body_pick(tiers: &Tiers, program: &ResidualProgram, graph: &quench_runtime::compile::call_graph::CallGraph, function: u32, called_by_loop: bool) -> super::tier_model::Pick {
-    super::tier_model::pick(tiers.admits_all, static_facts(program, graph, function, called_by_loop))
+/// The tier `function`'s lane body runs in (`tier_policy::predicted_tier`), where `called_by_loop` is a loop
+/// region's call of it. The floor row (`admits_all`) compiles every body optimized, as it always has.
+pub(crate) fn body_pick(tiers: &Tiers, program: &ResidualProgram, graph: &quench_runtime::compile::call_graph::CallGraph, function: u32, called_by_loop: bool) -> quench_runtime::vm::tier_policy::PredictedTier {
+    if tiers.admits_all { return quench_runtime::vm::tier_policy::PredictedTier::Ultra; }
+    quench_runtime::vm::tier_policy::predicted_tier(graph, program, function, called_by_loop)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

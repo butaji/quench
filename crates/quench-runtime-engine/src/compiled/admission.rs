@@ -5,12 +5,10 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
-use super::tier_model::Pick;
-use super::tier_policy::Tiers;
+use quench_runtime::vm::tier_policy::PredictedTier;
 use quench_runtime::bytecode::{Function, ResidualProgram};
 use crate::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::dispatch_fast::LaneView;
-use quench_runtime::vm::jit_backend::CompileLevel;
 use quench_runtime::vm::Vm;
 
 /// Why a compile or a callee's admission is refused. Each variant is one refusal site, counted
@@ -18,7 +16,7 @@ use quench_runtime::vm::Vm;
 /// this enum through `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
-    /// The static benefit declines the compile (`tier_model::Pick::Interpreter`, `PlanNotAmortized`).
+    /// The predicted tier is the interpreter (`PredictedTier::Interpreter`, `PlanNotAmortized`).
     NotAmortized,
     /// The callee may not run inline (`CalleeUse::Inlined`) or frameless (`CalleeUse::Frameless`).
     CalleeNotEligible,
@@ -183,7 +181,7 @@ pub(crate) enum UnitKind {
     /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
     /// root-only compile names its root.
     WasmModule,
-    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the pick the static benefit
+    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the tier predicted
     /// makes, the looped iterations' payment. Its unit is the proof every later lane gate needs.
     LanePlan,
     /// A lane body's entry gate during planning (phase B, inside the plan): the plan's unit, the amortization
@@ -219,8 +217,8 @@ pub(crate) struct UnitFacts {
     pub(crate) root_ok: bool,
     /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
     pub(crate) compiles_left: bool,
-    /// Lane phase A: the pick the static benefit makes (`lane_facts::body_pick`).
-    pub(crate) pick: Option<Pick>,
+    /// Lane phase A: the tier the body is predicted to run in (`lane_facts::body_pick`).
+    pub(crate) pick: Option<PredictedTier>,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
     /// Lane phase A: the looped iterations pay for the body at its planned size (`loop_model::body_taken`).
@@ -340,7 +338,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::LanePlan => {
             if !facts.compiles_left { return Decision::Declined; }
             match facts.pick {
-                Some(Pick::Interpreter) if !facts.called_by_regions => { record(Refusal::NotAmortized); return Decision::Unpaid; }
+                Some(PredictedTier::Interpreter) if !facts.called_by_regions => { record(Refusal::NotAmortized); return Decision::Unpaid; }
                 _ => {}
             }
             facts.looped_taken
@@ -527,13 +525,6 @@ pub(crate) fn admit_callee(program: &ResidualProgram, callee: &Function, how: Ca
         record(Refusal::CalleeNotEligible);
         Err(Refusal::CalleeNotEligible)
     }
-}
-
-/// The compile level of `function`'s u-jit body: `Quick` where its static residue takes the cheaper compile
-/// (`tier_model::compiles_quick`), else `Optimized`.
-pub(crate) fn compile_level(tiers: &Tiers, program: &ResidualProgram, function: u32) -> CompileLevel {
-    let residue = program.function_get(function as usize).map_or(0, super::lane_facts::static_residue);
-    if super::tier_model::compiles_quick(tiers.admits_all, residue) { CompileLevel::Quick } else { CompileLevel::Optimized }
 }
 
 impl From<super::osr_loop::RegionRejection> for Refusal {

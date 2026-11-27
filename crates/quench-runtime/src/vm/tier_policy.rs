@@ -6,7 +6,7 @@
 //! never a controller.
 
 use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
-use crate::compile::call_graph::CallGraph;
+use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
 use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
@@ -580,16 +580,52 @@ pub(crate) const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
 /// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
 pub(crate) const NATIVE_CREDIT_RUNS: u64 = 64;
 
-/// The static residue (`lane_facts::static_residue`) past which a function compiles at its first entry, though no loop
-/// or call cycle of the program reaches it. Conservative and untuned: a body this size repays its compile on its own.
-pub const BODY_STATIC_RESIDUE: u64 = 96;
+/// The tier a function runs in under default mode (design decision 4.9): the interpreter, or a compiled body. `Tier`
+/// names the compiled tiers only, so the interpreter is this enum's own variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PredictedTier {
+    Interpreter,
+    Base,
+    Ultra,
+}
 
-/// The residue one call instruction weighs (`lane_facts::static_residue`); every other instruction weighs one.
-pub const CALL_RESIDUE: u64 = 4;
+/// IR instructions the interpreter spends per bytecode of one run of a function.
+pub const INTERPRETER_IR_PER_OP: u64 = 40;
+/// IR instructions a b-jit (stencil) body spends per bytecode of one run.
+pub const BJIT_IR_PER_OP: u64 = 12;
+/// IR instructions a u-jit body spends per bytecode of one run.
+pub const UJIT_IR_PER_OP: u64 = 4;
+/// IR instructions the b-jit's one-time compile of a body spends per bytecode of the body.
+pub const BJIT_COMPILE_IR_PER_OP: u64 = 60;
+/// IR instructions the u-jit's one-time compile of a body spends per bytecode of the body.
+pub const UJIT_COMPILE_IR_PER_OP: u64 = 3000;
 
-/// The static residue from which a lane body compiles at the quick level (`CompileLevel::Quick`): a body this large
-/// costs more to compile optimized than its code saves, so it takes the cheaper compile. Conservative and untuned.
-pub const QUICK_RESIDUE: u64 = 512;
+// The tier order is locked: each compiled tier runs a bytecode for less IR than the one before it, and compiles for more.
+const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
+const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
+
+/// The tier a function runs in: the argmin over the three tiers of its predicted IR. A run of the function costs its
+/// work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in) times its static
+/// frequency (`CallGraph::frequency`) times the tier's cost per bytecode; a compiled tier adds its one-time compile
+/// over the bytecodes. `called_by_loop` is a loop region's call of the function, one loop more. Ties go to the tier
+/// that compiles less: the interpreter, then the b-jit. Pure: no count and no clock.
+pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32, called_by_loop: bool) -> PredictedTier {
+    let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
+    let frequency = graph.frequency(function).saturating_mul(if called_by_loop { LOOP_WEIGHT } else { 1 });
+    let work = graph.loop_work(function);
+    let run = |per_op: u64| frequency.saturating_mul(work).saturating_mul(per_op);
+    let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
+    let interpreter = run(INTERPRETER_IR_PER_OP);
+    let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP));
+    let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP));
+    if interpreter <= base && interpreter <= ultra {
+        PredictedTier::Interpreter
+    } else if base <= ultra {
+        PredictedTier::Base
+    } else {
+        PredictedTier::Ultra
+    }
+}
 
 /// The runs a function makes on the general path before it derives its lane view, which costs
 /// about a thousand instructions per bytecode instruction, so a function that runs fewer times

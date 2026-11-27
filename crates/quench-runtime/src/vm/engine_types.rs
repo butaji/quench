@@ -1592,7 +1592,7 @@ pub const JS_IMPORT_ARGUMENTS: usize = 8;
 /// A lane view's frameless body (`LaneView::tier_lane`). Shape compaction
 /// moves a body that names shape IDs back to `Unspecialized`.
 pub enum LaneBody {
-    /// Waiting for its next entry to specialize (a function with no static benefit stays here at its
+    /// Waiting for its next entry to specialize (a function predicted to run in the interpreter stays here at its
     /// first entry, and runs in the interpreter); `recompiles` bodies before it left too often for
     /// their feedback (`LaneView::note_lane_body_end`), the last of them, where `stuck`, at those few
     /// leaves only.

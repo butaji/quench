@@ -157,8 +157,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_executio
 fn quench_engine_vm_load_ahead_images(this: &mut Vm, images: AheadImages) -> () { <Vm as CompiledAheadImagesVm>::load_ahead_images(this, images) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_load_ahead_images = quench_engine_vm_load_ahead_images;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_stage_images_at_load(this: &mut Vm, id: ProgramId, program: &ResidualProgram) -> () { <Vm as CompiledAheadImagesVm>::stage_images_at_load(this, id, program) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_stage_images_at_load = quench_engine_vm_stage_images_at_load;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_set_execution_mode(this: &mut Vm, mode: ExecutionMode) -> () { <Vm as CompiledVm4>::set_execution_mode(this, mode) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_set_execution_mode = quench_engine_vm_set_execution_mode;
