@@ -263,6 +263,7 @@ use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
 pub mod native_table;
 pub mod reachable_realm;
+mod native_effects;
 mod reachable_protocol;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
