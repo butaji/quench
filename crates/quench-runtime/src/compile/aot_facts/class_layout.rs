@@ -16,10 +16,12 @@ use super::blocks::Blocks;
 use super::census::Census;
 use super::flow::FunctionFlow;
 use super::quiet::{Proofs, Quiet};
+use super::readers::Readers;
 use super::shape::{Change, Owner, Shape};
+use super::AotFacts;
 use crate::bytecode::{ControlEdge, Function, ResidualProgram, Successors};
 use crate::dataflow::{Dataflow, solve};
-use crate::typed_ir::Classes;
+use crate::typed_ir::{Cell, Classes, FactKey};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The layouts of the classes the program constructs, each absent where the closed world does not prove it.
@@ -107,7 +109,7 @@ fn reshapes_prototype(shape: &Shape, class: u32, fields: &[u32], census: &Census
 /// where the paths disagree, where the body changes an object it cannot order (`BodyOrder::step`), or where the
 /// body is derived (`super()` binds `this`, so the parent's stores are fields of the instance too).
 fn body_fields(function: &Function, flow: &FunctionFlow, class: u32, proofs: &Proofs, accessors: &Accessors) -> Option<Vec<u32>> {
-    if (0..function.code.len()).any(|pc| function.instruction_at(pc).op().binds_this()) {
+    if binds_this(function) {
         return None;
     }
     let blocks = Blocks::of(&Successors::of_code(function), function.code.len());
@@ -253,4 +255,115 @@ impl Dataflow for BodyOrder<'_> {
             ControlEdge::Normal => out.clone(),
         }
     }
+}
+
+/// The union layout of a class's instances (`AotFacts::class_union_layout`): every named field an instance may hold, in slot
+/// order, each with its settled cell and what an absent own field of its name reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnionLayout {
+    /// The fields in slot order: the constructor's own fields first (`AotFacts::class_layout`), then every other field a store
+    /// puts on an instance, in first-store program order.
+    pub fields: Box<[(u32, UnionField)]>,
+}
+
+/// One field of a union layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnionField {
+    /// The settled cell of the values stored into the field (`FactKey::Field`).
+    pub cell: Cell,
+    /// What an instance reads where it holds no own field of the name.
+    pub default: FieldDefault,
+}
+
+/// What an instance reads where it holds no own field of a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldDefault {
+    /// The prototype of class `class` defines the name (a store onto it, or an accessor), so the absent field reads that.
+    Prototype(u32),
+    /// No object on the prototype chain defines the name: the absent field reads `undefined`.
+    Absent,
+}
+
+/// The names `Object.prototype` defines (ECMA-262 section 20.1.3). An instance of a class whose union holds one of them reads
+/// the built-in where it has no own field, a default no class's prototype names, so the class has no union.
+const OBJECT_PROTOTYPE_NAMES: [&str; 12] = [
+    "constructor", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__", "__proto__",
+    "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "toLocaleString",
+];
+
+/// The union layouts of the constructed classes the closed world proves one for, over the settled `flows` and the settled
+/// `facts` (its readers and cells). Read after the readers settle, so `AotFacts::readers` is set.
+pub(super) fn unions_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, facts: &AotFacts) -> BTreeMap<u32, UnionLayout> {
+    let Some(readers) = facts.readers.as_ref() else { return BTreeMap::new() };
+    if !facts.closed() {
+        return BTreeMap::new();
+    }
+    facts.constructed_functions().into_iter()
+        .filter_map(|class| union_of(program, flows, census, facts, readers, class).map(|union| (class, union)))
+        .collect()
+}
+
+/// The union layout of `class`, or None where the closed world proves none. The union is the class's constructor-order own
+/// fields (`AotFacts::class_layout`), then every field a store puts on an instance (`Shape::Field` of an owner that may hold
+/// the class, but a this-store an accessor claims, which is a setter call). It is None where the program may enumerate the
+/// instances (`Readers::reflects_class`: a for-in, a spread, `Object.keys` and the like reach them), where a computed-key
+/// store or a delete may reach them (`Change::Any`, `member_wild`), where a builtin defines properties on them
+/// (`Change::Define`), where a `prototype` or `__proto__` may be replaced, or where the class is derived (its prototype chain
+/// runs through a parent's stores, `binds_this`). Any store that may hit a prototype object makes its name a default for the
+/// class's instances (`FieldDefault::Prototype`), which is a guess the holder watch checks; a name `Object.prototype` defines
+/// has no such holder, so it has no union.
+fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, facts: &AotFacts, readers: &Readers, class: u32) -> Option<UnionLayout> {
+    if census.member_wild() || readers.reflects_class(class) || program.with_record(class as usize, binds_this) {
+        return None;
+    }
+    let mut fields: Vec<u32> = facts.class_layout(class).map_or_else(Vec::new, <[u32]>::to_vec);
+    let on_prototype = instance_stores(program, flows, census, class, &mut fields)?;
+    let mut entries = Vec::with_capacity(fields.len());
+    for atom in fields {
+        if text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name)) { return None; }
+        let default = if on_prototype.contains(&atom) || census.accessors.defines(atom) { FieldDefault::Prototype(class) } else { FieldDefault::Absent };
+        let cell = facts.cell(FactKey::Field { class, instance: true, atom }).unwrap_or(Cell::ANY);
+        entries.push((atom, UnionField { cell, default }));
+    }
+    Some(UnionLayout { fields: entries.into_boxed_slice() })
+}
+
+/// Adds to `fields` the names the stores of `flows` put on instances of `class`, in first-store order, and returns the names
+/// they put on its prototype. None where a store may replace a prototype, or a change the closed world cannot name may reach
+/// an instance or a prototype (`Change::Any`, `Change::Define`).
+fn instance_stores(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, class: u32, fields: &mut Vec<u32>) -> Option<BTreeSet<u32>> {
+    let mut on_prototype = BTreeSet::new();
+    for shape in flows.iter().flat_map(|flow| &flow.shapes) {
+        let instance = shape.owner.classes().is_some_and(|classes| classes.may_hold(class));
+        let prototype = may_be_prototype(shape.owner, class, census);
+        match shape.change {
+            Change::Any | Change::Define if instance || prototype => return None,
+            Change::Any | Change::Define => {}
+            Change::Field(atom) => {
+                if prototype && matches!(text(program, atom), Some("prototype" | "__proto__")) { return None; }
+                if instance && !claimed_store(shape, class, &census.accessors) && !fields.contains(&atom) { fields.push(atom); }
+                if prototype { on_prototype.insert(atom); }
+            }
+        }
+    }
+    Some(on_prototype)
+}
+
+/// Whether a constructor body binds `this` through `super()`, so its instance's stores include its parent's.
+fn binds_this(function: &Function) -> bool {
+    (0..function.code.len()).any(|pc| function.instruction_at(pc).op().binds_this())
+}
+
+/// Whether an object of `owner` may be the prototype of `class`'s instances: an object of no one class or of any class (a store
+/// through it may write any name of a prototype), or a prototype object the census resolves to `class` or cannot resolve.
+fn may_be_prototype(owner: Owner, class: u32, census: &Census) -> bool {
+    match owner {
+        Owner::This(classes) | Owner::Object(classes) => matches!(classes, Classes::Never | Classes::Many),
+        Owner::Prototype(base) => census.prototype_owner(base).is_none_or(|owner| owner == class),
+    }
+}
+
+/// The text of atom `atom`, where the program has it.
+fn text(program: &ResidualProgram, atom: u32) -> Option<&str> {
+    program.atoms.get(atom as usize)
 }
