@@ -3870,6 +3870,10 @@ impl Lowering<'_, '_> {
         };
         let missed = self.guard_exit(state, pc as u32);
         self.home_written(state, pc);
+        // A proper tail call of the function's own body is a back edge to its entry (`self_tail_call`), not a call.
+        if let Some(callee) = self.self_tail_callee(pc, record, &site) {
+            return self.self_tail_call(state, pc, missed, &site, callee);
+        }
         let completed = self.builder.create_block();
         let raised = cold_block(&mut self.builder);
         let entered = self.builder.create_block();
