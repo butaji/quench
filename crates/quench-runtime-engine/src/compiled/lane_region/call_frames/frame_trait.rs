@@ -125,18 +125,22 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             stage.builder.set_cold_block(unfinished);
             return Some(Entered { status: returned, word: this, unfinished });
         }
-        self.push_native(stage, callee, this, call.registers, room)?;
         let entry = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let entry = self.proven_entry(stage, callee, room.cell, entry);
-        let signature = crate::compiled::lane_body_abi::body_shim_signature(types::I64);
-        let signature = stage.builder.import_signature(signature);
-        let shim = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), call.context,
-            field(std::mem::offset_of!(CallContext, head.body_shim)));
         let captures = match callee {
             DirectSite::Owned(owned) if self.rebinds.get() => self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, captures)),
             DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
             other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, captures))?,
         };
+        // A sibling tail call of an owned body takes the running frame over (`tail_branch`), unless its callee is the stub.
+        if let (Some(arguments), DirectSite::Owned(owned)) = (call.tail, callee) {
+            self.tail_branch(stage, owned, this, room, captures, entry, arguments)?;
+        }
+        self.push_native(stage, callee, this, call.registers, room)?;
+        let signature = crate::compiled::lane_body_abi::body_shim_signature(types::I64);
+        let signature = stage.builder.import_signature(signature);
+        let shim = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), call.context,
+            field(std::mem::offset_of!(CallContext, head.body_shim)));
         let (status, word) = stage.call_entry(signature, shim, &[call.context, this, captures, room.top, entry.word()]);
         // The status test's fall-through is the returned path (`complete_call`); every other status is cold.
         let unfinished = stage.builder.create_block();
