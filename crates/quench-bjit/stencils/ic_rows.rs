@@ -108,12 +108,13 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
 }
 
 /// The record of the receiver at hole `H` (as `receiver`'s), which every path proved a direct object
-/// (`base_region::proofs`): its address in the record table (`object_record_of`), no family test.
+/// (`base_region::proofs`): its address in the record table (`object_record_of`), no family test; `None` where
+/// the receiver is live (it has no record).
 #[inline(always)]
-fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> u64 {
+fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Option<u64> {
     let bits = if H == GET_RECEIVER { site_object(s) } else { word_at(s.frame, hole::<H>()) };
     let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    object_record_of(stage, records, bits)
+    object_record_of(stage, records, bits, ())
 }
 
 /// The own slot of the receiver known to be a direct object (`ic::own_field`: hole 2 the shape, hole 3 the
@@ -125,8 +126,7 @@ fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) ->
 #[inline(always)]
 fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-    let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
-    let word = ic::own_field(&mut stage, record, 0, 0, ());
+    let word = known_record::<GET_RECEIVER>(&s, &mut stage, payload).and_then(|record| ic::own_field(&mut stage, record, 0, 0, ()));
     finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| if NUMBER { deliver_number::<D>(s, word) } else { deliver::<D>(s, word) })
 }
 
@@ -135,9 +135,9 @@ fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
 #[inline(always)]
 fn known_get_flat<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES + 1, payload as u64);
-    let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
-    let word = own_field_flat(&mut stage, crate::staged::Shaped::by_fact(record, crate::staged::ShapeFact::entry_guard()), 0);
-    finish_chained::<true>(s, Step::Value(word), |s, word| deliver::<D>(s, word))
+    let word = known_record::<GET_RECEIVER>(&s, &mut stage, payload)
+        .map(|record| own_field_flat(&mut stage, crate::staged::Shaped::by_fact(record, crate::staged::ShapeFact::entry_guard()), 0));
+    finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| deliver::<D>(s, word))
 }
 
 /// The Number in the value place stored to the flat slot (its byte offset is the last hole the row reads) of the receiver
@@ -164,7 +164,7 @@ fn known_store<const INT: bool, const A: u8, const ADMITTED: bool, const FLAT: b
     // A Number names no heap record, so it skips the store gate, unless old records keep counts.
     let open = stage.immediate_store_open();
     stage.guard(open, ())?;
-    let record = known_record::<SET_RECEIVER>(s, &mut stage, payload);
+    let record = known_record::<SET_RECEIVER>(s, &mut stage, payload)?;
     if !FLAT {
         own_flat_known(&mut stage, record, 0, ())?;
     }

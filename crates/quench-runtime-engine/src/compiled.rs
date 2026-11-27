@@ -698,7 +698,7 @@ fn emit_js_cached_field_slot(
 ) -> (ir::Value, ir::Value) {
     use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_of, plain_payload, proto_link, proto_object_record_id};
+    use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
     use quench_runtime::staged::region::Region;
     use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
@@ -772,9 +772,9 @@ fn emit_js_cached_field_slot(
         builder.switch_to_block(holder_block);
         let mut stage = object_slots::emit(builder);
         let link = proto_link(&mut stage, object);
-        // The link names the prototype's stub granule (R4-B2b, option B): the record is reached by the hop.
-        let granule = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = object_record_of(&mut stage, records, granule);
+        // The link names the prototype's stub granule (R4-B2b, option B): its departed hop is the record id.
+        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = object_record_at(&mut stage, records, id);
         let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);
         let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
         stage.guard(same_holder, fallback);
@@ -1001,7 +1001,8 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let ok = stage.raw_binary(Binary::And, ok, has_properties);
     stage.branch_if(ok, (found, &[]), (done, &[]));
     stage.builder.switch_to_block(found);
-    let address = quench_runtime::staged::object::object_record_of(&mut stage, records, this);
+    // A live receiver has no record: the receiver stays `NO_FIELD_RECEIVER`, which the slow path decides.
+    let address = quench_runtime::staged::object::object_record_of(&mut stage, records, this, done).expect("a departed receiver's record continues");
     // The exact shape carries the dictionary bit, so a dictionary never matches.
     let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
     let inline = quench_runtime::staged::object::inline_storage(&mut stage, address);

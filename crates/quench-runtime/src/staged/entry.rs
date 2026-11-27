@@ -203,12 +203,12 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 }
 
 /// The id and object record that `object` names in the record table at `records`, whose presence
-/// the caller proved: `None` (leaving at `miss`) where the word is no direct object.
+/// the caller proved: `None` (leaving at `miss`) where the word is no direct object or its object is live.
 #[inline(always)]
 pub(super) fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let direct = super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
-    let id = super::value::direct_object_id(stage, object);
+    let id = super::object::object_record_id_of(stage, object, miss)?;
     Some((id, super::object::object_record_at(stage, records, id)))
 }
 
@@ -267,7 +267,7 @@ fn site_read_in<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word
 fn readable_record<S: Stage>(stage: &mut S, (records, functions): (S::Word, S::Word), object: S::Word, miss: S::Miss) -> Option<S::Word> {
     let direct = super::value::is_direct_object(stage, object);
     let id = super::value::direct_object_id(stage, object);
-    stage.choose_leaving(direct, #[inline(always)] |stage| Some(super::object::object_record_of(stage, records, object)), #[inline(always)] |stage| {
+    stage.choose_leaving(direct, #[inline(always)] |stage| super::object::object_record_of(stage, records, object, miss), #[inline(always)] |stage| {
         let function = super::value::is_direct_function(stage, object);
         stage.guard(function, miss)?;
         let present = stage.ne_imm(functions, 0u32);

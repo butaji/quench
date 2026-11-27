@@ -180,14 +180,14 @@ pub(crate) fn proto_record_id<S: Stage>(stage: &mut S, link: S::Word) -> S::Word
     stage.and_imm(link, u64::from(RECORD_LINKS - 1))
 }
 
-/// The id of the object record `link` names, or `miss` where it names none.
+/// The id of the object record `link` names, or `miss` where it names none or its object is live.
 #[inline(always)]
 pub fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
     let inside = proto_names_record(stage, link);
     stage.guard(inside, miss)?;
     // The link's low bits are the granule; the record id is its header's hop.
     let granule = proto_record_id(stage, link);
-    Some(record_id_of_granule(stage, granule))
+    departed_record_id(stage, granule, miss)
 }
 
 /// A prototype walk's answer as a word: the target is not on the chain, is on it, or a link names
@@ -279,30 +279,31 @@ pub(crate) fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, val
     miss: S::Miss) -> Option<S::Cond> {
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
-    let (decided, holds) = instance_decision(stage, records, value, target);
+    let (decided, holds) = instance_decision(stage, records, value, target, miss)?;
     stage.guard(decided, miss)?;
     Some(holds)
 }
 
 /// The walk's decision for `value` as `(decided, holds)`: whether the words decide `instanceof`, and
-/// where they do, whether it holds.
+/// where they do, whether it holds. A live direct object leaves at `miss` (`object_record_of`).
 #[inline(always)]
-pub(crate) fn instance_decision<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word) -> (S::Cond, S::Cond) {
-    let answer = instance_answer(stage, records, value, target);
+pub(crate) fn instance_decision<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word,
+    miss: S::Miss) -> Option<(S::Cond, S::Cond)> {
+    let answer = instance_answer(stage, records, value, target, miss)?;
     let undecided = stage.eq_imm(answer, WALK_UNDECIDED);
-    (stage.not(undecided), stage.eq_imm(answer, WALK_HOLDS))
+    Some((stage.not(undecided), stage.eq_imm(answer, WALK_HOLDS)))
 }
 
 /// The walk's answer for `value`: a direct object's chain, `fails` for a primitive, else undecided.
 #[inline(always)]
-fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word) -> S::Word {
+fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word, miss: S::Miss) -> Option<S::Word> {
     let direct = super::value::is_direct_object(stage, value);
-    stage.choose(direct, #[inline(always)] |stage| {
-        let record = object_record_of(stage, records, value);
+    stage.choose_leaving(direct, #[inline(always)] |stage| {
+        let record = object_record_of(stage, records, value, miss)?;
         let (decided, holds) = stage.walk_prototypes(records, record, target, INSTANCEOF_WALK_LINKS);
         let [fails, holding, undecided] = [WALK_FAILS, WALK_HOLDS, WALK_UNDECIDED].map(|answer| stage.constant(answer));
         let answer = stage.select(holds, holding, fails);
-        stage.select(decided, answer, undecided)
+        Some(stage.select(decided, answer, undecided))
     }, #[inline(always)] |stage| {
         let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
         let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
@@ -310,7 +311,7 @@ fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, ta
         let string = super::value::is_direct_string(stage, value);
         let primitive = stage.any(immediate, string);
         let [fails, undecided] = [WALK_FAILS, WALK_UNDECIDED].map(|answer| stage.constant(answer));
-        stage.select(primitive, fails, undecided)
+        Some(stage.select(primitive, fails, undecided))
     })
 }
 
@@ -323,32 +324,36 @@ pub fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) 
 }
 
 /// The address of the object record the direct object reference `bits` names, in the record table at
-/// `records`. The only staged resolver (`object_record_id_of` is its hop's first half).
+/// `records`; `miss` where the object is live (it has no record). The only staged resolver
+/// (`object_record_id_of` is its hop's first half).
 #[inline(always)]
-pub fn object_record_of<S: Stage>(stage: &mut S, records: S::Word, bits: S::Word) -> S::Word {
-    let id = object_record_id_of(stage, bits);
-    object_record_at(stage, records, id)
+pub fn object_record_of<S: Stage>(stage: &mut S, records: S::Word, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let id = object_record_id_of(stage, bits, miss)?;
+    Some(object_record_at(stage, records, id))
 }
 
-/// The record id the direct object reference `bits` names: its granule `g` is a class cell's (at
-/// `class_base + g * CLASS_HEADER_BYTES`), whose header's high half is the id of the record the cell
-/// stands for (`staged::object_encoding::departed_header`). The hop is `hdr = load_u64 [class_base + g*8];
-/// id = hdr >> 32`. Every ordinary object claims a stub, so its header names its record.
+/// The record id the direct object reference `bits` names: its granule's departed hop
+/// (`departed_record_id`), `miss` where the object is live.
 #[inline(always)]
-pub fn object_record_id_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+pub fn object_record_id_of<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
     let granule = super::value::direct_object_id(stage, bits);
-    record_id_of_granule(stage, granule)
+    departed_record_id(stage, granule, miss)
 }
 
-/// The record id of the ordinary object whose stub granule is `granule` (a word, as a prototype link
-/// or a direct object reference holds it): the header hop of `object_record_id_of`. Valid only for an
-/// object that departed (or is a stub): a live class cell's header names a class, not a record, so a
-/// reader of a value that may be live tests `cell_class` first.
+/// The record id of the object whose stub granule is `granule` (a word, as a prototype link or a
+/// direct object reference holds it), where that object departed: the high half of its class cell's
+/// header (`object_encoding::departed_header`). The class guard is that the cell's class is
+/// `DEPARTED_CLASS`; a live cell (a class id, no record) leaves at `miss`, and the slow path decides it
+/// (`ObjectRef::Cell`). R4-D1b(d) makes the guard's immediate the expected class and deletes the record
+/// shape guard, so each read keeps one guard.
 #[inline(always)]
-pub fn record_id_of_granule<S: Stage>(stage: &mut S, granule: S::Word) -> S::Word {
+pub fn departed_record_id<S: Stage>(stage: &mut S, granule: S::Word, miss: S::Miss) -> Option<S::Word> {
     let cell = cell_at_granule(stage, granule);
+    let class = cell_class(stage, cell);
+    let departed = stage.eq_imm(class, u64::from(DEPARTED_CLASS));
+    stage.guard(departed, miss)?;
     let header = stage.load_u64(Region::ShapeWord.mutable(), cell, 0);
-    stage.shr_imm(header, u64::from(u32::BITS))
+    Some(stage.shr_imm(header, u64::from(u32::BITS)))
 }
 
 /// The address of the class cell at granule `granule` (a word, as a prototype link or a direct object
@@ -394,7 +399,7 @@ pub fn cell_fields<S: Stage>(stage: &mut S, cell: S::Word, storage_len: usize) -
 }
 
 /// The id and address of the object record the direct object reference `bits` names, in the
-/// record table at `records`; `miss` for any other word, or where the VM has no table (zero).
+/// record table at `records`; `miss` for any other word, a live object, or where the VM has no table (zero).
 /// The Cranelift projection of the same read is `ObjectRecord::prove`.
 #[inline(always)]
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`), which includes this file
@@ -404,7 +409,7 @@ pub(crate) fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, recor
     stage.guard(object, miss)?;
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
-    let id = object_record_id_of(stage, bits);
+    let id = object_record_id_of(stage, bits, miss)?;
     Some((id, object_record_at(stage, records, id)))
 }
 
