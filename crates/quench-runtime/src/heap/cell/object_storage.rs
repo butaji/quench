@@ -286,7 +286,10 @@ impl Object {
         match value.to_narrow().filter(|_| self.meta() & OBJECT_INLINE_STORAGE != 0) {
             Some(narrow) => self.store_payload_narrow(slot, narrow),
             // SAFETY: `admits_plain_append` found the arena range's room for the value.
-            None => unsafe { properties.push_in_place(self.properties(), slot, value) },
+            None => {
+                let word = properties.stored_word(shape, slot, value);
+                unsafe { properties.push_in_place(self.properties(), slot, word) }
+            }
         }
         self.set_shape(shape, properties);
     }

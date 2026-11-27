@@ -186,7 +186,7 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
         }
         None => fact,
     };
-    let value = super::slot_store::class_word(stage, value, arm.holds);
+    let (value, fact) = super::slot_store::class_word(stage, (value, fact), arm.class);
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
     if let Some(named) = named {
@@ -234,7 +234,7 @@ fn arm_store_flat<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word),
         }
         None => fact,
     };
-    let value = super::slot_store::class_word(stage, value, arm.holds);
+    let (value, fact) = super::slot_store::class_word(stage, (value, fact), arm.class);
     admit_named(stage, named, (record, arm.slot), value, miss)?;
     let id = super::value::direct_object_id(stage, object);
     super::store::own_store_flat_proved(stage, record, id, arm.slot, (value, fact), miss)
@@ -255,7 +255,7 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
         }
         None => fact,
     };
-    let value = super::slot_store::class_word(stage, value, arm.holds);
+    let (value, fact) = super::slot_store::class_word(stage, (value, fact), arm.class);
     admit_named(stage, named, (record, arm.slot), value, miss)?;
     let id = super::value::direct_object_id(stage, object);
     own_store_proved(stage, record, id, arm.slot, (value, fact), miss)

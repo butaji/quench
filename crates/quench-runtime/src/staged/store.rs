@@ -32,6 +32,11 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
 
 /// `own_store_with` of a record whose form the caller knows and of a value nothing is proved
 /// of: packed (`packed`), its narrow form into its half of the payload word, else into its run.
+///
+/// The flat word is stored as it is: this store passed `store_gate`, which admits no write while
+/// slot representations are tracked (`Heap::store_unlogged`), and a Number-typed slot exists only
+/// while they are. The stores that write a Number slot convert: `slot_store::class_word` for the
+/// arm stores, `ValueArena::stored_word` for the heap's.
 #[inline(always)]
 fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S::Word, u16),
     value: S::Word, packed: bool, miss: S::Miss) -> Option<()> {

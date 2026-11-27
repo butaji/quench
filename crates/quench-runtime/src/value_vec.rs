@@ -10,6 +10,14 @@ use buffer::PropertyBuffer;
 #[allow(unused_imports)]
 pub use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
+/// The word a Number-typed slot stores for `value` (`Value::from_f64_raw` semantics): an int32 word
+/// becomes its double's bits; any other word, a double included, is itself. Stores never canonicalize
+/// a Number slot (decision 4.1), so readers of a Number slot need no tag test.
+#[inline(always)]
+pub(crate) fn raw_number_word(value: Value) -> Value {
+    value.as_number().map_or(value, Value::from_f64_raw)
+}
+
 /// The `Value` of a word a staged read took from an arena run. Every arena word is the one `Value`
 /// its slot holds: a Number is its `Value::number` encoding (a double's raw bits under invariant I,
 /// with NaN canonical), so the word is the value.
@@ -646,6 +654,22 @@ impl ValueArena {
         self.owner_types[self.slot_owner(shape, slot) as usize]
     }
 
+    /// The word a store of `value` writes at `slot` of exact shape `shape` (decision 4.1, R4-M1): the
+    /// raw double bits where the slot's owner holds the Number type (`raw_number_word`), `value` itself
+    /// otherwise. Called after the store observed `value`, so a widening has already moved the owner.
+    #[inline(always)] pub(crate) fn stored_word(&self, shape: u32, slot: usize, value: Value) -> Value {
+        if self.tracking && self.slot_observation(shape, slot) == SlotType::Number { raw_number_word(value) } else { value }
+    }
+
+    /// `values` as the words of `shape`'s slots `0..values.len()` (`stored_word`), borrowed where no
+    /// slot of them holds the Number type.
+    pub(crate) fn stored_words<'a>(&self, shape: u32, values: &'a [Value]) -> std::borrow::Cow<'a, [Value]> {
+        if !self.tracking { return std::borrow::Cow::Borrowed(values); }
+        let number = |slot: usize| self.slot_observation(shape, slot) == SlotType::Number;
+        if !(0..values.len()).any(|slot| number(slot)) { return std::borrow::Cow::Borrowed(values); }
+        std::borrow::Cow::Owned(values.iter().enumerate().map(|(slot, &value)| if number(slot) { raw_number_word(value) } else { value }).collect())
+    }
+
     /// Observe the next departure from this shape, not the contents of its slots.
     /// The caller must establish its target-shape assumption before subscribing.
     pub(crate) fn subscribe_shape(&mut self, shape: u32,
@@ -943,6 +967,8 @@ impl ValueArena {
 
     pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
         self.assert_shape_length(shape, values.len());
+        // The arena's words: a Number-typed slot's value is its raw double (`stored_words`).
+        let values = self.stored_words(shape, values);
         let mut vector = ValueVec {
             start: EMPTY_START,
             auxiliary: shape,
@@ -950,7 +976,7 @@ impl ValueArena {
         if values.is_empty() {
             return vector;
         }
-        if let Some(start) = self.run_of(values) {
+        if let Some(start) = self.run_of(&values) {
             vector.start = start;
         } else {
             vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
