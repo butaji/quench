@@ -362,6 +362,25 @@ impl Vm {
         self.collect_due(program);
     }
 
+    /// Services cell debt (`Heap::should_collect`) at an interpreter op boundary: the op has
+    /// stored its result into its frame register and the frame's PC names the next instruction,
+    /// so every live value is a frame root. Allocation itself never collects; only this does.
+    #[inline(always)]
+    pub(crate) fn service_allocation_debt(&mut self, program: &ResidualProgram) {
+        if self.heap.should_collect() {
+            self.collect_due(program);
+        }
+    }
+
+    /// The poll form (frame entry, tail call, back edges): collects only byte debt
+    /// (`Heap::byte_due`). Cell debt is serviced at the next op boundary instead.
+    #[inline(always)]
+    pub(crate) fn poll_byte_debt(&mut self, program: &ResidualProgram) {
+        if self.heap.byte_due() {
+            self.collect_due(program);
+        }
+    }
+
     /// An allocation threshold passed: a collection, full when pacing says so.
     #[cold]
     #[inline(never)]
