@@ -142,6 +142,10 @@ pub(super) fn plain_frame_local(function: &Function, slot: usize) -> bool {
         && !function.is_self_binding_slot(slot)
 }
 
+/// The lane view of `function_id`'s `function`. Each record's row instance is chosen here, once, from the program's
+/// solve (`facts`, the cells `int32_at` and the compare choosers read): a record is quickened to the instance its
+/// cells pick and is never reclassified per run. A record no cell decides keeps its first-run choice (`row_jump`).
+/// Without facts (`None`) the view takes no cell's instance.
 #[cfg(feature = "jit")]
 pub(crate) fn derive_lane_view<'live>(
     function_id: u32,
@@ -155,6 +159,7 @@ pub(crate) fn derive_lane_view<'live>(
     diagnostics: bool,
     proper_tail_calls: bool,
     tiers: &'static Tiers,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
 ) -> LaneView {
     let loop_tier = plan.loop_sites;
     // A returning call is admitted by its function and host (`returning_call_admitted`), both fixed here.
@@ -466,16 +471,13 @@ pub(crate) fn derive_lane_view<'live>(
     // (`operator_row`): its operator and operand tests fold, which a fused pair's or chain's run-time
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
-    // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
-    // A loop kernel or vector region writes its registers from its own code, under no kind.
-    let int_kinds = (!wasm && loop_kernels.is_empty() && vector_regions.is_empty())
-        .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
-            resolves_names, plan.speculates))
-        .flatten();
-    let mut int_speculating = Vec::new();
+    // The solve's int32 cells of this function's registers pick the operator records' proven forms (`int32_at`).
+    // A loop kernel or vector region writes its registers from its own code, under no cell.
+    let facts = facts.filter(|_| !wasm && loop_kernels.is_empty() && vector_regions.is_empty() && int32_projectable(&decoded, resolves_names));
+    let int32 = |pc: u32, register: u16| int32_at(facts, function_id, pc, register);
     if !wasm {
         let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-        specialize_plain_operators(&decoded, constants, &mut records, true, int_kinds.as_ref(), &mut int_speculating);
+        specialize_plain_operators(&decoded, constants, &mut records, true, &int32);
         for ((record, selected), before) in records.iter().zip(selected.iter_mut()).zip(before) {
             if record.handler != before {
                 *selected = record.handler;
@@ -483,8 +485,8 @@ pub(crate) fn derive_lane_view<'live>(
         }
     }
     let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, constants, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
-    let proven_counters = int_kinds.as_ref().map(|kinds| int_steps::prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating)).unwrap_or_default();
-    if let Some(kinds) = int_kinds.as_ref() { prove_compare_jumps(constants, &mut records, kinds, &mut int_speculating); }
+    let proven_counters = int_steps::prove_loop_steps(&decoded, &mut records, facts, function_id);
+    if let Some(facts) = facts { prove_compare_jumps(constants, &mut records, facts, function_id); }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -521,7 +523,7 @@ pub(crate) fn derive_lane_view<'live>(
     }
     // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
-        specialize_plain_operators(&decoded, constants, &mut records, false, None, &mut int_speculating);
+        specialize_plain_operators(&decoded, constants, &mut records, false, &|_, _| false);
         specialize_register_operands(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -615,10 +617,24 @@ pub(crate) fn derive_lane_view<'live>(
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
         name_records,
-        int_speculating: int_speculating.into_boxed_slice(),
+        int_speculating: Box::default(),
         proven_counters: proven_counters.into_boxed_slice(),
-        speculative_registers: int_kinds.as_ref().map(|kinds| kinds.speculative().collect()).unwrap_or_default(),
     }
+}
+
+/// Whether the solve's int32 cells hold for this body's registers. A dynamic scope access (`resolves_names`) or a
+/// superinstruction writes registers the solve does not follow, so a body with either takes no cell's int32.
+fn int32_projectable(decoded: &[WideInstruction], resolves_names: bool) -> bool {
+    !resolves_names && !decoded.iter().any(|instruction| instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::SuperinstructionIndex)
+}
+
+/// Whether register `register` holds an int32 just before the instruction at `pc` of `function`, in the program's one
+/// solve (`FunctionFacts::cell_at`): its cell's type lies within `Type::INT32`, and no path reaching `pc` leaves it
+/// unset (`Type::NEVER`). Without facts none does.
+pub(super) fn int32_at(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32, pc: u32, register: u16) -> bool {
+    use quench_runtime::typed_ir::Type;
+    facts.and_then(|facts| facts.function_facts(function).cell_at(pc, register))
+        .is_some_and(|cell| cell.ty != Type::NEVER && cell.ty.is_subtype(Type::INT32))
 }
 
 /// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
@@ -824,13 +840,12 @@ pub(super) fn arithmetic_binary(instruction: WideInstruction) -> bool {
 /// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
 /// generated row, so every operand pair stays decided by the one staged row.
 ///
-/// Where the registers' int32 kinds (`kinds`) prove every register operand of a record with no
+/// Where the solve's int32 cells (`int32`, by pc and register) prove every register operand of a record with no
 /// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
-/// which reads them with no tag test; one that reads a speculative register is listed in
-/// `speculating` with its checked form (`LaneView::retire_int_speculation`). Where the kinds prove no such
-/// operand, a register pair takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
+/// which reads them with no tag test. Where the cells prove no such operand, a register pair takes the guarded
+/// form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
 pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
-    kinds: Option<&int_kinds::IntKinds>, speculating: &mut Vec<(u32, *const (), *const ())>) {
+    int32: &dyn Fn(u32, u16) -> bool) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
     use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
@@ -884,9 +899,8 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
         }
         if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
             records[pc].handler = handler as *const ();
-            // The proven form, where the kinds prove each register operand an int32.
-            let proven = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| kinds.is_some_and(|kinds| kinds.proven(register)));
-            let speculative = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| kinds.is_some_and(|kinds| kinds.of(register) == int_kinds::Kind::Speculative));
+            // The proven form, where the cells prove each register operand an int32 before this record.
+            let proven = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| int32(pc as u32, register));
             let proven_form = match form {
                 OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => Some(OPERANDS_PROVEN),
                 OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => Some(OPERANDS_PROVEN_INT32),
@@ -902,15 +916,12 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
                 };
             }
             if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(instruction.binary_operator(), proven_at) {
-                if speculative(left) || speculative(right) {
-                    speculating.push((pc as u32, proven_handler as *const (), handler as *const ()));
-                }
                 records[pc].handler = proven_handler as *const ();
             }
-            // The guarded form, where the kinds prove neither register of a register pair: the same operator's
-            // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Not listed in
-            // `speculating`: its guard is the check, and its general form is the record's requicken target. A
-            // register and an int32 constant keep their int32 form, which tests one tag already.
+            // The guarded form, where the cells prove neither register of a register pair: the same operator's
+            // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Its guard is the
+            // check, and its general form is the record's requicken target. A register and an int32 constant keep
+            // their int32 form, which tests one tag already.
             macro_rules! guarded_at {
                 ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
             }
@@ -1073,26 +1084,27 @@ pub(super) fn checked_step(handler: *const ()) -> Option<(Handler, Handler)> {
     proven_step_forms().into_iter().find(|(checked, _)| *checked as *const () == handler)
 }
 
-/// The comparison jumps whose operands the int32 kinds prove (`lane_frame::proven_compare_jump`): each takes its proven
-/// instance, which reads its register operands untagged. One that reads a speculative register is listed in
-/// `speculating` with its formed instance (`LaneView::retire_int_speculation`), which it takes back once an update
-/// overflows that register. A register pair the kinds do not prove takes its guarded instance (`guarded_compare_jump`),
+/// The comparison jumps the solve's cells decide, each chosen once here at derivation: a pair of int32 cells takes its
+/// proven instance (`lane_frame::proven_compare_jump`), which reads its register operands untagged; a register the cells
+/// type `null` or `undefined` against a constant one, or a Boolean against a constant Boolean, takes that test's instance
+/// (`lane_frame::typed_compare_jump`). A register pair no cell decides takes its guarded instance (`guarded_compare_jump`),
 /// which tests the tags once per execution. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
-pub(super) fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
-    speculating: &mut Vec<(u32, *const (), *const ())>) {
+pub(super) fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], facts: &quench_runtime::compile::aot_facts::AotFacts,
+    function: u32) {
     use quench_runtime::bytecode::Operand;
-    let proven = |operand: Operand| operand.register_index().is_some_and(|register| kinds.proven(register));
-    let speculative = |operand: Operand| operand.register_index().is_some_and(|register| kinds.of(register) == int_kinds::Kind::Speculative);
     for (pc, record) in records.iter_mut().enumerate() {
-        let (left, right) = (Operand(record.b), Operand(record.c));
-        let Some((proven_handler, formed)) = lane_frame::proven_compare_jump(record, constants, proven) else {
-            if let Some(guarded) = lane_frame::guarded_compare_jump(record) { record.handler = guarded as *const (); }
-            continue
-        };
-        if speculative(left) || speculative(right) {
-            speculating.push((pc as u32, proven_handler as *const (), formed as *const ()));
+        let pc = pc as u32;
+        let int32 = |operand: Operand| operand.register_index().is_some_and(|register| int32_at(Some(facts), function, pc, register));
+        if let Some(proven) = lane_frame::proven_compare_jump(record, constants, int32) {
+            record.handler = proven as *const ();
+            continue;
         }
-        record.handler = proven_handler as *const ();
+        let typed = |operand: Operand| operand.register_index().and_then(|register| facts.function_facts(function).cell_at(pc, register)).map(|cell| cell.ty);
+        if let Some(decided) = lane_frame::typed_compare_jump(record, constants, typed) {
+            record.handler = decided as *const ();
+            continue;
+        }
+        if let Some(guarded) = lane_frame::guarded_compare_jump(record) { record.handler = guarded as *const (); }
     }
 }
 
