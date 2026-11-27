@@ -148,7 +148,7 @@ impl CompiledSources {
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
             .map_err(|error| error.to_string())?;
-        if let Some(realm) = &realm { write_builtin_table(&mut catalog, realm)?; }
+        if let Some(realm) = &realm { write_builtin_table(&mut catalog, realm, &demand.globals)?; }
         let sources_macro = match host {
             ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
             ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),
@@ -236,8 +236,12 @@ pub fn demand_report(demand: &Demand) -> Value {
 /// The realm's intrinsic table: a family the program reaches names its installer, and one
 /// it does not keeps its realm objects and its installer out of the image. The natives table
 /// keeps exactly the natives the closed world reaches; every other entry is `None`.
-fn write_builtin_table(catalog: &mut fs::File, realm: &ReachableRealm) -> Result<(), String> {
+fn write_builtin_table(catalog: &mut fs::File, realm: &ReachableRealm, globals: &BTreeSet<Box<str>>) -> Result<(), String> {
     use quench_runtime::BuiltinFamilies as F;
+    // The global names the program reads by name: the closed world's global roots, which the dump
+    // run rebuilds its closure from (`Vm::collect_for_image`).
+    let names = globals.iter().map(|name| format!("{:?}", &**name)).collect::<Vec<_>>().join(", ");
+    writeln!(catalog, "static CLOSED_GLOBALS: &[&str] = &[{names}];").map_err(|error| error.to_string())?;
     let families = realm.families;
     let installer = |family: F, name: &str| {
         if families.contains(family) { format!("Some(quench_runtime::vm::builtin_table::installers::{name})") } else { "None".to_owned() }

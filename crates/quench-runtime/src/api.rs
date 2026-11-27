@@ -322,6 +322,13 @@ impl<H: Host> Runtime<H> {
         Ok(())
     }
 
+    /// Collects a closed world's realm down to what `program` and `roots` reach (C5 D3), after
+    /// `install_native_at_rest` and before the state is dumped. The entry is the image's whole
+    /// program: a core build has no units (`compile_closed`).
+    pub fn collect_closed_world(&mut self, program: &crate::ResidualProgram, roots: crate::RealmRoots<'_>) -> Result<(), JsError> {
+        self.vm.collect_for_image(program, &[], roots)
+    }
+
     /// The running runtime as a snapshot, where nothing runs and nothing waits but host
     /// sources (an event loop about to wait for input), which `restore_snapshot` makes again
     /// with `entry` as the program whose run it continues; `write_host` writes the host's state.
