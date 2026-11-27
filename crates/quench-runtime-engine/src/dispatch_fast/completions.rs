@@ -96,21 +96,23 @@ impl<const LEAF: u8> quench_runtime::staged::call_return::ScriptReturn for LaneS
     fn returning_run(&mut self) -> Option<usize> { returning_plain_run(self.cx, self.window) }
     #[inline(always)]
     fn pop_returning(&mut self, above: usize) {
+        // The run's frames were proved by `returning_plain_run`, which read their headers: the pops are one
+        // walk down the caller links and one write of the plain words, not a staged pop per frame.
+        if above == 0 { return; }
         let stack: &mut LaneStack = &mut unsafe { vm(self.cx) }.lane_stack;
-        let plain = (&raw const stack.plain).expose_provenance() as u64;
-        let (mut released, mut caller) = (self.window.0, None);
+        let (mut released, mut window, mut base) = (self.window, self.window, std::ptr::null());
         for _ in 0..above {
-            released = stack.plain.registers.get();
-            caller = quench_runtime::staged::call_complete::step_returning_pop_of(&mut Concrete::new(std::ptr::null()), plain,
-                released.expose_provenance() as u64, plain_destination, ());
-            debug_assert!(caller.is_some(), "`returning_plain_run` proved this many returning plain frames");
+            released = window;
+            let (_, caller_registers, caller_base) = window.plain_caller();
+            (window, base) = (caller_registers, caller_base);
         }
-        let Some(caller) = caller else { return };
+        stack.plain.depth.set(stack.plain.depth.get() - above);
+        stack.plain.registers.set(window.0);
         stack.frames_changed();
         // SAFETY: plain windows are the lane stack's own, so the outermost one's release is the top's move.
-        unsafe { stack.values.set_top(released) };
-        self.window = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
-        unsafe { ((*self.cx).registers, (*self.cx).base) = (self.window, std::ptr::with_exposed_provenance(caller.base as usize)) };
+        unsafe { stack.values.set_top(released.0) };
+        self.window = window;
+        unsafe { ((*self.cx).registers, (*self.cx).base) = (window, base) };
     }
     #[inline(always)]
     fn side_return(&mut self, value: Value) -> Option<(Registers, Ip)> { return_from_in_lane::<false, false, false, false>(self.cx, value) }

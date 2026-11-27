@@ -227,6 +227,11 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
     caller_program: Option<ProgramId>,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::call_leaf::{step_leaf_call_of, LeafContext, LeafEntry};
+    // A form that binds the receiver writes the leaf's `this` (`call_leaf::binds_this`); any other reads none.
+    if quench_runtime::staged::call_leaf::binds_this(form) {
+        // SAFETY: the running lane's context; the program store keeps the view alive.
+        note_lane_this(unsafe { vm(cx) }, this, || unsafe { (*target.view).this_rows });
+    }
     // SAFETY: the function's contract.
     unsafe {
         let entry = LeafEntry {

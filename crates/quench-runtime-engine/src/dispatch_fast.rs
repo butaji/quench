@@ -881,8 +881,70 @@ fn requicken(ip: Ip, handler: Handler) {
             (*ip.cast_mut()).handler = general_step_in_lane as Handler as *const ();
             return;
         }
-        (*ip.cast_mut()).handler = handler as *const ();
+        (*ip.cast_mut()).handler = trusted_this_handler(handler) as *const ();
     }
+}
+
+/// `this` trust (`Vm::this_trust`): undecided, trusted, retired for good.
+const THIS_UNDECIDED: u8 = 0;
+const THIS_TRUSTED: u8 = 1;
+const THIS_RETIRED: u8 = 2;
+
+/// The generated rows of the hot `this` sites (a `this` own read, a formed `this` store, a `this`
+/// nested read's first hop) and their trusted forms (`lane_frame::trusted_this_rows`).
+const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
+    (generated_row!(53, ACC_NONE, 14), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 14>),
+    (generated_row!(62, ACC_NONE, 42), lane_frame::trusted_this_rows::generated_row::<62, ACC_NONE, 42>),
+    (generated_row!(53, ACC_NONE, 8), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 8>),
+];
+
+/// The handler a record takes for `handler`: its trusted form where the lane trusts `this`, decided at
+/// the first such row: trusted only where no compiled tier can run (`--no-jit`), so every activation's
+/// `this` is one the lane bound and checked (`note_lane_this`).
+#[inline]
+fn trusted_this_handler(handler: Handler) -> Handler {
+    let Some(&(_, trusted)) = TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler as *const ()) else { return handler };
+    let cx = context_in_lane();
+    if cx.is_null() { return handler; }
+    // SAFETY: the running lane's context.
+    let vm = unsafe { vm(cx) };
+    if vm.this_trust.get() == THIS_UNDECIDED {
+        let trusted = !quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::ANY);
+        vm.this_trust.set(if trusted { THIS_TRUSTED } else { THIS_RETIRED });
+    }
+    if vm.this_trust.get() == THIS_TRUSTED { trusted } else { handler }
+}
+
+/// The check once per activation of the `this` the lane binds for it (N4): a `this` that is no direct
+/// object retires the trust for good, and every trusted row takes its checked form
+/// (`retire_this_trust`). Every lane binding of an activation's `this` makes it.
+/// `this_rows` is whether the activation's view has `this` sites (`LaneView::this_rows`), `true` where it is not known.
+#[inline(always)]
+pub(crate) fn note_lane_this(vm: &Vm, this: Value, this_rows: impl FnOnce() -> bool) {
+    if this.direct_object_index().is_none() && vm.this_trust.get() != THIS_RETIRED && this_rows() {
+        retire_this_trust(vm);
+    }
+}
+
+/// `note_lane_this` for the general loop's frame `frame` the lane resumes, its view found in the context's table.
+#[inline]
+fn note_frame_this(cx: *mut LaneContext, vm: &Vm, frame: usize, this: Value) {
+    note_lane_this(vm, this, || {
+        let function = vm.frames[frame].function;
+        // SAFETY: the context's table lives as long as its program entry.
+        unsafe { (*cx).views.as_ref() }.and_then(|views| views.get(function as usize)).and_then(quench_runtime::vm::program_store::derived_lane_view)
+            .is_none_or(|view| view.this_rows)
+    });
+}
+
+/// Retires the lane's `this` trust (`note_lane_this`): every view's trusted rows take their checked forms.
+#[cold]
+#[inline(never)]
+fn retire_this_trust(vm: &Vm) {
+    vm.this_trust.set(THIS_RETIRED);
+    vm.programs.rewrite_lane_handlers(&|handler| {
+        TRUSTED_THIS_ROWS.iter().find(|(_, trusted)| *trusted as *const () == handler).map(|(plain, _)| *plain as *const ())
+    });
 }
 
 /// The context words below register 0 (`staged::frame`, the one source of the frame layout).
@@ -8143,7 +8205,9 @@ fn frame_state_in_lane(
         (*cx).registers = r;
         (*cx).base = base;
         (*cx).memory = view;
-        r.set_this(vm.frame_lane_this(frame));
+        let this = vm.frame_lane_this(frame);
+        note_lane_this(vm, this, || view_in_lane.this_rows);
+        r.set_this(this);
         r.set_env(Value::DELETED);
         (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
@@ -8495,7 +8559,9 @@ impl Vm {
         unsafe {
             (*cx).root = LaneRoot::Frame(caller);
             (*cx).registers = registers;
-            registers.set_this(self.frame_lane_this(caller));
+            let this = self.frame_lane_this(caller);
+            note_frame_this(cx, self, caller, this);
+            registers.set_this(this);
             registers.set_env(Value::DELETED);
             (*cx).instance = Value::DELETED;
             (*cx).registers.set_capture(std::ptr::null());
@@ -9343,6 +9409,7 @@ fn materialize_leaf_in_lane(cx: *mut LaneContext) {
             .expect("the leaf's call proved its receiver's binding")
             .to_bits()
     });
+    if let Some(this) = this { note_lane_this(vm, Value::from_bits(this), || unsafe { (*target.view).this_rows }); }
     // The context words the form left to its caller, by the staged row on machine words.
     quench_runtime::staged::call_leaf::materialize_leaf_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), window.expose_provenance() as u64, form, this,
@@ -13608,6 +13675,7 @@ fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool, const COUNT
     kept: Option<u16>,
 ) -> (Registers, Ip) {
     // The receiver goes to its context word first, so it holds no register past the push.
+    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     callee_registers.set_this(this);
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
@@ -13699,6 +13767,7 @@ fn enter_plain_window(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
+    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
@@ -13851,6 +13920,7 @@ fn activate_environment_in_lane(
     debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held) <= usize::from(target.room));
     let rest = if let Some(gathered) = gathered { Some((target.params - 1, gathered.to_bits())) } else { None };
     let self_binding = if let Some(slot) = self_binding { Some((slot, target.callee.to_bits())) } else { None };
+    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.
@@ -14206,6 +14276,7 @@ fn activate_keeping_in_lane<const MAY_CROSS: bool>(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
+    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
@@ -17150,6 +17221,19 @@ pub(crate) fn derive_lane_view<'live>(
     let string_case_filters = string_case_filter::specialize(heap, constants, &decoded, &mut records);
     let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
     seed_declared_feedback(function, &records);
+    // Whether a record may read a field through `this`: the trusted rows' sites (`note_lane_this`).
+    let this_rows = decoded.iter().any(|instruction| {
+        matches!(instruction.op(), quench_runtime::bytecode::Op::SetThisField | quench_runtime::bytecode::Op::SetThisFieldStrict | quench_runtime::bytecode::Op::CallThisMethod)
+            || match instruction.field_lookup() {
+                Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) => base == quench_runtime::bytecode::FieldBase::THIS,
+                Some(quench_runtime::bytecode::FieldLookup::Site(index)) => sites.get(index).is_none_or(|site| site.base == quench_runtime::bytecode::FieldBase::THIS),
+                None => false,
+            }
+            || [instruction.a(), instruction.b(), instruction.c()].into_iter().any(|word| {
+                let operand = Operand(word);
+                operand.kind() == Some(quench_runtime::bytecode::OperandKind::Field) && sites.get(usize::from(operand.payload())).is_none_or(|site| site.base == quench_runtime::bytecode::FieldBase::THIS)
+            })
+    });
     let first = records.base();
     // The first loop closing at a backedge owns it, as a front-to-back search would find it.
     let mut loop_at_backedge: Vec<(u32, u32)> = loops.iter().enumerate().map(|(index, site)| (site.backedge, index as u32)).collect();
@@ -17161,6 +17245,7 @@ pub(crate) fn derive_lane_view<'live>(
         tiers,
         memory_register,
         activation,
+        this_rows,
         target_body: std::cell::OnceCell::new(),
         _string_case_filters: string_case_filters,
         environment_window,
@@ -18626,7 +18711,9 @@ impl Vm {
                     let frame_registers = Registers(self.frames[caller].registers.as_mut_ptr());
                     (*cx).root = LaneRoot::Frame(caller);
                     (*cx).registers = frame_registers;
-                    frame_registers.set_this(self.frame_lane_this(caller));
+                    let this = self.frame_lane_this(caller);
+                    note_frame_this(cx, self, caller, this);
+                    frame_registers.set_this(this);
                     frame_registers.set_env(Value::DELETED);
                     (*cx).registers.set_capture(std::ptr::null());
                     (*cx).outer = NO_OUTER_WALK;
@@ -19002,8 +19089,11 @@ fn install_entry_in_lane(cx: *mut LaneContext, entry: &PreparedEntry, registers:
         (*cx).base = (*entry.view).records();
     }
     // The callback family's context row (`staged::call_callback::install_callback`).
+    let context = entry.context();
+    // SAFETY: the running lane's context; the program store keeps the view alive.
+    note_lane_this(unsafe { vm(cx) }, Value::from_bits(context.this), || unsafe { (*entry.view).this_rows });
     quench_runtime::staged::call_callback::install_callback(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, entry.context(),
+        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, context,
     );
 }
 
