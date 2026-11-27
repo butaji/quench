@@ -310,13 +310,6 @@ impl LaneInstruction {
         self.c = (address >> 32) as u16;
         true
     }
-
-    #[inline(always)]
-    fn vector_region(&self) -> *const vector_region::VectorRegion {
-        // SAFETY: the view writes `region` for the records it gives `vector_region_row`, the
-        // only handler that reads it.
-        unsafe { self.operand.region }
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::RegionDecline;
@@ -4229,8 +4222,6 @@ pub(crate) enum LoopContinuation {
 
 
 
-#[path = "vector_region.rs"]
-pub(crate) mod vector_region;
 pub(crate) mod wasm_instance;
 #[cfg(feature = "jit")]
 use wasm_instance::lane_instance_binding_memory;
