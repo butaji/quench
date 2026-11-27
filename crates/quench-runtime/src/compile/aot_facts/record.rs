@@ -9,9 +9,29 @@ use super::flow::{Call, FunctionFlow, Target};
 use super::lengths::Settled;
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
-use super::value::{Key, Origin, Word};
+use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
+use crate::staged::effects::{Affine, Indices};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type};
+
+/// The array an element store writes and the indices it touches, read before the store: the array's class as the census
+/// keys the store (`Key::Element`), and the indices (`indices_of`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ElementStore {
+    pub(crate) class: ElementClass,
+    pub(crate) indices: Indices,
+}
+
+/// The indices an element store through `index` touches in `function`. A Number that is parameter `p` on entry
+/// (`Origin::Parameter`, which a write to the register retires, and a join with any other origin drops) is the one
+/// index `p`: `Span { start: p, len: 1 }`. Any other index may be any index: `Whole`.
+pub(super) fn indices_of(function: u32, index: Word) -> Indices {
+    match index.origin {
+        Some(Origin::Parameter { function: owner, index: parameter }) if owner == function && index.is_number() =>
+            Indices::Span { start: Affine::parameter(parameter), len: Affine::constant(1) },
+        _ => Indices::Whole,
+    }
+}
 
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
@@ -42,6 +62,10 @@ pub(super) struct Record {
     pub(super) bounds: Vec<(Key, i64)>,
     /// The length relations each pc holds before its instruction (`lengths::Settled`).
     pub(super) lengths: Settled,
+    /// Per pc of an element store (`ElementWrite`), the array it writes and the indices it touches (`ElementStore`).
+    element_stores: std::collections::BTreeMap<u32, ElementStore>,
+    accessors: Vec<Accessor>,
+    parents: Vec<(u32, u32)>,
 }
 
 impl Record {
@@ -70,6 +94,9 @@ impl Record {
             quiet: Vec::new(),
             bounds: Vec::new(),
             lengths: Settled::default(),
+            element_stores: std::collections::BTreeMap::new(),
+            accessors: Vec::new(),
+            parents: Vec::new(),
         }
     }
 
@@ -92,6 +119,11 @@ impl Record {
             if !state[usize::from(register)].is_number() {
                 self.unsafe_reads[usize::from(register)] = true;
             }
+        }
+        // An element store writes the elements of its array's class, at the indices its index register holds.
+        if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
+            let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx.id, index) });
         }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
@@ -155,7 +187,7 @@ impl Record {
                 self.plain_calls.push(match call.target {
                     Target::Known(function) => Some(function),
                     Target::Register => call.callee.cell.ty.body_index(),
-                    Target::Method(_) => None,
+                    Target::Method(_) | Target::Accessor { .. } => None,
                 });
             }
             if method.is_some_and(|atom| ctx.scope.passes_this(atom)) {
@@ -165,7 +197,14 @@ impl Record {
             if let Some(proof) = quiet::of_call(ctx.scope, &call) {
                 self.quiet.push((pc as u32, proof));
             }
+            if let Some(link) = super::accessors::heritage_link(ctx, &call) {
+                self.parents.push(link);
+            }
             self.calls.push(call);
+        }
+        // A named field read or store may run the accessor its receiver's class defines for the name (`Target::Accessor`).
+        if let Some(access) = super::accessors::accessor_call(ctx, pc as u32, instruction, state) {
+            self.calls.push(access);
         }
     }
 
@@ -179,6 +218,7 @@ impl Record {
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
+        self.accessors.extend(events.accessors);
         self.shapes.extend(events.shape);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -257,6 +297,9 @@ impl Record {
             closures: self.closures,
             bounds: self.bounds,
             lengths: self.lengths,
+            element_stores: self.element_stores,
+            accessors: self.accessors,
+            parents: self.parents,
         }
     }
 }

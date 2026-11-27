@@ -1,7 +1,7 @@
 //! What the functions of a program share: each function's parent, the Number constants, and the
 //! atoms that name the global object.
 
-use crate::bytecode::{Constant, ResidualProgram};
+use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
 use crate::typed_ir::{IntRange, Type};
 use crate::ValueType;
 use super::quiet::{Arguments, BUILTINS};
@@ -37,6 +37,9 @@ pub(super) struct Scope {
     pub(super) prototype: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
     pub(super) length: Option<u32>,
+    /// The atom the intrinsic `Object.setPrototypeOf` class heritage calls is bound under, if the program names it
+    /// (`accessors::heritage_link`).
+    pub(super) set_prototype: Option<u32>,
     /// The atoms of `ARRAY_MUTATORS` the program names.
     mutators: Vec<u32>,
     /// The atoms of `ARRAY_BUILTINS` the program names.
@@ -81,6 +84,7 @@ impl Scope {
             this_passers: THIS_PASSERS.iter().filter_map(|name| atom_named(program, name)).collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
+            set_prototype: atom_named(program, INTRINSIC_SET_PROTOTYPE_OF_BINDING),
             mutators: program
                 .atoms
                 .iter()

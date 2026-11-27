@@ -491,3 +491,34 @@ fn an_index_plus_a_constant_below_the_length_is_below_it_through_its_sum() {
         assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the sum `i + 1` is below the length at {pc}");
     }
 }
+
+#[test]
+fn a_getter_read_off_its_one_class_takes_the_getters_return() {
+    let program = program("(function () { class C { get x() { return 3; } } var c = new C(); function f() { return c.x; } f(); })();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the read is a Known call of the getter");
+}
+
+#[test]
+fn a_data_store_of_a_getters_name_on_its_class_shadows_the_getter() {
+    let program = program("(function () { class C { get x() { return 3; } } var c = new C(); c.x = 'str'; function f() { return c.x; } f(); })();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the store may be what the read takes");
+}
+
+#[test]
+fn a_setter_store_passes_the_stored_value_as_the_setters_argument() {
+    let program = program("(function () { class C { set x(v) { this.last = v; } } var c = new C(); function f() { c.x = 7; } f(); })();");
+    let facts = analyze(&program);
+    assert!(facts.field_type(atom_named(&program, "last")).is_subtype(Type::INT32), "the setter's parameter is the stored 7");
+}
+
+#[test]
+fn a_method_read_off_a_subclass_instance_folds_to_the_superclass_method() {
+    let program = program("(function () { class P { m() { return 1; } } class C extends P {} function f(o) { return o.m(); } f(new C()); })();");
+    let facts = analyze(&program);
+    let (f, m) = (function_named(&program, "f") as u32, function_named(&program, "m") as u32);
+    assert!(facts.call_targets.iter().any(|(&(function, _), &target)| function == f && target == m), "the chain holds P's method");
+}

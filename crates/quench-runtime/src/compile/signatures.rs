@@ -16,11 +16,26 @@
 //! signature composed over it.
 
 use crate::bytecode::{Constant, FieldBase, FieldLookup, Operand, OperandKind, ResidualProgram, Traits, WideInstruction};
-use crate::staged::effects::{call_form, CallForm, Effects, Signature, Step};
+use crate::staged::effects::{call_form, CallForm, ClassWrite, Effects, ElementWrites, Signature, Step};
 use crate::staged::{Callee, DecodeContext, Invocation, NumberOperation, Operation};
-use crate::typed_ir::{Cell, Classes, FactKey, Type};
+use crate::typed_ir::{Cell, Classes, ElementClass, FactKey, Type};
 
 use super::aot_facts::AotFacts;
+
+/// What a call passes its callee, as the caller holds it: the element class of the receiver and of each argument, and the
+/// caller's own parameter each argument is (`Origin::Parameter`), which an index the callee writes is read through.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallSite {
+    pub receiver: ElementClass,
+    pub arguments: Box<[Argument]>,
+}
+
+/// One argument of a call: its array's class, and the caller's parameter it is on entry, if it is one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Argument {
+    pub class: ElementClass,
+    pub parameter: Option<u16>,
+}
 
 /// The signature of each function of a program, by function id, the targets of each call site the solve
 /// read (a call's signature is the join over those targets), and the graded effects of every pc.
@@ -36,17 +51,41 @@ pub struct Signatures {
 /// functions it may reach.
 enum Body {
     Row { effects: Effects },
-    Call { pc: u32, targets: Box<[u32]> },
+    Call { pc: u32, targets: Box<[u32]>, site: Option<CallSite> },
+}
+
+/// The signature of `callee` as the call `site` makes it: each class the callee writes that is one of its parameters or
+/// its receiver is the class the call passes there, and each index is read through the arguments' own parameters
+/// (`Indices::substitute`). Without a site, the callee's writes are any writes.
+fn lift(callee: u32, signature: Signature, site: Option<&CallSite>) -> Signature {
+    let elements = match site {
+        None => ElementWrites::Any,
+        Some(site) => {
+            let argument = |index: u16| site.arguments.get(usize::from(index)).copied();
+            signature.effects.elements.map(|write| {
+                let class = match write.class {
+                    ElementClass::Parameter { function, index } if function == callee => argument(index).map_or(ElementClass::Unnamed, |passed| passed.class),
+                    ElementClass::Receiver(function) if function == callee => site.receiver,
+                    other => other,
+                };
+                ClassWrite { class, indices: write.indices.substitute(&|index: u16| argument(index).and_then(|passed| passed.parameter)) }
+            })
+        }
+    };
+    Signature { effects: Effects { elements, ..signature.effects }, ..signature }
 }
 
 impl Body {
-    /// The step this instruction is in a pass, given the signatures the pass before found.
+    /// The step this instruction is in a pass, given the signatures the pass before found: a call's step is its callees'
+    /// signatures joined, each lifted to the call's site (`lift`).
     fn step(&self, functions: &[Signature]) -> Step {
         match self {
             Self::Row { effects } => Step::Row { effects: *effects },
             Self::Call { targets, .. } if targets.is_empty() => Step::Call(Signature::ANY),
-            Self::Call { targets, .. } => Step::Call(targets.iter().fold(Signature::NEVER,
-                |joined, &target| joined.join(functions.get(target as usize).copied().unwrap_or(Signature::ANY)))),
+            Self::Call { targets, site, .. } => Step::Call(targets.iter().fold(Signature::NEVER, |joined, &target| {
+                let callee = functions.get(target as usize).copied().unwrap_or(Signature::ANY);
+                joined.join(lift(target, callee, site.as_ref()))
+            })),
         }
     }
 
@@ -180,14 +219,27 @@ fn numeric_grade(site: Site<'_>, operands: &[Operand]) -> Effects {
     if numeric_operands(site, operands) { Effects::RUNS_NOTHING } else { Effects::ANY }
 }
 
+/// The grade of an element store: its array's class, and the indices it touches, where the solve kept the store
+/// (`FunctionFacts::element_store`); any array otherwise. Its flags are the kind row's (`ANY`), so the grade narrows
+/// only the classes it writes.
+fn element_store_grade(site: Site<'_>) -> Effects {
+    match site.facts.function_facts(site.function).element_store(site.pc) {
+        Some(store) => Effects { elements: ElementWrites::of([ClassWrite { class: store.class, indices: store.indices }]), ..Effects::ANY },
+        None => Effects::ANY,
+    }
+}
+
 /// What the settled facts prove of the operation `op` at `site`, as a grade for `Effects::meet`. Each arm names
 /// the one fact that clears the operation's flags; an operation no arm names is `ANY`, so the kind row stands.
 ///
 /// 1. A store (`SetField`, `StoreField`) is graded by `store_grade`.
 /// 2. A named field read is graded by `field_read_grade` over the closed classes of its object.
 /// 3. A Number operation, a numeric `Binary`, `Equality` or `CompareJump` is graded by `numeric_grade`.
+/// 4. An element store names its array's class and indices where the solve found them (`element_store_grade`): it
+/// narrows the arrays it may write and clears no flag.
 fn facts_grade(op: &Operation<(), ()>, site: Site<'_>) -> Effects {
     match op {
+        Operation::ElementWrite { .. } => element_store_grade(site),
         Operation::SetField { base, atom, .. } | Operation::StoreField { base, atom, .. } => {
             store_grade(site, (*base).map_or(FieldBase::THIS, FieldBase::register), *atom)
         }
@@ -227,7 +279,8 @@ fn bodies(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Vec<Bod
         record.instructions().enumerate().map(|(pc, instruction)| {
             let pc = pc as u32;
             match Invocation::of(instruction, decode) {
-                Some(invocation) => Body::Call { pc, targets: reached(facts, function, pc, &invocation, instruction) },
+                Some(invocation) => Body::Call { pc, targets: reached(facts, function, pc, &invocation, instruction),
+                    site: facts.function_facts(function).call_site(pc).cloned() },
                 None => row(instruction, Site { program, facts, function, pc }),
             }
         }).collect()
@@ -256,7 +309,7 @@ pub fn solve(program: &ResidualProgram, facts: &AotFacts) -> Signatures {
         .map(|body| body.iter().map(|step| step.effects(&functions)).collect::<Box<[Effects]>>())
         .collect();
     let calls = bodies.iter().enumerate().flat_map(|(function, body)| body.iter().filter_map(move |step| match step {
-        Body::Call { pc, targets } => Some(((function as u32, *pc), targets.clone())),
+        Body::Call { pc, targets, .. } => Some(((function as u32, *pc), targets.clone())),
         Body::Row { .. } => None,
     })).collect();
     Signatures { functions, calls, sites }
