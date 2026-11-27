@@ -1,8 +1,12 @@
 //! The register dataflow of one function (`dataflow::solve` over its basic blocks): each
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
+mod bounds;
+mod refine;
+
+use self::bounds::{compared_bounds, mask_bounds, relational_bounds, stored_bounds};
 use super::blocks::Blocks;
-use super::effects::{Before, Ctx, settled, step};
+use super::effects::{Ctx, settled, step};
 use super::lengths::{self, Lengths};
 use super::record::Record;
 use super::registers::{RegisterCells, Source};
@@ -10,13 +14,11 @@ use crate::staged::typing;
 use super::scope::Scope;
 use super::shape::Shape;
 use super::value::{Accessor, Key, Origin, Word};
-use crate::bytecode::{ControlEdge, Function, Operand, OperandKind, Successors, WideInstruction, used_registers};
+use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
-use crate::staged::{Comparison, NumberOperation, Operation};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, IntRange, Representation, Type, WIDENING_ROUNDS, language_bit};
-use crate::vm::operations::NumberBitwise;
-use crate::ValueType;
+use crate::staged::Operation;
+use crate::typed_ir::{Cell, Classes, ElementClass, Representation, WIDENING_ROUNDS};
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
@@ -197,20 +199,6 @@ fn bound_parameters(function: &Function) -> Box<[bool]> {
     (0..function.params).map(|index| one_to_one && function.promoted_register(index).is_some()).collect()
 }
 
-/// The integer constants the function's relational jumps compare a value against (`typing::thresholds`): the ones
-/// whose operand is a constant. A register operand's bound is the state's, which the narrowing pass tightens to.
-fn relational_bounds(function: &Function, scope: &Scope) -> Vec<i64> {
-    (0..function.code.len())
-        .filter_map(|pc| match Operation::<u64, ()>::of(function.instruction_at(pc))? {
-            Operation::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. } => Some([left, right]),
-            _ => None,
-        })
-        .flatten()
-        .filter(|operand| matches!(operand.kind(), Some(crate::bytecode::OperandKind::Constant)))
-        .filter_map(|operand| scope.constant_type(usize::from(operand.payload())).int_range())
-        .flat_map(|range| [range.min, range.max])
-        .collect()
-}
 
 /// The blocks a backedge enters (a normal edge to a block no later than its source): every loop has one, and every cycle
 /// of the graph passes through one, so widening at these blocks alone makes the solve finite.
@@ -309,61 +297,6 @@ impl Dataflow for Solver<'_> {
     }
 }
 
-/// What a conditional jump's test proves about the value it tests, on one of its edges.
-#[derive(Clone, Copy)]
-enum Refinement {
-    /// The value is `null` or `undefined` (or, by a loose test, an object an IsHTMLDDA cell may be).
-    Nullish,
-    /// The value is neither `null` nor `undefined`.
-    NotNullish,
-}
-
-impl Solver<'_> {
-    /// The state the normal edge from `block` to `target` carries, from `block`'s output `out`. Edge-fact
-    /// law: the jump at the end of a block proves a fact about the register it tests on each of its two
-    /// edges, and that fact is proven at the test, not assumed. The refined word is carried on the value
-    /// from the edge on, and every read after the edge trusts it, so `x.f` after `x != null` is one load
-    /// (the true edge carries `x: C`, not `C | Null`). An edge the test proves nothing on, or a jump whose
-    /// operands the state does not name with certainty, carries `out` as it is.
-    fn refine(&self, block: usize, target: usize, out: &Vec<Word>) -> Vec<Word> {
-        let last = self.blocks.ranges[block].end - 1;
-        let instruction = self.function.instruction_at(last);
-        let Some(jump) = conditional_target(instruction) else { return out.clone() };
-        let fallthrough = last + 1;
-        let edge = self.blocks.ranges[target].start;
-        // A jump to the next instruction has one edge that two indices name: no test tells them apart.
-        if jump == fallthrough || (edge != jump && edge != fallthrough) { return out.clone(); }
-        if let Some(refined) = self.refine_ranges(instruction, out, edge == jump) { return refined; }
-        let Some((register, fact)) = edge_fact(instruction, out, edge == jump) else { return out.clone() };
-        let word = out[register];
-        let mut refined = out.clone();
-        refined[register] = Word { cell: refine_cell(word.cell, fact), origin: word.origin };
-        refined
-    }
-
-    /// The state an edge of a relational jump carries when its two operands are integer ranges: each keeps the range
-    /// the comparison leaves it on that edge (`typing::relation_edge`). `None` where the jump compares no two integer
-    /// ranges, one register against itself, or no value reaches the edge (the edge then keeps the state it has).
-    fn refine_ranges(&self, instruction: WideInstruction, out: &Vec<Word>, to_target: bool) -> Option<Vec<Word>> {
-        let Some(Operation::CompareJump { comparison: Comparison::Relation { relation, .. }, left, right, negate }) =
-            Operation::<u64, ()>::of(instruction) else { return None };
-        let operands = [left, right];
-        if left.register_index().is_some() && left.register_index() == right.register_index() { return None; }
-        let env = Before { ctx: self.ctx, state: out };
-        let [Some(left_range), Some(right_range)] = operands.map(|operand| typing::operand_cell(&env, operand).ty.int_range())
-            else { return None };
-        // The jump is taken where the comparison fails when `negate`, so its target's edge holds the relation false.
-        let [left_kept, right_kept] = typing::relation_edge(relation, to_target != negate, left_range, right_range)?;
-        let mut refined = out.clone();
-        for (operand, range) in operands.into_iter().zip([left_kept, right_kept]) {
-            if let Some(register) = operand.register_index() {
-                let word = refined[usize::from(register)];
-                refined[usize::from(register)] = Word { cell: Cell { ty: Type::int(range), ..word.cell }, origin: word.origin };
-            }
-        }
-        Some(refined)
-    }
-}
 
 impl Solver<'_> {
     /// Joins the words `incoming` holds into `into`, register by register; whether `into` changed. Where `widen`, a
@@ -414,105 +347,8 @@ fn conditional_target(instruction: WideInstruction) -> Option<usize> {
         .then(|| instruction.jump_target() as usize)
 }
 
-/// The fact a conditional jump's test proves about the register it tests, on its target edge (`to_target`)
-/// or its fallthrough, from the state `state` the jump leaves. Recognized with certainty only:
-/// - `JumpIf` on a register `r` is a truth test. Its truthy edge proves `r` not nullish; its falsy edge may
-///   be `null`, `undefined`, `false`, `0` or `""`, so it proves nothing.
-/// - `CompareJump` with an equality operator (`==`, `===`, `!=`, `!==`) of one register against a register
-///   whose word is exactly `null` or `undefined`. The equal edge proves `r` nullish. The unequal edge of a
-///   loose test proves `r` not nullish; a strict unequal edge may still be the other nullish value, so it proves nothing.
-/// Every other jump, and a comparison of two registers neither of which is a nullish constant, is `None`.
-fn edge_fact(instruction: WideInstruction, state: &[Word], to_target: bool) -> Option<(usize, Refinement)> {
-    match Operation::<u64, ()>::of(instruction)? {
-        Operation::JumpIf { register, taken } => {
-            // The target is taken where `r` is truthy when `taken`, and where it is falsy when not.
-            let truthy = if to_target { taken } else { !taken };
-            truthy.then_some((usize::from(register), Refinement::NotNullish))
-        }
-        // The jump is taken where the comparison fails (`negate`), so the target's edge holds the comparison false.
-        Operation::CompareJump { comparison: Comparison::Equality { strict, negated }, left, right, negate: true } => {
-            let holds = !to_target;
-            let equal = holds != negated;
-            let (left, right) = (usize::from(left.register_index()?), usize::from(right.register_index()?));
-            let register = match (is_nullish_constant(state[left]), is_nullish_constant(state[right])) {
-                (false, true) => left,
-                (true, false) => right,
-                _ => return None,
-            };
-            if equal {
-                // A loose `== null` also holds of a legacy heap cell an IsHTMLDDA object is, so only a type that
-                // holds no such cell proves the value nullish.
-                (strict || !may_be_legacy_nullish(state[register].cell.ty)).then_some((register, Refinement::Nullish))
-            } else {
-                (!strict).then_some((register, Refinement::NotNullish))
-            }
-        }
-        _ => None,
-    }
-}
 
-/// The integer range of a program constant operand (`Scope::constant_type`); `None` for a register.
-fn constant_range(ctx: &Ctx<'_>, operand: Operand) -> Option<IntRange> {
-    if matches!(operand.kind(), Some(OperandKind::Constant)) { ctx.scope.constant_type(usize::from(operand.payload())).int_range() } else { None }
-}
 
-/// The key a value read from `origin` is the binding or named property of (`Record::commit` reads keys the same way).
-fn origin_key(origin: Option<Origin>) -> Option<Key> {
-    match origin? {
-        Origin::Binding(key) => Some(key),
-        Origin::Member(atom) => Some(Key::Member(atom)),
-        Origin::MemberOn { class, instance, atom, .. } => Some(Key::MemberOn { class, instance, atom }),
-        _ => None,
-    }
-}
-
-/// The bounds a relational jump puts on the key of its register operand, where its other operand is a constant: each
-/// end of the constant's range (`Record::bounds`). A field compared with `this.count < 1000` gets 1000 under its key.
-fn compared_bounds(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word], record: &mut Record) {
-    let Some(Operation::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. }) = Operation::<u64, ()>::of(instruction) else { return };
-    for (operand, other) in [(left, right), (right, left)] {
-        let Some(register) = operand.register_index() else { continue };
-        let Some(range) = constant_range(ctx, other) else { continue };
-        let Some(key) = origin_key(state[usize::from(register)].origin) else { continue };
-        record.bounds.extend([range.min, range.max].map(|bound| (key, bound)));
-    }
-}
-
-/// Marks the registers `instruction` writes: a `&` with a nonnegative constant operand holds that constant's mask bound
-/// (`typing::mask_bound`), and any other write clears the mark. Only the bytecode decides the marks, so they agree in every pass.
-fn mask_bounds(ctx: &Ctx<'_>, instruction: WideInstruction, masks: &mut [Option<i64>]) {
-    for register in instruction.written_registers() { masks[usize::from(register)] = None; }
-    if let Some(Operation::Number(NumberOperation::Bitwise { destination, left, right, operation: NumberBitwise::And })) = Operation::<u64, ()>::of(instruction) {
-        masks[usize::from(destination)] = [left, right].into_iter().find_map(|operand| typing::mask_bound(constant_range(ctx, operand)?));
-    }
-}
-
-/// The mask bound a store writes to the keys it stores to: a value the instruction reads that holds one (`mask_bounds`).
-fn stored_bounds(instruction: WideInstruction, writes: &[(Key, Word)], masks: &[Option<i64>], record: &mut Record) {
-    let Some(bound) = used_registers(instruction).find_map(|register| masks[usize::from(register)]) else { return };
-    record.bounds.extend(writes.iter().map(|&(key, _)| (key, bound)));
-}
-
-/// Whether a word is exactly `null` or exactly `undefined`: its type holds no other value, so it is that constant.
-fn is_nullish_constant(word: Word) -> bool {
-    word.cell.ty == Type::language(ValueType::Null) || word.cell.ty == Type::language(ValueType::Undefined)
-}
-
-/// Whether a value of type `ty` may be a legacy heap cell (an IsHTMLDDA object) that a loose `== null` holds of:
-/// any type outside `null`, `undefined`, Number and Boolean, except a direct object, which no such cell is.
-fn may_be_legacy_nullish(ty: Type) -> bool {
-    let plain = language_bit(ValueType::Null) | language_bit(ValueType::Undefined)
-        | language_bit(ValueType::Number) | language_bit(ValueType::Boolean);
-    ty.direct_object_part().is_none() && ty.may_be_languages(Type::languages(!plain))
-}
-
-/// The cell a value of cell `cell` holds on an edge proving `fact`. A nullish value holds no object and no array.
-fn refine_cell(cell: Cell, fact: Refinement) -> Cell {
-    match fact {
-        Refinement::NotNullish => Cell { ty: cell.ty.not_nullish(), ..cell },
-        Refinement::Nullish => Cell { ty: cell.ty.nullish_part(), classes: Classes::Never, elements: Elements::NEVER },
-    }
-}
 
 impl Solver<'_> {
     /// The facts at entry: every register unknown, but a promoted parameter holds its argument, whose
