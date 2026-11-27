@@ -4460,14 +4460,12 @@ impl Lowering<'_, '_> {
                     self.cell_before(*store, self.unit.instructions[*store].register_a()).ty.is_int32()
                 })
             } else { int32 };
-            // No own slot holds raw doubles (invariant I), so no loop field is carried as one.
-            let number = false;
             if int32 {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
             }
-            let mut ty = if int32 { Type::INT32 } else if number { Type::NUMBER } else { Type::ANY };
-            if !int32 && !number {
+            let mut ty = if int32 { Type::INT32 } else { Type::ANY };
+            if !int32 {
                 // This is a candidate, never a proof from source syntax. Admit the
                 // loaded closure on the same entry edge that already hoists its
                 // immutable read. A failed admission exits before loop effects.
