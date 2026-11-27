@@ -4,8 +4,8 @@
 //! A position-dependent executable is relocated at link time: its relocated read-only data
 //! stays clean, demand-paged file memory, and the loader reads no dynamic relocation table. On
 //! x86-64 Linux the functions a run executes are laid out in a trained order
-//! (`link/x86_64-linux*.order` of the including crate); symbols the order names but a build
-//! lacks are ignored.
+//! (`link/x86_64-linux*.order` of the including crate), named without crate hashes so a change of
+//! dependencies cannot silently disable it; symbols the order names but a build lacks are ignored.
 
 use std::{env, path::Path};
 
@@ -48,6 +48,7 @@ pub fn executable_link_args(ordered: bool) -> Vec<String> {
         .join(if static_runtime { X86_64_LINUX_STATIC_ORDER } else { X86_64_LINUX_ORDER });
     if ordered && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") && order.is_file() && on_path(ORDERING_LINKER) {
         arguments.push("-fuse-ld=lld".into());
+        // The order's names carry no crate hashes: the linker driver resolves them (`tools/ordered-ld/cc`).
         arguments.push(format!("-Wl,--symbol-ordering-file={}", order.display()));
         arguments.push("-Wl,--no-warn-symbol-ordering".into());
     }
