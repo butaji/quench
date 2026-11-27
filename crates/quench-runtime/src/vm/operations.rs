@@ -1,4 +1,5 @@
 use super::*;
+use super::array_modern::ArrayFromTarget;
 use crate::value::NumericPair;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
@@ -1264,55 +1265,6 @@ impl Vm {
                 let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
                 Ok(Value::number(result.unwrap_or(f64::NAN)))
             }
-            Native::ArrayPush => self.array_push_native(p, this, args),
-            Native::ArrayIsArray => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.is_array(p, value)? {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::ArrayPop => self.array_pop_native(p, this),
-            Native::ArraySlice => self.array_slice_native(p, this, args),
-            Native::ArrayIncludes => self.array_includes_native(p, this, args),
-            Native::ArrayJoin => self.array_join_native(p, this, args),
-            Native::ArrayConcat => self.array_concat_native(p, this, args),
-            Native::ArrayFlat => self.array_flatten_native(p, native, this, args),
-            Native::ArrayReverse => self.array_reverse_native(p, this),
-            Native::ArrayShift => self.array_shift_native(p, this),
-            Native::ArrayUnshift => self.array_unshift_native(p, this, args),
-            Native::ArraySplice => self.array_splice_native(p, this, args),
-            Native::ArrayFill => self.array_fill_native(p, this, args),
-            Native::ArrayAt
-            | Native::ArrayLastIndexOf
-            | Native::ArrayIndexOf
-            | Native::ArrayCopyWithin
-            | Native::ArrayWith
-            | Native::ArrayForEach
-            | Native::ArrayMap
-            | Native::ArrayFilter
-            | Native::ArraySome
-            | Native::ArrayEvery
-            | Native::ArrayFind
-            | Native::ArrayFindIndex
-            | Native::ArrayFindLast
-            | Native::ArrayFindLastIndex
-            | Native::ArrayGroup
-            | Native::ArrayGroupToMap
-            | Native::ArrayFlatMap
-            | Native::ArrayReduce
-            | Native::ArrayReduceRight => self.array_indexed_native(p, native, this, args),
-            Native::ArrayToReversed
-            | Native::ArrayToSpliced
-            | Native::ArraySort
-            | Native::ArrayToSorted
-            | Native::ArrayToString
-            | Native::ArrayToLocaleString
-            | Native::ArraySpecies => self.array_modern_native(p, native, this, args),
-            Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
-                self.array_iterator_native(p, native, this)
-            }
             Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args, false),
             Native::SharedArrayBufferSlice => self.array_buffer_slice_native(p, this, args, true),
@@ -1341,11 +1293,8 @@ impl Vm {
             }
             Native::DetachArrayBuffer => self.detach_array_buffer_native(p, args),
             Native::SharedArrayBufferGrow => self.shared_array_buffer_grow_native(p, this, args),
-            Native::ArrayFrom
-            | Native::ArrayFromAsync
-            | Native::ArrayOf
-            | Native::TypedArrayFrom
-            | Native::TypedArrayOf => self.array_modern_native(p, native, this, args),
+            Native::TypedArrayFrom => self.array_from_native(p, this, args, ArrayFromTarget::TypedArray),
+            Native::TypedArrayOf => self.typed_array_of_native(p, this, args),
             Native::TypedArrayToStringTag => Ok(self.typed_array_to_string_tag_native(this)),
             Native::TypedArrayBufferGetter
             | Native::TypedArrayByteLengthGetter
@@ -2130,8 +2079,8 @@ fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if native.is_string_regexp_or_math() {
         return Some(enter_table);
     }
-    if native.is_array_callback() {
-        return Some(enter_array_callback);
+    if let Some(entry) = super::array_builtins::entry(native) {
+        return Some(entry);
     }
     if super::string::is_string_html_method(native) {
         return Some(enter_string_html);
@@ -2195,10 +2144,6 @@ fn value_entry(native: Native) -> Option<native_table::NativeFn> {
 
 fn enter_generator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.generator_prototype_method(p, native, this, args)
-}
-
-fn enter_array_callback(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.array_callback_native(p, native, this, args)
 }
 
 fn enter_string_html(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {

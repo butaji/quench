@@ -7,28 +7,6 @@ use crate::staged::array_iteration::{self as step_rules, Answer, Effect, Kind};
 const NOT_FOUND: f64 = -1.0;
 
 impl Vm {
-    pub(super) fn array_indexed_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::ArrayAt => self.array_at_native(p, this, args),
-            Native::ArrayLastIndexOf => self.array_last_index_of_native(p, this, args),
-            Native::ArrayIndexOf => self.array_index_of_native(p, this, args),
-            Native::ArrayCopyWithin => self.array_copy_within_native(p, this, args),
-            Native::ArrayWith => self.array_copy_native(p, native, this, args),
-            native if native.is_array_callback() => self.array_callback_native(p, native, this, args),
-            Native::ArrayGroup | Native::ArrayGroupToMap => {
-                self.array_group_native(p, native, this, args)
-            }
-            Native::ArrayFlatMap => self.array_flatten_native(p, native, this, args),
-            _ => unreachable!("non-indexed native routed to array index dispatch"),
-        }
-    }
-
     pub(super) fn array_at_native(
         &mut self,
         p: &ResidualProgram,
