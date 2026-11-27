@@ -83,7 +83,7 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
         }
         sinks.extend(flow.handed.iter().copied());
     }
-    let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).copied().collect();
+    let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).map(|&(_, key, word)| (key, word)).collect();
     // The closures an unresolved call's callee may be: the writes under the keys its reads may see (`reads`).
     let reached: Vec<Word> = writes.iter().filter(|(key, _)| read.iter().any(|&origin| reads(origin, *key))).map(|&(_, word)| word).collect();
     // Every accessor's function, which code the solve does not see may run with any receiver where an object reaches such code.

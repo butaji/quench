@@ -23,6 +23,7 @@ mod escapes;
 mod flow;
 mod gate;
 mod length_settle;
+mod phase;
 mod lengths;
 mod quiet;
 mod readers;
@@ -598,7 +599,8 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let accessor_names = accessors::names_of(&first);
     let resolved = Census::of(&first, world).singles();
     let flows = analyze_typed(&resolved, &accessor_names, None);
-    let census = Census::of(&flows, world);
+    let mut census = Census::of(&flows, world);
+    census.phases = phase::folds(program, &flows, &census);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
@@ -606,7 +608,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             if !call.construct && let Some(set) = census.candidates(call.callee) {
                 facts.call_candidates.insert((id, call.pc), set.iter().copied().collect());
             }
-            let Some(target) = census.target(call.callee) else { continue };
+            let Some(target) = census.target_from(call.callee, id, call.pc) else { continue };
             let guessed = census.guessed(call.callee);
             if call.construct {
                 if !guessed { facts.construct_targets.insert((id, call.pc), target); }
@@ -681,7 +683,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             }
             for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
                 if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
-                let Some(target) = census.target(call.callee) else { continue };
+                let Some(target) = census.target_from(call.callee, id, call.pc) else { continue };
                 facts.call_targets.insert((id, call.pc), target);
                 if census.guessed(call.callee) { facts.guessed_calls.insert((id, call.pc)); }
                 facts.call_candidates.remove(&(id, call.pc));

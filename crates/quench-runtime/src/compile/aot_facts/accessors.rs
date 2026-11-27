@@ -139,7 +139,7 @@ impl Accessors {
         let mut own: Vec<(Classes, u32)> = Vec::new();
         for (id, flow) in flows.iter().enumerate() {
             base.wild |= flow.member_wild;
-            base.names.extend(flow.writes.iter().filter_map(|(key, _)| match key {
+            base.names.extend(flow.writes.iter().filter_map(|(_, key, _)| match key {
                 Key::MemberAny(atom) => Some(*atom),
                 _ => None,
             }));
