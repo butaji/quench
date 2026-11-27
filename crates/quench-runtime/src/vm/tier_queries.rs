@@ -408,6 +408,11 @@ impl<'a> FactWatch<'a> {
     pub fn subscribe_prototype_chain(&mut self, chain: PrototypeChain, code: &Rc<dyn DependentCode>) -> bool {
         self.heap.subscribe_prototype_chain(chain, code)
     }
+    /// Retires `code` when cell `key` widens (`Dependencies::subscribe_cell`); `false` where the table is full.
+    #[inline(always)]
+    pub fn subscribe_cell(&mut self, key: crate::typed_ir::FactKey, code: &Rc<dyn DependentCode>) -> bool {
+        self.heap.dependencies_mut().subscribe_cell(key, code)
+    }
     /// Retires `code` when a method cache names `atom` (`CodeReaders::subscribe`).
     #[inline(always)]
     pub fn subscribe_atom(&mut self, atom: u32, code: &Rc<dyn DependentCode>) -> bool { self.readers.subscribe(atom, code) }

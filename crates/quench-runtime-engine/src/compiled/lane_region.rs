@@ -1283,12 +1283,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// The solver's type of each register at unit PC `pc` (`AotFacts::block_entry`, the cell every register
     /// of the block starts with), by unit register: the origin's function and PC (an inlined frame's registers
-    /// sit at its `base`). Empty where no facts were given, where the origin's block starts no solved block, or
-    /// where a covered function's key is live (new code may move it, and nothing subscribes to it here).
-    fn cell_types(&self, pc: usize) -> Vec<Option<Type>> {
+    /// sit at its `base`). Empty where no facts were given or where the origin's block starts no solved block. Where
+    /// the cells are trusted, each covered function's live dependency keys are recorded (`StableUses::cells`): an
+    /// edge that widens one of them retires the code.
+    fn cell_types(&mut self, pc: usize) -> Vec<Option<Type>> {
         let Some(facts) = self.vm.facts else { return Vec::new() };
-        let covered = std::iter::once(self.function_id).chain(self.unit.frames.iter().map(|frame| frame.target.function));
-        if covered.clone().any(|function| facts.function_facts(function).dependencies().iter().any(|key| facts.live(*key))) { return Vec::new(); }
         let (function, at, base) = match self.unit.origins.get(pc) {
             Some(super::lane_unit::Origin::Caller(at)) => (self.function_id, *at, 0),
             Some(super::lane_unit::Origin::Inlined { frame, pc: at }) => {
@@ -1298,6 +1297,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
             None => return Vec::new(),
         };
         let Some(cells) = facts.function_facts(function).block_entry(at) else { return Vec::new() };
+        let covered = std::iter::once(self.function_id).chain(self.unit.frames.iter().map(|frame| frame.target.function));
+        let live: Vec<_> = covered.flat_map(|function| facts.function_facts(function).dependencies().iter().copied()
+            .filter(|key| facts.live(*key)).collect::<Vec<_>>()).collect();
+        self.stable.cells.extend(live);
         (0..usize::from(self.unit.registers)).map(|register| register.checked_sub(base)
             .and_then(|own| cells.get(own)).map(|cell| cell.ty).filter(|ty| *ty != Type::NEVER)).collect()
     }
@@ -1305,7 +1308,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// Narrows each register's fact of `state` at unit PC `pc` to its solved type (`cell_types`), where the
     /// solved type is narrower and the held representation still holds it (a tagged fact, or an unboxed one
     /// of the same machine representation). A fact is never widened; a register the solve holds nothing for stays.
-    fn narrow_to_cells(&self, state: &mut State, pc: usize) {
+    fn narrow_to_cells(&mut self, state: &mut State, pc: usize) {
         for (index, cell) in self.cell_types(pc).into_iter().enumerate() {
             let Some(ty) = cell else { continue };
             let Some(fact) = state.values.get(index).copied() else { continue };

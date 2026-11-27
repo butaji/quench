@@ -41,10 +41,11 @@ fn subscribe_prototype_facts(stable: &lane_region::StableFacts, code: &Rc<dyn qu
             && facts.subscribe_shape(fact.shape, code) && quench_runtime::tier_surface::subscribe_prototype_values(fact.holder, code))
 }
 
-/// Method atoms, shapes held past a call, globals, layouts, slot observations and held typed views.
+/// Method atoms, shapes held past a call, globals, layouts, slot observations, held typed views and trusted cells.
 fn subscribe_heap_facts(stable: &lane_region::StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>,
     facts: &mut quench_runtime::vm::tier_queries::FactWatch<'_>) -> bool {
     stable.atoms.iter().all(|atom| facts.subscribe_atom(*atom, code))
+        && stable.cells.iter().all(|key| facts.subscribe_cell(*key, code))
         && stable.shapes.iter().all(|shape| facts.subscribe_shape(*shape, code))
         && stable.globals.iter().all(|fact| quench_runtime::tier_surface::subscribe_global_value(*fact, code))
         && stable.layouts.iter().all(|fact| quench_runtime::tier_surface::subscribe_global_layout(*fact, code))
