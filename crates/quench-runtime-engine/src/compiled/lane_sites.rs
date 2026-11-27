@@ -2,7 +2,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, StableCell, scalar_native};
+use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, ReceiverLink, GlobalSlot, GlobalTable, StableCell, scalar_native};
 
 #[quench_macros::ext(CompiledLaneSitesVm)]
 impl Vm {
@@ -228,15 +228,19 @@ impl Vm {
         };
         let value = self.own_plain_data(holder, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
-        let array_link = matches!(row.holder, quench_runtime::vm::native_rows::Holder::ArrayPrototype)
-            .then(|| quench_runtime::tier_surface::ProtoLink::of(holder).bits());
-        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None, array_link })
+        let link = match row.holder {
+            quench_runtime::vm::native_rows::Holder::ArrayPrototype => ReceiverLink::Array(quench_runtime::tier_surface::ProtoLink::of(holder).bits()),
+            _ => ReceiverLink::None,
+        };
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None, link })
     }
 
     /// The field read `instruction` of a method by a name some realm prototype holds as a native a loop
     /// calls in place (`lane_region::native_calls::Inline::InPlace`): `map.get`, `set.has`. That
     /// native is only the analysis's witness: the call checks its callee is such a native at each
     /// run (`lane_allocations::scalar_native_in_lane`), as a name may be several prototypes' (`has`).
+    /// Its `link` lists Map.prototype's and Set.prototype's members of the name, which the read
+    /// folds to on a plain Map or Set receiver (`ReceiverLink::Collection`).
     fn cached_method_native(&mut self, instruction: &quench_runtime::bytecode::WideInstruction) -> Option<GlobalRead> {
         let Some(quench_runtime::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
         let row = quench_runtime::vm::native_rows::in_place_method(self.atom_name(atom))?;
@@ -249,8 +253,20 @@ impl Vm {
         };
         let value = self.own_plain_data(holder, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
-        (*held == row.native).then(|| self.native_holder(holder)).flatten()
-            .map(|holder| GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None, array_link: None })
+        if *held != row.native { return None; }
+        let mut members = Vec::with_capacity(2);
+        for prototype in [self.map_proto, self.set_proto] {
+            let Some(Some(member)) = self.own_plain_data(prototype, atom) else { continue };
+            let Some(shape) = self.native_holder(prototype) else { continue };
+            members.push((quench_runtime::tier_surface::ProtoLink::of(prototype).bits(), member, shape));
+        }
+        let link = match members[..] {
+            [only] => ReceiverLink::Collection([only, only]),
+            [first, second] => ReceiverLink::Collection([first, second]),
+            _ => ReceiverLink::None,
+        };
+        let holder = self.native_holder(holder)?;
+        Some(GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None, link })
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
@@ -299,7 +315,7 @@ impl Vm {
         let value = self.own_plain_data(object, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
-        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell, array_link: None }))
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell, link: ReceiverLink::None }))
     }
 
     /// The exact shape of `holder`, an object whose own native functions code calls inline,

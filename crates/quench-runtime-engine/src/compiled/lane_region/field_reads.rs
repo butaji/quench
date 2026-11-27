@@ -2,6 +2,7 @@
 //! prototype value folded under its guard, or the read value with the int32 view a slot
 //! that has only held int32 values proves: by the code's dependency on the slot's observation
 //! (an online body), else by a tag test.
+use quench_runtime::vm::global_facts::ReceiverLink;
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -85,12 +86,14 @@ impl Lowering<'_, '_> {
     /// to one retires this code rather than each run re-reading the member.
     /// `None` where the read is not one, or completes its frame or writes `this` besides.
     pub(crate) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let Some(&quench_runtime::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds, array_link, cell }) = self.global_reads.get(&pc) else { return None };
+        let Some(&quench_runtime::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds, link, cell }) = self.global_reads.get(&pc) else { return None };
         // A method read by name folds only where the receiver can hold no own member of that
         // name: a string primitive, whose members are its prototype's, or a direct array of no
-        // named property whose prototype is the holder (`array_link`). A string method's read
-        // proves its receiver a string by one tag test, as the call it names would; an Array
-        // method's proves its receiver such an array (`elements::plain_array_of`).
+        // named property whose prototype is the holder, or a Map or Set of no named property linked
+        // to a prototype that holds the name (`ReceiverLink`). A string method's read proves its
+        // receiver a string by one tag test, as the call it names would; an Array method's proves
+        // its receiver such an array (`elements::plain_array_of`); a collection method's reads the
+        // receiver's link and folds to that prototype's member (`elements::plain_collection_link`).
         let receiver = match instruction.field_lookup() {
             Some(FieldLookup::Atom { base, .. }) => base.register_index().filter(|register| usize::from(*register) < state.values.len()),
             _ => None,
@@ -109,16 +112,30 @@ impl Lowering<'_, '_> {
         let receiver = match (folds, receiver) {
             (true, _) => None,
             (false, Some(register)) if string_method && (string.is_subtype(state.values[usize::from(register)].value.ty) || state.values[usize::from(register)].value.ty.is_subtype(string)) => Some(register),
-            (false, Some(register)) if array_link.is_some() => Some(register),
+            (false, Some(register)) if link != ReceiverLink::None => Some(register),
             _ => return None,
         };
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Shape);
-        if let (Some(register), Some(link)) = (receiver, array_link) {
+        let mut member = None;
+        if let (Some(register), ReceiverLink::Array(link)) = (receiver, link) {
             let bits = self.tagged(state, register);
             let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             super::builtin_calls::continues(quench_runtime::staged::elements::plain_array_of(&mut stage, records, bits, link, exit));
+        } else if let (Some(register), ReceiverLink::Collection([first, second])) = (receiver, link) {
+            let bits = self.tagged(state, register);
+            let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.collection_record_base));
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let linked = super::builtin_calls::continues(quench_runtime::staged::elements::plain_collection_link(&mut stage, records, bits,
+                quench_runtime::tier_surface::NATIVE_COLLECTION_LAYOUT, exit));
+            let is_first = stage.eq_imm(linked, u64::from(first.0));
+            let is_second = stage.eq_imm(linked, u64::from(second.0));
+            let known = stage.any(is_first, is_second);
+            super::builtin_calls::continues(stage.guard(known, exit));
+            let (first_value, second_value) = (self.identity_constant(first.1), self.identity_constant(second.1));
+            member = Some(if first == second { first_value } else { self.builder.ins().select(is_first, first_value, second_value) });
+            self.hold_holder_any(state, exit, second.2);
         } else if let Some(register) = receiver.filter(|register| !state.values[usize::from(*register)].value.ty.is_subtype(string)) {
             let bits = self.tagged(state, register);
             let mut stage = super::super::object_slots::emit(&mut self.builder);
@@ -137,8 +154,11 @@ impl Lowering<'_, '_> {
             _ => {}
         }
         self.hold_holder_any(state, exit, holder);
-        let constant = self.identity_constant(value);
-        self.define(state, instruction.result_register(), constant, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
+        let (word, ty) = match member {
+            Some(word) => (word, Type::language(quench_runtime::ValueType::Function)),
+            None => (self.identity_constant(value), Type::immediate(value)),
+        };
+        self.define(state, instruction.result_register(), word, RegisterFact::definition(ty, Representation::Tagged));
         Some(true)
     }
 

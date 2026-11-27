@@ -697,6 +697,11 @@ impl Heap {
         self.array_records.base_ptr()
     }
 
+    /// The Map and Set record reservation's base (`NATIVE_COLLECTION_LAYOUT`), where reserved.
+    pub fn collection_record_base(&self) -> Option<*const u8> {
+        self.collection_records.base_ptr().map(|base| base.cast::<u8>())
+    }
+
     /// `array_record_base` untested, for a read that proves its receiver a direct array before
     /// it addresses the table.
     #[inline(always)]
