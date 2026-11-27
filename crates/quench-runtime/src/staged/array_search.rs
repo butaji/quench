@@ -140,6 +140,7 @@ pub struct DenseNeedle<'a, W> {
 /// step, whether the loop stopped on a match or on the end.
 ///
 /// This is `Vm::search_dense`'s word walk and the u-jit's `element_search` scans, one body for both.
+#[inline(always)]
 pub fn scan_dense<S: NumericStage>(stage: &mut S, base: S::Word, from: S::Word, to: S::Word,
     needle: DenseNeedle<'_, S::Word>, step: u32) -> S::Word {
     let bytes = u64::from(step);
@@ -205,8 +206,26 @@ fn scan_forward(elements: &ArrayElements, range: Range<usize>, needle: &Needle) 
             (base, 8, needle.words(), holed.then(|| Value::DELETED.to_bits()))
         }
     };
-    let found = scan_dense(&mut stage, base, range.start as u64, range.end as u64,
-        DenseNeedle { words, number: None, hole }, step);
+    // The needle's shape is fixed for the walk: each shape (its word count, a hole word or none, the width)
+    // runs its own instance, so the walk tests only the words it compares, as the u-jit's emitted scan does.
+    let (from, to) = (range.start as u64, range.end as u64);
+    macro_rules! walk {
+        ($words:expr) => {
+            match (hole, step) {
+                (Some(hole), 4) => scan_dense(&mut stage, base, from, to, DenseNeedle { words: $words, number: None, hole: Some(hole) }, 4),
+                (Some(hole), _) => scan_dense(&mut stage, base, from, to, DenseNeedle { words: $words, number: None, hole: Some(hole) }, 8),
+                (None, 4) => scan_dense(&mut stage, base, from, to, DenseNeedle { words: $words, number: None, hole: None }, 4),
+                (None, _) => scan_dense(&mut stage, base, from, to, DenseNeedle { words: $words, number: None, hole: None }, 8),
+            }
+        };
+    }
+    let found = match *words {
+        [] => walk!(&[]),
+        [a] => walk!(&[a]),
+        [a, b] => walk!(&[a, b]),
+        [a, b, c] => walk!(&[a, b, c]),
+        _ => walk!(words),
+    };
     (found != range.end as u64).then(|| found as usize - range.start)
 }
 
