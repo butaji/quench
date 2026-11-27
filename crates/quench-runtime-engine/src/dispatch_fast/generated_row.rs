@@ -52,6 +52,10 @@ lane_handler! {
                     requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
                 }
             }
+            // A store instance missed: its hint may have moved, so the record retires to the plain row, which re-chooses.
+            if const { crate::dispatch_fast::store_formed_site(FLAG) } {
+                requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
+            }
             if this_store {
                 sibling!(crate::dispatch_fast::row_set_field_classify::<OP, true>, r, ip, Carried::script_in(script, view))
             }
@@ -181,7 +185,7 @@ lane_handler! {
             // `this` as the VM's own-field hit resolves it (`fixed_this_in_lane`), so a fixed one stores;
             // a plain own-field store row keeps the record's `this` and no call on its path.
             if this_store {
-                frame.this = if const { FLAG == FLAG_UNREAD } { r.this() }
+                frame.this = if const { FLAG == FLAG_UNREAD || crate::dispatch_fast::store_formed_site(FLAG) } { r.this() }
                     else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
@@ -199,6 +203,11 @@ lane_handler! {
                 RecordPlan::own_hinted(hint.receiver, hint.slot, records, const { FLAG == crate::dispatch_fast::NARROW_SITE })
             } else {
                 let hint = i.field_hint();
+                // A store instance's form is its hint layout's own: the requicken that chose the row proved it
+                // (`requicken_store_form`), and a hint a store moves retires the row (`store_miss!`, the success arm).
+                if const { crate::dispatch_fast::store_formed_site(FLAG) } {
+                    unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == const { crate::dispatch_fast::own_site_form(FLAG) }) }
+                }
                 RecordPlan::own_store(hint.receiver, hint.slot, records)
             });
         } else if property {
@@ -397,6 +406,15 @@ lane_handler! {
                             requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
                         }
                     }
+                }
+                // A plain store's record takes the instance of its hint's storage form (`requicken_store_form`, which
+                // leaves a tracked or narrow record to its own site). An instance whose hint a VM store moved retires.
+                if const { FLAG == FLAG_UNREAD } {
+                    let layout = frame.stored.map_or_else(|| i.field_hint().receiver, |hint| hint.receiver);
+                    crate::dispatch_fast::requicken_store_form::<OP>(script, ip, layout);
+                }
+                if const { crate::dispatch_fast::store_formed_site(FLAG) } && frame.stored.is_some() {
+                    requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
                 }
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }
