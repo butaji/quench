@@ -132,22 +132,16 @@ fn min_word<S: Stage>(stage: &mut S, a: S::Word, b: S::Word) -> S::Word {
     stage.select(below, a, b)
 }
 
-/// The integer `bound` within `0..=length`: a negative bound counts back from the end (`slice`,
-/// `substr`'s start, every relative index) or is zero (`substring`), a larger one is the length.
+/// The integer `bound` clamped to `0..=length`: the position it names as a relative index
+/// (`strings::relative_index_row`, which counts a negative one back from the end where `from_end`:
+/// `slice`, `substr`'s start), below zero the start (`substring`), past the length the length.
 #[inline(always)]
 pub fn clamped_index<S: Stage>(stage: &mut S, length: S::Word, bound: S::Word, from_end: bool) -> S::Word {
-    let below = negative(stage, bound);
-    stage.choose(below, #[inline(always)] |stage| {
-        let zero = stage.constant(0);
-        if from_end {
-            let distance = stage.sub(zero, bound);
-            let past = stage.ult(length, distance);
-            let counted = stage.sub(length, distance);
-            stage.select(past, zero, counted)
-        } else {
-            zero
-        }
-    }, #[inline(always)] |stage| min_word(stage, bound, length))
+    let (_, position) = super::strings::relative_index_row(stage, bound, length, from_end);
+    let below = negative(stage, position);
+    let zero = stage.constant(0);
+    let capped = min_word(stage, position, length);
+    stage.select(below, zero, capped)
 }
 
 /// The units `slice`, `substring` or `substr` cuts from a string of `length` units, as its start
