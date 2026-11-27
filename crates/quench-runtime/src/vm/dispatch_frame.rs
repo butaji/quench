@@ -1112,11 +1112,11 @@ impl Vm {
             return Ok(None);
         };
         let anchor = self
-            .object_data(template.anchor)
+            .heap.object(template.anchor)
             .expect("arguments template anchor is an object");
         let iterator = self
             .heap
-            .property_get(anchor, template.iterator_slot)
+            .property_get_ref(anchor, template.iterator_slot)
             .expect("arguments template has an iterator method");
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
         properties[template.length_slot] = Value::number(args.len() as f64);
@@ -1124,7 +1124,7 @@ impl Vm {
             callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
         } else {
             self.heap
-                .property_get(anchor, template.callee_slot)
+                .property_get_ref(anchor, template.callee_slot)
                 .expect("arguments template has a callee accessor")
         };
         properties[template.iterator_slot] = iterator;
@@ -1140,15 +1140,16 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.object_data_mut(arguments)
+            self.heap.object_mut(arguments)
                 .expect("arguments object is an array")
+                .record_mut_departing()
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.object_data_mut(arguments) {
-            object.set_arguments_object();
+        if let Some(object) = self.heap.object_mut(arguments) {
+            object.record_mut_departing().set_arguments_object();
         }
         let length = self.length_atom;
         self.set_property_with_attributes(
@@ -1248,17 +1249,17 @@ impl Vm {
             return;
         }
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
-        let Some(object) = self.object_data(arguments) else {
+        let Some(object) = self.heap.object(arguments) else {
             return;
         };
         let proto = object.proto();
-        let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
+        let Some(iterator_method) = self.heap.property_get_ref(object, iterator_slot) else {
             return;
         };
         properties[iterator_slot] = iterator_method;
         let (_, expose_callee) = key;
         if !expose_callee {
-            let Some(thrower) = self.heap.property_get(object, callee_slot) else {
+            let Some(thrower) = self.heap.property_get_ref(object, callee_slot) else {
                 return;
             };
             properties[callee_slot] = thrower;

@@ -286,7 +286,8 @@ impl Vm {
         if guard.depth == 0 && receiver != guard.owner {
             return None;
         }
-        let holder = self.object_data(guard.owner)?;
+        // record: the holder is returned as &Object
+        let holder = self.heap.object(guard.owner)?.record();
         (holder.shape() == guard.owner_shape).then_some(holder)
     }
 
@@ -296,7 +297,7 @@ impl Vm {
     /// it was when the property was found. `None` for an accessor or a link a shape cannot
     /// answer; the caller then reads through `get_field_cached`.
     fn method_cache_lookup(&self, receiver: Value, atom: Atom) -> Option<(MethodGuard, Value)> {
-        let receiver_shape = self.object_data(receiver)?.shape();
+        let receiver_shape = self.heap.object(receiver)?.shape();
         if self.shape_is_dictionary(receiver_shape) {
             return None;
         }
@@ -505,7 +506,7 @@ impl Vm {
     /// The shape and prototype method caches key a lookup on `this` by: an object's own, else
     /// the key no entry serves (`NON_OBJECT_RECEIVER_SHAPE`).
     fn method_receiver_key(&self, this: Value) -> (u32, Value) {
-        self.object_data(this)
+        self.heap.object(this)
             .map(|object| (object.shape(), object.proto()))
             .unwrap_or((NON_OBJECT_RECEIVER_SHAPE, Value::UNDEFINED))
     }

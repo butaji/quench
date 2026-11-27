@@ -342,7 +342,7 @@ impl Vm {
         object: Value,
         key: PropertyKey,
     ) -> Option<(u32, usize)> {
-        let shape = self.object_data(object)?.shape();
+        let shape = self.heap.object(object)?.shape();
         Some((shape, self.property_shape_slot(shape, key)?))
     }
     /// The attributes of `object`'s shape-held property at `slot`, its getter read from the
@@ -588,7 +588,7 @@ impl Vm {
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         // A class cell departs first (R4-C4), so the record it becomes takes the dictionary class here.
         self.heap.depart_class_object(object);
-        let Some(shape) = self.object_data(object).map(Object::shape) else {
+        let Some(shape) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
         if self.shape_is_dictionary(shape) {
@@ -602,7 +602,7 @@ impl Vm {
     }
     #[inline(always)]
     pub fn property_attributes(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
-        let slot = self.object_data(object).and_then(|data| self.property_shape_slot(data.shape(), key));
+        let slot = self.heap.object(object).and_then(|data| self.property_shape_slot(data.shape(), key));
         self.property_attributes_at(object, key, slot)
     }
 
@@ -611,7 +611,7 @@ impl Vm {
     /// `property_attributes_at` and `own_property_at`.
     #[inline(always)]
     pub(super) fn own_shape_slot(&self, object: Value, atom: Atom) -> Option<usize> {
-        self.object_data(object).and_then(|data| self.shape_slot(data.shape(), atom))
+        self.heap.object(object).and_then(|data| self.shape_slot(data.shape(), atom))
     }
 
     /// `property_attributes` of `key` on `object` given its shape `slot` (`own_shape_slot`).
@@ -623,7 +623,7 @@ impl Vm {
         slot: Option<usize>,
     ) -> Option<PropertyAttributes> {
         if let Some(slot) = slot
-            && let Some(attributes) = self.object_data(object).and_then(|data| self.slot_attributes(data, slot))
+            && let Some(attributes) = self.heap.object(object).and_then(|data| self.slot_attributes(data.record(), slot)) // record: slot_attributes takes the record
         {
             return Some(attributes);
         }
@@ -641,7 +641,8 @@ impl Vm {
     /// entries in once marked (`Object::has_side_descriptors`); any other value is looked up.
     #[inline(always)]
     pub(super) fn side_descriptor(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
-        if self.object_data(object).is_some_and(|data| !data.has_side_descriptors()) {
+        // record-only: side descriptors
+        if self.heap.object(object).is_some_and(|data| !data.record().has_side_descriptors()) {
             return None;
         }
         self.descriptors.get(&(object, key)).copied()
@@ -661,7 +662,7 @@ impl Vm {
             }
             _ => (false, false),
         };
-        if let Some(data) = self.object_data_mut(object) {
+        if let Some(data) = self.heap.object_mut(object).map(|object| object.record_mut_departing()) {
             data.mark_side_descriptors();
             if index {
                 data.mark_indexed_descriptors();
@@ -690,7 +691,7 @@ impl Vm {
             atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
         if self.own_element_present(holder, index) {
             let attributes = named.unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            let frozen = self.object_data(holder).is_some_and(Object::is_frozen);
+            let frozen = self.heap.object(holder).is_some_and(|object| object.is_frozen());
             return Some(PropertyAttributes {
                 writable: attributes.writable && !frozen,
                 ..attributes
@@ -705,7 +706,8 @@ impl Vm {
     /// it: no element there, no index-keyed descriptor and no index name among its shape's
     /// keys.
     fn lacks_own_index(&self, holder: Value, index: usize) -> bool {
-        self.object_data(holder).is_some_and(|data| self.object_lacks_own_index(holder, data, index))
+        // record: object_lacks_own_index takes the record
+        self.heap.object(holder).is_some_and(|data| self.object_lacks_own_index(holder, data.record(), index))
     }
 
     /// `lacks_own_index` of a holder whose object `data` the caller has read.
@@ -773,11 +775,11 @@ impl Vm {
         let mut array_holder = false;
         let mut current = first;
         while !current.is_null() {
-            let Some(data) = self.object_data(current) else {
+            let Some(data) = self.heap.object(current) else {
                 return false;
             };
             let is_array = self.heap.array(current).is_some();
-            if self.may_hold_index(current, data, is_array) {
+            if self.may_hold_index(current, data.record(), is_array) { // record: takes the record
                 return false;
             }
             if is_array {
@@ -791,7 +793,7 @@ impl Vm {
             current = data.proto();
         }
         if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
-            let next = self.object_data(first).map_or(Value::NULL, |data| data.proto());
+            let next = self.heap.object(first).map_or(Value::NULL, |data| data.proto());
             let proof = crate::heap::IndexFreeChainProof::new(first, next);
             // The link word mirrors the held proof only where that proof covers `Array.prototype`'s
             // chain. Recording any other proof replaces a held one, so the word clears then.
@@ -824,7 +826,7 @@ impl Vm {
     /// there, ends in a plain data definition on `object`: no prototype answers it with an
     /// accessor, read-only data or an exotic [[Set]] (proxy, typed array, module namespace).
     pub(super) fn inherited_index_unclaimed(&self, object: Value, index: usize) -> bool {
-        let first = self.object_data(object).map(|data| data.proto());
+        let first = self.heap.object(object).map(|data| data.proto());
         if first.is_some_and(|first| self.chain_holds_no_index(first)) {
             return true;
         }
@@ -842,13 +844,13 @@ impl Vm {
             {
                 return false;
             }
-            let Some(data) = self.object_data(holder) else {
+            let Some(data) = self.heap.object(holder) else {
                 return false;
             };
             if data.is_module_namespace() {
                 return false;
             }
-            if !self.object_lacks_own_index(holder, data, index) {
+            if !self.object_lacks_own_index(holder, data.record(), index) { // record: takes the record
                 let atom = *atom.get_or_insert_with(|| self.lookup_array_index_atom(index));
                 if let Some(attributes) = self.own_index_attributes(holder, index, atom) {
                     return !attributes.accessor && attributes.writable;
@@ -863,16 +865,16 @@ impl Vm {
     /// its storage (a proxy, typed array, module namespace, arguments object or boxed
     /// primitive): HasProperty of the index, where `object` holds none, is then false.
     pub(super) fn inherited_index_absent(&self, object: Value, index: usize) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
+        let mut current = self.heap.object(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
                 return false;
             }
-            let Some(data) = self.object_data(holder) else {
+            let Some(data) = self.heap.object(holder) else {
                 return false;
             };
             if data.has_exotic_access()
-                || data.boxed_primitive().is_some()
+                || data.record().boxed_primitive().is_some()
                 || !self.lacks_own_index(holder, index)
             {
                 return false;
@@ -901,7 +903,7 @@ impl Vm {
     /// (`inherited_index_unclaimed`), and HasProperty of it finds nothing inherited
     /// (`inherited_index_absent`), whichever the index.
     pub fn prototypes_hold_no_index(&self, object: Value) -> bool {
-        let first = self.object_data(object).map(|data| data.proto());
+        let first = self.heap.object(object).map(|data| data.proto());
         self.chain_from_holds_no_index(first)
     }
 
@@ -920,12 +922,12 @@ impl Vm {
             if !record && matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
                 return false;
             }
-            let Some(data) = self.object_data(holder) else {
+            let Some(data) = self.heap.object(holder) else {
                 return false;
             };
             if data.has_exotic_access()
-                || data.boxed_primitive().is_some()
-                || data.has_indexed_descriptors()
+                || data.record().boxed_primitive().is_some()
+                || data.record().has_indexed_descriptors()
                 || self.shape_has_index_key(data.shape())
                 || self.heap.sparse_length(holder).is_some()
                 || self
@@ -947,7 +949,7 @@ impl Vm {
         attributes: PropertyAttributes,
     ) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            let current = self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
+            let current = self.slot_attributes(self.heap.object(object).expect("shaped object").record(), slot); // record: slot_attributes takes the record
             if current == Some(attributes) {
                 return;
             }
@@ -978,7 +980,7 @@ impl Vm {
         keys: &[PropertyKey],
         update: impl Fn(PropertyAttributes) -> PropertyAttributes,
     ) {
-        let Some(original) = self.object_data(object).map(Object::shape) else {
+        let Some(original) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
         let resolved = keys
@@ -986,7 +988,7 @@ impl Vm {
             .map(|&key| {
                 let slot = self.property_shape_slot(original, key);
                 let current = slot
-                    .and_then(|slot| self.slot_attributes(self.object_data(object)?, slot))
+                    .and_then(|slot| self.slot_attributes(self.heap.object(object)?.record(), slot)) // record: slot_attributes takes the record
                     .or_else(|| self.property_attributes(object, key))
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 (key, slot, current)
@@ -1028,7 +1030,7 @@ impl Vm {
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            let current = self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
+            let current = self.slot_attributes(self.heap.object(object).expect("shaped object").record(), slot); // record: slot_attributes takes the record
             self.store_accessor_slot(object, slot, current, DEFAULT_PROPERTY_ATTRIBUTES, DEFAULT_SHAPE_ATTRIBUTES);
             let next_id = self.append_cached_shape_transition(
                 shape,
@@ -1424,12 +1426,12 @@ impl Vm {
         if !matches!(self.heap.function(value), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
             return None;
         }
-        let object = self.object_data(value)?;
-        if object.has_side_descriptors() || self.shapes[object.shape() as usize].facts.slot_getters() {
+        let object = self.heap.object(value)?;
+        if object.record().has_side_descriptors() || self.shapes[object.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(object.shape(), self.length_atom)?;
-        self.heap.property_get(object, slot).filter(|value| !self.is_accessor_pair(object.shape(), *value))
+        self.heap.property_get_ref(object, slot).filter(|value| !self.is_accessor_pair(object.shape(), *value))
     }
 
     pub fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
@@ -1438,9 +1440,9 @@ impl Vm {
         {
             return Some(Value::length(length));
         }
-        let object = self.object_data(object)?;
+        let object = self.heap.object(object)?;
         let slot = self.shape_slot(object.shape(), atom)?;
-        self.slot_data_value(object, slot)
+        self.slot_data_value(object.record(), slot) // record: slot_data_value takes the record
     }
 
     /// `own_property` of `atom` on `object` given its shape `slot` (`own_shape_slot`), so a walk
@@ -1452,8 +1454,8 @@ impl Vm {
         {
             return Some(Value::length(length));
         }
-        let object = self.object_data(object)?;
-        self.slot_data_value(object, slot?)
+        let object = self.heap.object(object)?;
+        self.slot_data_value(object.record(), slot?) // record: slot_data_value takes the record
     }
     /// The target and handler of a Proxy, copied out so callers need not clone its cell.
     pub fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
@@ -1462,15 +1464,6 @@ impl Vm {
                 target, handler, ..
             } => Some((*target, *handler)),
             _ => None,
-        }
-    }
-    pub fn object_data(&self, value: Value) -> Option<&Object> {
-        self.heap.object(value).map(|o| o.record())
-    }
-    pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
-        match self.heap.object_mut(value)? {
-            crate::heap::ObjectMut::Record(object) => Some(object),
-            crate::heap::ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
         }
     }
     #[inline] pub fn is_object_like(&self, value: Value) -> bool {
@@ -3501,7 +3494,7 @@ impl Vm {
                 self.atom_name(atom),
                 self.heap.function(object).is_some(),
                 self.shape_property_lookup(object, atom).is_some(),
-                self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
+                self.heap.object(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
             ));
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -4076,7 +4069,7 @@ impl Vm {
         receiver_value: Value,
         atom: Atom,
     ) -> Option<(u32, u32, usize, Value)> {
-        let holder_value = self.object_data(receiver_value)?.proto();
+        let holder_value = self.heap.object(receiver_value)?.proto();
         let holder = self.shape_property_lookup(holder_value, atom)?;
         // A module namespace's [[Get]] is exotic: no field cache names it as a holder. A
         // namespace's shape descends from its own dictionary transition
@@ -4113,7 +4106,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let key = PropertyKey::string(atom);
         if let Some(data) = DataAttributes::of(attributes)
-            && let Some(object_data) = self.object_data(object)
+            && let Some(object_data) = self.heap.object(object)
             && self.property_shape_slot(object_data.shape(), key).is_none()
         {
             self.create_shape_data_property(object, key, value, data)?;
@@ -4250,7 +4243,7 @@ impl Vm {
                 found = Some((current, attributes));
                 break;
             }
-            let Some(data) = self.object_data(current) else {
+            let Some(data) = self.heap.object(current) else {
                 break;
             };
             current = data.proto();
@@ -4274,8 +4267,8 @@ impl Vm {
 
         let receiver = self.descriptor_forwarding_target(receiver);
         if self
-            .object_data(receiver)
-            .is_some_and(Object::is_module_namespace)
+            .heap.object(receiver)
+            .is_some_and(|object| object.is_module_namespace())
         {
             let key = self.heap.alloc_string(self.atom_value(atom));
             let descriptor = self.object_get_own_property_descriptor(p, &[receiver, key])?;
@@ -4340,7 +4333,7 @@ impl Vm {
         }
         // A String wrapper receiver's own index is read-only (`string_wrapper`).
         if self.string_wrapper_index(receiver, PropertyKey::string(atom)).is_some()
-            || (new_property && !self.object_data(receiver).is_some_and(Object::is_extensible))
+            || (new_property && !self.heap.object(receiver).is_some_and(|object| object.is_extensible()))
         {
             return Ok(false);
         }
@@ -4365,8 +4358,8 @@ impl Vm {
         }
         if atom == self.length_atom
             && !self
-                .object_data(receiver)
-                .is_some_and(Object::is_arguments_object)
+                .heap.object(receiver)
+                .is_some_and(|object| object.record().is_arguments_object())
         {
             return self.set_array_length(p, receiver, value).map(Some);
         }
@@ -4453,10 +4446,10 @@ impl Vm {
     ) -> Result<(), JsError> {
         let (slot, old) = {
             let data = self
-                .object_data(object)
+                .heap.object(object)
                 .ok_or_else(|| JsError("property write on non-object".into()))?;
             let slot = self.property_shape_slot(data.shape(), key);
-            let old = slot.and_then(|slot| self.heap.property_get(data, slot));
+            let old = slot.and_then(|slot| self.heap.property_get_ref(data, slot));
             (slot, old)
         };
         self.check_property_key_write(object, key, old.is_some())?;
@@ -4485,7 +4478,7 @@ impl Vm {
         attributes: DataAttributes,
     ) -> Result<(), JsError> {
         let shape = self
-            .object_data(object)
+            .heap.object(object)
             .ok_or_else(|| JsError("property write on non-object".into()))?
             .shape();
         self.check_property_key_write(object, key, false)?;
@@ -4511,7 +4504,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         debug_assert!(attributes.accessor, "an accessor property has accessor attributes");
         let shape = self
-            .object_data(object)
+            .heap.object(object)
             .ok_or_else(|| JsError("property write on non-object".into()))?
             .shape();
         self.check_property_key_write(object, key, false)?;
@@ -4855,7 +4848,7 @@ impl Vm {
         }
         if !own
             && self
-                .object_data(object)
+                .heap.object(object)
                 .is_some_and(|object| !object.is_extensible())
         {
             return if strict {
@@ -4867,8 +4860,8 @@ impl Vm {
         if atom == self.length_atom
             && self.heap.array(object).is_some()
             && !self
-                .object_data(object)
-                .is_some_and(Object::is_arguments_object)
+                .heap.object(object)
+                .is_some_and(|object| object.record().is_arguments_object())
         {
             let succeeded = self.set_array_length(p, object, value)?;
             return if succeeded || !strict {
@@ -4886,11 +4879,11 @@ impl Vm {
         }
         let site = self.field_cache_index(site);
         let existing = self
-            .object_data(object)
+            .heap.object(object)
             .and_then(|data| self.shape_slot(data.shape(), atom));
         self.check_property_write(object, atom, existing.is_some())?;
         let (shape, layout) = self
-            .object_data(object)
+            .heap.object(object)
             .map_or((u32::MAX, 0), |data| (data.shape(), data.layout_id()));
         let add_prototype_guard =
             if existing.is_none() && shape != u32::MAX && self.field_add_atom_eligible(atom) {
@@ -4903,7 +4896,7 @@ impl Vm {
         }
         self.profile.field_cache(false);
         self.set_property(object, atom, value)?;
-        let data = self.object_data(object).unwrap();
+        let data = self.heap.object(object).unwrap();
         let slot = self
             .shape_slot(data.shape(), atom)
             .expect("property transition records the new shape slot");
@@ -5083,9 +5076,9 @@ impl Vm {
             return Ok(());
         }
         let plain = self.class_field_is_plain_add(object, key);
-        let layout = self.object_data(object).map_or(0, Object::layout_id);
+        let layout = self.heap.object(object).map_or(0, |object| object.layout_id());
         self.define_class_field(p, object, key, value)?;
-        let target_shape = self.object_data(object).map_or(shape, Object::shape);
+        let target_shape = self.heap.object(object).map_or(shape, |object| object.shape());
         if plain
             && !self.shape_is_dictionary(shape)
             && !self.shape_is_dictionary(target_shape)
@@ -5120,7 +5113,8 @@ impl Vm {
     /// value. A shape names its slots' attributes, so the exact shape proves them again.
     /// `None` for any other property, a dictionary or an object with side descriptors.
     fn field_define_overwrite(&self, object: Value, atom: Atom) -> Option<FieldCache> {
-        let data = self.object_data(object)?;
+        // record-only: side descriptors and the slot attributes of the record
+        let data = self.heap.object(object)?.record();
         if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) {
             return None;
         }
@@ -5134,7 +5128,7 @@ impl Vm {
     /// shape fields of a `FieldAddCache`; `None` when a link is exotic, a dictionary, or holds
     /// `key` as an accessor or read-only.
     pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<AddPrototypeGuard> {
-        let mut prototype = self.object_data(object)?.proto();
+        let mut prototype = self.heap.object(object)?.proto();
         let mut guard = AddPrototypeGuard::EMPTY;
         while !prototype.is_null() {
             let depth = usize::from(guard.depth);
@@ -5398,12 +5392,12 @@ impl Vm {
     }
 
     pub fn prototype_chain_contains_proxy(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
+        let mut current = self.heap.object(object).map(|data| data.proto());
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto());
+            current = self.heap.object(value).map(|data| data.proto());
         }
         false
     }
@@ -5428,7 +5422,7 @@ impl Vm {
             if self.own_property(object, atom).is_some() {
                 return None;
             }
-            object = self.object_data(object)?.proto();
+            object = self.heap.object(object)?.proto();
             if object.is_null() {
                 return None;
             }
@@ -5436,17 +5430,17 @@ impl Vm {
     }
 
     pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
-        let mut object = self.object_data(object).map(|data| data.proto());
+        let mut object = self.heap.object(object).map(|data| data.proto());
         while let Some(current) = object.filter(|value| !value.is_null()) {
             if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom)) {
                 return !attributes.accessor && !attributes.writable;
             }
-            object = self.object_data(current).map(|data| data.proto());
+            object = self.heap.object(current).map(|data| data.proto());
         }
         false
     }
     /// `callable_write` for a slot a matching cached shape proved present: an ordinary
-    /// object's old value is read in place rather than through `object_data`.
+    /// object's old value is read in place rather than through `heap.object`.
     #[inline(always)]
     fn cached_store_is_callable(&self, object: Value, slot: usize, value: Value) -> bool {
         if self.is_function(value) {
@@ -5462,8 +5456,8 @@ impl Vm {
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
         self.is_function(value)
             || self
-                .object_data(object)
-                .and_then(|object| self.heap.property_get(object, slot))
+                .heap.object(object)
+                .and_then(|object| self.heap.property_get_ref(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
     /// How many runs of a lane body left at the site since its record was last reset,

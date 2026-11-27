@@ -65,8 +65,8 @@ impl Vm {
     }
 
     fn mapped_argument_index(&self, arguments: Value, slot: usize) -> Option<usize> {
-        self.object_data(arguments)
-            .and_then(Object::arguments_map)
+        self.heap.object(arguments)
+            .and_then(|object| object.record().arguments_map()) // record-only: argument mapping
             .and_then(|mapping| {
                 mapping
                     .iter()
@@ -83,8 +83,8 @@ impl Vm {
 
     pub(super) fn sync_mapped_argument(&mut self, object: Value, index: usize, value: Value) {
         let slot = self
-            .object_data(object)
-            .and_then(|object| object.mapped_argument_slot(index));
+            .heap.object(object)
+            .and_then(|object| object.record().mapped_argument_slot(index)); // record-only: argument mapping
         self.sync_mapped_argument_slot(object, slot, value);
     }
 
@@ -144,8 +144,8 @@ impl Vm {
 
     pub(super) fn unmap_argument_index(&mut self, object: Value, index: usize) {
         if let Some(mapping) = self
-            .object_data_mut(object)
-            .and_then(Object::arguments_map_mut)
+            .heap.object_mut(object)
+            .and_then(|object| object.record_mut_departing().arguments_map_mut()) // record-only: argument mapping
             && let Some(slot) = mapping.get_mut(index)
         {
             *slot = u16::MAX;

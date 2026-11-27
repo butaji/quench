@@ -206,7 +206,7 @@ impl Vm {
         }
         let (array_proto, object_proto) = (self.array_proto, self.object_proto);
         let lacks = |vm: &Self, holder: Value, parent: Value| {
-            vm.object_data(holder).is_some_and(|data| {
+            vm.heap.object(holder).is_some_and(|data| {
                 data.proto() == parent && !vm.shape_is_dictionary(data.shape()) && vm.property_shape_slot(data.shape(), key).is_none()
             })
         };

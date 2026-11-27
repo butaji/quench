@@ -262,7 +262,7 @@ impl Vm {
         if let Some(number) = self.primitive_to_number(value) {
             return Ok(number);
         }
-        if self.object_data(value).is_some() {
+        if self.heap.object(value).is_some() {
             let primitive = self.to_primitive(program, value, "number")?;
             return self.to_number(program, primitive);
         }
@@ -297,7 +297,7 @@ impl Vm {
         if let Some(text) = immediate_to_string(value) {
             return Ok(text.into());
         }
-        if self.object_data(value).is_some() {
+        if self.heap.object(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
             return self.to_string(program, primitive);
         }
