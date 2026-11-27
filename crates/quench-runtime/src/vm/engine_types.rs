@@ -3,7 +3,7 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::bytecode::InstructionField;
-use crate::staged::effects::CallForm;
+use crate::staged::effects::{call_form, CallForm, Signature};
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -1232,9 +1232,9 @@ pub struct TargetBody {
     pub entry: CallEntry,
     pub constructs: bool,
     pub initializes: bool,
-    /// Whether an `Activates` body runs as a leaf (`leaf_body`), and what its records then read
-    /// of the context: only where the tier could not claim it at the first resolution, which
-    /// specialized its returns for good.
+    /// Whether an `Activates` body of a frameless call form runs as a leaf (`leaf_body`), and what its
+    /// records then read of the context: only where the tier could not claim it at the first resolution,
+    /// which specialized its returns for good. None for a framed call form, whose entries never run a leaf.
     pub leaf: Option<LeafForm>,
 }
 
@@ -4211,6 +4211,23 @@ impl CallEntry {
     pub const fn form(self) -> CallForm {
         if self.0 & Self::FRAMED == 0 { CallForm::Frameless } else { CallForm::Framed }
     }
+
+    /// The entry's byte as an index of a table of all 256 entries. The byte holds both the form bit
+    /// and the shape, so a table over it answers a framed entry without a test of the form.
+    #[inline(always)]
+    pub const fn table_index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Whether a call of `function` takes a frameless entry: the form `staged::effects::call_form` gives the
+/// function's composed signature (`FunctionFacts::signature`), of the program's facts `facts`
+/// (`ProgramStore::aot_facts`). The facts are not inlinable here, since a lane target is never spliced.
+/// A function the solve did not reach, or a program without facts, has the top signature, whose form is
+/// framed.
+pub fn frameless_call(facts: Option<&AotFacts>, function: u32) -> bool {
+    let signature = facts.map_or(Signature::ANY, |facts| facts.function_facts(function).signature());
+    call_form(signature, false) == CallForm::Frameless
 }
 
 impl Admission {
