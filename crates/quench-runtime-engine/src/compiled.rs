@@ -145,7 +145,7 @@ pub(crate) mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 pub(crate) mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] pub(crate) mod lane_allocations;
-use lane_allocations::{binary_in_lane, collection_lookup_in_lane, concat_pair_in_lane, define_kept_element_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane,new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
+use lane_allocations::{binary_in_lane, collection_lookup_in_lane, concat_pair_in_lane, define_kept_element_in_lane, flatten_string_in_lane, scalar_native_in_lane, materialize_array_in_lane, new_array_in_lane,new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
 #[path = "compiled/lane_method.rs"] pub(crate) mod lane_method;
@@ -1161,6 +1161,8 @@ lane_helper_inventory! {
     TypeofIndex => typeof_index_in_lane,
     /// A planned construction (`construct_in_lane`).
     Construct => constructions::construct_in_lane,
+    /// A materialized kept receiver's planned construction, made whatever is due (`materialize_construct_in_lane`).
+    MaterializeConstruct => constructions::materialize_construct_in_lane,
     ConstructReceiver => constructions::construct_receiver_in_lane,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane,
@@ -1173,6 +1175,8 @@ lane_helper_inventory! {
     /// An object literal's and an array literal's allocation.
     NewObject => compiled_new_object,
     NewArray => new_array_in_lane,
+    /// A materialized kept array's allocation, made whatever is due (`lane_allocations::materialize_array_in_lane`).
+    MaterializeArray => materialize_array_in_lane,
     /// One written element of a hole array a materialized kept array made (`define_kept_element_in_lane`).
     DefineKeptElement => define_kept_element_in_lane,
     /// An array literal of program constants (`new_const_array_in_lane`).
