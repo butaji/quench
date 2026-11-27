@@ -10,7 +10,6 @@ pub use crate::heap::{
     NATIVE_TYPED_ARRAY_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK,
     TYPED_ARRAYS, armed_proofs_address, buffer_relocations_address, index_free_chain_link_address,
 };
-pub use crate::heap::rc::COUNTS_SEEN;
 
 /// The records a tier reads through `HeapReads` and the kinds it matches on.
 pub use crate::heap::{

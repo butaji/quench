@@ -191,7 +191,7 @@ impl LoweringJob<'_> {
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
             names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }),
             facts: self.aot.as_deref(), graph: self.graph.as_deref(), ..self.facts };
-        let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Body, facts: Default::default() }).compiled()?;
+        let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Body, facts: Default::default(), fresh: false }).compiled()?;
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.kinds, self.views, admitted)
     }

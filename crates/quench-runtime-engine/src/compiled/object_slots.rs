@@ -177,7 +177,7 @@ impl ObjectHeader {
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(crate) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default() }
+    Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false }
 }
 
 /// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
@@ -532,7 +532,7 @@ impl CheckedObject {
     /// shape is held by a dependency (`fact`, `HeldLayouts::hold`), so only the representation is tested.
     pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, (record, fact): (ir::Value, ShapeFact), inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
-        let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None, facts: Default::default() };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None, facts: Default::default(), fresh: false };
         quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss)
             .map(|layout| Self(layout, fact))
     }

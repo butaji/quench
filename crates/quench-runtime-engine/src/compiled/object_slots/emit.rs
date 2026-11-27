@@ -30,6 +30,9 @@ pub(crate) struct Emit<'a, 'b> {
     /// type at this point, which the frame noted when it read the word (`EmitFrame::tagged`).
     /// A row's class test the fact decides builds no code (`Stage::fact`, `value::decided`).
     pub(crate) facts: smallvec::SmallVec<[(ir::Value, quench_runtime::typed_ir::Type); 4]>,
+    /// Whether the holder this step stores into is fresh (allocated in this unit, with no safepoint since, `LocalProofs::fresh`):
+    /// its store barrier's log is elided, and only the observation gate remains (`store_gate`, `held_store_gate`).
+    pub(crate) fresh: bool,
 }
 
 impl Emit<'_, '_> {
@@ -237,6 +240,10 @@ impl Stage for Emit<'_, '_> {
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
     /// the store leaves at its miss.
     fn store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        if self.fresh {
+            // A fresh holder logs nothing (4.7 (b)): only the observation gate is asked.
+            return self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_untracked(stage, payload, watch, logged));
+        }
         self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged))
     }
     /// Whether a store of a value the slot's type holds needs no barrier log
@@ -245,6 +252,11 @@ impl Stage for Emit<'_, '_> {
     /// owner is unmarked (`barrier::value_unlogged`). A stage with no payload answers no, and the
     /// store leaves at its miss.
     fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        if self.fresh {
+            // A fresh holder's barrier log is elided (4.7 (b)), and the held store observes nothing: it is open.
+            let zero = self.constant(0);
+            return self.eq(zero, zero);
+        }
         let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);
@@ -261,14 +273,13 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         open
     }
-    /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
-    /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
-    /// without counts, else closed, and the store leaves at its miss.
+    /// Whether an immediate store needs no barrier log: the dispatch payload's counts bit is clear, read at run
+    /// time from the run's own payload (the gate's, else the step's). A stage with no payload cannot read the run's
+    /// counts, so it is closed and the store leaves at its miss (no process-wide flag is baked into compiled code).
     fn immediate_store_open(&mut self) -> ir::Value {
-        let Some(payload) = self.gate else {
-            let seen = quench_runtime::tier_surface::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
-            let counted = self.raw_const(Lane::I8, i64::from(seen));
-            return self.raw_compare_imm(Relation::Equal, counted, 0);
+        let Some(payload) = self.gate.or(self.payload) else {
+            let zero = self.constant(0);
+            return self.ult(zero, zero);
         };
         self.counts_clear(payload)
     }

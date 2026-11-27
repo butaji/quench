@@ -300,7 +300,14 @@ struct LocalProofs {
     /// Registers whose lane-frame slot holds their current tagged value (`Lowering::home_written`): a
     /// definition retires one, so a call writes back only what changed since the last write-back.
     homed: BitSet,
+    /// Resolved words of holders this unit allocated (object or array literals) with no safepoint since (4.7 (b)):
+    /// a store into one needs no barrier log. A safepoint is an allocation, a call, or a step that may allocate or run guest
+    /// code (`Lowering::retire_fresh`); a join keeps the holders every arrival holds (`keep_shared_proofs`, `join_states`).
+    fresh: smallvec::SmallVec<[ir::Value; INLINE_FRESH_HOLDERS]>,
 }
+
+/// A block usually holds a few fresh holders at once (a constructor's receiver, a literal's temporaries).
+const INLINE_FRESH_HOLDERS: usize = 4;
 
 impl LocalProofs {
     /// Keeps the typed views past an instruction that may change one: the next access takes a kept view only
@@ -352,7 +359,8 @@ impl State {
             headers: smallvec::SmallVec::new(), records: smallvec::SmallVec::new(),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
-            arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
+            arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new(),
+            fresh: smallvec::SmallVec::new() } }
     }
 
     /// The facts a jump proved along `edge` (`refinements`), each narrowing its register's type for
@@ -374,6 +382,7 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
+        self.proofs.fresh.clear();
         self.proofs.fields.clear();
         self.proofs.arrays.clear();
         self.proofs.keep_typed_views();
@@ -1075,6 +1084,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .collect();
         state.proofs.records = first.records.iter().copied().filter(|record| rest.iter()
             .all(|other| other.records.contains(record))).collect();
+        state.proofs.fresh = first.fresh.iter().copied().filter(|word| rest.iter()
+            .all(|other| other.fresh.contains(word))).collect();
         state.proofs.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
         state.proofs.global = first.global.filter(|kept| rest.iter().all(|other| other.global == Some(*kept)));
@@ -1504,6 +1515,13 @@ fn retains_array_views(constants: &[quench_runtime::bytecode::Constant], instruc
 /// call lowered as an intrinsic the loop holds (`native_calls::holds_in_loop`).
 fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic: bool) -> bool {
     intrinsic || reads_only(constants, instruction) || stores_own(instruction) || stores_element(instruction)
+}
+
+/// Whether an allocation makes a holder of named or indexed properties (an object or array literal), whose stores may be
+/// fresh (`LocalProofs::fresh`). A closure, regexp or template is no such holder here.
+fn makes_holder(allocation: quench_runtime::staged::Allocation) -> bool {
+    use quench_runtime::staged::Allocation;
+    matches!(allocation, Allocation::Empty | Allocation::Array { .. } | Allocation::ConstArray { .. } | Allocation::ArrayOf { .. } | Allocation::ObjectPair { .. } | Allocation::ObjectLiteral { .. })
 }
 
 /// Loops with one external entry and no interior entry, whose native operations
@@ -2328,6 +2346,7 @@ pub(crate) fn lower(
         lowering.at = pc;
         if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Edges, now - mark); mark = now; block_mark = lowering.builder.func.dfg.num_blocks(); }
         reachable = lowering.instruction(&mut state, pc, instruction);
+        lowering.retire_fresh(&mut state, pc, instruction);
         if let Some(census) = census.as_mut() {
             let now = emitted(&lowering);
             if census.sample(instruction.op()) {
@@ -2568,6 +2587,7 @@ impl Lowering<'_, '_> {
         state.proofs.typed.retain_mut(|view| incoming.proofs.typed.iter().find(|other| TypedProof { kept: view.kept, ..**other } == *view)
             .map(|other| view.kept |= other.kept).is_some());
         state.proofs.meet_homed(&incoming.proofs.homed);
+        state.proofs.fresh.retain(|word| incoming.proofs.fresh.contains(word));
         // A record both arrivals name as the same value is the join's (`LocalProofs::records`).
         state.proofs.records.retain(|record| incoming.proofs.records.contains(record));
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
@@ -3483,9 +3503,61 @@ impl Lowering<'_, '_> {
     /// After a helper that allocated, which may move the property arena: the projections
     /// into it retire and its base reloads.
     fn allocated(&mut self, state: &mut State) {
+        // The allocation is a safepoint: a collection it runs may promote every holder made before it.
+        state.proofs.fresh.clear();
         state.proofs.layouts.clear();
         state.proofs.global = None;
         self.reload_property_arena();
+    }
+
+    /// Whether the step at unit PC `pc` may allocate or run guest code, a safepoint that retires the fresh holders
+    /// (`LocalProofs::fresh`): the settled effect of the caller's own step (`FunctionFacts::may_allocate`), else the
+    /// operation's kind row, which is ANY for a store. An inlined callee's step takes the kind row.
+    fn safepoint_at(&self, pc: usize) -> bool {
+        let settled = match self.unit.origins.get(pc) {
+            Some(super::lane_unit::Origin::Caller(caller)) => self.vm.facts.map(|facts| facts.function_facts(self.function_id).may_allocate(*caller)),
+            _ => None,
+        };
+        settled.unwrap_or_else(|| crate::compiled::performed(self.unit.instructions[pc])
+            .map_or(true, |operation| { let effects = operation.effects(); effects.may_alloc || effects.may_call_js }))
+    }
+
+    /// After the instruction at `pc` is lowered: a safepoint retires every fresh holder, and an object or array literal
+    /// it allocated is fresh from here (`allocation`'s own safepoint retired the holders before it). The holder's word is
+    /// the one `register_word` names it by, which a store's owner reads.
+    fn retire_fresh(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) {
+        // A kept literal (`virtual_objects`) holds no object of its own, so it is no fresh holder.
+        let holder = self.allocation_row(pc, instruction).then(|| quench_runtime::staged::Allocation::decode(instruction, self.straight_following(pc)))
+            .flatten().and_then(|(destination, allocation)| (makes_holder(allocation) && !self.is_kept(state, destination)).then_some(destination));
+        if holder.is_none() && self.safepoint_at(pc) { state.proofs.fresh.clear(); }
+        if let Some(destination) = holder {
+            let word = self.register_word(state, destination);
+            state.proofs.fresh.push(word);
+        }
+    }
+
+    /// Narrows register `register`'s fact to the type the solve proves it holds before `pc` (`cell_before`), where that is a
+    /// narrower type of a tagged word (as `State::narrow`). A stored value the solve proves immediate then takes the
+    /// immediate store path, which needs no barrier log (4.7 (a)).
+    fn refine_to_solved(&self, state: &mut State, pc: usize, register: Register) {
+        let solved = self.cell_before(pc, register).ty;
+        let fact = state.values[usize::from(register)];
+        if fact.value.representation == Representation::Tagged && solved != fact.value.ty && solved.is_subtype(fact.value.ty) {
+            state.values[usize::from(register)] = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(solved, Representation::Tagged) };
+        }
+    }
+
+    /// Whether the store `operation` writes into a fresh holder (`store_step`): the holder's resolved word is one this unit
+    /// allocated with no safepoint since (`LocalProofs::fresh`).
+    fn store_into_fresh(&mut self, state: &mut State, operation: &quench_runtime::staged::Operation<ir::Value, EmitProof>) -> bool {
+        let owner = match operation {
+            quench_runtime::staged::Operation::SetField { base, .. } | quench_runtime::staged::Operation::StoreField { base, .. } => *base,
+            _ => return false,
+        };
+        match self.owner_word(state, owner) {
+            Some(word) => state.proofs.fresh.contains(&word),
+            None => false,
+        }
     }
 
     /// After a helper that may also have changed any object's shape or storage (a
@@ -3569,7 +3641,8 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload), facts: Default::default() };
+        let fresh = access.as_ref().is_some_and(|(_, held)| held.fresh);
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload), facts: Default::default(), fresh };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held, property,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, views: &mut self.stable.views, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
@@ -5091,6 +5164,7 @@ impl Lowering<'_, '_> {
             .map(|_| self.int(state, source, exit))
             .or_else(|| carried.filter(|read| read.representation == Representation::Float64)
                 .map(|_| self.number(state, source, exit)));
+        self.refine_to_solved(state, pc, source);
         let ty = state.values[usize::from(source)].value.ty;
         let operation = quench_runtime::staged::Operation::SetField { value: source, base: register,
             atom: instruction.atom_index(), site: instruction.cache_site_index(),
@@ -5232,7 +5306,8 @@ impl Lowering<'_, '_> {
     fn store_step(&mut self, state: &mut State, operation: quench_runtime::staged::Operation<ir::Value, EmitProof>,
         (plan, held): (StorePlan, HeldRead), exit: ir::Block) -> Option<()> {
         let plans = LanePlans { store: Some(plan), ..LanePlans::NONE };
-        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
+        let fresh = self.store_into_fresh(state, &operation);
+        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, HeldRead { fresh, ..held })) {
             quench_runtime::staged::Step::Value(_) => Some(()),
             _ => None,
         }

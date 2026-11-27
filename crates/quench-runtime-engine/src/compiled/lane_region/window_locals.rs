@@ -88,7 +88,7 @@ impl Lowering<'_, '_> {
             Access::Write { source, .. } => Some(self.tagged(state, source)),
             Access::Read(_) | Access::Open => None,
         };
-        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None, facts: Default::default() };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None, facts: Default::default(), fresh: false };
         let read = match (access, written) {
             (Access::Read(_), _) => environment_slot(&mut stage, storage, slot, miss),
             (Access::Write { define: false, .. }, Some(value)) => environment_slot_store(&mut stage, storage, slot, value, miss).map(|()| value),

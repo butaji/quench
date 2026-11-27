@@ -10,6 +10,8 @@ impl Lowering<'_, '_> {
     pub(crate) fn jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let target = instruction.jump_target() as usize;
         if target <= pc {
+            // A back edge carries a poll, a safepoint: no holder made before it stays fresh past it (`LocalProofs::fresh`).
+            state.proofs.fresh.clear();
             self.backedge |= target == self.coverage.entry();
             if target == self.coverage.entry() { self.count_trip(); }
             if self.shared_backedge(state, target) { return false; }

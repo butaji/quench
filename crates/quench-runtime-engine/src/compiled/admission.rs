@@ -391,7 +391,7 @@ pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabl
 
 /// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
 pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {
-    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default(), fresh: false }).compiled()
 }
 
 /// The unit of a loop region this VM may compile (`region_unit_under` of its memory policy).

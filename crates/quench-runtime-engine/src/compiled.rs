@@ -578,7 +578,7 @@ pub(crate) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default() };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
     if view.uncounted {
         quench_runtime::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -981,7 +981,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     builder.def_var(receiver.properties, properties);
     let (found, done) = (builder.create_block(), builder.create_block());
     // The payload is the stage's, so the record hop's class base reads the dispatch head (`Table::ClassSpace`).
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default() };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default(), fresh: false };
     let none = stage.raw_const(Lane::I32, i64::from(quench_runtime::vm::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
     let outside = stage.raw_const(Lane::I8, 0);
@@ -8426,7 +8426,7 @@ impl Vm {
             let build = build_order.into_iter().map(|index| {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
-                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
+                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
                 let built = WasmSpecializer {
                     index,
                     plans: &plans,
@@ -8464,7 +8464,7 @@ impl Vm {
                             return None;
                         }
                         let full_plan = full_plans[index].as_ref()?;
-                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
+                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
                         let residual = WasmSpecializer {
                             index,
                             plans: &plans,
@@ -9375,7 +9375,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default() };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
         let encoded = quench_runtime::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();
