@@ -1,5 +1,6 @@
 //! A loop region's stores to fields and bindings: which store rows the region lowers, and how their values are admitted.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
 use std::collections::BTreeSet;
 

@@ -1,4 +1,5 @@
 //! The coverage tests: which opcodes the staged layer decodes, and that tiers derive from it.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 /// Hand-written decodes of the object and narrow layouts outside `staged`, per native-tier
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.
@@ -530,8 +531,8 @@ fn staged_encoders_round_trip_through_their_decode_arms() {
         assert!(matches!(Row::of(Row::encode_construct(a, b, c, imm)), Some(Operation::Call(_))), "construct {a} {b} {c} {imm}");
     }
     assert!(matches!(Row::of(Row::encode_nop()), Some(Operation::Nop)), "nop");
-    assert!(Row::is_call_index(Row::encode_call(0, 1, 0, 0).op() as u16));
-    assert!(!Row::is_call_index(Row::encode_nop().op() as u16));
+    assert!(quench_runtime::staged::operation_is_call_index(Row::encode_call(0, 1, 0, 0).op() as u16));
+    assert!(!quench_runtime::staged::operation_is_call_index(Row::encode_nop().op() as u16));
 }
 
 /// Each row constant a tier selects a row by (`staged::*_ROW`) names the opcode whose decode arm

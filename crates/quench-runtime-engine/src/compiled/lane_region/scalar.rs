@@ -13,6 +13,7 @@
 //! holds under the body's own dependencies (`GlobalRead::Stable`): the load of the binding
 //! defines the callee register as that constant, and the call compares nothing per use.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::lane_body_abi::body_signature_in_lane;

@@ -1,6 +1,7 @@
 //! The fixpoint of `transfer` over the control-flow graph, and the replay of its rows: the one
 //! analysis, which every consumer of a type, a range or a length relation reads.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lengths::Relations;

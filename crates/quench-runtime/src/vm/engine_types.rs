@@ -1,6 +1,8 @@
 //! The types the VM core holds for its engine layer (`quench-runtime-engine`: lane handlers
 //! and compiled tiers). Their behaviour stays in the engine, as extension traits on them.
 #![allow(unused_imports)]
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use crate::bytecode::InstructionField;
 use std::cell::{RefCell, UnsafeCell};

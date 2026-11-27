@@ -1,5 +1,7 @@
 //! The property rows on the concrete stage, against the heap's own object model.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::ic::IcOp;
 use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StoreArm, StoreJoin, StorePlan};
 use super::test_words::ANSWER;

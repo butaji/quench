@@ -1,6 +1,7 @@
 //! The default lowering of a row no specialized arm makes (TOD-2307, FP1 step 1): the row's own
 //! staged definition on the emit stage, as every tier steps it, so the region continues past it
 //! rather than leaving at its record; a row the emit stage cannot hold leaves there.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

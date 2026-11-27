@@ -4,6 +4,8 @@
 //! `GenericStep`: the interpreter's step a lane or a body makes in place) and its orthogonal
 //! tier traits (`Traits`). The table expands into `Op::class`, `Op::staged`,
 //! `Op::generic_step` and `Op::traits`.
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 // Catalog helpers the derived-row design no longer asks for are kept beside the columns they
 // describe until the compiler path that named them is replaced.
 #![allow(dead_code)]

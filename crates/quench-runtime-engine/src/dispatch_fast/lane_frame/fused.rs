@@ -2,6 +2,7 @@
 //! install them (`fuse_rows`, `fuse_chains`). A child of `lane_frame`, so its monomorphized records
 //! land in their own codegen unit and only the lane's build instantiates them (`derive_lane_view`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationGenericExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

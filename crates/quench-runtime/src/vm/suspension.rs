@@ -3,6 +3,8 @@
 //! call-out with the VM's own operation and turns the row's suspension into the step result the
 //! general loop suspends the activation with.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use super::call_out::{CallSite, HostControl, HostFrame};
 use crate::bytecode::WideInstruction;

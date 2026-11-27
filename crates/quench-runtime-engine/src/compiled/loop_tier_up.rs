@@ -1,6 +1,7 @@
 //! A loop body's tier-up leaves and resumes: the poll's unconditional backward jump and the
 //! header that dispatches the body a tier-up published.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use crate::dispatch_fast::{vm, LaneView, LoopSite};

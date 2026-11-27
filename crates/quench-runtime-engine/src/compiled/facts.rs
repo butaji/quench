@@ -11,6 +11,7 @@
 //! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
 //! never the body. Constants, definitions and joins use the one `quench_runtime::typed_ir` lattice.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};

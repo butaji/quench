@@ -9,6 +9,7 @@
 //! are rows of the same fixpoint that types every register, which widens a range that keeps
 //! growing instead of assuming one and checking it on the back edge.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

@@ -1,5 +1,6 @@
 //! A loop kernel's shape: the loop's body as a dataflow graph over columns, found by two
 //! symbolic passes over the body (`Shape::of`).
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};

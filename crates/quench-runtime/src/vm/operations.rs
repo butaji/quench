@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::*;
 use super::array_modern::ArrayFromTarget;
 use crate::value::NumericPair;

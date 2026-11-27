@@ -9,6 +9,7 @@
 //! retires the body (`ProgramStore::retire_dead_native_calls`), and the identity a word names is
 //! never a reused one.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, CallFormFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
