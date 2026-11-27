@@ -1254,10 +1254,6 @@ impl Vm {
             | Native::ReflectGetPrototypeOf
             | Native::ReflectSetPrototypeOf
             | Native::ReflectConstruct => self.call_reflect_native(p, native, args),
-            Native::JsonParse => self.json_parse(p, args),
-            Native::JsonStringify => self.json_stringify(p, args),
-            Native::JsonRawJson => self.json_raw_json(p, args),
-            Native::JsonIsRawJson => self.json_is_raw_json(args),
             Native::GlobalIsNaN | Native::GlobalIsFinite => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let number = self.to_number(p, value)?;
@@ -2121,6 +2117,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .or_else(|| method_entry(native))
         .or_else(|| realm_entry(native))
         .or_else(|| value_entry(native))
+        .or_else(|| json::entry(native))
         .unwrap_or(enter_table)
 }
 
