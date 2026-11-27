@@ -25,9 +25,9 @@ macro_rules! need {
     };
 }
 
-#[cfg(fixed_rows)]
+#[cfg(any(fixed_rows, stencil_family = "call"))]
 mod call_rows;
-#[cfg(fixed_rows)]
+#[cfg(any(fixed_rows, stencil_family = "call"))]
 mod direct_frame;
 #[macro_use]
 #[path = "row_catalog.rs"]

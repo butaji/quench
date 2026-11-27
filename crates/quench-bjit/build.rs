@@ -82,7 +82,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     thread,
 };
 use transfer::{Arch, check_call, check_no_return, check_transfer, check_value_field};
@@ -91,8 +91,8 @@ const SOURCE: &str = "stencils/rows.rs";
 /// Environment variable of each rustc process naming its shard's instance file (`rows.rs` reads
 /// it with `env!`).
 const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
-/// Environment variable of each rustc process naming the file of `call_rows`' invocations (`build/call_rows.rs`),
-/// which `stencils/call_rows.rs` includes; only the fixed-rows shard compiles that module.
+/// Environment variable of each rustc process naming its shard's file of `call_rows`' invocations (`build/call_rows.rs`),
+/// which `stencils/call_rows.rs` includes: a slice of them in each call shard (`Family::Call`), none elsewhere.
 const CALL_ROWS_VAR: &str = "QUENCH_STENCIL_CALL_ROWS";
 /// The shard that defines the fixed rows of the target's `stencils/entry*.rs` (cfg `fixed_rows`) and no generated
 /// row, so no name is defined twice.
@@ -111,10 +111,14 @@ enum Family {
     Wasm,
     /// The regexp rows (`stencils/regexp_rows.rs`), which read none of the JS or Wasm staged rules.
     Regexp,
+    /// The call rows (`stencils/call_rows.rs`'s `direct_row!` and `reload_row!`, `build/call_rows.rs`): a direct row
+    /// inlines the whole staged call path, ~110 MB and ~4 s of rustc each, so the 78 of them in the fixed shard
+    /// made it 10.2 GB and 10 minutes alone, past what the box holds beside the engine's rustc.
+    Call,
 }
 
 impl Family {
-    const ALL: [Family; 4] = [Family::Fixed, Family::Js, Family::Wasm, Family::Regexp];
+    const ALL: [Family; 5] = [Family::Fixed, Family::Js, Family::Wasm, Family::Regexp, Family::Call];
 
     /// The cfgs that select the family's modules in `rows.rs` and `stencils/staged.rs`.
     fn args(self) -> Vec<String> {
@@ -123,6 +127,7 @@ impl Family {
             Family::Js => "stencil_family=\"js\"",
             Family::Wasm => "stencil_family=\"wasm\"",
             Family::Regexp => "stencil_family=\"regexp\"",
+            Family::Call => "stencil_family=\"call\"",
         };
         vec!["--cfg".to_string(), cfg.to_string()]
     }
@@ -133,6 +138,7 @@ impl Family {
             Family::Js => "js",
             Family::Wasm => "wasm",
             Family::Regexp => "regexp",
+            Family::Call => "call",
         }
     }
 }
@@ -189,7 +195,7 @@ fn main() {
     // The stencil sources and arguments are relative to the `quench-bjit` crate.
     env::set_current_dir(manifest).expect("enter the quench-bjit crate");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
-    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\", \"regexp\"))");
+    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\", \"regexp\", \"call\"))");
     for extra in EXTRA_WATCHED {
         println!("cargo::rerun-if-changed={}", manifest.join(extra).display());
     }
@@ -207,20 +213,24 @@ fn main() {
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(&out, name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
-    let instances = instances(&listed, arch);
+    let mut instances = instances(&listed, arch);
+    instances.extend(call_rows::invocations().lines().map(|row| (format!("{row}\n"), shards::call_weight(row), Family::Call)));
     // The fixed rows' shard first, then each family's rows split on their own, so no shard mixes two families.
     let mut parts: Vec<(Family, &[(String, usize, Family)])> = vec![(Family::Fixed, &[][..])];
-    for family in [Family::Js, Family::Wasm, Family::Regexp] {
+    for family in [Family::Js, Family::Wasm, Family::Regexp, Family::Call] {
         let start = instances.iter().position(|row| row.2 == family);
         let Some(start) = start else { continue };
         let end = instances.iter().rposition(|row| row.2 == family).unwrap() + 1;
         assert!(instances[start..end].iter().all(|row| row.2 == family), "the {family:?} rows are contiguous");
         parts.extend(shards::split(&instances[start..end], |(_, weight, _)| *weight).into_iter().map(|part| (family, part)));
     }
-    for (shard, (_, part)) in parts.iter().enumerate() {
-        fs::write(instance_file(&out, shard), part.iter().map(|(row, _, _)| row.as_str()).collect::<String>()).unwrap();
+    // A call shard's rows go to its call rows file (`call_rows.rs` includes it), every other shard's to its instances.
+    for (shard, (family, part)) in parts.iter().enumerate() {
+        let rows = part.iter().map(|(row, _, _)| row.as_str()).collect::<String>();
+        let (calls, generated) = if *family == Family::Call { (rows, String::new()) } else { (String::new(), rows) };
+        fs::write(instance_file(&out, shard), generated).unwrap();
+        fs::write(call_rows_file(&out, shard), calls).unwrap();
     }
-    fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
 
     // `VARIANTS` are x86-64 cpu levels; another target has the one baseline table, built without a
     // `-C target-cpu` (which for an AArch64 target is not a cpu at all).
@@ -322,8 +332,8 @@ fn instance_file(out: &Path, shard: usize) -> PathBuf {
     out.join(format!("instances_{shard}.rs"))
 }
 
-fn call_rows_file(out: &Path) -> PathBuf {
-    out.join("call_rows.rs")
+fn call_rows_file(out: &Path, shard: usize) -> PathBuf {
+    out.join(format!("call_rows_{shard}.rs"))
 }
 
 /// What `checks` counted over a library's rows: the rows that keep a stack frame, and those whose hot path
@@ -455,14 +465,14 @@ fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>
     debug_assert_eq!(shard == FIXED_ROWS_SHARD, family == Family::Fixed);
     args.extend(family.args());
     let instances = instance_file(out, shard);
-    let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out)]);
-    let since = since.map(|(was, edited)| (cache::shard_key(was, &args, &[&instances, &call_rows_file(out)]), edited));
+    let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out, shard)]);
+    let since = since.map(|(was, edited)| (cache::shard_key(was, &args, &[&instances, &call_rows_file(out, shard)]), edited));
     // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
     // or 16, and with `-Z inline-mir=yes`), so 116 of 303 sampled rows came out changed and 61 kept relocations
     // that are not holes. A shard is reused whole, by its key, or compiled whole.
     let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
     args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
-    let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
+    let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out, shard))];
     Shard { cpu, family, args, envs, key_file: object.with_extension("key"), object, key, since }
 }
 
@@ -497,7 +507,7 @@ fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::coll
     let mut command = Command::new(rustc());
     command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
     command.args(["--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).status().ok()?;
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard)).status().ok()?;
     if !status.success() {
         return None;
     }
@@ -516,7 +526,7 @@ fn type_check(out: &Path, family: Family, shard: usize) {
     let mut command = Command::new(rustc());
     command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
     command.args(["--emit=metadata", "-o"]).arg(out.join(format!("rows_check_{}.rmeta", family.name())));
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).arg(SOURCE).status().expect("run rustc");
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard)).arg(SOURCE).status().expect("run rustc");
     assert!(status.success(), "rustc failed to type-check {SOURCE} for the {family:?} rows");
 }
 
@@ -589,37 +599,54 @@ fn compile(job: &Shard, shard: usize) {
     // The same rustc lists the shard's mono items (`-Z print-mono-items`, on stdout), which name every function a
     // row can reach: the reach file comes from this compile rather than a second, unoptimized one (`write_reach`).
     // The flag is outside `job.args`, so it is in no key.
+    // The shard's own peak from its last compile (`peak_file`), else `SHARD_MEMORY`: shard 0 peaks well past the
+    // estimate, and a compile started on the estimate beside the engine's rustc (~9 GB) was killed three times.
+    let peak_file = job.object.with_extension("peak");
+    let need = fs::read_to_string(&peak_file).ok().and_then(|peak| peak.trim().parse::<u64>().ok()).map_or(SHARD_MEMORY, |peak| peak + peak / 8);
+    let peak = AtomicU64::new(0);
     let run = || {
         let child = shard_command().args(&job.args).args(["-Z", "print-mono-items=yes"])
             .envs(job.envs.iter().map(|(name, path)| (*name, path))).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit()).spawn().expect("run rustc");
         let pid = child.id();
         yield_to_oom_killer(pid);
-        let output = child.wait_with_output().expect("run rustc");
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let output = thread::scope(|scope| {
+            scope.spawn(|| while !done.load(Ordering::Relaxed) {
+                peak.fetch_max(high_water(pid), Ordering::Relaxed);
+                thread::sleep(std::time::Duration::from_millis(200));
+            });
+            let output = child.wait_with_output().expect("run rustc");
+            done.store(true, Ordering::Relaxed);
+            output
+        });
         OOM_ORDER.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|running| *running != pid);
         output
     };
     let mut output = {
         let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _flight = wait_for_memory(SHARD_MEMORY);
+        let _flight = wait_for_memory(need);
         run()
     };
     // A killed shard runs again beside the others once the box has room for it twice over, rather than after every
-    // other shard: alone, it was the build's tail. Killed once more, it runs alone.
+    // other shard: alone, it was the build's tail. Killed once more, it runs alone, once the box has room for it
+    // beside whatever else is compiling (the runtime crates are not shards and do not wait).
     if killed(&output.status) {
         println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again");
         output = {
             let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _flight = wait_for_memory(2 * SHARD_MEMORY);
+            let _flight = wait_for_memory(2 * need);
             run()
         };
     }
     if killed(&output.status) {
         println!("cargo::warning=stencil shard {shard} was killed again; compiling it again alone");
         let _alone = MEMORY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        wait_for_free_memory(need.max(peak.load(Ordering::Relaxed)));
         output = run();
     }
     assert!(output.status.success(), "rustc failed on {SOURCE} (shard {shard}): {}", output.status);
+    let _ = fs::write(&peak_file, peak.load(Ordering::Relaxed).to_string());
     let ids = reach::mono_items(&String::from_utf8_lossy(&output.stdout));
     fs::write(job.reach_file(), ids.into_iter().map(|id| id + "\n").collect::<String>()).unwrap();
     if let Some(shared) = &shared {
@@ -696,14 +723,34 @@ impl Drop for Flight {
 /// workers were counted (`memory_workers`); a shard started into that is killed and compiled again alone,
 /// which costs its whole compile twice (2026-11-22: one in two hot edits on the 4-core, 15 GB box).
 fn wait_for_memory(need: u64) -> Flight {
-    let available = || fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
-        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()))
-        .map_or(u64::MAX, |kib| kib << 10);
-    while IN_FLIGHT.load(Ordering::SeqCst) > 0 && available() < need {
+    while IN_FLIGHT.load(Ordering::SeqCst) > 0 && available_memory() < need {
         thread::sleep(std::time::Duration::from_millis(500));
     }
     IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
     Flight
+}
+
+/// The box's available memory in bytes (`MemAvailable`), unbounded where unknown.
+fn available_memory() -> u64 {
+    fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()))
+        .map_or(u64::MAX, |kib| kib << 10)
+}
+
+/// Process `pid`'s peak resident set so far in bytes (`VmHWM`), 0 once it is gone.
+fn high_water(pid: u32) -> u64 {
+    fs::read_to_string(format!("/proc/{pid}/status")).ok().and_then(|status| status.lines()
+        .find_map(|line| line.strip_prefix("VmHWM:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()))
+        .map_or(0, |kib| kib << 10)
+}
+
+/// Waits, with no shard in flight, until the box's available memory is at least `need`, for at most ten minutes:
+/// the runtime crates compiling beside a shard rerun alone hold memory a shard cannot wait out by count.
+fn wait_for_free_memory(need: u64) {
+    let start = std::time::Instant::now();
+    while available_memory() < need && start.elapsed() < std::time::Duration::from_secs(600) {
+        thread::sleep(std::time::Duration::from_millis(500));
+    }
 }
 
 /// Held for reading by every shard compile, and for writing by the rerun of one the kernel killed.
