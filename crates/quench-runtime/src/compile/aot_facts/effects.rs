@@ -303,6 +303,7 @@ fn value_of(
             elements: Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain, holes },
             sites: Sites::Many,
             global: false,
+            prototype: false,
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -386,6 +387,7 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
         elements: Elements { ty: stored, classes: Classes::Never, length: Length::Any, view: View::Plain, holes },
         sites: Sites::Many,
         global: false,
+        prototype: false,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -409,6 +411,7 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
         },
         sites: Sites::Many,
         global: false,
+        prototype: false,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }

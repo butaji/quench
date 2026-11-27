@@ -14,6 +14,14 @@ use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Sites, Type
 /// stores into that field of `owner`'s class wrote (`Key::MemberOn`), else every store of the name's
 /// (`Key::Member`); any value in the passes that find call targets.
 pub(super) fn member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
+    let cell = stored_member_type(ctx, owner, atom);
+    // A `prototype` or `__proto__` read off a value that is no program closure may be a builtin's prototype object
+    // (`Cell::prototype`): a program closure's `prototype` is its own, never a builtin's.
+    if ctx.scope.is_prototype_name(atom) && !owner.is_some_and(|owner| owner.cell.ty.body_index().is_some()) { cell.maybe_prototype() } else { cell }
+}
+
+/// The type and class a read of field `atom` off `owner` takes from the solved stores (`member_type`).
+fn stored_member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
     let Some(types) = ctx.types else { return Cell::ANY };
     let named = types.cell(Key::Member(atom));
     // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its classes come with a later pass.
@@ -81,7 +89,7 @@ pub(super) fn prototype_base(base: Word) -> Option<PrototypeBase> {
 /// changes an array, an index store past the length, a `delete`.
 fn length_change(class: ElementClass) -> (Key, Word) {
     let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: true };
-    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown, sites: Sites::Never, global: false }))
+    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown, sites: Sites::Never, global: false, prototype: false }))
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
@@ -112,7 +120,7 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             // A store the previous round proved hole-free leaves no hole, as its index is within the filled prefix.
             let hole_free = ctx.hole_free_stores.contains(&(ctx.id, pc as u32));
             let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None, holes: !in_bounds && !hole_free };
-            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, sites: stored.cell.sites, global: stored.cell.global })));
+            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, sites: stored.cell.sites, global: stored.cell.global, prototype: stored.cell.prototype })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));
             events.wild_member |= !index.is_number();

@@ -290,7 +290,7 @@ impl Elements {
             _ => self.ty,
         };
         let ty = if self.holes || !in_bounds { ty.join(Type::language(ValueType::Undefined)) } else { ty };
-        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false }
+        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true }
     }
 }
 
@@ -306,23 +306,32 @@ pub struct Cell {
     /// Whether the value may be the global object. Not a lattice point of `ty` or `classes` (`Classes::Many` absorbs
     /// objects, so the global object cannot ride in them): a flag the closed world's verification reads (`aot_facts::gate`).
     pub global: bool,
+    /// Whether the value may be a builtin's prototype object (`Array.prototype`, `Object.prototype`, ...): a `.prototype` or
+    /// `__proto__` read off a value that is no program closure, a `getPrototypeOf` result, or a value from nowhere the solve
+    /// follows (`ANY`). A flag like `global`, joined by OR; the closed world's index-property fact reads it (`aot_facts::gate`).
+    pub prototype: bool,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false, prototype: false };
     /// Any value: the top.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false };
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true };
 
     /// A value of type `ty` from nowhere the solve follows: its classes and sites from the type alone.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
-        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false }
+        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false, prototype: false }
     }
 
     /// The cell with the global object among the values it may hold.
     pub const fn maybe_global(self) -> Self {
         Self { global: true, ..self }
+    }
+
+    /// The cell with a builtin's prototype object among the values it may hold (`prototype`).
+    pub const fn maybe_prototype(self) -> Self {
+        Self { prototype: true, ..self }
     }
 
     /// A value of type `ty` holding objects of `classes`.
@@ -342,6 +351,7 @@ impl Cell {
             elements: self.elements.join(other.elements),
             sites: self.sites.join(other.sites),
             global: self.global || other.global,
+            prototype: self.prototype || other.prototype,
         }
     }
 

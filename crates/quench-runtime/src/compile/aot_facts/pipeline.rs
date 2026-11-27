@@ -248,6 +248,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
         facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
+        facts.prototype_indices_absent = facts.index_accessors_absent && gate::prototype_writes_absent(&settled_flows);
         facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).

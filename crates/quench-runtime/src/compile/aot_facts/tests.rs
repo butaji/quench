@@ -902,3 +902,36 @@ fn a_store_whose_index_steps_by_two_covers_the_whole_array() {
     let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
     assert_eq!(store.indices, Indices::Whole, "a step of two leaves no span of the count");
 }
+
+/// The atom `name` interns to, in `program`.
+fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
+    program.atoms.iter().position(|atom| atom.as_ref() == name).expect("an atom of that name") as u32
+}
+
+#[test]
+fn a_store_of_a_name_a_define_property_may_make_non_writable_stays_observed() {
+    let program = program("function Proto() {} var p = new Proto(); p.x = 1; Object.defineProperty(Proto.prototype, 'x', {writable: false});");
+    let facts = analyze(&program);
+    assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, "x"))), "a defineProperty may make x non-writable, so a store of x fails rather than writes");
+}
+
+#[test]
+fn every_store_stays_observed_once_a_builtin_may_freeze_an_object() {
+    let program = program("var p = {}; p.x = 1; p.y = 2; Object.freeze(p);");
+    let facts = analyze(&program);
+    for name in ["x", "y"] {
+        assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, name))), "a frozen object rejects a store of {name}, so the store is observed");
+    }
+}
+
+#[test]
+fn a_store_into_a_builtin_prototype_makes_its_index_properties_non_empty() {
+    let program = program("var a = new Array(3); a[0] = 1; Array.prototype[0] = 1; a[1];");
+    assert!(!analyze(&program).prototype_indices_empty(), "Array.prototype gains an index property the frame array's holes would read");
+}
+
+#[test]
+fn a_program_with_no_store_into_a_builtin_prototype_keeps_its_index_properties_empty() {
+    let program = program("var a = new Array(3); a[0] = 1; a[1];");
+    assert!(analyze(&program).prototype_indices_empty(), "no builtin prototype gains an index property");
+}

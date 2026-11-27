@@ -22,8 +22,10 @@ const ARRAY_MUTATORS: [&str; 9] = ["push", "pop", "shift", "unshift", "splice", 
 /// `sort` is a mutator that calls its comparator, so it is not one.
 const ARRAY_BUILTINS: [&str; 12] = ["push", "pop", "shift", "unshift", "splice", "fill", "copyWithin", "reverse", "slice", "indexOf", "lastIndexOf", "includes"];
 /// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
-/// object, which the closed world must treat as changed (`shape::of_call`).
-const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
+/// object, which the closed world must treat as changed (`shape::of_call`). The descriptor builtins (`freeze`, `seal`,
+/// `preventExtensions`, `create`, `Proxy`) also make an object's stores fail or run a trap, so they are read by
+/// `Scope::changes_descriptors`.
+const PROPERTY_ADDERS: [&str; 9] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign", "freeze", "seal", "preventExtensions", "create", "Proxy"];
 /// The typed-array constructors whose kind has a native element (`TypedArrayKind::has_native_element`): a call of one
 /// allocates a typed array of that kind (`effects::typed_array_constructed`).
 const TYPED_ARRAY_CONSTRUCTORS: [(&str, TypedArrayKind); 9] = [
@@ -54,6 +56,10 @@ pub(super) struct Scope {
     pub(super) prototype: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
     pub(super) length: Option<u32>,
+    /// The atom `create` interns to, if the program names it: `Object.create(proto, descriptors)` defines properties with its second argument.
+    create: Option<u32>,
+    /// The atom `__proto__` interns to, if the program names it: a read of it is a builtin prototype (`Cell::prototype`).
+    proto: Option<u32>,
     /// The atom the intrinsic `Object.setPrototypeOf` class heritage calls is bound under, if the program names it
     /// (`accessors::heritage_link`).
     pub(super) set_prototype: Option<u32>,
@@ -115,6 +121,8 @@ impl Scope {
             this_passers: THIS_PASSERS.iter().filter_map(|name| atom_named(program, name)).collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
+            proto: program.atoms.iter().position(|name| name == "__proto__").map(|atom| atom as u32),
+            create: atom_named(program, "create"),
             set_prototype: atom_named(program, INTRINSIC_SET_PROTOTYPE_OF_BINDING),
             mutators: program
                 .atoms
@@ -210,6 +218,17 @@ impl Scope {
     /// (its code is strict, as a Module is).
     pub(super) fn root_this_is_global(&self) -> bool {
         !self.module
+    }
+
+    /// Whether `atom` names a prototype object's property a builtin reads as one: `prototype` or `__proto__` (`Cell::prototype`).
+    pub(super) fn is_prototype_name(&self, atom: u32) -> bool {
+        self.prototype == Some(atom) || self.proto == Some(atom)
+    }
+
+    /// Whether the builtin named `atom`, called with `arguments` arguments, may define a property of an object it is given, or make
+    /// one non-writable or non-extensible (`property_adders`). `Object.create` does so only with its second argument, the descriptors.
+    pub(super) fn changes_descriptors(&self, atom: u32, arguments: usize) -> bool {
+        self.adds_properties(atom) && (self.create != Some(atom) || arguments >= 2)
     }
 
     /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).

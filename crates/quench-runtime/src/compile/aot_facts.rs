@@ -105,6 +105,9 @@ pub struct AotFacts {
     /// Whether no index accessor can run for an element access (`gate::index_accessors_absent`): an element access then runs
     /// no guest code for a key that converts to none (`lengths::transfer::element_runs_guest_code`).
     pub(crate) index_accessors_absent: bool,
+    /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the closed
+    /// world (`AotFacts::prototype_indices_empty`): `index_accessors_absent` and no store writes an index of one.
+    pub(crate) prototype_indices_absent: bool,
     /// Whether the property `apply` of every function is `Function.prototype.apply` (`gate::apply_is_builtin`): the callee
     /// register of a `f.apply(this, arguments)` forwarding call then holds the builtin, which calls `f` with the caller's arguments.
     pub(crate) apply_builtin: bool,
@@ -158,6 +161,7 @@ impl AotFacts {
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
             index_accessors_absent: false,
+            prototype_indices_absent: false,
             apply_builtin: false,
             dependencies: BTreeMap::new(),
             element_views: BTreeMap::new(),
@@ -200,6 +204,13 @@ impl AotFacts {
     /// fact that a forwarding `f.apply(this, arguments)` call's callee is the builtin.
     pub fn apply_is_builtin(&self) -> bool {
         self.apply_builtin
+    }
+
+    /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the
+    /// closed world (`gate::prototype_writes_absent`, with `index_accessors_absent`). The JIT lane reads an unwritten element of
+    /// an array allocated in the frame as `undefined` only where this holds: an edge fact, never checked in execution.
+    pub fn prototype_indices_empty(&self) -> bool {
+        self.prototype_indices_absent
     }
 
     /// Whether no code can be added to the program (`World::Closed`): no key is live, so a unit that
