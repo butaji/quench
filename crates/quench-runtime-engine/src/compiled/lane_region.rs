@@ -2728,11 +2728,7 @@ impl Lowering<'_, '_> {
     /// (`FunctionFacts::may_resize_any`). An instruction the solve has no origin for may resize.
     pub(crate) fn may_resize(&self, unit_pc: usize) -> bool {
         let Some(facts) = self.vm.facts else { return true };
-        let (function, pc) = match self.unit.origins.get(unit_pc) {
-            Some(super::lane_unit::Origin::Caller(pc)) => (self.function_id, *pc),
-            Some(super::lane_unit::Origin::Inlined { frame, pc }) => (self.unit.frames[*frame].target.function, *pc),
-            None => return true,
-        };
+        let Some((function, pc)) = self.origin_pc(unit_pc) else { return true };
         facts.function_facts(function).may_resize_any(pc)
     }
 
@@ -3512,14 +3508,21 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
     }
 
+    /// The function and PC the unit instruction at `unit_pc` came from: the caller's own, or an inlined callee's
+    /// at its own PC (`Origin`). None where the instruction has no origin.
+    fn origin_pc(&self, unit_pc: usize) -> Option<(u32, u32)> {
+        match self.unit.origins.get(unit_pc)? {
+            super::lane_unit::Origin::Caller(pc) => Some((self.function_id, *pc)),
+            super::lane_unit::Origin::Inlined { frame, pc } => Some((self.unit.frames[*frame].target.function, *pc)),
+        }
+    }
+
     /// Whether the step at unit PC `pc` may allocate or run guest code, a safepoint that retires the fresh holders
-    /// (`LocalProofs::fresh`): the settled effect of the caller's own step (`FunctionFacts::may_allocate`), else the
-    /// operation's kind row, which is ANY for a store. An inlined callee's step takes the kind row.
+    /// (`LocalProofs::fresh`): the settled effect of its origin's step (`FunctionFacts::may_allocate`, the caller's
+    /// or an inlined callee's), else the operation's kind row, which is ANY for a store.
     fn safepoint_at(&self, pc: usize) -> bool {
-        let settled = match self.unit.origins.get(pc) {
-            Some(super::lane_unit::Origin::Caller(caller)) => self.vm.facts.map(|facts| facts.function_facts(self.function_id).may_allocate(*caller)),
-            _ => None,
-        };
+        let settled = self.vm.facts.zip(self.origin_pc(pc))
+            .map(|(facts, (function, at))| facts.function_facts(function).may_allocate(at));
         settled.unwrap_or_else(|| crate::compiled::performed(self.unit.instructions[pc])
             .map_or(true, |operation| { let effects = operation.effects(); effects.may_alloc || effects.may_call_js }))
     }
@@ -3549,17 +3552,21 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Whether the store `operation` writes into a fresh holder (`store_step`): the holder's resolved word is one this unit
-    /// allocated with no safepoint since (`LocalProofs::fresh`).
+    /// Whether the store `operation` writes into a fresh holder (`Emit::fresh`): a named field or an element store
+    /// whose holder is fresh (`holder_fresh`).
     fn store_into_fresh(&mut self, state: &mut State, operation: &quench_runtime::staged::Operation<ir::Value, EmitProof>) -> bool {
         let owner = match operation {
             quench_runtime::staged::Operation::SetField { base, .. } | quench_runtime::staged::Operation::StoreField { base, .. } => *base,
+            quench_runtime::staged::Operation::ElementWrite { base, .. } => Some(*base),
             _ => return false,
         };
-        match self.owner_word(state, owner) {
-            Some(word) => state.proofs.fresh.contains(&word),
-            None => false,
-        }
+        self.holder_fresh(state, owner)
+    }
+
+    /// Whether the holder `owner` names (a register's, or fixed `this`'s) is one this unit allocated with no safepoint
+    /// since: its resolved word is in `LocalProofs::fresh`, so a store into it needs no barrier log.
+    fn holder_fresh(&mut self, state: &mut State, owner: Option<Register>) -> bool {
+        self.owner_word(state, owner).is_some_and(|word| state.proofs.fresh.contains(&word))
     }
 
     /// After a helper that may also have changed any object's shape or storage (a
@@ -3643,7 +3650,7 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let fresh = access.as_ref().is_some_and(|(_, held)| held.fresh);
+        let fresh = self.store_into_fresh(state, &operation);
         let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload), facts: Default::default(), fresh };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held, property,
@@ -4909,7 +4916,9 @@ impl Lowering<'_, '_> {
         self.builder.set_cold_block(slow);
         self.builder.set_cold_block(helper);
         if !number {
+            let fresh = self.holder_fresh(state, Some(instruction.register_b()));
             let mut stage = super::object_slots::emit(&mut self.builder);
+            stage.fresh = fresh;
             frame_elements::store_gate(&mut stage, self.payload, base, value, helper)
                 .expect("the emit stage continues past its guards");
         }
@@ -5313,8 +5322,7 @@ impl Lowering<'_, '_> {
     fn store_step(&mut self, state: &mut State, operation: quench_runtime::staged::Operation<ir::Value, EmitProof>,
         (plan, held): (StorePlan, HeldRead), exit: ir::Block) -> Option<()> {
         let plans = LanePlans { store: Some(plan), ..LanePlans::NONE };
-        let fresh = self.store_into_fresh(state, &operation);
-        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, HeldRead { fresh, ..held })) {
+        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
             quench_runtime::staged::Step::Value(_) => Some(()),
             _ => None,
         }
