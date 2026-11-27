@@ -456,7 +456,7 @@ pub(crate) fn activation_form(target: &ScriptCallTarget, argc: u16) -> Option<Ca
 
 /// The `this` a callee's body is entered with: the deleted marker where it reads a lexical one.
 #[inline]
-fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
+pub(super) fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
     Value::from_bits(quench_runtime::staged::call_body::concrete_body_this(this.to_bits(), target.this_binding == ThisBinding::Lexical))
 }
 

@@ -1383,6 +1383,40 @@ pub(super) fn enter_cell_body_in_lane(
     Some(cell_body_ended_in_lane(cx, window, own, target.function, method, vm.run_lane_body(&run)))
 }
 
+/// A frameless call of `target` (`CallEntry::frameless(Frameless::Native)`), passed the `argc` values at `passed`
+/// (the call's argument window), whose body's compiled entry runs with no activation and no frame. The window is
+/// the lane stack's top, filled from the arguments (`fill_window_in_lane`): the caller's registers past its call
+/// window are not known dead (liveness reads the window alone), so the body may not write through them. The body
+/// is entered as `enter_cell_body_in_lane` enters one, minus the activation: a frameless callee leaves nothing, so
+/// nothing observes the window and the stack's top is restored at its return. Arguments past the parameters are
+/// dropped, which a frameless body observes nowhere (an `arguments` object or rest array allocates).
+/// `None`, which changes nothing, where the cell holds no body (it retired since the target resolved), the lane has
+/// no room, or a `with` scope is entered: the call then takes its general form.
+#[inline(never)]
+pub(super) fn native_call_in_lane(cx: *mut LaneContext, target: &ScriptCallTarget, passed: *const Value, argc: u16, this: Value) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let own = unsafe { &*target.view };
+    let method = own.cell_method()?;
+    if vm.with_scope_entered || !activation_room_in_lane(vm, target) || !body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS) {
+        return None;
+    }
+    let window = fill_window_in_lane(vm, target, passed, argc.min(target.params));
+    let receiver = if own.binds_this() { body_calls::body_this_in_lane(target, this) } else { Value::DELETED };
+    let run = crate::compiled::BodyRun {
+        method, direct_calls: direct_calls_in_lane(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
+        registers: window.0, receiver, captures: capture_reads(target.capture), lane_context: cx.cast(),
+        pending: NO_PENDING_ACTIVATIONS, bases_stand: false };
+    let exit = vm.run_lane_body(&run);
+    // SAFETY: the window is the stack's top the fill moved; a returned call leaves the stack as it found it.
+    unsafe { vm.lane_stack.values.set_top(window.0) };
+    record_end_in_lane(cx, own, method, exit);
+    match exit {
+        crate::compiled::LaneExit::Returned { value, .. } => Some(value),
+        _ => unreachable!("a frameless body leaves nothing: its call form's leaves are Never"),
+    }
+}
+
 /// Makes the call of `target` the context's running leaf (`CONTEXT_LEAF`), which holds what its
 /// activation would (`materialize_leaf_in_lane`): the callee's receiver, environment, captures,
 /// registers and records are the context's, the caller's are the leaf's; the entry is counted.

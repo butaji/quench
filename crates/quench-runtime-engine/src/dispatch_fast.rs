@@ -4947,7 +4947,10 @@ impl Vm {
             let constructs = Self::inline_constructible(body);
             // A class constructor's calls throw on the general path, so they take a
             // frame; only its constructions activate frameless (`script_construct_miss`).
-            let entry = body_entry(body, &code.constants, frameless);
+            // A frameless form whose cell holds a body that calls only natively enters it as `Frameless::Native`.
+            // SAFETY: as above; the cell's body is pinned by the view while it is published.
+            let native = frameless && unsafe { &*view }.cell_method().is_some_and(|method| method.calls_only_natively());
+            let entry = body_entry(body, &code.constants, frameless, native);
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::framed(Framed::Activates) && !environment));
             TargetBody {
@@ -5398,7 +5401,17 @@ script_handler! {
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         // Past the forwards, settling, frame and environment tests above, `activation_form` holds
         // exactly when the entry activates (its plain or keeping form), so this is the same test.
-        let value = if body_calls::activation_form(target, argc).is_some()
+        // A frameless native target runs its entry with no activation (`native_call_in_lane`); where that declines,
+        // the call takes the general form below, which activates it as its records.
+        let value = if target.entry == CallEntry::frameless(Frameless::Native) {
+            if returns && !returning_call_admitted(cx) {
+                None
+            } else {
+                // SAFETY: the call's window of `r` holds its `argc` values.
+                let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+                native_call_in_lane(cx, target, passed, argc, this)
+            }
+        } else if body_calls::activation_form(target, argc).is_some()
             || returns && !returning_call_admitted(cx)
         {
             None

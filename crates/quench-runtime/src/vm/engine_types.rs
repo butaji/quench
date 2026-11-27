@@ -4048,6 +4048,11 @@ pub enum Frameless {
     /// A proven conditional append to a captured binding, completed without activation
     /// (`capture_append::run`).
     AppendsCapture,
+    /// A body with admitted native code, whose call runs that code's entry on a window at the lane
+    /// stack's top with no activation and no frame (`native_call_in_lane`). The callee's leaves are
+    /// `Never`, so nothing observes the window. Chosen where the target resolves, while the body is
+    /// published; a body retired since falls back to the general form.
+    Native,
 }
 
 /// The shape of a `CallForm::Framed` entry: which activation layout a call makes.

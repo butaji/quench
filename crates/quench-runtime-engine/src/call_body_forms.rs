@@ -21,8 +21,10 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
 /// with none takes `Framed::Activates` here, and `target_entry` makes it `CallEntry::leaf` where `leaf_body`
 /// proves it a leaf; where it proves none, the call keeps a frame although the signature is frameless, since
 /// no frameless shape runs such a body. A class constructor's calls throw on the general path, so they take a
-/// frame; only its constructions activate frameless (`script_construct_miss`).
-pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant], frameless: bool) -> CallEntry {
+/// frame; only its constructions activate frameless (`script_construct_miss`). A frameless form whose body
+/// answers none of those takes `Frameless::Native` where `native` (the body is published with native code
+/// that calls only natively), before `Framed::Activates`.
+pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant], frameless: bool, native: bool) -> CallEntry {
     if body.is_class_constructor {
         CallEntry::framed(Framed::Frame)
     } else if !frameless {
@@ -39,6 +41,8 @@ pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode:
         CallEntry::frameless(Frameless::ReadsThis)
     } else if super::capture_append::recognizes(body, constants) {
         CallEntry::frameless(Frameless::AppendsCapture)
+    } else if native {
+        CallEntry::frameless(Frameless::Native)
     } else {
         CallEntry::framed(Framed::Activates)
     }
