@@ -277,6 +277,8 @@ pub struct SymbolicField {
     pub hole: u32,
     pub offset: usize,
     pub class: u8,
+    /// The relocation's addend: a PC-relative field (`REL32`) is the symbol's address plus it, less the field's.
+    pub addend: i64,
 }
 
 /// The value fields of `rows` whose hole `symbolic` names, at the offsets `copy_patch` places them: a
@@ -289,7 +291,7 @@ pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> V
         // A successor class may still name a *value* hole: the Apple AArch64 helper site is a
         // branch the image links (`Reloc::Arm64Call`), so its class does not decide.
         for r in relocs.filter(|r| layout.kept(rows, k, r.offset as usize) && symbolic(k, r.index)) {
-            fields.push(SymbolicField { row: k, hole: r.index, offset: layout.address(rows, k, r.offset as usize), class: r.class });
+            fields.push(SymbolicField { row: k, hole: r.index, offset: layout.address(rows, k, r.offset as usize), class: r.class, addend: r.addend });
         }
     }
     fields
