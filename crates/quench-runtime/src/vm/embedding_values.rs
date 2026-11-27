@@ -49,7 +49,7 @@ impl Vm {
             Some(Cell::ArrayBuffer { shared, bytes, detached, .. }) => (*shared, *detached, bytes.is_wasm_view()),
             _ => return Detach::NotArrayBuffer,
         };
-        let keyed = self.heap.object(value).is_some_and(|object| object.record().is_structured_transfer_forbidden()); // record-only: detach key
+        let keyed = self.heap.object(value).is_some_and(|object| object.record_only().is_some_and(|record| record.is_structured_transfer_forbidden())); // record-only: detach key
         if shared {
             return Detach::NotArrayBuffer;
         }

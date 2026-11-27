@@ -1707,7 +1707,7 @@ impl Vm {
     pub(super) fn json_is_raw_json(&self, args: &[Value]) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         // record-only: raw JSON flag
-        let is_raw = self.heap.object(value).is_some_and(|object| object.record().is_raw_json());
+        let is_raw = self.heap.object(value).is_some_and(|object| object.record_only().is_some_and(|record| record.is_raw_json()));
         Ok(if is_raw { Value::TRUE } else { Value::FALSE })
     }
 
@@ -2172,7 +2172,7 @@ impl Vm {
     }
 
     fn json_raw_text(&self, value: Value) -> Option<String> {
-        if !self.heap.object(value).is_some_and(|object| object.record().is_raw_json()) { // record-only: raw JSON flag
+        if !self.heap.object(value).is_some_and(|object| object.record_only().is_some_and(|record| record.is_raw_json())) { // record-only: raw JSON flag
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;

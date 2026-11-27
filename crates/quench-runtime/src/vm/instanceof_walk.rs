@@ -16,7 +16,7 @@ impl Vm {
             return Some(holds);
         }
         let mut object = match value.direct_object_index() {
-            Some(record) => self.heap.object_record_by_id(self.heap.record_id(record)),
+            Some(_) => self.heap.object_record(value)?,
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
             // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
             None => self.ordinary_link_holder(value)?,

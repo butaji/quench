@@ -294,7 +294,7 @@ impl Vm {
         let mut current = base;
         loop {
             // record-only: indexed descriptors and boxed state
-            let data = self.heap.object(current)?.record();
+            let data = self.heap.object(current)?.record_only()?;
             if data.has_indexed_descriptors()
                 || data.is_arguments_object()
                 || data.boxed_primitive().is_some()

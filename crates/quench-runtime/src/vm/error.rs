@@ -326,7 +326,7 @@ impl Vm {
         receiver: Value,
     ) -> Result<Value, JsError> {
         // record-only: stack data
-        let records = match self.heap.object(receiver).and_then(|object| object.record().stack_data()) {
+        let records = match self.heap.object(receiver).and_then(|object| object.record_only().and_then(|record| record.stack_data())) {
             Some(StackData::Formatted(value)) => return Ok(value.clone()),
             Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
@@ -854,7 +854,7 @@ impl Vm {
         receiver: Value,
     ) -> Result<Value, JsError> {
         // record-only: stack data
-        let record = match self.heap.object(receiver).and_then(|object| object.record().stack_data()) {
+        let record = match self.heap.object(receiver).and_then(|object| object.record_only().and_then(|record| record.stack_data())) {
             Some(StackData::CallSite(record)) => record.clone(),
             _ => {
                 let method = CALL_SITE_METHODS
@@ -947,7 +947,7 @@ impl Vm {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(mut object) = self.heap.object_mut(receiver)
             && matches!(
-                object.record().stack_data(),
+                object.record_only().and_then(|record| record.stack_data()),
                 Some(StackData::Captured { .. } | StackData::Formatted(_))
             ) {
                 object.record_mut_departing().set_stack_data(StackData::Formatted(value));

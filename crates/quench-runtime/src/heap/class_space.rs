@@ -365,6 +365,16 @@ impl ClassSpace {
         unsafe { cell_fields_at(self.base, g) }
     }
 
+    /// Granule `g`'s cell as an exclusive view: its header word and its fields (`region_capacity(g)` values).
+    /// The space must be reserved.
+    pub(super) fn cell_mut(&mut self, g: u32) -> (&mut u64, &mut [Value]) {
+        debug_assert!(self.range.is_some());
+        let cell = self.cell_ptr(g);
+        // SAFETY: `g` names a cell of this reserved space; its header and its fields are disjoint words of it,
+        // and `&mut self` is exclusive.
+        unsafe { (&mut *cell, std::slice::from_raw_parts_mut(cell.cast::<Value>().add(1), region_capacity(g) as usize)) }
+    }
+
     /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region
     /// 0) has no mark of its own, so there this does nothing and its record is marked instead. A departed cell
     /// in a cell region is marked with its Value: its granule stays live while the Value does.

@@ -189,7 +189,7 @@ impl Vm {
             }
             _ => return GlobalRead::Dynamic,
         };
-        let Some(table) = self.heap.object_mut(globals).map(|mut o| o.record().global_values_table()) else {
+        let Some(table) = self.heap.object_record_mut(globals).map(|o| o.global_values_table()) else {
             return GlobalRead::Dynamic;
         };
         // A function's identity lets a call through the read skip its callee check.
@@ -217,7 +217,7 @@ impl Vm {
         let globals = self.realm.globals;
         if !self.global_name_hintable(atom) { return None; }
         let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
-        let table = self.heap.object_mut(globals).map(|mut o| o.record().global_values_table())?;
+        let table = self.heap.object_record_mut(globals).map(|o| o.global_values_table())?;
         let cell = GlobalCell::Slot(u32::from(hint.slot));
         // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
         while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
@@ -227,7 +227,7 @@ impl Vm {
         let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));
         let dependency = (ty != Type::ANY && ty != Type::NEVER)
             .then_some(SlotDependency { shape: hint.receiver, slot: hint.slot, ty });
-        let record = self.heap.record_id(globals.direct_object_index()?);
+        let record = self.heap.record_id(globals.direct_object_index()?)?;
         Some(GlobalSlot { slot: hint.slot, storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
             layout: crate::heap::global_layout_fact(table)?, global: globals, record,
             realm_offset: Self::realm_globals_offset() })
@@ -239,7 +239,7 @@ impl Vm {
     pub fn global_lexical_slot(&mut self, atom: Atom, store: bool) -> Option<LexicalSlot> {
         let globals = self.realm.globals;
         let index = self.realm.global_lexical_declarations.contains(&atom).then(|| self.realm.global_lexical_bindings.get_index_of(&atom)).flatten()?;
-        let table = self.heap.object_mut(globals).map(|mut o| o.record().global_values_table())?;
+        let table = self.heap.object_record_mut(globals).map(|o| o.global_values_table())?;
         let held = crate::heap::global_value_fact(table, GlobalCell::Binding(u32::try_from(index).ok()?)).is_some();
         if store && (held || self.realm.immutable_global_lexical_bindings.contains(&atom)) {
             return None;
@@ -252,7 +252,7 @@ impl Vm {
     /// the VM makes holds the cell, so the write that makes it `Mutable` retires the code that stores through the VM.
     pub fn held_lexical(&mut self, atom: Atom) -> Option<GlobalFact> {
         let index = self.realm.global_lexical_declarations.contains(&atom).then(|| self.realm.global_lexical_bindings.get_index_of(&atom)).flatten()?;
-        let table = self.heap.object_mut(self.realm.globals).map(|mut o| o.record().global_values_table())?;
+        let table = self.heap.object_record_mut(self.realm.globals).map(|o| o.global_values_table())?;
         crate::heap::global_value_fact(table, GlobalCell::Binding(u32::try_from(index).ok()?))
     }
 
@@ -321,7 +321,7 @@ impl Vm {
 
     /// The table of the values code read from the active realm's global object, if any.
     fn active_global_values(&self) -> Option<u32> {
-        self.heap.object(self.realm.globals).and_then(|o| o.record().global_values())
+        self.heap.object(self.realm.globals).and_then(|o| o.record_only().and_then(|record| record.global_values()))
     }
 
     /// A compiled Script's global declaration instantiation: its lexical names may not

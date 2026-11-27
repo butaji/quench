@@ -149,7 +149,7 @@ impl Vm {
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         // record-only: module bindings are record state
-        let (program, slot) = self.heap.object(object)?.record().module_binding(atom)?;
+        let (program, slot) = self.heap.object(object)?.record_only()?.module_binding(atom)?;
         if let Some(value) =
             self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot))
         {
@@ -493,7 +493,7 @@ impl Vm {
                 return Some(data);
             }
             if self.heap.array(object).is_some() {
-                return self.heap.object(object).map(|o| o.record());
+                return self.heap.object(object).and_then(|o| o.record_only());
             }
         }
         if !matches!(key, PropertyKey::Symbol(_))
@@ -502,7 +502,7 @@ impl Vm {
         {
             return None;
         }
-        self.heap.object(object).map(|o| o.record())
+        self.heap.object(object).and_then(|o| o.record_only())
     }
 
     /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
@@ -510,7 +510,7 @@ impl Vm {
     /// the key is none of its exotic ones.
     #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
         self.proved_read_receiver(object, key)
-            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object).map(|o| o.record())).flatten())
+            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object).and_then(|o| o.record_only())).flatten())
     }
 
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
@@ -683,7 +683,7 @@ impl Vm {
         let Some(subjects) = self.heap.chain_subjects(prototype, depth) else { return false };
         // A holder up the chain that is an object record: its id, plus one; any other holder
         // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
-        let holder = if depth > 0 { holder.direct_object_index().map_or(0, |r| self.heap.record_id(r) + 1) } else { 0 };
+        let holder = if depth > 0 { holder.direct_object_index().and_then(|r| self.heap.record_id(r)).map_or(0, |id| id + 1) } else { 0 };
         match self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
             Some(entry) => {
                 self.hold_fact(entry, &subjects);
@@ -769,7 +769,7 @@ impl Vm {
         };
         if kind != KIND_GETTER {
             // An own accessor's holder is each receiver itself, never the one recorded.
-            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().map_or(0, |r| self.heap.record_id(r) + 1) };
+            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().and_then(|r| self.heap.record_id(r)).map_or(0, |id| id + 1) };
             self.symbol_load_proofs.record_accessor(layout, key32, depth, slot, kind, holder_id);
         }
     }
@@ -1160,7 +1160,7 @@ impl Vm {
 
     pub fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
         // record: private_element_addable takes the record
-        let Some(addable) = self.heap.object(target).map(|object| self.private_element_addable(object.record())) else {
+        let Some(addable) = self.heap.object(target).and_then(|object| object.record_only().map(|record| self.private_element_addable(record))) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
         if !addable {
@@ -1180,7 +1180,7 @@ impl Vm {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
             // record: private_element_addable takes the record
-            let Some((addable, branded)) = self.heap.object(object).map(|data| (self.private_element_addable(data.record()), self.has_private_name(object, brand))) else {
+            let Some((addable, branded)) = self.heap.object(object).and_then(|data| data.record_only().map(|record| (self.private_element_addable(record), self.has_private_name(object, brand)))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {

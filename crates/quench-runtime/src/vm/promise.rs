@@ -1718,7 +1718,7 @@ impl Vm {
         // The deferred module is record data.
         let Some(module) = self
             .heap.object(namespace)
-            .and_then(|object| object.record().deferred_module().cloned())
+            .and_then(|object| object.record_only().and_then(|record| record.deferred_module().cloned()))
         else {
             return Ok(namespace);
         };
@@ -1787,7 +1787,7 @@ impl Vm {
         // Only a deferred namespace can evaluate; most objects are rejected before the key.
         if !self
             .heap.object(namespace)
-            .is_some_and(|object| object.record().deferred_module().is_some())
+            .is_some_and(|object| object.record_only().is_some_and(|record| record.deferred_module().is_some()))
         {
             return Ok(());
         }
@@ -1857,7 +1857,7 @@ impl Vm {
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
         // The record is copied whole: its bindings and deferred module are record data.
-        let Some(source) = self.heap.object(source).map(|object| object.record().clone()) else {
+        let Some(source) = self.heap.object(source).and_then(|object| object.record_only().cloned()) else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
         if self.heap.copy_property_storage(&source, target)
@@ -2312,7 +2312,7 @@ impl Vm {
                     let atom = self.intern_atom(name);
                     self.heap.object(namespace)
                         // Module bindings are record data.
-                        .and_then(|object| object.record().module_binding(atom))
+                        .and_then(|object| object.record_only().and_then(|record| record.module_binding(atom)))
                 }
                 _ => None,
             };
@@ -3360,7 +3360,7 @@ impl Vm {
         let bindings = self
             .heap.object(namespace)
             // Module bindings are record data.
-            .map(|object| object.record().module_bindings().to_vec())
+            .and_then(|object| object.record_only().map(|record| record.module_bindings().to_vec()))
             .unwrap_or_default();
         for (atom, program, slot) in bindings {
             let Some(environment) = self.programs.module_environment(program) else {
@@ -4510,7 +4510,7 @@ impl Vm {
 
     fn cached_static_exports(&self, namespace: Value) -> Option<Vec<(String, StaticModuleValue)>> {
         // The module bindings are record data.
-        let object = self.heap.object(namespace)?.record();
+        let object = self.heap.object(namespace)?.record_only()?;
         let bindings = object
             .module_bindings()
             .iter()
@@ -4812,7 +4812,7 @@ impl Vm {
         }
         self.heap.mark_prototype(prototype);
         let Some(holder) = self.heap.object(prototype) else { return };
-        if holder.record().has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
+        if holder.record_only().is_some_and(|record| record.has_side_descriptors()) || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
             return;
         }
         if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {

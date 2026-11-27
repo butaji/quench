@@ -46,7 +46,7 @@ impl Vm {
             return Vec::new();
         };
         // `ordered_shape` reads the record's shape order.
-        self.ordered_shape(data.record())
+        self.ordered_shape(data.record_only()?)
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get_ref(data, *slot).is_some()
@@ -65,7 +65,7 @@ impl Vm {
             return Vec::new();
         };
         // `ordered_shape` reads the record's shape order.
-        self.ordered_shape(data.record())
+        self.ordered_shape(data.record_only()?)
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get_ref(data, *slot).is_some()
@@ -448,14 +448,14 @@ impl Vm {
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
         // The target's record is one lookup for every key of the loop.
-        let target_object = self.heap.object(target).map(|object| object.record());
+        let target_object = self.heap.object(target).and_then(|object| object.record_only());
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
             }
             let slot = *slot as usize;
             // Slot attributes are record data.
-            if self.slot_attributes(data.record(), slot).is_none_or(|attributes| attributes.accessor) {
+            if data.record_only().and_then(|record| self.slot_attributes(record, slot)).is_none_or(|attributes| attributes.accessor) {
                 return false;
             }
             let Some(value) = self.heap.property_get_ref(data, slot) else {
@@ -588,7 +588,7 @@ impl Vm {
         let data = self.heap.object(object)?;
         let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
         // Slot values are record data.
-        self.slot_data_value(data.record(), slot)
+        data.record_only().and_then(|record| self.slot_data_value(record, slot))
     }
 
     pub fn set_symbol_property(
@@ -617,7 +617,7 @@ impl Vm {
         let (shape, proto) = (data.shape(), data.proto());
         if let Some(slot) = self.property_shape_slot(shape, symbol) {
             // Slot attributes are record data.
-            let attributes = self.slot_attributes(data.record(), slot)?;
+            let attributes = data.record_only().and_then(|record| self.slot_attributes(record, slot))?;
             if attributes.accessor {
                 return None;
             }

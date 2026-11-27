@@ -66,7 +66,7 @@ impl Vm {
 
     fn mapped_argument_index(&self, arguments: Value, slot: usize) -> Option<usize> {
         self.heap.object(arguments)
-            .and_then(|object| object.record().arguments_map()) // record-only: argument mapping
+            .and_then(|object| object.record_only().and_then(|record| record.arguments_map())) // record-only: argument mapping
             .and_then(|mapping| {
                 mapping
                     .iter()
@@ -84,7 +84,7 @@ impl Vm {
     pub(super) fn sync_mapped_argument(&mut self, object: Value, index: usize, value: Value) {
         let slot = self
             .heap.object(object)
-            .and_then(|object| object.record().mapped_argument_slot(index)); // record-only: argument mapping
+            .and_then(|object| object.record_only().and_then(|record| record.mapped_argument_slot(index))); // record-only: argument mapping
         self.sync_mapped_argument_slot(object, slot, value);
     }
 

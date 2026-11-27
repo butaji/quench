@@ -27,7 +27,7 @@ fn locate(heap: &Heap, value: Value) -> Option<(RecordSpaceId, RecordId)> {
     if !value.is_heap() || live_cell(heap, value).is_some() {
         None
     } else if let Some(object) = value.direct_object_index() {
-        Some((RecordSpaceId::Object, heap.record_id(object)))
+        Some((RecordSpaceId::Object, heap.stub_record(object.granule())))
     } else if let Some(id) = value.direct_array_index() {
         Some((RecordSpaceId::Array, id))
     } else if let Some(id) = value.direct_function_index() {

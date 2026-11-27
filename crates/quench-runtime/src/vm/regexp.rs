@@ -1534,7 +1534,7 @@ impl Vm {
         let prototype = self.heap.object(intrinsics.prototype)?;
         let exec_slot = self.property_shape_slot(prototype.shape(), exec)?;
         // The slot's attributes are record data.
-        if self.slot_attributes(prototype.record(), exec_slot)?.accessor {
+        if prototype.record_only().and_then(|record| self.slot_attributes(record, exec_slot))?.accessor {
             return None;
         }
         // Allocating a RegExp marks its prototype, so the proof is recorded from the first; an

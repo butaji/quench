@@ -92,7 +92,7 @@ impl Vm {
         let holds = if getter {
             !self.shape_is_dictionary(data.shape()) && self.shape_slot_attributes(data.shape(), slot).is_some_and(ShapeAttributes::slot_getter)
         } else {
-            !self.slot_attributes(data.record(), slot)?.accessor
+            !data.record_only().and_then(|record| self.slot_attributes(record, slot))?.accessor
         };
         if !holds {
             return None;

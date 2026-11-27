@@ -165,7 +165,7 @@ impl Heap {
         for prototype in prototypes {
             let watch = self.dependencies.watch();
             let subject = watch.subject().expect("a new watch names its subject");
-            self.prototype_object_mut(prototype).expect("a restored prototype").record().watch_as(watch);
+            self.prototype_object_mut(prototype).expect("a restored prototype").watch_as(watch);
             known.push((prototype, subject));
         }
         self.prototypes = known;

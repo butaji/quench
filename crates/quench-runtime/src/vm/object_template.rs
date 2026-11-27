@@ -104,7 +104,7 @@ impl Vm {
             let data = self.heap.object(template)?;
             let shape = data.shape();
             let slot = self.property_shape_slot(shape, key)?;
-            if self.shape_may_have_accessors(shape) && self.slot_attributes(data.record(), slot)?.accessor {
+            if self.shape_may_have_accessors(shape) && data.record_only().and_then(|record| self.slot_attributes(record, slot))?.accessor {
                 return None;
             }
             slots.push(u32::try_from(slot).ok()?);
@@ -320,7 +320,7 @@ impl Vm {
     fn template_layout_object(&self, value: Value) -> Option<&crate::heap::Object> {
         match self.heap.function(value) {
             Some(function) => Some(&function.object),
-            None => self.heap.object(value).map(|o| o.record()),
+            None => self.heap.object(value).and_then(|o| o.record_only()),
         }
     }
 
@@ -332,7 +332,7 @@ impl Vm {
             && self.heap.object(value).is_some_and(|object| {
                 object.is_extensible()
                     && !object.was_used_as_prototype()
-                    && !object.record().has_side_descriptors()
+                    && object.record_only().is_none_or(|record| !record.has_side_descriptors())
                     && !object.is_module_namespace()
             })
     }

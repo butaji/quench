@@ -1374,7 +1374,9 @@ impl Heap {
         // takes the recent entry when its run is still wide: no exclusive access, which
         // widens and barriers.
         if self.object(prototype).is_some_and(|object| {
-            object.was_used_as_prototype() && object.watched_subject().is_some() && !object.record().properties().is_narrow()
+            object.was_used_as_prototype()
+                && object.watched_subject().is_some()
+                && object.record_only().is_some_and(|record| !record.properties().is_narrow())
         }) {
             self.marked_prototypes.rotate_right(1);
             self.marked_prototypes[0] = Some(prototype);
@@ -1387,10 +1389,10 @@ impl Heap {
         // prototypes watch nothing) takes one, which its extras keep.
         let watch = unwatched.then(|| self.dependencies.watch());
         let subject = watch.as_ref().and_then(dependencies::Watch::subject);
-        let mut object = self.prototype_object_mut(prototype).expect("the prototype just read");
+        let object = self.prototype_object_mut(prototype).expect("the prototype just read");
         object.mark_as_prototype();
         if let Some(watch) = watch {
-            object.record().watch_as(watch);
+            object.watch_as(watch);
         }
         if let Some(subject) = subject {
             self.prototypes.push((prototype, subject));
@@ -1399,20 +1401,22 @@ impl Heap {
         self.marked_prototypes[0] = Some(prototype);
     }
 
-    /// The object `mark_prototype` marks: a record's, or a cell's.
+    /// The record `mark_prototype` marks. A prototype takes extras (`Object::mark_as_prototype`), so a live
+    /// class cell departs first and its record is the object.
     #[inline]
-    fn prototype_object_mut(&mut self, prototype: Value) -> Option<ObjectMut<'_>> {
-        // A flag, not an edge: no write barrier for record prototypes.
+    fn prototype_object_mut(&mut self, prototype: Value) -> Option<&mut Object> {
+        self.depart_for_mutation(prototype);
         match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             Some(object_ref) => {
-                let record_id = self.record_id(object_ref);
-                let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+                let record_id = self.record_id(object_ref)?;
+                // A flag, not an edge: no write barrier for record prototypes.
+                let object: &mut Object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
                 // A prototype takes extras (`Object::mark_as_prototype`), which hold wide runs.
                 access::widen_narrow_run(object, &mut self.properties);
-                Some(ObjectMut::Record(object))
+                Some(object)
             }
-            None => self.object_mut(prototype),
+            None => self.object_mut(prototype)?.record_only_mut(),
         }
     }
 
@@ -1430,8 +1434,8 @@ impl Heap {
 
     /// Retires the proofs that read `array`'s elements, when it is a watched prototype.
     fn note_prototype_elements(&self, array: Value) {
-        if let Some(object) = self.object(array) {
-            object.record().note_prototype_elements_change();
+        if let Some(record) = self.object(array).and_then(|object| object.record_only()) {
+            record.note_prototype_elements_change();
         }
     }
 
@@ -1815,7 +1819,10 @@ impl Heap {
         let Some(object_ref) = object.direct_object_index() else {
             return self.property_set(object, slot, value);
         };
-        let record_id = self.record_id(object_ref);
+        // A live class cell has no inline record to fill: the generic store takes it.
+        let Some(record_id) = self.record_id(object_ref) else {
+            return self.property_set(object, slot, value);
+        };
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
@@ -2233,8 +2240,8 @@ impl Heap {
         self.settle_widened();
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
-            let (mut object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
-            object.record().replace_property_storage(properties, inline_properties, arena)
+            let (object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
+            object.replace_property_storage(properties, inline_properties, arena)
         };
         self.properties.release(previous);
         #[cfg(feature = "profile-memory")]
@@ -2767,7 +2774,8 @@ impl Heap {
                 // declared in a hot function leaves one dead prototype per call.
                 match prototype.direct_object_index() {
                     Some(object_ref) => {
-                        let record_id = self.record_id(object_ref);
+                        // A prototype departed its cell on first use, so its stub names its record.
+                        let record_id = self.stub_record(object_ref.granule());
                         // Its stub is withheld with its record: the granule names no other object either.
                         self.class_space.withhold_stub(object_ref.granule());
                         withheld = self.object_records.withhold(record_id);
@@ -4051,7 +4059,7 @@ impl Heap {
             // Marking a direct object marks its record: the stub has no mark bit of its own. A departed cell
             // keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`, a no-op for a stub).
             self.class_space.mark_cell(object_ref.granule());
-            let record_id = self.record_id(object_ref);
+            let record_id = self.stub_record(object_ref.granule());
             if !self.object_records.mark(record_id) {
                 return;
             }
@@ -4512,8 +4520,8 @@ impl Heap {
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         self.note_prototype_elements(array);
         self.write_barrier(array);
-        if let Some(mut object) = self.object_mut(array) {
-            object.record().mark_sparse_elements();
+        if let Some(record) = self.object_record_mut(array) {
+            record.mark_sparse_elements();
         }
         let arrays = self
             .sparse_arrays
@@ -4550,8 +4558,8 @@ impl Heap {
             self.materialize_sparse_array(array, length);
             return;
         }
-        if let Some(mut object) = self.object_mut(array) {
-            object.record().mark_sparse_elements();
+        if let Some(record) = self.object_record_mut(array) {
+            record.mark_sparse_elements();
         }
         let arrays = self
             .sparse_arrays
@@ -4685,7 +4693,8 @@ impl Heap {
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
         let data = self.object(object)?;
-        let vector = data.record().properties();
+        // A class cell has no arena run to point into: it declines, as an inline value does.
+        let vector = data.record_only()?.properties();
         let shape = data.shape();
         if vector.has_inline_property_storage() || vector.is_dictionary() || vector.is_narrow() || slot >= self.properties.len(vector) {
             return None;
@@ -4707,12 +4716,22 @@ impl Heap {
         }
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
-        let mut data = self.object_store_mut(object, stored).expect("property owner is an object");
-        data.note_constant_write();
-        if data.record().store_packed_inline_values(values) {
+        let record = match self.object_store_mut(object, stored).expect("property owner is an object") {
+            // A class cell's leading fields are the values themselves.
+            ObjectMut::Cell(mut cell) => {
+                cell.note_constant_write();
+                for (slot, value) in values.into_iter().enumerate() {
+                    cell.set_slot(slot, value);
+                }
+                return;
+            }
+            ObjectMut::Record(record) => record,
+        };
+        record.note_constant_write();
+        if record.store_packed_inline_values(values) {
             return;
         }
-        let vector = data.record().properties();
+        let vector = record.properties();
         if vector.has_inline_property_storage() || vector.is_narrow() {
             for (slot, value) in values.into_iter().enumerate() {
                 self.property_set(object, slot, value);
@@ -4775,14 +4794,20 @@ impl Heap {
     pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
         let vector = {
-            let mut data = self
-                .object_store_mut(object, value)
-                .expect("property owner is an object");
-            data.record().note_value_write(slot);
-            let vector = data.record().properties();
+            let record = match self.object_store_mut(object, value).expect("property owner is an object") {
+                // A class cell's field is the store: its constant mark ends, as a record's write does.
+                ObjectMut::Cell(mut cell) => {
+                    cell.note_constant_write();
+                    cell.set_slot(slot, value);
+                    return;
+                }
+                ObjectMut::Record(record) => record,
+            };
+            record.note_value_write(slot);
+            let vector = record.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
-            } else if data.record().store_inline_narrow(slot, value) {
+            } else if record.store_inline_narrow(slot, value) {
                 return;
             } else {
                 None
@@ -4807,7 +4832,7 @@ impl Heap {
             return;
         }
         self.properties.keep_shape_wide(vector);
-        let vector = self.object_mut(object).expect("property owner is an object").record().properties();
+        let vector = self.object_record_mut(object).expect("a narrow run is a record's").properties();
         self.properties.set(vector, slot, value);
     }
 
@@ -4822,14 +4847,20 @@ impl Heap {
     ) {
         self.note_value_slot(object, slot, value);
         let vector = {
-            let mut data = self
-                .object_store_mut(object, value)
-                .expect("property owner is an object");
-            data.record().note_value_write(slot);
-            let vector = data.record().properties();
+            let record = match self.object_store_mut(object, value).expect("property owner is an object") {
+                // A class cell's field is the store, as in `property_set`.
+                ObjectMut::Cell(mut cell) => {
+                    cell.note_constant_write();
+                    cell.set_slot(slot, value);
+                    return;
+                }
+                ObjectMut::Record(record) => record,
+            };
+            record.note_value_write(slot);
+            let vector = record.properties();
             if !vector.has_inline_property_storage() {
                 Some(vector)
-            } else if data.record().store_inline_narrow(slot, value) {
+            } else if record.store_inline_narrow(slot, value) {
                 return;
             } else {
                 None
@@ -5034,7 +5065,9 @@ impl Heap {
     #[inline(always)]
     pub fn property_add(&mut self, object: Value, value: Value, shape: u32) {
         let _slot = if let Some(object_ref) = object.direct_object_index() {
-            let record_id = self.record_id(object_ref);
+            // An add appends to the record's arena run: a live class cell departs first.
+            self.depart_for_mutation(object);
+            let record_id = self.stub_record(object_ref.granule());
             let Self {
                 object_records,
                 properties,
@@ -5046,11 +5079,11 @@ impl Heap {
             append_property(data, properties, slot, value, shape, 0);
             slot
         } else {
-            let (mut data, properties) = self
+            let (data, properties) = self
                 .object_and_arena_mut(object)
                 .expect("property owner is an object");
-            let slot = properties.len(data.record().properties());
-            append_property(data.record(), properties, slot, value, shape, 0);
+            let slot = properties.len(data.properties());
+            append_property(data, properties, slot, value, shape, 0);
             slot
         };
         self.settle_widened();
@@ -5072,7 +5105,9 @@ impl Heap {
         let Some(object_ref) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
-        let record_id = self.record_id(object_ref);
+        // An add appends to the record's arena run: a live class cell departs first.
+        self.depart_for_mutation(object);
+        let record_id = self.stub_record(object_ref.granule());
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
@@ -5126,7 +5161,7 @@ impl Heap {
 
     #[cfg(feature = "profile-memory")]
     fn profile_allocation(&mut self, identity: Value) {
-        let object_id = identity.direct_object_index().map(|object| self.record_id(object));
+        let object_id = identity.direct_object_index().and_then(|object| self.record_id(object));
         let Self {
             object_records,
             array_records,

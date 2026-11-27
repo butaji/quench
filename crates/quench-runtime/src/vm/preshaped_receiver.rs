@@ -212,7 +212,7 @@ impl Vm {
     /// entry and one shape are read; anything else, an empty entry included, answers `false`.
     #[inline(always)]
     pub fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
-        let Some(record_id) = receiver.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = receiver.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
             return false;
         };
         let entry = self.field_cache_entry(site);
@@ -231,7 +231,7 @@ impl Vm {
     /// as its defines would add them; `false` where an append finds no room, leaving the rest
     /// to `initialize_object_properties`, which replaces whatever storage it holds.
     fn append_preshaped_fields(&mut self, this: Value, index: usize) -> bool {
-        let Some(record_id) = this.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = this.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
             return false;
         };
         let entry = &self.preshaped_receivers[index];
@@ -273,7 +273,7 @@ impl Vm {
         // Inline runs and extras are record data.
         if layout == self.learned_receivers[index].template
             || data.record().inline_properties().is_none()
-            || data.record().has_extras()
+            || data.record_only().is_some_and(|record| record.has_extras())
             || data.has_exotic_access()
             || self.shape_is_dictionary(shape)
             || self.shapes[shape as usize].storage_len() != 0

@@ -25,7 +25,7 @@ impl Vm {
 
     pub(super) fn constructor_name(&self, value: Value) -> Option<JsString> {
         // record-only: intrinsic_class_name takes the record
-        let object = self.heap.object(value)?.record();
+        let object = self.heap.object(value)?.record_only()?;
         if self.proxy_parts(value).is_some() {
             return Some(JsString::from_str(if self.is_function(value) {
                 "Function"

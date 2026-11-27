@@ -39,7 +39,7 @@ impl Vm {
 
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
         // record-only: boxed primitive state
-        self.heap.object(value)?.record().boxed_primitive()
+        self.heap.object(value)?.record_only()?.boxed_primitive()
     }
 
     pub(super) fn boxed_primitive_data(
@@ -327,7 +327,7 @@ impl Vm {
             B::External => self
                 .heap
                 .object(value)
-                .and_then(|object| object.record().external_address())
+                .and_then(|object| object.record_only().and_then(|record| record.external_address()))
                 .is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
@@ -348,7 +348,7 @@ impl Vm {
             }
             B::ArgumentsObject => self
                 .heap.object(value)
-                .is_some_and(|object| object.record().is_arguments_object()), // record-only: arguments flag
+                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object())), // record-only: arguments flag
             B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
                 Some(FunctionRecord {
                     kind:
@@ -467,7 +467,7 @@ impl Vm {
         // Proxy objects deliberately do not expose their target's captured metadata.
         if let Some(crate::heap::StackData::Captured { records, source }) = self
             .heap.object(value)
-            .and_then(|object| object.record().stack_data()) // record-only: stack data
+            .and_then(|object| object.record_only().and_then(|record| record.stack_data())) // record-only: stack data
             && let Some(record) = records
                 .iter()
                 .find(|record| matches!(record.location, CallSiteLocation::Source { .. }))
@@ -1242,7 +1242,7 @@ impl Vm {
 
     pub(crate) fn embedding_external_address(&self, root: RootId) -> Option<usize> {
         let value = self.root_value(root)?;
-        self.heap.object(value)?.record().external_address()
+        self.heap.object(value)?.record_only()?.external_address()
     }
 
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {

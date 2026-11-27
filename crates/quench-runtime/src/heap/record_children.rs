@@ -136,7 +136,7 @@ impl Heap {
             if let Some(object) = value.direct_object_index() {
                 match self.class_space.live_class(object.granule()) {
                     Some(class) => class_cell_edges(class, self.class_space.cell_fields(object.granule()), out),
-                    None => self.object_records.get_live(self.record_id(object)).extend_children(properties, out),
+                    None => self.object_records.get_live(self.stub_record(object.granule())).extend_children(properties, out),
                 }
             } else if let Some(id) = value.direct_array_index() {
                 self.array_records.get_live(id).extend_children(properties, out);
