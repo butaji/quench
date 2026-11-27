@@ -2,7 +2,7 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, settled, this_fact};
+use super::effects::{Ctx, Events, decoded, is_global_load, root_this, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
@@ -179,7 +179,7 @@ impl Record {
             let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
             let receiver = match invocation.receiver {
                 crate::staged::Receiver::Register(register) => state[usize::from(register)],
-                crate::staged::Receiver::This { path: None } if !ctx.is_root => this_fact(ctx),
+                crate::staged::Receiver::This { path: None } => if ctx.is_root { root_this(ctx) } else { this_fact(ctx) },
                 crate::staged::Receiver::This { path: Some((atom, _)) } => match ctx.types {
                     Some(_) => super::effects::this_member(ctx, atom),
                     None => Word::UNKNOWN,
@@ -290,7 +290,7 @@ impl Record {
         }
     }
 
-    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>) -> FunctionFlow {
+    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>, strict: bool) -> FunctionFlow {
         // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
@@ -326,6 +326,7 @@ impl Record {
             arity,
             in_register,
             returns_out,
+            strict,
             handed: self.handed,
             closures: self.closures,
             bounds: self.bounds,

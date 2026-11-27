@@ -108,6 +108,9 @@ pub(super) struct FunctionFlow {
     /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
     /// `types::escapes` takes its returns as positions the solve cannot follow.
     pub(super) returns_out: bool,
+    /// Whether the function is strict code (`Function::strict`, which class bodies and Modules set): a plain call binds its
+    /// `this` to `undefined`, not to the global object, so only a sloppy function's `this` may be the global object (`types`).
+    pub(super) strict: bool,
     /// The values the function hands to code the solve cannot follow: each value it throws, and every register at
     /// a `yield` or `await`, which the runtime carries to a consumer or a promise reaction (`types::escapes`).
     pub(super) handed: Vec<Word>,
@@ -198,7 +201,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     record.registers.sort();
     let arity = arity_of(function);
     let returns_out = ctx.is_root || function.is_generator || function.is_async;
-    let mut flow = record.finish(arity, returns_out, in_register);
+    let mut flow = record.finish(arity, returns_out, in_register, function.strict);
     flow.entries = entries;
     flow
 }
