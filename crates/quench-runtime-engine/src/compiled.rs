@@ -5188,16 +5188,6 @@ impl Plan {
     }
 }
 
-fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
-    let mut successors = Vec::with_capacity(2);
-    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
-        if successor < function.code.len() {
-            successors.push(successor);
-        }
-    });
-    successors
-}
-
 /// The analysis context shared by every function of a program.
 struct Analysis<'a> {
     vm: &'a Vm,
@@ -5473,11 +5463,13 @@ impl Analysis<'_> {
                 self.reject(index, || format!("unsupported-instruction:{op:?}@{pc}"));
                 return None;
             }
-            for successor in successors(function, pc, instruction) {
-                if successor >= instructions.len() {
-                    self.reject(index, || format!("invalid-successor:{successor}@{pc}"));
-                    return None;
+            let mut successor_pcs = Vec::with_capacity(2);
+            quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+                if successor < instructions.len() {
+                    successor_pcs.push(successor);
                 }
+            });
+            for successor in successor_pcs {
                 let changed = match &mut states[successor] {
                     Some(existing) => existing.join_from(&state),
                     target @ None => {
@@ -5777,15 +5769,8 @@ fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option
         }
     }
     let mut loops = vec![None; instructions.len()];
-    for (latch, instruction) in instructions.iter().enumerate() {
-        let layout = instruction.op().control_flow_layout();
-        if !plan.reachable(latch)
-            || !layout.jumps()
-        {
-            continue;
-        }
-        let header = instruction.jump_target() as usize;
-        if header > latch {
+    for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
+        if !plan.reachable(latch) {
             continue;
         }
         let length = latch - header + 1;
