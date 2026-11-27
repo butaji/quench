@@ -387,7 +387,16 @@ pub fn changed_functions(old: &str, new: &str) -> Option<BTreeSet<String>> {
 }
 
 /// `changed_functions` with each name's freedom (`Body::free`): `true` for a function that is the file's own item.
+#[cfg(test)]
 pub fn changed_items(old: &str, new: &str) -> Option<BTreeSet<(String, bool)>> {
+    changed_items_typed(old, new).filter(|(_, types)| types.is_empty()).map(|(names, _)| names)
+}
+
+/// `changed_items`, where an edit of items other than functions (a type, a constant, a static, an `impl` or trait
+/// header) is not structural but names what it changed: the second set holds the names those items define
+/// (`defined_names`), whose users the caller finds by name (`mentions`). `None` still for an edit no name covers: a
+/// module, a macro, an `extern` block, a `const fn`, an exported function added or removed.
+pub fn changed_items_typed(old: &str, new: &str) -> Option<(BTreeSet<(String, bool)>, BTreeSet<String>)> {
     let (old_tokens, new_tokens) = (tokens(old), tokens(new));
     let (old_outline, old_bodies) = split(&old_tokens);
     let (new_outline, new_bodies) = split(&new_tokens);
@@ -411,14 +420,17 @@ pub fn changed_items(old: &str, new: &str) -> Option<BTreeSet<(String, bool)>> {
             }
             compare(was, now)?;
         }
-        return Some(names);
+        return Some((names, BTreeSet::new()));
     }
-    // The outline without its function and `use` items must be the same; each item is placed by the count of other
-    // outline tokens before it.
+    // The outline without its function and `use` items: where it differs, the items that differ name what changed.
     let (old_items, new_items) = (items(&old_outline, &old_bodies), items(&new_outline, &new_bodies));
-    if rest(&old_outline, &old_items) != rest(&new_outline, &new_items) {
-        return None;
+    let (old_rest, new_rest) = (rest(&old_outline, &old_items), rest(&new_outline, &new_items));
+    if old_rest != new_rest {
+        let types = changed_type_names(&old_rest, &new_rest)?;
+        return moved_items(&old_outline, &old_bodies, &new_outline, &new_bodies, (&old_items, &new_items))
+            .map(|names| (names, types));
     }
+    let types = BTreeSet::new();
     // Pairs the items of each place by header (a longest common subsequence); the unpaired are removed or added.
     let mut removed: Vec<&Item> = Vec::new();
     let mut added: Vec<&Item> = Vec::new();
@@ -473,7 +485,167 @@ pub fn changed_items(old: &str, new: &str) -> Option<BTreeSet<(String, bool)>> {
             }
         }
     }
+    Some((names, types))
+}
+
+/// The function and `use` items an edit changed where the rest of the outline changed too, so no item keeps its place
+/// (`changed_items_typed`): functions are paired by their whole header (attributes, qualifiers, signature) instead. A
+/// header several functions share (one method of several `impl`s) names its function where their bodies differ as a
+/// set; a header on one side only names its function, as an added or removed one does. `None` for a `const fn` or an
+/// exported function added, removed or changed, or a `use` that binds names the text does not show.
+fn moved_items<'t, 'a>(old_outline: &[&'t Token<'a>], old_bodies: &[Body<'_, 'a>], new_outline: &[&'t Token<'a>], new_bodies: &[Body<'_, 'a>],
+    (old_items, new_items): (&[Item<'a>], &[Item<'a>])) -> Option<BTreeSet<(String, bool)>> {
+    fn header<'t, 'a>(outline: &[&'t Token<'a>], body: &Body<'_, 'a>) -> Vec<&'t Token<'a>> { outline[body.item.clone()].to_vec() }
+    fn uses<'t, 'a>(outline: &[&'t Token<'a>], items: &[Item<'a>]) -> Vec<(Vec<&'t Token<'a>>, Option<Vec<&'a str>>)> {
+        items.iter().filter(|item| item.body.is_none()).map(|item| (outline[item.range.clone()].to_vec(), item.names.clone())).collect()
+    }
+    let mut names = BTreeSet::new();
+    let mut headers: Vec<Vec<&'t Token<'a>>> = Vec::new();
+    for (outline, bodies) in [(old_outline, old_bodies), (new_outline, new_bodies)] {
+        for body in bodies {
+            let key = header(outline, body);
+            if !headers.contains(&key) { headers.push(key); }
+        }
+    }
+    for key in &headers {
+        let olds: Vec<&Body> = old_bodies.iter().filter(|body| header(old_outline, body) == *key).collect();
+        let news: Vec<&Body> = new_bodies.iter().filter(|body| header(new_outline, body) == *key).collect();
+        let mut was: Vec<(&[Token<'a>], &Vec<&[Token<'a>]>)> = olds.iter().map(|body| (body.tokens, &body.hints)).collect();
+        let mut now: Vec<(&[Token<'a>], &Vec<&[Token<'a>]>)> = news.iter().map(|body| (body.tokens, &body.hints)).collect();
+        let same = was.len() == now.len() && {
+            was.retain(|item| match now.iter().position(|other| other == item) { Some(at) => { now.remove(at); false } None => true });
+            was.is_empty()
+        };
+        if same { continue; }
+        let Some(body) = news.first().or(olds.first()) else { continue };
+        let outline = if news.is_empty() { old_outline } else { new_outline };
+        if body.is_const || exported(&outline[body.item.clone()]) { return None; }
+        names.insert((body.name.to_string(), body.free));
+    }
+    // A `use` on one side only: what it binds may resolve to any item of that name.
+    let (old_uses, new_uses) = (uses(old_outline, old_items), uses(new_outline, new_items));
+    for (one, other) in [(&old_uses, &new_uses), (&new_uses, &old_uses)] {
+        for (tokens, bound) in one.iter().filter(|(tokens, _)| !other.iter().any(|(theirs, _)| theirs == tokens)) {
+            let _ = tokens;
+            names.extend(bound.as_ref()?.iter().map(|name| (name.to_string(), false)));
+        }
+    }
     Some(names)
+}
+
+/// The top-level items of `outline` tokens: each from its first token (its attributes first) to its `;` or the `}`
+/// closing its block, at depth 0.
+fn top_items<'t, 'a>(outline: &[&'t Token<'a>]) -> Vec<Vec<&'t Token<'a>>> {
+    let mut found = Vec::new();
+    let mut current = Vec::new();
+    let mut depth = 0i32;
+    // Whether the item assigned at depth 0 (`const X: T = { .. };`), which then ends at its `;`, not at a `}`.
+    let mut assigns = false;
+    for &token in outline {
+        current.push(token);
+        match token {
+            Token::Punct(b'{' | b'(' | b'[') => depth += 1,
+            Token::Punct(b')' | b']') => depth -= 1,
+            Token::Punct(b'=') if depth == 0 => assigns = true,
+            Token::Punct(b'}') => {
+                depth -= 1;
+                if depth == 0 && !assigns { found.push(std::mem::take(&mut current)); }
+            }
+            Token::Punct(b';') if depth == 0 => { found.push(std::mem::take(&mut current)); assigns = false; }
+            _ => {}
+        }
+    }
+    if !current.is_empty() { found.push(current); }
+    found
+}
+
+/// The names a top-level item defines, by which its users name it: a `struct`, `enum`, `union`, `type`, `const`,
+/// `static` or `trait`'s own name, every word of an `impl` header (its trait, its type and theirs), and for a `mod`
+/// block the names of the items inside it. `None` for an item no name covers (a macro, an `extern` block, an
+/// invocation).
+fn defined_names<'a>(item: &[&Token<'a>]) -> Option<Vec<&'a str>> {
+    let mut i = 0;
+    // Attributes and qualifiers.
+    while i < item.len() {
+        match item[i] {
+            Token::Punct(b'#') => {
+                let mut depth = 0i32;
+                i += 1;
+                while i < item.len() {
+                    match item[i] {
+                        Token::Punct(b'[') => depth += 1,
+                        Token::Punct(b']') => { depth -= 1; if depth == 0 { i += 1; break; } }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            Token::Word("pub") => {
+                i += 1;
+                if item.get(i) == Some(&&Token::Punct(b'(')) {
+                    while i < item.len() && *item[i] != Token::Punct(b')') { i += 1; }
+                    i += 1;
+                }
+            }
+            Token::Word("unsafe" | "default") => i += 1,
+            _ => break,
+        }
+    }
+    let word = |at: usize| match item.get(at) { Some(Token::Word(w)) => Some(*w), _ => None };
+    match word(i)? {
+        "struct" | "enum" | "union" | "type" | "const" | "static" | "trait" => {
+            let at = if word(i + 1) == Some("mut") { i + 2 } else { i + 1 };
+            Some(vec![word(at)?])
+        }
+        "impl" => Some(item[i + 1..].iter().take_while(|t| **t != &Token::Punct(b'{')).filter_map(|t| match t {
+            Token::Word(w) if !matches!(*w, "for" | "where" | "dyn" | "impl" | "unsafe" | "const" | "mut") && !w.starts_with('\'') => Some(*w),
+            _ => None,
+        }).collect()),
+        "mod" if item.get(i + 2) == Some(&&Token::Punct(b'{')) => {
+            let inner = &item[i + 3..item.len().saturating_sub(1)];
+            let mut names = Vec::new();
+            for item in top_items(inner) { names.extend(defined_names(&item)?); }
+            Some(names)
+        }
+        _ => None,
+    }
+}
+
+/// The names the items differing between two outlines (without their functions and `use` items) define: the items of
+/// one not found as written in the other. `None` where a differing item defines no name (`defined_names`).
+fn changed_type_names(old: &[&Token<'_>], new: &[&Token<'_>]) -> Option<BTreeSet<String>> {
+    let (old_items, new_items) = (top_items(old), top_items(new));
+    let mut names = BTreeSet::new();
+    for (items, others) in [(&old_items, &new_items), (&new_items, &old_items)] {
+        for item in items.iter().filter(|item| !others.contains(item)) {
+            names.extend(defined_names(item)?.into_iter().filter(|name| *name != "_").map(str::to_string));
+        }
+    }
+    Some(names)
+}
+
+/// The functions of `text` (with each one's freedom, as `changed_items` names them) and the names of its other items
+/// (`defined_names`) that name any of `names`: in a function's header or body, or anywhere in another item. `None`
+/// where an item that names one defines no name of its own (a macro, an `extern` block), whose users the text cannot
+/// tell.
+pub fn mentions(text: &str, names: &BTreeSet<String>) -> Option<(BTreeSet<(String, bool)>, BTreeSet<String>)> {
+    let all = tokens(text);
+    let (outline, bodies) = split(&all);
+    let names_one = |token: &Token<'_>| matches!(token, Token::Word(word) if names.contains(*word));
+    let mut functions = BTreeSet::new();
+    for body in &bodies {
+        if outline[body.item.clone()].iter().any(|token| names_one(token)) || body.tokens.iter().any(names_one) {
+            functions.insert((body.name.to_string(), body.free));
+        }
+    }
+    let items = items(&outline, &bodies);
+    let mut types = BTreeSet::new();
+    for item in top_items(&rest(&outline, &items)) {
+        if item.iter().any(|token| names_one(token)) {
+            types.extend(defined_names(&item)?.into_iter().filter(|name| *name != "_").map(str::to_string));
+        }
+    }
+    Some((functions, types))
 }
 
 /// Whether an item's outline tokens carry an export attribute (`#[no_mangle]`, `#[unsafe(no_mangle)]`,
@@ -556,6 +728,22 @@ mod tests {
     use super::*;
 
     const BASE: &str = "/// Doc.\npub(crate) fn alpha(x: u32) -> u32 {\n    let s = \"}\"; // }\n    x + 1\n}\n\nconst fn beta() -> u8 { 1 }\nstruct S { a: u8 }\nimpl S { fn gamma(&self) -> char { '}' } }\n";
+
+    #[test]
+    fn a_type_edit_names_the_type_and_its_users_are_found_by_name() {
+        let typed = |new: String| changed_items_typed(BASE, &new).map(|(functions, types)| (functions.len(), types.into_iter().collect::<Vec<_>>()));
+        assert_eq!(typed(BASE.replace("a: u8", "a: u16")), Some((0, vec!["S".to_string()])));
+        assert_eq!(typed(BASE.replace("struct S { a: u8 }", "struct S { a: u8, b: u8 }\nconst K: u8 = 2;")), Some((0, vec!["K".to_string(), "S".to_string()])));
+        assert_eq!(typed(BASE.replace("struct S { a: u8 }", "macro_rules! m { () => {} }")), None, "a macro defines no name");
+        let users = "struct T { s: S }\nfn uses(t: &T) -> u8 { t.s.a }\nfn other() -> u8 { 3 }\nimpl S { fn d(&self) {} }\n";
+        let (functions, types) = mentions(users, &BTreeSet::from(["S".to_string()])).unwrap();
+        assert_eq!(functions, BTreeSet::new(), "no function names S itself");
+        assert_eq!(types, BTreeSet::from(["S".to_string(), "T".to_string()]), "T holds an S; the impl of S defines S");
+        let (functions, _) = mentions(users, &BTreeSet::from(["T".to_string()])).unwrap();
+        assert_eq!(functions, BTreeSet::from([("uses".to_string(), true)]));
+        let constant = "const fn k() -> u8 { 1 }\nconst X: u8 = { let a = 1; a };\nstruct Y;\n";
+        assert_eq!(changed_items_typed(constant, &constant.replace("let a = 1", "let a = 2")).map(|(_, types)| types), Some(BTreeSet::from(["X".to_string()])));
+    }
 
     #[test]
     fn body_edit_names_the_function() {
