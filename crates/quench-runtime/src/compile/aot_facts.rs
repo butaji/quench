@@ -16,10 +16,12 @@
 
 mod blocks;
 mod census;
+mod class_layout;
 mod effects;
 mod flow;
 mod gate;
 mod scope;
+mod shape;
 mod types;
 mod value;
 #[cfg(test)]
@@ -30,6 +32,7 @@ use std::collections::BTreeMap;
 use crate::bytecode::ResidualProgram;
 use crate::typed_ir::Representation;
 use census::Census;
+use class_layout::ClassLayouts;
 use flow::FunctionFlow;
 use scope::Scope;
 pub use gate::World;
@@ -71,6 +74,9 @@ pub struct AotFacts {
     /// Per function, the cells its registers hold at every point of the settled solve (`flow::RegisterCells`):
     /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
     pub(crate) registers: BTreeMap<u32, flow::RegisterCells>,
+    /// The closed-world layouts of the program's classes (`class_layout`): each instance layout and prototype layout
+    /// the solve proved, read by `AotFacts::class_layout` and `AotFacts::prototype_layout`.
+    pub(crate) layouts: ClassLayouts,
 }
 
 impl AotFacts {
@@ -87,6 +93,8 @@ impl AotFacts {
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
             access_classes: BTreeMap::new(),
+            registers: BTreeMap::new(),
+            layouts: ClassLayouts::default(),
         }
     }
 
@@ -134,6 +142,19 @@ impl AotFacts {
     pub fn any_fields(&self) -> (usize, usize) {
         let any = self.field_types.values().filter(|ty| **ty == crate::typed_ir::Type::ANY).count();
         (any, self.field_types.len())
+    }
+
+    /// The ordered named fields every instance of class `class` (a constructor's function id) holds, in slot order:
+    /// proven where every construction of the class makes exactly this shape and no other code reshapes its instances
+    /// (`class_layout`); None otherwise.
+    pub fn class_layout(&self, class: u32) -> Option<&[u32]> {
+        self.layouts.instances.get(&class).map(|fields| &**fields)
+    }
+
+    /// The names class `class`'s prototype takes, in the order the program's code first installs them, proven where no
+    /// object of unknown class receives another name (`class_layout`); None otherwise.
+    pub fn prototype_layout(&self, class: u32) -> Option<&[u32]> {
+        self.layouts.prototypes.get(&class).map(|fields| &**fields)
     }
 
     /// The functions some construction (`new`) always constructs.
@@ -202,6 +223,13 @@ impl<'a> FunctionFacts<'a> {
     /// The class of every `this` the function's recorded calls pass (`AotFacts::this_classes`): a guess.
     pub fn this_class(&self) -> Option<u32> {
         self.facts.cell(crate::typed_ir::FactKey::Receiver(self.function)).and_then(|cell| cell.classes.single()).map(|(class, _)| class)
+    }
+
+    /// The slot of named field `atom` in instances of `class` (its index in `AotFacts::class_layout`), where the layout is
+    /// proven: a fixed offset a lowering reads in place of the field's name.
+    pub fn field_slot(&self, class: u32, atom: u32) -> Option<u16> {
+        let slot = self.facts.class_layout(class)?.iter().position(|&field| field == atom)?;
+        u16::try_from(slot).ok()
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
@@ -293,7 +321,8 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
     // take it from a flow over the settled types.
     if settled {
-        for (id, mut flow) in analyze_typed(&resolved, Some(&found)).into_iter().enumerate() {
+        let mut settled_flows = analyze_typed(&resolved, Some(&found));
+        for (id, flow) in settled_flows.iter_mut().enumerate() {
             let id = id as u32;
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
             for (&pc, &classes) in &flow.field_owners {
@@ -310,6 +339,8 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
                 facts.call_candidates.remove(&(id, call.pc));
             }
         }
+        // The class layouts read the settled shapes: each construction's classes are the settled ones.
+        facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_functions());
     }
     // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
     let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
