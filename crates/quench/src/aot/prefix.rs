@@ -16,7 +16,8 @@
 //! (`quench_runtime::clock::watch_inputs`), and nothing past it is kept: the Node gate's `refuse`
 //! and `stop` end a run at a host operation before it runs, and a core probe (`Probe`,
 //! `core_rest::probe`) ends its run at the input the runtime notes, and makes no output of its own.
-//! What a build keeps is the state before its first input, and `finish` names that input.
+//! What a build keeps is the state before its first input: a core probe's input native captures the
+//! frames that called it (`clock::take_input_capture`), and `finish` reports that capture.
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -124,7 +125,8 @@ impl Question {
 pub(crate) type HeldOperations = (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>, Vec<u16>);
 
 /// What a build-time run left: its effects in order; a question it asked with no answer
-/// assumed, which a run per answer specializes; or the first other dynamic input it read.
+/// assumed, which a run per answer specializes; a dynamic input it read, named; or the caller
+/// chain captured at its first input (`clock::take_input_capture`, C5 D1c).
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
     /// The run's effects up to its first wait for input, the runtime there as a snapshot, and
@@ -132,6 +134,8 @@ pub(crate) enum Residual {
     Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>, HeldOperations),
     Question(Question),
     Dynamic(String),
+    /// The run ended at an input native's entry: the frames that called it, parked there.
+    Captured(Box<quench_runtime::vm::activation::FrameRecord>),
 }
 
 /// Makes this process's entry run a build-time evaluation, which assumes each of `answers`.
@@ -222,11 +226,9 @@ pub(crate) fn input_of(name: &str) -> String {
     }
 }
 
-/// Notes the first dynamic input of the run: an input the runtime noted before it (the
-/// clock, `quench_runtime::clock::note_input`) came first.
+/// Notes a dynamic input the run reads by a refusal: the first refusal is the one named.
 pub(crate) fn refuse(what: String) {
-    let first = quench_runtime::clock::first_input().map_or(what, str::to_owned);
-    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(first);
+    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(what);
 }
 
 /// The callback the gate runs in place of a refused operation: it ends the run, which a
@@ -263,8 +265,8 @@ pub(crate) fn finish() -> Residual {
     if let Some(question) = state.choice.take() {
         return Residual::Question(question);
     }
-    if let Some(input) = quench_runtime::clock::first_input() {
-        return Residual::Dynamic(input.to_owned());
+    if let Some(chain) = quench_runtime::clock::take_input_capture() {
+        return Residual::Captured(chain);
     }
     let effects = std::mem::take(&mut state.effects);
     match state.rest.take() {

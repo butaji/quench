@@ -263,7 +263,7 @@ fn main() {
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
     // quench-staged's metadata is the front end the shards and the rows' type check read: built only when a shard must
     // compile (lazily, so a body edit no row reaches pays nothing here).
-    if jobs.iter().any(|job| !job.cached() && !job.unchanged_by_edit()) {
+    if jobs.iter().any(Shard::reads_staged) {
         let cpus: Vec<Option<&str>> = variants.iter().map(|(_, cpu)| *cpu).collect();
         build_staged(&out, &cpus);
     }
@@ -392,6 +392,12 @@ impl Shard {
         self.object.with_extension("reach")
     }
 
+    /// Whether this job's rustc reads quench-staged's metadata (`staged_extern`): a compile, or the reach file a
+    /// cached object still lacks (`compile`, `write_reach`). The metadata is built before any such job runs.
+    fn reads_staged(&self) -> bool {
+        if self.cached() { !self.reach_file().is_file() } else { !self.unchanged_by_edit() }
+    }
+
     /// Whether the object on disk is still the one these inputs make although its key is not: it was built from
     /// the last finished build's sources with these arguments and instances, every edit since then is inside
     /// function bodies (`edits`), and no row of the shard reaches an edited function (`reach`). A row is made of the
@@ -514,7 +520,10 @@ fn stencil_sources(out: &Path, family: Family, shard: usize, staged: &[String]) 
     let mut command = Command::new(rustc());
     command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args()).args(staged);
     command.args(["--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard)).status().ok()?;
+    // Before the metadata exists this fails by design (the extern is absent): its error is silent, and the caller falls
+    // back to the `#[path]` graph. A real error in the rows surfaces in `type_check`, which runs with the metadata.
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard))
+        .stderr(std::process::Stdio::null()).status().ok()?;
     if !status.success() {
         return None;
     }

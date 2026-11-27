@@ -10,43 +10,28 @@
 //! * **Fold**: the entry reaches its end with no dynamic input (`prefix`, the same gate the Node
 //!   host runs its entries under). Nothing about the program is observable at run time, so the
 //!   image is the strict replay image (`strict::fold_image`): no realm, no program, no top level.
-//! * **Realm and program** (`dump`): the state after the realm is installed and the program is
-//!   loaded, before any of its top-level code runs. The linked image runs once more with a dump
-//!   request argument, builds that state on its own catalog's closed world, and writes it as the
-//!   dump it adopts at each start (`image_driver_core::start_state`). Every program with an input
-//!   lands here, as does one that fails with no input.
+//! * **Captured** (`dump`): the build runs the entry to its first input. The input native's entry
+//!   captures the chain of frames that called it, parked at that call (`Vm::capture_input_native`,
+//!   `clock::store_input_capture`), before the native runs. The dump run writes the realm, the
+//!   program and that chain as the dump the image adopts; the image resumes the chain
+//!   (`image_driver_core::run`).
+//! * **Unfinished**: the entry fails, or leaves a top-level await pending, with no input read. The
+//!   build saves the realm and program before any top-level code runs, and the image runs into the
+//!   same failure.
 //!
-//! # Where a save point can be (the input handler and what it can capture)
+//! # The input edge
 //!
-//! A dynamic input is a runtime input the build may not make: a clock read (`Date`, `Date.now`,
-//! `performance`), the local time zone, `Math.random`, or a host output (`console`, `print`).
-//! The runtime notes each one before it happens (`clock::note_input`, `HostContext::invoke`), and
-//! the gate's handler ends the watched run there (`clock::watch_inputs`). The handler resumes
-//! nothing: a run that goes on past an input would keep effects no build may keep.
-//!
-//! The handler could save the run where it stopped only if the live state there is a continuation
-//! the VM can materialize. Per frame kind:
-//!
-//! * **Capturable**: a generator, an async function or an async request suspended at a `yield` or
-//!   an `await`. Its state is one `activation::Continuation` (a `FrameRecord` with its completion,
-//!   resume register and promise), which the heap writes like any other record.
-//! * **Not capturable**: an ordinary call frame. Its activation keeps its scope on the lane stack
-//!   and has no record (`vm/activation/frame_record.rs`). A native call's own Rust frame, such as
-//!   the `Date` constructor that reads the clock, has no continuation at all. A call chain of more
-//!   than one frame has no multi-frame continuation: a `Continuation` holds one frame.
-//!
-//! So an input reached through any call of the program is not capturable, and its save point is
-//! the realm and program. The richards suite (`quench-bench/js-engine-benchmark/v8-v7`) reads its
-//! first input at `base.js` `new Date()` (line 204, `Measure`): the top level calls `RunSuites`,
-//! which calls `RunStep`, `RunNextBenchmark` and `RunSingleBenchmark` before it. None of those
-//! frames is capturable, so richards saves the realm and program. A capture at that point needs a
-//! multi-frame continuation and a native call site that parks its caller (the VM's
-//! `dispatch_frame` change), which this build does not have.
+//! A dynamic input is a runtime input the build may not make: a clock read (`Date`, `Date.now`),
+//! `Math.random`, the local time zone, or a host output. The edge is armed once at a watched run's
+//! start (`clock::watch_inputs`). The input natives' own entries (Date call and
+//! construct, `Date.now`, `Math.random`) are the one place the capture happens (`Vm::capture_input_native`). A host output that is not a native's own read still ends the run
+//! (`clock::note_input`), but such a run has no chain and is `Unfinished`.
 
 use super::prefix::{self, Residual};
 use quench_layers::engine::ExecutionTableSpec;
 use quench_runtime::native_link::image_dump::{self, Dump, UNDUMPED, DUMP_ARGUMENT};
 use quench_runtime::tier_surface::Native;
+use quench_runtime::vm::activation::FrameRecord;
 use quench_runtime::{BuiltinFamilies, BuiltinTable, ExecutionTable, ReachableRealm, ResidualProgram, Runtime};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -64,8 +49,8 @@ pub(super) struct ClosedTables {
 pub(super) enum Reach {
     /// The entry ends with no input and nothing pending: its image replays no effect.
     Folds,
-    /// The entry reads this input before it ends, so the build saves the realm and program.
-    Input(String),
+    /// The entry reached an input native before it ended: the frames that called it, parked there.
+    Captured(Box<FrameRecord>),
     /// The entry fails or leaves a top-level await pending with no input read. The build saves the
     /// realm and program, and the image runs into the same failure.
     Unfinished(String),
@@ -169,9 +154,10 @@ pub(super) fn probe(program: &Path, tables: ClosedTables) -> Result<Reach, Strin
         Err(_) => false,
     };
     Ok(match prefix::finish() {
-        // An input the run read first decides the save point, whatever the run went on to do.
-        Residual::Dynamic(input) => Reach::Input(input),
-        Residual::Question(question) => Reach::Input(format!("a question about {}", question.key())),
+        // The chain at the first input decides the save point, whatever the run went on to do.
+        Residual::Captured(chain) => Reach::Captured(chain),
+        Residual::Dynamic(input) => Reach::Unfinished(format!("reads {input} with no frame to capture")),
+        Residual::Question(question) => Reach::Unfinished(format!("asks a question about {}", question.key())),
         Residual::Effects(_) | Residual::Waiting(..) => match run {
             Err(error) => Reach::Unfinished(error.to_string()),
             Ok(()) if pending => Reach::Unfinished("a top-level await that never settles".into()),
@@ -188,7 +174,7 @@ pub(super) fn dump(image: &Path, work: &Path, report: &mut Value) -> Vec<Dump> {
     };
     match image_dump::dump_image(image, work, 1, UNDUMPED, &request) {
         Ok(dumps) => {
-            report["bootstrap"] = json!({"status": "dumped", "kind": "closed_world_state", "runs_entry_at_start": true,
+            report["bootstrap"] = json!({"status": "dumped", "kind": "closed_world_state", "runs_entry_at_start": false,
                 "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes()})).collect::<Vec<_>>()});
             dumps.into_iter().map(|(dump, _)| dump).collect()
         }
