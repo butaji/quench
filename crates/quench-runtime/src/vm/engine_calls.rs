@@ -9,7 +9,6 @@ use super::engine_types::*;
 use super::engine_types::CallContext;
 use super::activation::{FrameRecord, JobRoot, JobResume};
 use super::dispatch_frame::PendingGeneralCall;
-use cranelift_codegen::ir;
 
 unsafe extern "Rust" {
     safe fn quench_engine_vm_nested_lane_run(this: &mut Vm, innermost: [Value; 2], run: &mut dyn FnMut(&mut Vm));
@@ -87,7 +86,6 @@ unsafe extern "Rust" {
     safe fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) -> ();
     safe fn quench_engine_fn_native_js_lane_helpers() -> *const ();
     safe fn quench_engine_fn_native_js_operation_entry_for(opcode: usize) -> Option<NativeJsOperationEntry>;
-    safe fn quench_engine_fn_declare_regions(function: &mut ir::Function) -> ();
 }
 
 /// The engine's methods of `Vm` that the core calls.
@@ -339,9 +337,6 @@ pub fn native_js_lane_helpers() -> *const () { quench_engine_fn_native_js_lane_h
 #[inline(always)]
 pub fn native_js_operation_entry_for(opcode: usize) -> Option<NativeJsOperationEntry> { quench_engine_fn_native_js_operation_entry_for(opcode) }
 
-#[inline(always)]
-pub fn declare_regions(function: &mut ir::Function) -> () { quench_engine_fn_declare_regions(function) }
-
 /// Defines the lane helpers' named entries (`quench_lane_helper_<Name>`) an ahead image's object
 /// links against (`export_native_js_operations!`).
 #[inline(always)]
@@ -456,5 +451,4 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_fn_settle_name_record = fn(&LaneView, usize, Op, bool) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_native_js_lane_helpers = fn() -> *const ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_native_js_operation_entry_for = fn(usize) -> Option<NativeJsOperationEntry>;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_declare_regions = fn(&mut ir::Function) -> ();
 }

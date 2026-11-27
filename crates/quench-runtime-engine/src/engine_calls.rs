@@ -231,7 +231,7 @@ fn quench_engine_fn_native_js_operation_entry_for(opcode: usize) -> Option<Nativ
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_native_js_operation_entry_for = quench_engine_fn_native_js_operation_entry_for;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_declare_regions(function: &mut ir::Function) -> () { crate::compiled::regions::declare_regions(function) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_declare_regions = quench_engine_fn_declare_regions;
+const _: quench_runtime::vm::jit_backend::signatures::quench_engine_fn_declare_regions = quench_engine_fn_declare_regions;
 
 #[unsafe(no_mangle)]
 fn quench_engine_vm_nested_lane_run(this: &mut Vm, innermost: [Value; 2], run: &mut dyn FnMut(&mut Vm)) {
