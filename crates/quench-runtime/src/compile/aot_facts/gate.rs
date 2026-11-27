@@ -46,6 +46,32 @@ impl World {
 /// How closed `program` is: its source's demands (`Engine::standalone_source_demands`, the
 /// decision every producer makes), and whether it calls a dynamic import. A program whose source
 /// is not kept is not proved closed.
+///
+/// Reachability (why an unreferenced `eval` keeps a program Closed). The demands hold only the
+/// sites that can run: `standalone_source_demands` drops a site whose innermost function body no
+/// run can call (`native_sources::reachability`). The soundness argument, for the gate's first
+/// decision, which assumes the world Closed except for the sites that can run:
+/// - A site opens the world only if it runs. Code runs from the top level, and a function body
+///   runs only if its closure is created by a live body and called. A closure expression, arrow or
+///   method is created where it appears, so it is live with its enclosing body. A declaration is
+///   called only through a read of its binding, so it is live once such a read sits in a live
+///   body. Roots: a Module's top-level declarations (the host imports them), and a Script's global
+///   functions once the global object is materialized by a live site (`globalThis`, `window`,
+///   `self`, `global`, `frames`, a top-level `this`, or a sloppy function's `this` that a plain
+///   call binds). Only then can a computed read (`g[k]`) reach a global; a computed read on any
+///   other object reaches no global.
+/// - Unresolved calls: a call the solve cannot resolve may reach any escaped function
+///   (`escapes::escapes`). An escaped closure is a closure value a live body created, so its body
+///   is live by the rule above; it is never a dead body. So the escaped set is within the live set,
+///   and no site that opens the world is missed by ignoring dead bodies.
+/// - New code in a Closed world: a live site that could add code opens the world, so the world
+///   is Closed only when no live site adds code. Code only enters through a site, so a Closed
+///   program's dead sites never run and add nothing.
+/// The gate does not read the solve's call graph: the solve takes the world as input (`live`),
+/// so the call graph cannot decide the world without a second solve. The syntactic fixpoint is a
+/// superset of the call graph's reachable set, so it is sound and may be less precise.
+/// A dynamic import is still program-wide (`DYNAMIC_IMPORT`), since the compiled atoms carry no
+/// position for it.
 pub(super) fn world(program: &ResidualProgram) -> World {
     // An execution-only build runs no code its image did not archive (`require_source_compilation`
     // refuses dynamic source), so every program it can run is closed; the source parse below is
