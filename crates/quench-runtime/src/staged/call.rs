@@ -112,7 +112,7 @@ pub fn admit_room<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Word, miss
 /// native tiers emit.
 #[inline(always)]
 pub fn concrete_fits(limit: u64, needed: u64) -> bool {
-    admit_room(&mut super::Concrete::new(std::ptr::null()), limit, needed, ()).is_some()
+    admit_room(&mut super::Concrete::pure(), limit, needed, ()).is_some()
 }
 
 #[cfg_attr(feature = "test-support", quench_macros::test_visible)]
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn a_cached_entry_is_one_identity_compare_and_one_load() {
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut cell = cell(7, 5, 8, 2, 1);
         cell.entry = 0xC0DE;
         let at = std::ptr::addr_of!(cell) as u64;
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn a_native_admission_is_one_validity_compare_and_a_room_check() {
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         // The values stack from 0 to `free` words, with nothing reserved past the room.
         let mut admit = |cell: EntryCellLayoutWords, expected: u64, free: u64| {
             admit_native(&mut stage, std::ptr::addr_of!(cell) as u64, expected, 0, free * WORD_BYTES, 0, ()).map(|(room, _)| room)

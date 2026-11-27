@@ -26,7 +26,7 @@ use super::{
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
-use super::class_space::stub_record_at;
+use super::class_space::{ClassCellMarks, cell_fields_at, live_class_at, stub_record_at};
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use crate::vm::wtf16::JsString;
@@ -64,8 +64,11 @@ macro_rules! parallel_mark_view {
             properties: &'heap ValueArena,
             sparse_arrays: Option<&'heap FxHashMap<Value, SparseElements>>,
             marks: &'heap [AtomicU64],
-            /// The class space's base: a direct object's stub names its record (`stub_record_at`).
+            /// The class space's base: a direct object's stub names its record (`stub_record_at`), and a live
+            /// class cell is read in place (`live_class_at`).
             class_base: usize,
+            /// The class cell regions' mark views (`ClassCellMarks`).
+            cells: ClassCellMarks<'heap>,
             $($view: ParallelRecordMarks<'heap, $elem>,)*
             /// The keys weak map values wait for, which change only between rounds.
             ephemerons: &'heap weak::EphemeronWork,
@@ -88,6 +91,7 @@ macro_rules! parallel_mark_view {
                     sparse_arrays: heap.sparse_arrays.as_deref(),
                     marks: &heap.marks,
                     class_base: heap.class_space.base,
+                    cells: heap.class_space.parallel_marks(),
                     $($view: heap.$field.parallel_marks(),)*
                     ephemerons,
                     reads_closures,
@@ -274,29 +278,32 @@ impl<'heap> ParallelMarkView<'heap> {
         };
         let kind = match reference {
             HeapReference::ObjectRecord(granule) => {
-                let id = stub_record_at(self.class_base, granule);
-                if !self.objects.mark_if_new(id) {
-                    return;
-                }
-                // SAFETY: this view just marked the occupied record.
-                let record = unsafe { self.objects.get(id) };
                 let (strings, small_strings) = (self.strings, self.small_strings);
-                Heap::object_children_marking(
-                    value,
-                    &record.object,
-                    properties,
-                    |child, work, last_proto| match child.heap_reference() {
-                        Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
-                        Some(HeapReference::ArrayRecord(array)) => {
-                            self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
-                        }
-                        _ => false,
-                    },
-                    work,
-                    &mut object_roots,
-                    trace_kind,
-                    last_proto,
-                );
+                let mark_leaf = |child: Value, work: &mut Vec<Value>, last_proto: &mut PushedProtos| match child.heap_reference() {
+                    Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
+                    Some(HeapReference::ArrayRecord(array)) => {
+                        self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
+                    }
+                    _ => false,
+                };
+                if let Some(class) = live_class_at(self.class_base, granule) {
+                    if !self.cells.mark_if_new(granule) {
+                        return;
+                    }
+                    // SAFETY: this view just marked the cell, and no worker writes a cell's fields during the round.
+                    let fields = unsafe { cell_fields_at(self.class_base, granule) };
+                    Heap::cell_children_marking(value, class, fields, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
+                } else {
+                    // A departed cell keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`).
+                    self.cells.mark_if_new(granule);
+                    let id = stub_record_at(self.class_base, granule);
+                    if !self.objects.mark_if_new(id) {
+                        return;
+                    }
+                    // SAFETY: this view just marked the occupied record.
+                    let record = unsafe { self.objects.get(id) };
+                    Heap::object_children_marking(value, &record.object, properties, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
+                }
                 self.note_marked_key(value, batch);
                 CellKind::Object
             }

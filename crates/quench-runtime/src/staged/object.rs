@@ -5,7 +5,8 @@
 use super::{Concrete, Stage, Table};
 use super::region::Region;
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
-use super::object_encoding::CLASS_HEADER_BYTES;
+use super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
+use super::object_encoding::{CLASS_HEADER_BYTES, DEPARTED_CLASS};
 use crate::typed_ir::Representation;
 use crate::value::{NarrowLayout, ValueLayout};
 
@@ -340,14 +341,56 @@ pub fn object_record_id_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
 }
 
 /// The record id of the ordinary object whose stub granule is `granule` (a word, as a prototype link
-/// or a direct object reference holds it): the header hop of `object_record_id_of`.
+/// or a direct object reference holds it): the header hop of `object_record_id_of`. Valid only for an
+/// object that departed (or is a stub): a live class cell's header names a class, not a record, so a
+/// reader of a value that may be live tests `cell_class` first.
 #[inline(always)]
 pub fn record_id_of_granule<S: Stage>(stage: &mut S, granule: S::Word) -> S::Word {
-    let base = stage.table(Table::ClassSpace);
-    let offset = stage.mul_imm(granule, CLASS_HEADER_BYTES as u64);
-    let cell = stage.add(base, offset);
+    let cell = cell_at_granule(stage, granule);
     let header = stage.load_u64(Region::ShapeWord.mutable(), cell, 0);
     stage.shr_imm(header, u64::from(u32::BITS))
+}
+
+/// The address of the class cell at granule `granule` (a word, as a prototype link or a direct object
+/// reference holds it): `class_base + granule * CLASS_HEADER_BYTES`, the one addressing mode of a cell.
+#[inline(always)]
+pub fn cell_at_granule<S: Stage>(stage: &mut S, granule: S::Word) -> S::Word {
+    let base = stage.table(Table::ClassSpace);
+    let offset = stage.mul_imm(granule, CLASS_HEADER_BYTES as u64);
+    stage.add(base, offset)
+}
+
+/// The address of the class cell the direct object reference `bits` names (`cell_at_granule` of its
+/// granule). Its header is the object's class word (`cell_class`) while the object is live, and
+/// `departed_header` once it departed: a reader tests the class before it takes either path.
+#[inline(always)]
+#[allow(dead_code)] // read by the class readers the R4-D2..D4 callers adopt
+pub fn cell_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+    let granule = super::value::direct_object_id(stage, bits);
+    cell_at_granule(stage, granule)
+}
+
+/// The class id in the low half of the header of the cell at `cell`. It is `DEPARTED_CLASS` where the
+/// object departed, which no class guard names (`IcOp::GuardClass`), so a departed object misses there.
+#[inline(always)]
+pub fn cell_class<S: Stage>(stage: &mut S, cell: S::Word) -> S::Word {
+    stage.load_u32(Region::ShapeWord.mutable(), cell, NATIVE_CLASS_CELL_LAYOUT.class_offset as i32)
+}
+
+/// Whether the class `class` (`cell_class`) names a live cell: `DEPARTED_CLASS` names the record instead.
+#[inline(always)]
+#[allow(dead_code)] // read by the class readers the R4-D2..D4 callers adopt
+pub fn class_is_live<S: Stage>(stage: &mut S, class: S::Word) -> S::Cond {
+    stage.ne_imm(class, u64::from(DEPARTED_CLASS))
+}
+
+/// The fields of the class cell at `cell`, which holds `storage_len` values: value `i` is the tagged
+/// word at `cell + 8 + 8 * i` (`NATIVE_CLASS_CELL_LAYOUT.fields_offset`). A cell's fields are one flat
+/// run, so a class-fixed object's layout is this and no table entry.
+#[inline(always)]
+pub fn cell_fields<S: Stage>(stage: &mut S, cell: S::Word, storage_len: usize) -> Layout<S::Word, S::Cond> {
+    let fields = stage.add_imm(cell, NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
+    Layout { slots: Slots::Flat(fields), storage_len }
 }
 
 /// The id and address of the object record the direct object reference `bits` names, in the
@@ -736,15 +779,12 @@ pub fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_wor
 }
 
 /// The value at `slot` of the live object `object`, whose exact shape (no dictionary) holds
-/// it, through the arena whose values start at `property_values`: the interpreter's reading
-/// of `own_layout` and `read_slot`.
+/// it, through the arena `stage` is over: the interpreter's reading of `own_layout` and `read_slot`.
 ///
 /// # Safety
-/// `object` is a live record whose exact shape covers `slot`, and `property_values` is the
-/// base of the arena that holds its run.
+/// `object` is a live record of the heap `stage` is over, whose exact shape covers `slot`.
 #[inline(always)]
-pub unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
-    let mut stage = Concrete::new(property_values);
+pub unsafe fn concrete_own_read(object: &crate::heap::Object, mut stage: Concrete, slot: usize) -> crate::Value {
     let record = object as *const crate::heap::Object as u64;
     let word = header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     let layout = formed_own_layout(&mut stage, record, word, Form::Either, slot + 1, PackedAccess::Reload, ())

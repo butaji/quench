@@ -45,7 +45,7 @@ impl LaneView {
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), recompiles, stuck, 0)
+                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, looped: None, called: self.called_by_bodies(), caller: self }), recompiles, stuck, 0)
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
                 (work(crate::compiled::LaneBodyWork::Poll(pending, self)), recompiles, stuck, looks.saturating_add(1)),

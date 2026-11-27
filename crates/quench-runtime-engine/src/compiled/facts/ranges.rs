@@ -3,6 +3,7 @@
 //! analysis computes it with every other fact and `lane_region::int_ranges` and `packed_ranges`
 //! read what it proves; this file is the one meaning of a range.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{immediate, operand_type, set};

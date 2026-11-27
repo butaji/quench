@@ -14,7 +14,7 @@ use crate::ext_traits::*;
 use quench_runtime::bytecode::{Function, WideInstruction};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_flow::Flow;
-use quench_runtime::staged::wasm_instance::Instance;
+use quench_runtime::staged::wasm_instance::{Instance, InstanceWasmInstanceExt};
 use quench_runtime::staged::wasm_memory::{Access, Memory};
 use quench_runtime::staged::wasm_operation::{Operand, WasmOperation};
 use quench_runtime::staged::wasm_step::Step;

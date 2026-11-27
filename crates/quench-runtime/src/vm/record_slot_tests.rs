@@ -1,8 +1,7 @@
-//! A slot whose owner holds Numbers keeps them as raw doubles (`QUENCH_FLOAT_SLOTS`,
-//! `ValueArena::float_slots`): every program computes what the interpreter computes without them.
+//! Record slots hold tagged words (`ValueArena::float` is never set), so every program computes what
+//! the interpreter computes in each execution mode.
 
 use super::Vm;
-use super::switches::with_float_slots;
 
 /// Programs whose fields move between int32, double, string and object values, read by the
 /// interpreter and by compiled loops, and pass through every way a property is copied or listed.
@@ -66,36 +65,31 @@ const CORPUS: &[(&str, &str)] = &[
     "#),
 ];
 
-/// The program's `answer`, run in `mode` with raw-double slots as `float` says.
-fn run(source: &str, mode: crate::ExecutionMode, float: bool) -> String {
-    let program = crate::Engine::specialize(source, "float-slots.js").unwrap();
-    let execute = || {
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(mode);
-        vm.programs.enable_js_lane_methods();
-        vm.execute(&program).unwrap();
-        let answer = vm.intern_atom("answer");
-        let value = vm.own_property(vm.realm.globals, answer).unwrap();
-        vm.heap.string(value).unwrap().to_string()
-    };
-    if float { with_float_slots(execute) } else { execute() }
+/// The program's `answer`, run in `mode`.
+fn run(source: &str, mode: crate::ExecutionMode) -> String {
+    let program = crate::Engine::specialize(source, "record-slots.js").unwrap();
+    let mut vm = Vm::new(crate::test_host::TestHost::default());
+    vm.set_execution_mode(mode);
+    vm.programs.enable_js_lane_methods();
+    vm.execute(&program).unwrap();
+    let answer = vm.intern_atom("answer");
+    let value = vm.own_property(vm.realm.globals, answer).unwrap();
+    vm.heap.string(value).unwrap().to_string()
 }
 
 #[test]
-fn raw_double_slots_compute_what_tagged_slots_compute() {
+fn every_mode_computes_what_the_interpreter_computes() {
     for (name, source) in CORPUS {
-        let expected = run(source, crate::ExecutionMode::Interpreted, false);
-        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-            assert_eq!(run(source, mode, true), expected, "{name} in {mode:?}");
-        }
+        let expected = run(source, crate::ExecutionMode::Interpreted);
+        assert_eq!(run(source, crate::ExecutionMode::Compiled), expected, "{name} compiled");
     }
 }
 
-/// A double-field dot product loop run hot under float slots: its own-field reads take the
-/// slots' raw doubles, and a string written to a double field mid-run widens the slot, which
-/// retires the loop's body, so the later iterations coerce the string as the interpreter does.
+/// A double-field dot product loop run hot: its own-field reads take tagged doubles, and a string written
+/// to a double field mid-run leaves the loop's compiled body, so the later iterations coerce the string
+/// as the interpreter does.
 #[test]
-fn a_double_field_loop_reads_raw_doubles_and_survives_a_widening() {
+fn a_double_field_loop_survives_a_string_written_mid_run() {
     let source = r#"
         var a = { x: 1.5, y: 2.5, z: 3.5 }, b = { x: 2, y: 0.5, z: 4 };
         function dot(n) {
@@ -109,8 +103,7 @@ fn a_double_field_loop_reads_raw_doubles_and_survives_a_widening() {
         out.push(dot(500));
         globalThis.answer = out.join("|");
     "#;
-    let expected = run(source, crate::ExecutionMode::Interpreted, false);
+    let expected = run(source, crate::ExecutionMode::Interpreted);
     assert_eq!(expected, "18250|10625");
-    assert_eq!(run(source, crate::ExecutionMode::Interpreted, true), expected, "interpreted with raw doubles");
-    assert_eq!(run(source, crate::ExecutionMode::Compiled, true), expected, "compiled with raw doubles");
+    assert_eq!(run(source, crate::ExecutionMode::Compiled), expected, "compiled");
 }

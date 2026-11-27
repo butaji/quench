@@ -560,7 +560,7 @@ impl Vm {
             .filter(|index| index.to_string() == name && number == *index as f64);
         let key = self.heap.alloc_string(name.into());
         let mut current = self
-            .object_data(receiver)
+            .heap.object(receiver)
             .map_or(Value::NULL, |data| data.proto());
         let mut visited = std::collections::HashSet::new();
         while !current.is_null() && visited.insert(current) {

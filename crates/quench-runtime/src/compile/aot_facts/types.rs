@@ -21,6 +21,7 @@ use super::census::{Census, ElementClasses};
 use super::escapes::{escapes, resolved};
 use super::flow::FunctionFlow;
 use super::gate::World;
+use super::quiet::{Proofs, StringBuiltins};
 use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
@@ -70,10 +71,12 @@ pub(crate) struct Types {
     wild_elements: bool,
     /// The stores that may shadow a named property of an instance (`accessors::Shadows`), which bound `holder`.
     shadows: Shadows,
-    /// Per class, the parent its prototype chain links it to (`accessors::parents_of`): the `extends` chain `holder` walks.
+    /// Per class, the parent its prototype chain links it to (`Accessors::parents`): the `extends` chain `holder` walks.
     parents: BTreeMap<u32, u32>,
     /// The world the program is solved in: a key new code can move is no fold (`World::live`).
     world: World,
+    /// The String builtins the program leaves as the host installed them: the calls of them are typed by the string rules.
+    strings: StringBuiltins,
 }
 
 impl Types {
@@ -98,8 +101,9 @@ impl Types {
             wild_elements: flows.iter().any(|flow| flow.wild_elements),
             thresholds: BTreeMap::new(),
             shadows: census.accessors.shadows.clone(),
-            parents: super::accessors::parents_of(flows),
+            parents: census.accessors.parents().clone(),
             world: facts.world,
+            strings: scope.string_builtins(&Proofs::of(flows)),
         };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
@@ -138,8 +142,6 @@ impl Types {
             if escaped.contains(&function) { continue; }
             types.receivers.entry(function).or_insert(Cell::ANY.maybe_global()).classes = Classes::one(class, false);
         }
-        // An escaped function is called by code the solve cannot follow, which may call it plainly: a sloppy function's
-        // `this` is then the global object.
         for function in &escaped {
             types.receivers.insert(*function, Cell::ANY.maybe_global());
         }
@@ -194,7 +196,7 @@ impl Types {
         if self.wild_elements { return Elements::ANY; }
         self.elements.members(class)
             .filter_map(|member| self.cells.get(&Key::Element(member)))
-            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None }))
+            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None, holes: stored.elements.holes }))
     }
 
     /// The elements of the arrays of the unnamed class: an array no key names, and every array that may reach code the
@@ -234,8 +236,15 @@ impl Types {
             let rounds = grown.entry(*key).or_insert(0);
             *rounds = rounds.saturating_add(1);
             if *rounds < WIDENING_ROUNDS { continue; }
-            let thresholds = self.thresholds.get(key).map_or(&[][..], Vec::as_slice);
-            let widened = typing::widen(thresholds, before.ty, cell.ty);
+            // An element class's stores are read-modify-writes (`+=`, `++`, `|=`) that grow its range each pass, so it also
+            // widens to the power-of-two bounds of its new range (`typing::power_thresholds`) before the word.
+            let mut bounds = self.thresholds.get(key).cloned().unwrap_or_default();
+            if matches!(key, Key::Element(_)) {
+                bounds.extend(typing::power_thresholds(new));
+                bounds.sort_unstable();
+                bounds.dedup();
+            }
+            let widened = typing::widen(&bounds, before.ty, cell.ty);
             cell.ty = match widened.int_range() {
                 Some(range) if range.contains(new) => widened,
                 _ => Type::NOT_NAN_NUMBER,
@@ -307,6 +316,13 @@ impl Types {
         class
     }
 
+    /// The String builtins a call's result is typed by (`strings`).
+    pub(super) fn strings(&self) -> &StringBuiltins {
+        &self.strings
+    }
+
+    /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no
+    /// recorded call reaches it.
     /// Whether a constructor's returns may be the global object (`Key::Return`): a `new` of it then yields the global
     /// object, not only the instance. A constructor no write of returns holds nothing to return.
     pub(super) fn returns_global(&self, function: u32) -> bool {
@@ -411,7 +427,7 @@ pub(super) fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts,
         }
         Target::Known(callee) => vec![callee],
         Target::Method(atom) => census.method_closures(atom).map(|set| set.iter().copied().collect()).unwrap_or_default(),
-        Target::Accessor { atom, setter } => super::accessors::accessor_targets(call, atom, setter, census),
+        Target::Accessor { atom, setter } => super::accessors::accessor_arms(call, atom, setter, census).into_iter().map(|arm| arm.function).collect(),
     }
 }
 

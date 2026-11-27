@@ -529,26 +529,27 @@ impl ReadHooks for MessageHooks {
 impl Vm {
     pub(crate) fn embedding_mark_untransferable(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
-        if let Some(object) = self.object_data_mut(source) {
-            object.forbid_structured_transfer();
+        if let Some(mut object) = self.heap.object_mut(source) {
+            object.record_mut_departing().forbid_structured_transfer();
         }
         Ok(())
     }
 
     pub(crate) fn embedding_is_marked_untransferable(&self, source: RootId) -> Result<bool, JsError> {
         let source = self.embedding_value(source)?;
-        Ok(self.object_data(source).is_some_and(Object::is_structured_transfer_forbidden))
+        // The transfer flag is record data.
+        Ok(self.heap.object(source).is_some_and(|object| object.record().is_structured_transfer_forbidden()))
     }
 
     pub(crate) fn embedding_mark_uncloneable(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
         // The host marker applies to ordinary objects. Built-in serialized
         // types (arrays, buffers, maps) retain their own clone protocol.
-        if self.heap.object_record(source).is_some() {
+        if source.direct_object_index().is_some() {
             self.heap
-                .object_mut_ref(source)
+                .object_record_mut(source)
                 .expect("ordinary object remains live")
-                .record().set_structured_serialization(crate::heap::StructuredSerialization::Forbidden);
+                .set_structured_serialization(crate::heap::StructuredSerialization::Forbidden);
         }
         Ok(())
     }
@@ -556,8 +557,8 @@ impl Vm {
     /// Mark a host object serializable only by transfer (a MessagePort).
     pub(crate) fn embedding_require_transfer(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
-        if let Some(mut object) = self.heap.object_mut_ref(source) {
-            object.record().set_structured_serialization(crate::heap::StructuredSerialization::TransferRequired);
+        if let Some(object) = self.heap.object_record_mut(source) {
+            object.set_structured_serialization(crate::heap::StructuredSerialization::TransferRequired);
         }
         Ok(())
     }
@@ -776,7 +777,8 @@ impl Vm {
             return Err(self.uncloneable_with(program, hooks, value));
         }
         let _stack = self.enter_stack()?;
-        if self.object_data(value).is_some_and(Object::is_arguments_object) {
+        // The arguments-object flag is record data.
+        if self.heap.object(value).is_some_and(|object| object.record().is_arguments_object()) {
             return Err(self.uncloneable_with(program, hooks, value));
         }
         if let Some(object) = self.heap.object_record(value) {
@@ -1766,7 +1768,8 @@ impl Vm {
         let mut seen = HashSet::new();
         for root in transfers.iter().copied() {
             let value = self.heap.root_value(root).unwrap();
-            if self.object_data(value).is_some_and(Object::is_structured_transfer_forbidden)
+            // The transfer flag is record data.
+            if self.heap.object(value).is_some_and(|object| object.record().is_structured_transfer_forbidden())
                 || matches!(self.heap.get(value), Some(Cell::ArrayBuffer { detached, immutable, bytes, .. })
                     if *detached || *immutable || bytes.is_wasm_view())
             {
@@ -1826,7 +1829,8 @@ impl Vm {
             })
         };
         let to_string = self.data_property(value, "toString");
-        if self.object_data(value).is_some_and(Object::has_error_data) || native_function(self, to_string, Native::ErrorToString) {
+        // The error-data flag is record data.
+        if self.heap.object(value).is_some_and(|object| object.record().has_error_data()) || native_function(self, to_string, Native::ErrorToString) {
             let text = |vm: &mut Self, name: &str| vm.data_property(value, name).and_then(|value| vm.heap.string(value).map(ToString::to_string));
             let name = text(self, "name").unwrap_or_else(|| "Error".to_owned());
             let message = text(self, "message").unwrap_or_default();
@@ -1864,7 +1868,7 @@ impl Vm {
     /// `JSReceiver::class_name`: the receiver's built-in kind. Typed arrays on resizable
     /// buffers have no per-type name.
     fn class_name(&self, value: Value) -> &'static str {
-        if self.object_data(value).is_some_and(Object::is_arguments_object) {
+        if self.heap.object(value).is_some_and(|object| object.record().is_arguments_object()) {
             return "Arguments";
         }
         if let Some((brand, _)) = self.boxed_primitive_data(value) {
@@ -1877,7 +1881,8 @@ impl Vm {
                 _ => "Object",
             };
         }
-        if self.object_data(value).is_some_and(Object::has_error_data) {
+        // The error-data flag is record data.
+        if self.heap.object(value).is_some_and(|object| object.record().has_error_data()) {
             return "Error";
         }
         if self.is_promise(value) {
@@ -1903,7 +1908,7 @@ impl Vm {
 
     /// The structured-clone DataCloneError: an Error named DataCloneError that hosts
     /// present as their DOMException.
-    pub(super) fn data_clone_error(&mut self, program: &ResidualProgram, message: &str) -> JsError {
+    pub(super) fn data_clone_error(&mut self, program: &ProgramRecord, message: &str) -> JsError {
         let message_value = self.heap.alloc_string(message.into());
         let error = self
             .construct_error_native(program, Native::Error, &[message_value])

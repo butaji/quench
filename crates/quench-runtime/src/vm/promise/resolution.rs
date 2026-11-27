@@ -21,7 +21,7 @@ impl Vm {
             Ok(then) => then,
             // Cancellation must unwind the active job, not become a guest
             // rejection or an allocated Error during thenable assimilation.
-            Err(error) if error.is_execution_terminated() => return Err(error),
+            Err(error) if error.is_execution_terminated() || error.is_captured() => return Err(error),
             Err(error) => {
                 let reason = self.thrown_value_for(p, error);
                 return self.promise_settle(p, promise, PromiseState::Rejected, reason);

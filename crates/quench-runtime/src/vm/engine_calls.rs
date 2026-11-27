@@ -14,6 +14,7 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_nested_lane_run(this: &mut Vm, innermost: [Value; 2], run: &mut dyn FnMut(&mut Vm));
     safe fn quench_engine_vm_restore_native_snapshot(this: &mut Vm, bytes: crate::KeptBytes, native: &NativeJsProgram,
         read_host: Box<dyn FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String> + '_>) -> Result<(), JsError>;
+    safe fn quench_engine_vm_install_native_main(this: &mut Vm, native: &NativeJsProgram) -> Result<(), JsError>;
     safe fn quench_engine_fn_define_lane_helper_symbols();
     #[cfg(feature = "native-execution")]
     unsafe fn quench_engine_fn_js_semantic_callout_single(operation: Option<StaticJsOperation>, context: *mut CallContext, function: u64, arguments: *const u64, result: *mut u64) -> i64;
@@ -93,6 +94,8 @@ pub trait EngineVm {
     fn nested_lane_run<T>(&mut self, innermost: [Value; 2], run: impl FnOnce(&mut Vm) -> T) -> T;
     fn restore_native_snapshot(&mut self, bytes: crate::KeptBytes, native: &NativeJsProgram,
         read_host: impl FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>) -> Result<(), JsError>;
+    /// Binds `native`'s code to the main program the realm was initialized with.
+    fn install_native_main(&mut self, native: &NativeJsProgram) -> Result<(), JsError>;
     fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError> + 'static);
     fn install_wasm_instance(&mut self, env: Value, program: ProgramId) -> Option<()>;
     fn bind_wasm_instance(&mut self, env: Value, program: ProgramId) -> Option<()>;
@@ -160,6 +163,9 @@ impl EngineVm for Vm {
     fn restore_native_snapshot(&mut self, bytes: crate::KeptBytes, native: &NativeJsProgram,
         read_host: impl FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>) -> Result<(), JsError> {
         quench_engine_vm_restore_native_snapshot(self, bytes, native, Box::new(read_host))
+    }
+    fn install_native_main(&mut self, native: &NativeJsProgram) -> Result<(), JsError> {
+        quench_engine_vm_install_native_main(self, native)
     }
     fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError> + 'static) {
         self.set_native_program_resolver_boxed(Box::new(resolver));
@@ -384,6 +390,7 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_nested_lane_run = fn(&mut Vm, [Value; 2], &mut dyn FnMut(&mut Vm));
     #[allow(non_camel_case_types)] pub type quench_engine_vm_restore_native_snapshot = for<'a> fn(&mut Vm, crate::KeptBytes, &NativeJsProgram,
         Box<dyn FnOnce(&mut dyn Host, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String> + 'a>) -> Result<(), JsError>;
+    #[allow(non_camel_case_types)] pub type quench_engine_vm_install_native_main = fn(&mut Vm, &NativeJsProgram) -> Result<(), JsError>;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_define_lane_helper_symbols = fn();
     #[cfg(feature = "native-execution")]
     #[allow(non_camel_case_types)] pub type quench_engine_fn_js_semantic_callout_single = unsafe fn(Option<StaticJsOperation>, *mut CallContext, u64, *const u64, *mut u64) -> i64;

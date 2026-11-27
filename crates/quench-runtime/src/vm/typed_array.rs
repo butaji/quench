@@ -128,10 +128,10 @@ impl Vm {
         self.typed_array_protos[TypedArrayKind::Uint8 as usize] = self.object();
         self.typed_array_proto = self.object();
         let (typed_array_proto, function_proto) = (self.typed_array_proto, self.function_proto);
-        self.object_data_mut(self.typed_array_protos[TypedArrayKind::Uint8 as usize])
+        self.heap.object_mut(self.typed_array_protos[TypedArrayKind::Uint8 as usize])
             .expect("Uint8Array prototype")
             .set_proto(typed_array_proto);
-        self.object_data_mut(typed_array)
+        self.heap.object_mut(typed_array)
             .expect("TypedArray constructor")
             .set_proto(function_proto);
         self.set_named(program, typed_array, "prototype", self.typed_array_proto)?;
@@ -153,7 +153,7 @@ impl Vm {
                 },
             );
         }
-        self.object_data_mut(uint8_array)
+        self.heap.object_mut(uint8_array)
             .expect("Uint8Array constructor")
             .set_proto(typed_array);
         self.set_named(program, uint8_array, "prototype", self.typed_array_protos[TypedArrayKind::Uint8 as usize])?;
@@ -785,7 +785,7 @@ fn uint8_array_subarray(vm: &mut Vm, p: &ResidualProgram, _native: Native, this:
     vm.typed_array_subarray_native(p, this, args)
 }
 
-fn uint8_array_reverse(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+fn uint8_array_reverse(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
     let length = typed_array_mutable_view(vm, p, native, this)?;
     for index in 0..length / 2 {
         let other = length - index - 1;
@@ -1147,7 +1147,7 @@ fn typed_array_to_locale_string(vm: &mut Vm, p: &ResidualProgram, _native: Nativ
     vm.array_to_locale_string_with_length(p, this, length, args)
 }
 
-fn array_buffer_is_view(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+fn array_buffer_is_view(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
     let value = args.first().copied().unwrap_or(Value::UNDEFINED);
     Ok(Value::boolean(vm.is_array_buffer_view(value)))
 }

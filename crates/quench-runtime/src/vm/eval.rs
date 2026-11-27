@@ -94,7 +94,7 @@ impl Vm {
     fn in_native_env_realm(&mut self, body: impl FnOnce(&mut Self) -> Result<Value, JsError>) -> Result<Value, JsError> {
         let previous_global = self
             .active_native_env()
-            .filter(|global| self.object_data(*global).is_some())
+            .filter(|global| self.heap.object(*global).is_some())
             .map(|global| self.switch_realm_global(global));
         let result = body(self);
         if let Some(previous_global) = previous_global {
@@ -187,7 +187,7 @@ impl Vm {
         let result = (|| {
             self.instantiate_global_declarations(&residual)?;
             let root = self.closure(&residual, 0, Value::NULL)?;
-            self.call_root(&residual, root, self.realm.globals)
+            self.call_root(&residual, root, self.realm.globals).map_err(JsError::from)
         })();
         self.set_active_program(active_program);
         self.eval_script_context = eval_script_context;
@@ -1116,7 +1116,7 @@ impl Vm {
         let atom = self.intern_atom(name);
         if self.own_property(globals, atom).is_none() {
             if self
-                .object_data(globals)
+                .heap.object(globals)
                 .is_some_and(|object| !object.is_extensible())
             {
                 return Err(self.type_error(p, format!("cannot define global {name}")));

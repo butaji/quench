@@ -3,6 +3,7 @@
 //! the decode gave, so a register call, a known call, a method call and a construction run the
 //! same helper. The running activation's registers, `this` and function come from the running
 //! body, which a native callee's frame makes the innermost (`native_frames::in_innermost_frame`).
+#[allow(unused_imports)] use quench_runtime::staged::{InvocationFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::vm::field_cache::FieldCacheProbe;
@@ -184,7 +185,7 @@ impl<'a> BodyCall<'a> {
         let window = unsafe {
             let top = stack.values.top();
             let listed = Passed::List { file: self.registers.0 as u64, registers: self.list };
-            fill_call(&mut Concrete::new(std::ptr::null()), top as u64, &[], listed, target.registers);
+            fill_call(&mut Concrete::pure(), top as u64, &[], listed, target.registers);
             stack.values.set_top(top.add(usize::from(target.registers) + quench_runtime::vm::lane_values::CONTEXT));
             Registers(top)
         };

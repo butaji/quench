@@ -4,8 +4,9 @@
 use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
 use crate::heap::TypedArrayKind;
 use crate::typed_ir::{IntRange, Type};
+use std::collections::BTreeSet;
 use crate::ValueType;
-use super::quiet::{Arguments, BUILTINS};
+use super::quiet::{Arguments, BUILTINS, Proofs, Quiet, STRING_METHODS, StringBuiltins, StringMethod};
 use super::value::{Key, Origin};
 
 /// Names that reach the global object as a value (`globalThis`, Node's `global`, and the browser names `self` and `window`).
@@ -74,6 +75,12 @@ pub(super) struct Scope {
     pub(super) site_paths: Vec<Option<(crate::bytecode::FieldBase, u32, Option<u32>)>>,
     /// The builtins of `quiet::BUILTINS` the program names, as (object atom, name atom, arguments).
     builtins: Vec<(Option<u32>, u32, Arguments)>,
+    /// The atom the global `String` interns to, if the program names it (`String(x)` is a string conversion).
+    string_global: Option<u32>,
+    /// The atoms of the `STRING_METHODS` the program names, with their methods.
+    string_methods: Vec<(u32, StringMethod)>,
+    /// The atoms whose text is a canonical array index: a string key of one reads an element, not a named field.
+    index_names: BTreeSet<u32>,
 }
 
 impl Scope {
@@ -82,7 +89,8 @@ impl Scope {
             parents: (0..program.function_count())
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
-            constant_types: program.constants.iter().map(constant_type).collect(),
+            constant_types: program.constants.iter().zip(constant_atoms(program))
+                .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             global_objects: program
                 .atoms
                 .iter()
@@ -117,10 +125,7 @@ impl Scope {
                 .collect(),
             array: program.atoms.iter().position(|name| name == "Array").map(|atom| atom as u32),
             typed_arrays: TYPED_ARRAY_CONSTRUCTORS.iter().filter_map(|(name, kind)| atom_named(program, name).map(|atom| (atom, *kind))).collect(),
-            constant_atoms: program.constants.iter().map(|constant| match constant {
-                Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
-                _ => None,
-            }).collect(),
+            constant_atoms: constant_atoms(program),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
             builtins: BUILTINS.iter().filter_map(|builtin| {
@@ -131,7 +136,28 @@ impl Scope {
                 };
                 Some((object, name, builtin.arguments))
             }).collect(),
+            string_global: atom_named(program, "String"),
+            string_methods: STRING_METHODS.iter().filter_map(|(name, method)| Some((atom_named(program, name)?, *method))).collect(),
+            index_names: program.atoms.iter().enumerate()
+                .filter(|(_, name)| {
+                    let name: &str = name.as_ref();
+                    is_array_index(name)
+                })
+                .map(|(atom, _)| atom as u32).collect(),
         }
+    }
+
+    /// The String builtins the program leaves as the host installed them, under the program's proofs (`Proofs`).
+    pub(super) fn string_builtins(&self, proofs: &Proofs) -> StringBuiltins {
+        StringBuiltins {
+            global: self.string_global.filter(|&atom| proofs.proves(Quiet::Intrinsic { object: None, name: atom })),
+            methods: self.string_methods.iter().copied().filter(|&(atom, _)| proofs.string_method(atom)).collect(),
+        }
+    }
+
+    /// Whether the string key `atom` names an array index, so a read of it is an element read.
+    pub(super) fn names_index(&self, atom: u32) -> bool {
+        self.index_names.contains(&atom)
     }
 
     /// The type of constant `index`: what the constant is, not what a register holds (`Word`).
@@ -187,6 +213,12 @@ impl Scope {
     }
 }
 
+/// Whether `text` is a canonical array index: decimal digits with no leading zero, below 2^32 - 1.
+fn is_array_index(text: &str) -> bool {
+    let canonical = text == "0" || (!text.is_empty() && !text.starts_with('0') && text.bytes().all(|byte| byte.is_ascii_digit()));
+    canonical && text.parse::<u32>().is_ok_and(|index| index < u32::MAX)
+}
+
 /// The atom whose name is `text`, if the program names it.
 fn atom_named(program: &ResidualProgram, text: &str) -> Option<u32> {
     program.atoms.iter().position(|atom| {
@@ -195,16 +227,33 @@ fn atom_named(program: &ResidualProgram, text: &str) -> Option<u32> {
     }).map(|atom| atom as u32)
 }
 
+/// Each constant's atom, by constant index: a String constant whose text the program names interns to that atom.
+fn constant_atoms(program: &ResidualProgram) -> Vec<Option<u32>> {
+    program.constants.iter().map(|constant| match constant {
+        Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
+        _ => None,
+    }).collect()
+}
+
 /// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;
-/// a string's, a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
-pub fn constant_type(constant: &Constant) -> Type {
+/// a string's exact length, which is an atom's (`atom`) where the program names its text, so the string is that atom;
+/// a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
+pub fn constant_type(constant: &Constant, atom: Option<u32>) -> Type {
     match constant {
         Constant::Number(value) => crate::value::exact_int32(*value)
             .map_or(Type::NUMBER, |int| Type::int(IntRange::singleton(i64::from(int)))),
         Constant::Null => Type::language(ValueType::Null),
         Constant::Undefined => Type::language(ValueType::Undefined),
         Constant::Boolean(_) => Type::language(ValueType::Boolean),
-        Constant::String(_) | Constant::StringUnits(_) => Type::language(ValueType::String),
+        Constant::String(text) => {
+            let length = u32::try_from(text.encode_utf16().count()).unwrap_or(u32::MAX);
+            let atoms: Vec<u32> = atom.into_iter().collect();
+            Type::string_atoms(&atoms, length, length)
+        }
+        Constant::StringUnits(units) => {
+            let length = u32::try_from(units.len()).unwrap_or(u32::MAX);
+            Type::string_length(length, length)
+        }
         Constant::BigInt(_) => Type::language(ValueType::BigInt),
         _ => Type::ANY,
     }

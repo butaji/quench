@@ -161,8 +161,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             declared_types: None,
         source_name: String::new(),
         source: None,
-        atoms: AtomTable::default(),
-        constants: vec![].into(),
+        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into() },
         functions: vec![Function {
             parent: None,
             name: None,
@@ -283,8 +282,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             declared_types: None,
         source_name: String::new(),
         source: None,
-        atoms: AtomTable::default(),
-        constants: vec![].into(),
+        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into() },
         functions: vec![Function {
             parent: None,
             name: None,

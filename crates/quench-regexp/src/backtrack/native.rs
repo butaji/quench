@@ -202,7 +202,7 @@ impl Program {
 
     /// The program as a native plan: its instructions and the tables they name.
     fn native_plan(&self) -> NativePlan {
-        let starts = self.starts.as_ref().map(|starts| (starts.at_start, starts.at_end, starts.units.table.0));
+        let starts = self.facts.starts.as_ref().map(|starts| (starts.at_start, starts.at_end, starts.units.table.0));
         let masks = self.sets.iter().map(|set| set.table.0).chain(starts.map(|(_, _, units)| units)).collect();
         let restarts = self.native_restarts(starts.map(|(at_start, at_end, _)| Admission { at_start, at_end, units: UnitTest::Set(self.sets.len() as u32) }));
         NativePlan {
@@ -213,11 +213,11 @@ impl Program {
             dispatches: self.dispatches.iter().map(|dispatch| dispatch.intervals().into()).collect(),
             classes: self.classes.as_ptr() as usize,
             folds: [false, true].map(case_partners),
-            entry: self.entry.unwrap_or(0),
+            entry: self.facts.entry.unwrap_or(0),
             registers: self.register_count,
             unset: super::UNSET,
             restarts,
-            restart_skip: self.restart_skip,
+            restart_skip: self.facts.restart_skip,
         }
     }
 
@@ -237,7 +237,7 @@ impl Program {
     /// Whether a scan finds the next start (a prefix, lookahead or inner literal), or the
     /// pattern is anchored: native code then gives a failed start back to its caller.
     fn restarts_through_caller(&self) -> bool {
-        self.anchored || self.prefix.is_some() || self.lookahead.is_some() || self.inner_literal.is_some()
+        self.facts.anchored || self.facts.prefix.is_some() || self.facts.lookahead.is_some() || self.facts.inner_literal.is_some()
     }
 
     /// The native code for this program, asked of the embedder's compiler once the program has
@@ -351,7 +351,7 @@ impl Program {
     /// as `MAXIMUM_STACK_FRAMES` allows: the start of its match and the match's end (or
     /// `NATIVE_FAIL`); `None` where the stack is not enough.
     fn native_attempt(&self, code: &NativeCode, bytes: &[u8], (mut start, last): (usize, usize), registers: &mut [usize], stack: &mut Vec<usize>) -> Option<(usize, usize)> {
-        let offset = self.entry.unwrap_or(0) as usize;
+        let offset = self.facts.entry.unwrap_or(0) as usize;
         if stack.len() < INITIAL_STACK_FRAMES * NATIVE_FRAME_WORDS {
             stack.resize(INITIAL_STACK_FRAMES * NATIVE_FRAME_WORDS, 0);
         }

@@ -69,7 +69,7 @@ extern "C" fn map_fixed_table() {
 static MAP_FIXED_TABLE: extern "C" fn() = map_fixed_table;
 
 /// The layout table's range where it sits at its fixed address, mapped before `main`: a dump of
-/// the process (`quench::aot::image_dump`) carries its written pages.
+/// the process (`native_link::image_dump`) carries its written pages.
 pub fn fixed_table_range() -> Option<(usize, usize)> {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     return Some((FIXED_TABLE, LAYOUT_CAPACITY * size_of::<u64>()));
@@ -184,13 +184,11 @@ pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64) -> u32 {
 }
 
 /// The shape of class `id`: the shape bits of its auxiliary word.
-#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
 pub(crate) fn class_shape(id: u32) -> u32 {
     auxiliary(id) & SHAPE_MASK
 }
 
 /// The prototype link of class `id`: the index bits of its meta word.
-#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
 pub(crate) fn class_link(id: u32) -> ProtoLink {
     ProtoLink::from_bits((word(id) >> u32::BITS) as u32 & PROTO_INDEX_BITS)
 }

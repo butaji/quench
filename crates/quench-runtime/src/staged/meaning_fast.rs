@@ -2,6 +2,8 @@
 //! tier's test exactly. Each classification reads the record's decoded operation (`Operation::decode`,
 //! the shared staged semantics) or a catalog trait, never the opcode's name.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use crate::bytecode::{Register, Traits, WideInstruction};
 use super::protocol_literals::LiteralStep;
 use super::protocol_owned::OwnedVarStep;

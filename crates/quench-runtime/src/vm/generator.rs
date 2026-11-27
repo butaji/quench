@@ -180,8 +180,8 @@ impl Vm {
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if function.arguments_alias_parameters()
-                && let Some(object) = self.object_data_mut(arguments) {
-                    object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
+                && let Some(object) = self.heap.object_mut(arguments) {
+                    object.record_mut_departing().set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
         }
         self.initialize_frame_invocation(p, &mut frame, function, context, args);
@@ -210,6 +210,10 @@ impl Vm {
                 None,
                 None,
             );
+            // A captured run took this frame into its chain (`capture_chain_parked`): none is left to pop.
+            if result.as_ref().is_err_and(JsError::is_captured) {
+                return Err(result.err().expect("checked above"));
+            }
             frame = self.frames.pop().expect("generator parameter frame exists");
             match result {
                 Ok(FrameOutcome::ParameterInitializationComplete) => {}
@@ -258,7 +262,7 @@ impl Vm {
                 self.own_function_prototype_data(function, prototype_atom)
                     .or_else(|| self.own_property(function, prototype_atom))
             })
-            .filter(|prototype| self.object_data(*prototype).is_some())
+            .filter(|prototype| self.heap.object(*prototype).is_some())
             .unwrap_or(default_prototype);
         let mut object = Self::empty_object(generator_prototype);
         if let Some(function) = function_object {

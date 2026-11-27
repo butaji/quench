@@ -104,8 +104,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
 /// planned from, its field proofs and its direct callees. Equal keys make equal code.
 pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
-    direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize,
-    arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> u64 {
+    direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize) -> u64 {
     use std::fmt::Write;
     // The instructions, most of the key, fold as their words; the rest as its debug text,
     // written into the hash without a string between.
@@ -115,7 +114,7 @@ pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
         key.word(word);
         key.word(u64::from(imm));
     }
-    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}{arrays:?}", unit.frames);
+    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}", unit.frames);
     key.0
 }
 

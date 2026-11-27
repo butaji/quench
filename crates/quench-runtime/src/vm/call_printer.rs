@@ -3,6 +3,8 @@
 //! position is found in source on the dynamic error path. Native images freeze the same
 //! descriptions before publication, so their error path needs no syntax frontend.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::Vm;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
@@ -99,7 +101,7 @@ impl Vm {
             if let Some(attributes) = self.property_attributes(holder, key) {
                 return (!attributes.accessor).then(|| self.own_property(holder, atom)).flatten();
             }
-            holder = match self.object_data(holder) {
+            holder = match self.heap.object(holder) {
                 Some(object) => object.proto(),
                 None => return Some(Value::UNDEFINED),
             };

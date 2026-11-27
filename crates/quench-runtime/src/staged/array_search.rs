@@ -186,7 +186,7 @@ pub fn scan_dense<S: NumericStage>(stage: &mut S, base: S::Word, from: S::Word, 
 /// double backing compares its words, which hold each element's exact bits: a double element equal to a
 /// Number's value has the bits of that Number's word (the needle's words hold them, `-0` and `+0` both).
 fn scan_forward(elements: &ArrayElements, range: Range<usize>, needle: &Needle) -> Option<usize> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let key = needle.narrow.map(|key| [u64::from(key)]);
     // A backing with no hole (`holds_no_hole`) has no hole word for the walk to stop on.
     let holed = !elements.holds_no_hole();

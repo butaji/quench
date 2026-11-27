@@ -2,6 +2,7 @@
 //! A loop with a statically true first test and false post-body test has no backedge.
 //! Instructions keep their original unit PCs, origins and recovery homes.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{facts, lane_unit::Unit};

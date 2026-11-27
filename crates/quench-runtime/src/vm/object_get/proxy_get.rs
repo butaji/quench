@@ -176,7 +176,8 @@ impl Vm {
     /// attributes: an extensible array no descriptor was recorded an index for.
     fn array_leaves_index_unconstrained(&self, target: Value, key: Value) -> bool {
         self.heap.array(target).is_some()
-            && self.object_data(target).is_some_and(|data| data.is_extensible() && !data.has_indexed_descriptors())
+            // `has_indexed_descriptors` is record data: the descriptors an index was recorded for.
+            && self.heap.object(target).is_some_and(|data| data.is_extensible() && !data.record().has_indexed_descriptors())
             && self.heap.string(key).is_some_and(|text| super::super::object_static::array_index(text.host_string()).is_some())
     }
 
@@ -210,7 +211,8 @@ impl Vm {
                 _ => {}
             }
         }
-        if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
+        // Record data: the arguments-object flag and the length and index descriptors.
+        if let Some(array) = self.heap.array(target).and_then(|_| self.heap.object(target)).map(|object| object.record()).filter(|array| !array.is_arguments_object()) {
             // An array's `length` is non-configurable and writable unless a descriptor says
             // otherwise; its elements are configurable unless a descriptor was recorded.
             if atom == self.length_atom {

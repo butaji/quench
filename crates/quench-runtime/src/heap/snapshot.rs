@@ -4,8 +4,9 @@
 //! remembered, and pacing planned from the live count.
 
 use super::*;
-use super::class_space::ClassCell0;
+use super::class_space::{ClassCell0, ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, ClassSpace};
 use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
+use crate::value::Value;
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
@@ -27,6 +28,8 @@ impl Heap {
         // The object stubs (region 0 of the class space) are written verbatim, so every direct
         // object `Value` restores to the granule it named.
         write_records(writer, &self.class_space.regions.0, |writer, cell: &ClassCell0| Ok(writer.u64(cell.header)))?;
+        // The class cells (regions 1..) follow, each with its header and fields, so a Value naming one restores unchanged.
+        write_class_cells(writer, &self.class_space)?;
         write_records(writer, &self.array_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.function_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.promise_records, |writer, record| record.write_snapshot(writer))?;
@@ -105,6 +108,7 @@ impl Heap {
         }
         read_records(reader, &mut heap.object_records, OrdinaryRecord::read_snapshot)?;
         read_stubs(reader, &mut heap)?;
+        read_class_cells(reader, &mut heap)?;
         read_records(reader, &mut heap.array_records, ArrayObject::read_snapshot)?;
         read_records(reader, &mut heap.function_records, FunctionRecord::read_snapshot)?;
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
@@ -226,6 +230,53 @@ fn read_stubs(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
     Ok(())
 }
 
+/// Writes the class cells of regions `1..` (`read_class_cells`), each record with its granule's local id.
+fn write_class_cells(writer: &mut Writer, space: &ClassSpace) -> SnapshotResult<()> {
+    let regions = &space.regions;
+    write_records(writer, &regions.1, |writer, cell: &ClassCell1| Ok(write_cell(writer, cell.header, &cell.fields)))?;
+    write_records(writer, &regions.2, |writer, cell: &ClassCell2| Ok(write_cell(writer, cell.header, &cell.fields)))?;
+    write_records(writer, &regions.3, |writer, cell: &ClassCell3| Ok(write_cell(writer, cell.header, &cell.fields)))?;
+    write_records(writer, &regions.4, |writer, cell: &ClassCell4| Ok(write_cell(writer, cell.header, &cell.fields)))?;
+    write_records(writer, &regions.5, |writer, cell: &ClassCell5| Ok(write_cell(writer, cell.header, &cell.fields)))
+}
+
+/// A class cell's header, then each of its fields, as the snapshot keeps them.
+fn write_cell(writer: &mut Writer, header: u64, fields: &[Value]) {
+    writer.u64(header);
+    for &field in fields {
+        writer.value(field);
+    }
+}
+
+/// Reads one cell region's records (`read_records`): each cell's header, then its `$fields` fields.
+macro_rules! read_cell_region {
+    ($reader:expr, $region:expr, $cell:ident, $fields:literal) => {
+        read_records($reader, &mut $region, |reader| {
+            let header = reader.u64()?;
+            let mut fields = [Value::DELETED; $fields];
+            for field in fields.iter_mut() {
+                *field = reader.value()?;
+            }
+            Ok($cell { header, fields })
+        })?
+    };
+}
+
+/// Reads the class cells `write_class_cells` wrote, into regions `1..` at their granules. The space is reserved
+/// first, since a cell lives in it.
+fn read_class_cells(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
+    if !heap.class_space.ensure_reserved() {
+        return Err(SnapshotError("snapshot class cells without a class space".into()));
+    }
+    let regions = &mut heap.class_space.regions;
+    read_cell_region!(reader, regions.1, ClassCell1, 1);
+    read_cell_region!(reader, regions.2, ClassCell2, 3);
+    read_cell_region!(reader, regions.3, ClassCell3, 7);
+    read_cell_region!(reader, regions.4, ClassCell4, 15);
+    read_cell_region!(reader, regions.5, ClassCell5, 31);
+    Ok(())
+}
+
 fn write_records<T, const CAPACITY: usize, const HOLE: usize>(
     writer: &mut Writer,
     space: &records::RecordSpace<T, CAPACITY, HOLE>,
@@ -285,7 +336,7 @@ mod tests {
         assert_eq!(registered.len(), 2);
         assert!(registered.contains(&prototype) && registered.contains(&record_prototype) && !registered.contains(&plain));
         for value in [prototype, record_prototype] {
-            assert!(restored.object_ref(value).and_then(|object| object.watched_subject()).is_some());
+            assert!(restored.object(value).and_then(|object| object.watched_subject()).is_some());
         }
         restored.collect([prototype, record_prototype]);
         assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");

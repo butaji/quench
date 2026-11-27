@@ -21,6 +21,7 @@
 //! home (census `fact_homes`).
 use super::{IntRange, Representation, Type};
 use crate::heap::TypedArrayKind;
+use crate::ValueType;
 
 /// The most classes a closed union holds before it is `Classes::Many`: richards' four task classes.
 pub const MAX_CLASSES: usize = 4;
@@ -183,21 +184,26 @@ pub fn view_element_type(kind: TypedArrayKind) -> Type {
     }
 }
 
-/// What the arrays a value holds keep in their elements: the join of every element store's type and
-/// classes, a hole read as `undefined` included, their length (`Length`), and which kind of array they are (`View`).
+/// What the arrays a value holds keep in their elements: the join of every element store's type and classes (`ty`,
+/// `classes`), whether some index within the length may hold no element (`holes`), their length (`Length`), and which
+/// kind of array they are (`View`). A hole is not a stored value, so `ty` never holds `undefined` for one: a read of a
+/// hole takes `undefined` (`element`), and a store of an actual `undefined` joins it into `ty`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Elements {
     pub ty: Type,
     pub classes: Classes,
     pub length: Length,
     pub view: View,
+    /// Whether an index may hold no element: a literal that leaves an index out, `new Array(n)` before it is filled, a
+    /// `delete`, or a store past the length. Joins by `or`: a join with a hole-free array keeps the hole.
+    pub holes: bool,
 }
 
 impl Elements {
     /// No array, or none with an element yet.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, length: Length::Never, view: View::None };
-    /// Arrays of anything, of any length, of any kind.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, length: Length::Any, view: View::Mixed };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, length: Length::Never, view: View::None, holes: false };
+    /// Arrays of anything, of any length, of any kind, with holes.
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, length: Length::Any, view: View::Mixed, holes: true };
 
     pub fn join(self, other: Self) -> Self {
         Self {
@@ -205,17 +211,19 @@ impl Elements {
             classes: self.classes.join(other.classes),
             length: self.length.join(other.length),
             view: self.view.join(other.view),
+            holes: self.holes || other.holes,
         }
     }
 
     /// The cell an element read takes (γ): the elements' type and classes, the type of a typed array's kind where its
-    /// view is one kind. An index the range of which the length does not cover may read a hole: the reader joins
-    /// `undefined` itself.
-    pub fn element(self) -> Cell {
+    /// view is one kind, and `undefined` where the read may find a hole: the array has holes, or the index is not within
+    /// its length (`in_bounds`, `typing::within_length`).
+    pub fn element(self, in_bounds: bool) -> Cell {
         let ty = match self.view {
             View::One(kind) => view_element_type(kind),
             _ => self.ty,
         };
+        let ty = if self.holes || !in_bounds { ty.join(Type::language(ValueType::Undefined)) } else { ty };
         Cell { ty, classes: self.classes, elements: Elements::ANY, global: false }
     }
 }
@@ -227,29 +235,26 @@ pub struct Cell {
     pub ty: Type,
     pub classes: Classes,
     pub elements: Elements,
-    /// Whether the value may be the global object. Only the sources the closed world proves make it (a root's `this`, a
-    /// global-object name, the `this` a plain call passes: `aot_facts::gate`); a flag survives every join, where a
-    /// `Classes::Many` would absorb the global object into any object. A solve that proves no computed access or
-    /// enumeration reaches a flagged value, and no escape holds one, has its closed world verified.
+    /// Whether the value may be the global object. Not a lattice point of `ty` or `classes` (`Classes::Many` absorbs
+    /// objects, so the global object cannot ride in them): a flag the closed world's verification reads (`aot_facts::gate`).
     pub global: bool,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
     pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, global: false };
-    /// Any value: the top of `ty`, `classes` and `elements`. Not the global object: an unknown value is not one, by the
-    /// closed world's premise that the host hands the program the global object only through its sources.
+    /// Any value: the top.
     pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, global: false };
 
-    /// The same value, which may be the global object (`global`).
-    pub const fn maybe_global(self) -> Self {
-        Self { global: true, ..self }
-    }
-
-    /// A value of type `ty` from nowhere the solve follows: its classes from the type alone, and not the global object.
+    /// A value of type `ty` from nowhere the solve follows: its classes from the type alone.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
         Self { ty, classes: Classes::of_type(ty), elements, global: false }
+    }
+
+    /// The cell with the global object among the values it may hold.
+    pub const fn maybe_global(self) -> Self {
+        Self { global: true, ..self }
     }
 
     /// A value of type `ty` holding objects of `classes`.

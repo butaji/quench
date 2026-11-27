@@ -178,11 +178,12 @@ impl Vm {
         if fuses.intact(crate::code_dependencies::IntactFuse::RegExpExec, intrinsics.prototype) == Some(true) {
             return true;
         }
-        let Some(data) = self.object_data(intrinsics.prototype) else {
+        let Some(data) = self.heap.object(intrinsics.prototype) else {
             return false;
         };
-        let exec = if exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.inline_property(exec_slot) } else { None };
-        let Some(exec) = exec.or_else(|| self.heap.property_get(data, exec_slot)) else {
+        // Inline values are record data.
+        let exec = if exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.record().inline_property(exec_slot) } else { None };
+        let Some(exec) = exec.or_else(|| self.heap.property_get_ref(data, exec_slot)) else {
             return false;
         };
         if intrinsics.builtin_exec.get() == Some(exec) {

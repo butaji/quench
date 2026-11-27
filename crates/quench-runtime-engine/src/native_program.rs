@@ -201,6 +201,13 @@ impl Vm {
         self.attach_native_js(ProgramId::MAIN, &native.code).map_err(JsError::validation)
     }
 
+    /// Binds `native`'s code to the main program the realm was initialized with, as
+    /// `restore_native_snapshot` does for a restored realm.
+    pub(crate) fn install_native_main(&mut self, native: &NativeJsProgram) -> Result<(), JsError> {
+        self.check_execution_interrupt()?;
+        self.attach_native_js(ProgramId::MAIN, &native.code).map_err(JsError::validation)
+    }
+
     pub(crate) fn execute_native_program(
         &mut self,
         native: &NativeJsProgram,
@@ -276,7 +283,7 @@ impl Vm {
             let prepared = self.prepare_native_script(script.clone())?;
             self.evaluate_prepared_global_script(&prepared)?;
         }
-        self.run_main(&native.program, drain_jobs)
+        self.run_main(&native.program, drain_jobs).map_err(JsError::from)
     }
 }
 

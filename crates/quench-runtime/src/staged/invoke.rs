@@ -24,10 +24,6 @@ use super::property::get_field;
 use super::protocol::{bind_this_with, complete_call, fill_call, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
-#[cfg(not(stencil_build))]
-use super::CallRecord;
-#[cfg(not(stencil_build))]
-use crate::bytecode::WideInstruction;
 use crate::bytecode::{FieldBase, FieldLookup};
 use crate::Value;
 
@@ -255,23 +251,13 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     fn call_helper(&mut self, _stage: &mut S, _site: &Invocation, direct: Option<S::Word>) -> Option<S::Word> {
         direct
     }
-
-    #[cfg(not(stencil_build))]
-    /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
-    /// call row runner asks where the row declined (the record's operands are read from it, since an
-    /// `Invocation` does not name every form). `None` where the frame runs no general calls.
-    #[cfg(not(stencil_build))]
-    #[inline(always)]
-    fn call_general(&mut self, _form: CallRecord, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
-        None
-    }
 }
 
 /// The call of `site`: by the frame's direct entry where it has one (a unit's inlined callee is a
 /// `CallEntry::Inline` the unit spliced, whose entry stays the fallback), else by the VM. A
 /// guard that fails leaves at `miss`, where the VM's call runs.
 #[inline(always)]
-pub(crate) fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
+pub fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
     -> Step<S::Word, F::Control> {
     let direct = match frame.call_entry(&site) {
         CallEntry::Direct(plan) | CallEntry::Inline(plan) => match plan.kind {
@@ -325,7 +311,7 @@ fn callee_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fram
 /// The callee's `this`: a construction's allocated receiver, or the receiver a call binds (a bound
 /// function's own), after the callee's identity is proved.
 #[inline(always)]
-pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
+pub fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
     (site, plan): (&Invocation, &DirectPlan)) -> Option<S::Word> {
     if plan.kind.allocates_receiver() {
         let held = callee_word(stage, frame, file, miss, (site, plan, None))?;
@@ -347,7 +333,7 @@ pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
 /// the plan folded, then the call's: a window of the caller's file, or the registers of the list
 /// the frame resolves.
 #[inline(always)]
-pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
+pub fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
     (site, plan, registers): (&Invocation, &DirectPlan, u16)) -> Option<()> {
     let constants: &[u64] = match plan.bound {
         Some(bound) => frame.call_constants(bound.arguments)?,
@@ -412,9 +398,14 @@ impl<W, P> Operation<W, P> {
 
 /// Complete the activation with the value of `source`, where the frame can.
 #[inline(always)]
-pub(crate) fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
+pub fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
     frame.ret(stage, source).map_or(Step::Unresolved, Step::Control)
 }
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;
 
 #[cfg(test)]
 mod tests;

@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 pub mod native_operands;
+pub mod exit;
 pub mod jit_backend;
 pub mod tier_policy;
 pub mod tier_queries;
@@ -50,7 +51,7 @@ pub mod wasm_indirect;
 pub mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
-    NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+    NEW_TARGET_BINDING, Op, Operand, ProgramRecord, Register, ResidualProgram, WideInstruction};
 use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_add_property_held, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
@@ -241,7 +242,7 @@ pub mod object_static;
 pub mod object_symbols;
 pub mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
-#[cfg(test)] mod float_slot_tests;
+#[cfg(test)] mod record_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
@@ -263,6 +264,8 @@ use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
 pub mod native_table;
 pub mod reachable_realm;
+mod native_effects;
+mod reachable_protocol;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;
@@ -1517,10 +1520,13 @@ pub(crate) enum DictionaryTrigger {
     /// and a field cache hit, which only records non-dictionary shapes, proves an ordinary
     /// receiver.
     ModuleNamespace,
+    /// A class cell's object departs its class on an add past its capacity or a delete
+    /// (`Heap::depart_class_object`), so it leaves the class's shape for a dictionary of its own.
+    ClassDeparture,
 }
 impl DictionaryTrigger {
     #[cfg(feature = "profile-aggregate")]
-    pub(crate) const COUNT: usize = 4;
+    pub(crate) const COUNT: usize = 5;
 
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn index(self) -> usize {
@@ -1529,6 +1535,7 @@ impl DictionaryTrigger {
             Self::DeletionPattern => 1,
             Self::PrototypeUse => 2,
             Self::ModuleNamespace => 3,
+            Self::ClassDeparture => 4,
         }
     }
 }
@@ -1714,6 +1721,7 @@ impl ShapeFacts {
             Some(DictionaryTrigger::DeletionPattern) => 2,
             Some(DictionaryTrigger::PrototypeUse) => 3,
             Some(DictionaryTrigger::ModuleNamespace) => 4,
+            Some(DictionaryTrigger::ClassDeparture) => 5,
         };
         Self((self.0 & !Self::DICTIONARY_MASK) | (code << Self::DICTIONARY_SHIFT))
     }
@@ -1725,7 +1733,8 @@ impl ShapeFacts {
             1 => Some(DictionaryTrigger::PropertyCount),
             2 => Some(DictionaryTrigger::DeletionPattern),
             3 => Some(DictionaryTrigger::PrototypeUse),
-            _ => Some(DictionaryTrigger::ModuleNamespace),
+            4 => Some(DictionaryTrigger::ModuleNamespace),
+            _ => Some(DictionaryTrigger::ClassDeparture),
         }
     }
 
@@ -2818,7 +2827,7 @@ impl Vm {
             let key = PropertyKey::string(atom);
             let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
                 if self
-                    .object_data(self.realm.globals)
+                    .heap_reads().object(self.realm.globals)
                     .is_some_and(|object| !object.is_extensible())
                 {
                     return Err(self.type_error(program, "cannot declare global function".into()));
@@ -2860,7 +2869,7 @@ impl Vm {
                 continue;
             }
             if self
-                .object_data(self.realm.globals)
+                .heap_reads().object(self.realm.globals)
                 .is_some_and(|object| !object.is_extensible())
             {
                 return Err(self.type_error(program, "cannot declare global var".into()));
@@ -2931,7 +2940,7 @@ impl Vm {
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
         }
-        self.run_main(program, drain_jobs)
+        self.run_main(program, drain_jobs).map_err(JsError::from)
     }
 
     #[quench_macros::test_visible]
@@ -2947,7 +2956,7 @@ impl Vm {
 
     /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
     /// `program`: the host resumes its installation where the snapshot left it.
-    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, exit::Exit> {
         self.resume_restored()?;
         self.run_main(program, false)
     }
@@ -2961,7 +2970,7 @@ impl Vm {
 
     /// Runs the main program of an installed realm: its module graph, its declarations and
     /// its body, then optionally its jobs.
-    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
+    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, exit::Exit> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -2979,7 +2988,8 @@ impl Vm {
         };
         let result = self.call_root(program, root, this);
         self.finish_main_module(program, &result)?;
-        if drain_jobs {
+        // A captured run stops at its native call: its jobs wait for the run that resumes it.
+        if drain_jobs && !matches!(result, Err(exit::Exit::Captured(_))) {
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;
@@ -3589,14 +3599,19 @@ impl Vm {
         }
     }
 
-    fn materialize_constant(&mut self, constant: &Constant) -> Value {
+    /// The value of a program constant. A String constant the program names is the string of its atom (`atom`), so a
+    /// string constant and the atom it spells are one string object, which `===` between atom-known operands relies on
+    /// (`staged::typing::both_interned`); a `typeof` name keeps its one shared string (`typeof_constant`).
+    fn materialize_constant(&mut self, constant: &Constant, atom: Option<Atom>) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc_v128(*bits),
-            Constant::String(v) => self
-                .typeof_constant(v)
-                .unwrap_or_else(|| self.heap.alloc_string(JsString::from_shared_text(v))),
+            Constant::String(v) => match (self.typeof_constant(v), atom) {
+                (Some(name), _) => name,
+                (None, Some(atom)) => self.atom_string(atom),
+                (None, None) => self.heap.alloc_string(JsString::from_shared_text(v)),
+            },
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint((**v).clone())),
             Constant::Boolean(true) => Value::TRUE,
@@ -3611,19 +3626,21 @@ impl Vm {
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
         let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
+        let atoms = program_atoms(program);
         for constant in &program.constants {
+            let atom = constant_atom(&atoms, constant);
             let key = match constant {
                 Constant::String(text) => StringConstantKey::Text(text),
                 Constant::StringUnits(units) => StringConstantKey::Units(units),
                 _ => {
-                    constants.push(self.materialize_constant(constant));
+                    constants.push(self.materialize_constant(constant, atom));
                     continue;
                 }
             };
             let value = match strings.entry(key) {
                 std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
                 std::collections::hash_map::Entry::Vacant(slot) => {
-                    *slot.insert(self.materialize_constant(constant))
+                    *slot.insert(self.materialize_constant(constant, atom))
                 }
             };
             constants.push(value);
@@ -4201,6 +4218,25 @@ impl Vm {
 /// A program string constant's text as written, the key under which equal constants share a
 /// cell (`Vm::materialize_program_constants`).
 #[derive(PartialEq, Eq, Hash)]
+/// The atom each name of `program` interns to, by text: the program's atoms are the VM's prefix, so an atom is its index.
+pub(crate) fn program_atoms(program: &ResidualProgram) -> FxHashMap<&str, Atom> {
+    program.atoms.iter().enumerate().map(|(index, name)| {
+        let name: &str = name.as_ref();
+        (name, index as Atom)
+    }).collect()
+}
+
+/// The atom a program constant names: a String constant whose text the program names is that atom.
+pub(crate) fn constant_atom(atoms: &FxHashMap<&str, Atom>, constant: &Constant) -> Option<Atom> {
+    match constant {
+        Constant::String(text) => {
+            let text: &str = text.as_ref();
+            atoms.get(text).copied()
+        }
+        _ => None,
+    }
+}
+
 enum StringConstantKey<'a> {
     Text(&'a str),
     Units(&'a [u16]),

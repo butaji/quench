@@ -17,15 +17,18 @@ use crate::vm::{ActiveIterator, CaptureCache, Frame};
 use crate::Value;
 
 /// A native call a chain's top frame is parked in: the native the frame called at `call_pc` (the
-/// frame's pc at the call instruction), with its receiver and arguments. `Vm::resume_chain` makes
-/// the call again through the ordinary call path and delivers its result to that instruction's
-/// destination. Holds only values and ids, so the chain serializes with the heap.
+/// frame's pc at the call instruction), with its receiver and arguments. `new_target` is `None`
+/// for a call and `Some` for a construction (`new`), whose receiver is then unused.
+/// `Vm::resume_chain` makes the call again through the ordinary call or construct path and
+/// delivers its result to that instruction's destination. Holds only values and ids, so the chain
+/// serializes with the heap.
 #[derive(Clone)]
 pub struct ParkedNative {
     pub callee: Value,
     pub this: Value,
     pub args: Box<[Value]>,
     pub call_pc: u32,
+    pub new_target: Option<Value>,
 }
 
 /// A frame's record. Its window is its register file's first register (`WINDOW`, `staged::frame`),
@@ -137,11 +140,11 @@ impl FrameRecord {
             let entries = self.registers.as_mut_ptr().add(count);
             match own_slots {
                 None => crate::staged::call_environment::lay_out_entries(
-                    &mut crate::staged::Concrete::new(std::ptr::null()),
+                    &mut crate::staged::Concrete::pure(),
                     entries.expose_provenance() as u64, captured, self.locals.len() as u16,
                 ),
                 Some(slots) => crate::staged::call_environment::write_entries(
-                    &mut crate::staged::Concrete::new(std::ptr::null()),
+                    &mut crate::staged::Concrete::pure(),
                     entries.expose_provenance() as u64, self.env.to_bits(), slots.expose_provenance() as u64, captured,
                 ),
             }
@@ -377,6 +380,7 @@ impl FrameRecord {
         if let Some(parked) = &self.parked {
             out.extend([parked.callee, parked.this]);
             out.extend_from_slice(&parked.args);
+            out.extend(parked.new_target);
         }
         Value::extend_heap_values(out, &self.locals);
         out.extend(cold.dynamic_bindings.iter().map(|(_, value)| *value));
@@ -456,7 +460,8 @@ impl Snap for FrameRecord {
                 parked.callee.snap(writer)?;
                 parked.this.snap(writer)?;
                 parked.args.snap(writer)?;
-                parked.call_pc.snap(writer)
+                parked.call_pc.snap(writer)?;
+                parked.new_target.snap(writer)
             }
             None => false.snap(writer),
         }
@@ -475,7 +480,13 @@ impl Snap for FrameRecord {
         let caller = Snap::unsnap(reader)?;
         let parked = if bool::unsnap(reader)? {
             let (callee, this) = (Value::unsnap(reader)?, Value::unsnap(reader)?);
-            Some(ParkedNative { callee, this, args: Snap::unsnap(reader)?, call_pc: Snap::unsnap(reader)? })
+            Some(ParkedNative {
+                callee,
+                this,
+                args: Snap::unsnap(reader)?,
+                call_pc: Snap::unsnap(reader)?,
+                new_target: Snap::unsnap(reader)?,
+            })
         } else {
             None
         };

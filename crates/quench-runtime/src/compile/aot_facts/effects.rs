@@ -1,12 +1,18 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
-use super::accessors::{accessor_definition, accessor_mode, site_holder};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
+mod fields;
+mod strings;
+
+pub(super) use self::fields::{base_fact, field_owner, this_fact, this_member};
+use self::fields::{base_fact, member_stores, member_type, named_word, prototype_base};
+use self::strings::{string_call, string_length};
 use super::scope::Scope;
-use super::value::{Accessor, Word, Key, Origin, PrototypeBase};
+use super::value::{Accessor, Word, Key, Origin};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
-use crate::bytecode::{FieldBase, FieldLookup, Register, Traits, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
-use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing::{self, Abstract};
 use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation, Protocol};
 use oxc_syntax::operator::BinaryOperator;
@@ -33,6 +39,9 @@ pub(super) struct Ctx<'a> {
     pub(super) decode: crate::staged::DecodeContext<'a>,
     /// The registers the method sites list as their arguments (`ResidualProgram::method_arguments`).
     pub(super) records: &'a [crate::bytecode::Register],
+    /// The names some accessor definition defines (`accessors::names_of`): a store of one may run its setter, so it is a
+    /// guest run (`runs_guest_code`), and no class's field takes the stored value (`fields::member_stores`).
+    pub(super) accessors: &'a std::collections::BTreeSet<u32>,
 }
 
 /// What an instruction does beyond its registers: the bindings it writes, and whether it makes
@@ -78,8 +87,9 @@ pub(super) fn settled(ctx: &Ctx<'_>, word: Word) -> Cell {
 /// Whether the instruction at a point may run guest code with the objects it touches: a call or construction, a getter,
 /// setter or proxy trap, a conversion that runs `valueOf`. It is the operation's effect row (`Effects::may_call_js`),
 /// met with what the facts before it (`state`) prove: a Number or binary operation over Numbers runs none, and a
-/// captured or environment binding's read runs none. A store through `this` is not counted: it is the constructor's
-/// own store, whose setter `class_layout` does not model. Whatever does not decode runs guest code.
+/// captured or environment binding's read runs none. A store through `this` runs none unless its name is an accessor's
+/// (`Ctx::accessors`): then it may be the setter's call, which the class layout reads as a call. Whatever does not decode
+/// runs guest code.
 pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> bool {
     if crate::staged::Invocation::of(instruction, ctx.decode).is_some() {
         return true;
@@ -87,6 +97,7 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
     let operation = Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or_else(|| decoded(instruction));
     match operation {
         None => true,
+        Some(Operation::SetField { atom, .. }) if ctx.accessors.contains(&atom) => true,
         Some(Operation::SetField { base: None, .. }) => false,
         Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
         Some(Operation::Number(number)) => !numbers_over_numbers(ctx, state, number),
@@ -209,14 +220,11 @@ fn value_of(
         if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(prototype_base) {
             return Word::from(Origin::Prototype(prototype));
         }
+        if let Some(length) = string_length(ctx, base_fact(ctx, base, state), atom) {
+            return Word::of(length);
+        }
         let cell = member_type(ctx, base_fact(ctx, base, state), atom);
-        return match owner.and_then(Word::class_site) {
-            Some(site) => {
-                let (holder, instance, guess) = site_holder(ctx, site, atom);
-                Word { cell, ..Word::member_on(holder, instance, atom, guess) }
-            }
-            None => Word::member(atom, cell),
-        };
+        return named_word(ctx, owner, cell, atom);
     }
     // A nested lookup (`base.first.second`) delivers its last field's value.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
@@ -234,6 +242,9 @@ fn value_of(
     }
     if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
         return typed;
+    }
+    if ctx.types.is_some() && let Some(string) = string_call(ctx, instruction, state) {
+        return string;
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
@@ -281,6 +292,16 @@ fn value_of(
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
     if instruction.op() == crate::bytecode::Op::GetIndex {
+        // A key that is one atom reads the named field it spells, as `o.name` does; an array index is an element instead.
+        let key = state[usize::from(instruction.register_c())].cell.ty.string_fact().and_then(|fact| fact.atom());
+        if let Some(atom) = key.filter(|&atom| !ctx.scope.names_index(atom)) {
+            let owner = state[usize::from(instruction.register_b())];
+            if let Some(length) = string_length(ctx, Some(owner), atom) {
+                return Word::of(length);
+            }
+            let cell = member_type(ctx, Some(owner), atom);
+            return named_word(ctx, Some(owner), cell, atom);
+        }
         let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
         return Word::of_cell(typing::element(&before, base, index));
     }
@@ -350,73 +371,6 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
 
-/// The type and class a read of field `atom` off `owner` takes (`types::Types::field`): the class the
-/// stores into that field of `owner`'s class wrote (`Key::MemberOn`), else every store of the name's
-/// (`Key::Member`); any value in the passes that find call targets.
-fn member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
-    let Some(types) = ctx.types else { return Cell::ANY };
-    let named = types.cell(Key::Member(atom));
-    // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its classes come with a later pass.
-    if owner.is_some_and(|owner| owner.cell.classes == Classes::Never) { return Cell { classes: Classes::Never, ..named }; }
-    owner.and_then(Word::class_site).and_then(|site| {
-        let (class, instance, _) = site_holder(ctx, site, atom);
-        types.cell_on(class, instance, atom)
-    }).unwrap_or(named)
-}
-
-/// The object a named field read or store at `instruction` reads or stores: a `GetField`'s base (a nested
-/// lookup's last owner, the value of its first field), a `SetField`'s base or the function's `this`.
-pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
-    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
-        return match instruction.field_lookup()? {
-            crate::bytecode::FieldLookup::Atom { base, .. } => base_fact(ctx, base, state),
-            crate::bytecode::FieldLookup::Site(index) => {
-                let (base, first, second) = ctx.scope.site_paths.get(index).copied().flatten()?;
-                let owner = base_fact(ctx, base, state);
-                if second.is_none() { return owner; }
-                Some(Word::of_cell(member_type(ctx, owner, first)))
-            }
-        };
-    }
-    match decoded(instruction) {
-        Some(Operation::SetField { base: Some(base), .. }) => state.get(usize::from(base)).copied(),
-        Some(Operation::SetField { base: None, .. }) if !ctx.is_root => Some(this_fact(ctx)),
-        _ => None,
-    }
-}
-
-/// The fact of a field lookup's base: its register's, or the function's own `this`.
-pub(super) fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) -> Option<Word> {
-    match base.register_index() {
-        Some(register) => state.get(usize::from(register)).copied(),
-        None if base == crate::bytecode::FieldBase::THIS && !ctx.is_root => Some(this_fact(ctx)),
-        None => None,
-    }
-}
-
-/// The fact of a read of field `atom` off the function's own `this` (a receiver `this.task` of a method call):
-/// its class's own field where the solve names `this`'s class (`member_type`). It carries the field's origin, so
-/// an array it holds is the field's element class, as a read of the field off any other object is.
-pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
-    let this = (!ctx.is_root).then(|| this_fact(ctx));
-    Word::member(atom, member_type(ctx, this, atom))
-}
-
-/// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`), and the
-/// receiver's own element class, which a resolved call joins to its receiver's (`types::entry_links`).
-pub(super) fn this_fact(ctx: &Ctx<'_>) -> Word {
-    ctx.types.map_or(Word::UNKNOWN, |types| Word { cell: types.this(ctx.id), origin: Some(Origin::Receiver(ctx.id)) })
-}
-
-/// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
-fn prototype_base(base: Word) -> Option<PrototypeBase> {
-    if let Some(function) = base.cell.ty.body_index() { return Some(PrototypeBase::Closure(function)); }
-    match base.origin? {
-        Origin::Binding(key) => Some(PrototypeBase::Binding(key)),
-        _ => None,
-    }
-}
-
 /// The registers of the facts before an instruction, read as the operands of `staged::typing`. A constant's cell is the
 /// type of its value (`Scope::constant_type`); the unnamed elements are the types' (`Types::unnamed_elements`).
 pub(super) struct Before<'a, 'b> {
@@ -428,13 +382,6 @@ impl Abstract for Before<'_, '_> {
     fn register(&self, register: Register) -> Cell { settled(self.ctx, self.state[usize::from(register)]) }
     fn constant(&self, index: usize) -> Cell { Cell::of(self.ctx.scope.constant_type(index)) }
     fn unnamed_elements(&self) -> Option<Elements> { self.ctx.types.map(|types| types.unnamed_elements()) }
-}
-
-/// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
-/// changes an array, an index store past the length, a `delete`.
-fn length_change(class: ElementClass) -> (Key, Word) {
-    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
-    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown, global: false }))
 }
 
 /// Records the bindings `instruction` writes, from the facts before it, and the writes it makes
@@ -488,77 +435,6 @@ fn named_base_global(ctx: &Ctx<'_>, base: FieldBase, state: &[Word]) -> bool {
     base_fact(ctx, base, state).is_none_or(|word| word.cell.global)
 }
 
-/// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
-/// key that is no Number may name any property (`Events::wild_member`).
-fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
-    events.computed_store |= writes_global_name(operation.as_ref(), state);
-    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { mode, value }), .. }) = operation {
-        let target = state[usize::from(instruction.register_b())];
-        let key = state[usize::from(instruction.register_c())];
-        match accessor_mode(mode) {
-            Some(setter) => accessor_definition(pc, setter, target, key, state[usize::from(value)], events),
-            None => {
-                if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
-                    events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
-                }
-            }
-        }
-    }
-    match operation {
-        // A store into the array `base` names (`SetIndex`): its value joins the elements of the array's element class
-        // (`Key::Element`), and the class's length changes unless the key is a Number within the length it has. A key
-        // that is no Number may name a property (`wild_member`) or the length, so its store changes the length.
-        Some(Operation::ElementWrite { value, base, key, .. }) => {
-            let (array, index, stored) = (state[usize::from(base)], state[usize::from(key)], state[usize::from(value)]);
-            let length = settled(ctx, array).elements.length;
-            let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
-            let length = if in_bounds { Length::Never } else { Length::Any };
-            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
-            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, global: stored.cell.global })));
-            // The stored value is an element of the array, which reads it back with the unnamed class.
-            events.links.extend(stored.link(ElementClass::Unnamed));
-            events.wild_member |= !index.is_number();
-        }
-        // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) names no array: it may store
-        // any value into an array of any class and change any length, so every class's elements are any (`wild_elements`).
-        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => {
-            events.wild_member = true;
-            events.wild_elements = true;
-        }
-        // `delete base[key]` keeps the values the elements hold and changes the length of `base`'s class (a hole, or the
-        // last element removed); it may name a property (`wild_member`).
-        Some(Operation::Delete { base, .. }) => {
-            events.wild_member = true;
-            events.writes.push(length_change(state[usize::from(base)].elements_key()));
-        }
-        Some(Operation::SetField { value, atom, base, .. }) => {
-            events.writes.push((Key::Member(atom), state[usize::from(value)]));
-            let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
-            if ctx.scope.length == Some(atom) {
-                events.writes.push(length_change(owner.elements_key()));
-            }
-            // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
-            // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
-            // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
-            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`).
-            let key = match owner.class_site() { Some((class, true, _)) => Key::MemberOn { class, instance: true, atom }, _ => Key::MemberAny(atom) };
-            events.writes.push((key, state[usize::from(value)]));
-        }
-        Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
-            events.writes.push((Key::Member(atom), Word::UNKNOWN));
-            events.writes.push((Key::MemberAny(atom), Word::UNKNOWN));
-            // A length store through an object the analysis does not name may resize an array of any class.
-            events.wild_elements |= ctx.scope.length == Some(atom);
-        }
-        _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
-            events.writes.push((Key::Member(instruction.atom_index()), Word::UNKNOWN));
-            events.writes.push((Key::MemberAny(instruction.atom_index()), Word::UNKNOWN));
-            events.wild_elements |= ctx.scope.length == Some(instruction.atom_index());
-        }
-        _ => {}
-    }
-}
-
 /// Marks the writes the analysis cannot follow: name operations other than plain loads and
 /// global stores (`with`, `delete`, sloppy declarations), and writes through a computed key, which may name a global or an element of an arguments object.
 fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, events: &mut Events) {
@@ -579,24 +455,6 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         }
         _ => {}
     }
-}
-
-/// Whether a store through a computed key (`operation`) may write a name of the global object: a key that is no Number
-/// (a Number names no identifier a name read reads), into a receiver that may be the global object (`may_be_global`).
-/// A store through an operation with no receiver the analysis names may be any of them.
-fn writes_global_name(operation: Option<&Operation<(), ()>>, state: &[Word]) -> bool {
-    match operation {
-        Some(Operation::ElementWrite { base, key, .. } | Operation::Delete { base, key, .. }) =>
-            !state[usize::from(*key)].is_number() && may_be_global(state[usize::from(*base)]),
-        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => true,
-        _ => false,
-    }
-}
-
-/// Whether a value of cell `word` may be the global object: an object of no one known class (`Classes::Many`), as the
-/// global object is no instance of a constructed class.
-fn may_be_global(word: Word) -> bool {
-    word.cell.classes == Classes::Many && word.cell.ty.direct_object_part().is_some()
 }
 
 /// Records the binding stores `operation` makes, with the facts they store.
@@ -635,3 +493,4 @@ fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, 
     let fact = if !stable && pc < ctx.parameter_end { Word::UNKNOWN } else { fact };
     events.writes.push((key, fact));
 }
+

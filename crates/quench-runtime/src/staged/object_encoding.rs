@@ -121,3 +121,9 @@ pub(crate) const REGION_SHIFT: u32 = 29;
 pub(crate) const REGION_MASK: u32 = (1 << REGION_SHIFT) - 1;
 /// The regions, one per capacity class `0..CAPACITY_CLASSES`.
 pub(crate) const CAPACITY_CLASSES: usize = 6;
+
+/// The fields a cell of region `region` holds: its `2^region` granules less the header. A cell's capacity class is
+/// its region, so no word records it.
+pub(crate) const fn region_field_capacity(region: u32) -> usize {
+    (1 << region) - 1
+}

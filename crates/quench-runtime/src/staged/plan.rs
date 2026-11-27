@@ -12,9 +12,9 @@ use crate::typed_ir::BindingTime;
 /// A native function a call enters directly: its entry, and whether it runs beside the lane's
 /// activations (`Native::runs_beside_activations`), which stay frameless around such a call.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct NativeId {
-    pub(crate) index: u32,
-    pub(crate) beside: bool,
+pub struct NativeId {
+    pub index: u32,
+    pub beside: bool,
 }
 
 /// The kinds of callee a site binds to a direct entry. A bound function is one of these with its
@@ -36,7 +36,7 @@ impl CalleeKind {
     /// Whether the call allocates the callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
     #[inline(always)]
-    pub(crate) const fn allocates_receiver(self) -> bool {
+    pub const fn allocates_receiver(self) -> bool {
         matches!(self, Self::Class)
     }
 }
@@ -55,7 +55,7 @@ pub enum Identity {
 impl Identity {
     /// The callee's identity word.
     #[inline(always)]
-    pub(crate) const fn word(self) -> u64 {
+    pub const fn word(self) -> u64 {
         match self {
             Self::Guarded(word) | Self::Folded(word) => word,
         }
@@ -73,7 +73,7 @@ pub struct WordList {
 impl WordList {
     /// The words the list names in `constants`; none where the constants do not hold them.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn words(self, constants: &[u64]) -> &[u64] {
+    pub fn words(self, constants: &[u64]) -> &[u64] {
         let start = self.start as usize;
         constants.get(start..start + usize::from(self.count)).unwrap_or(&[])
     }

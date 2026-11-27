@@ -368,7 +368,6 @@ fn frame(shape: &CallShape, callee: &Callee, base: Register) -> InlinedCall {
         call: shape.call_pc,
         target: CallTarget { callee: CalleeBinding::Identity(callee.identity), function: callee.function },
         callee_register: shape.callee,
-        callee_entry_word: None,
         receiver: shape.this,
         window: shape.window,
         arguments: shape.argc,

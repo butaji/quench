@@ -97,7 +97,7 @@ fn chain_stores(
         let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]));
         return append(stores, program, own.filter(|_| Vm::inline_constructible(body))?, passed).map(|()| class);
     }
-    let parent = vm.object_data(class)?.proto();
+    let parent = vm.heap_reads().object(class)?.proto();
     if body.super_forwarding(&code.atoms, &code.constants) == Some(SuperForwarded::Passed) {
         return chain_stores(vm, parent, passed, stores, classes + 1);
     }
@@ -149,7 +149,7 @@ fn enter_program(vm: &mut Vm, program: ProgramId) {
 fn plan_super_parent(vm: &mut Vm, callee: Value) {
     if let Some(index) = construct_plan_index(callee)
         && vm.lane_stack.construct_plans[index].callee == callee
-        && let Some(class) = vm.object_data(callee)
+        && let Some(class) = vm.heap_reads().object(callee)
     {
         vm.lane_stack.construct_plans[index].super_parent = class.proto();
     }

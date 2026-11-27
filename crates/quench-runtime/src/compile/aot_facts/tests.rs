@@ -1,6 +1,7 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::{analyze, AotFacts};
+use super::{analyze, world, AotFacts};
+use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
 use crate::staged::Operation;
@@ -537,6 +538,18 @@ fn an_element_of_a_typed_array_of_one_kind_is_that_kind() {
 }
 
 #[test]
+fn an_index_below_a_bound_that_is_within_the_length_is_below_it_through_the_chain() {
+    let program = program("function f(a) { for (var j = 0; j < a.length; j++) { for (var i = 0; i < j; i++) { a[i] = 0; } } } f([0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the inner loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`i < j` with `j` within the length proves `i` at {pc}");
+    }
+}
+
+#[test]
 fn an_element_of_an_array_that_may_be_plain_or_typed_has_no_view() {
     let program = program("function f(c) { var a = c ? new Int32Array(2) : [1, 2]; return a[0]; } f(true);");
     let facts = analyze(&program);
@@ -545,6 +558,20 @@ fn an_element_of_an_array_that_may_be_plain_or_typed_has_no_view() {
     assert!(!accesses.is_empty(), "the function reads the array");
     for (pc, _, _) in accesses {
         assert_eq!(facts.function_facts(f as u32).element_view(pc), None, "a plain array beside a typed one is no one kind at {pc}");
+    }
+}
+
+#[test]
+fn the_midpoint_of_two_bounded_indices_is_below_the_larger() {
+    let program = program(
+        "function f(a) { var lo = 0, hi = a.length - 1; while (lo < hi) { var mid = (lo + hi) >>> 1; a[mid] = 0; if (a[mid] < 0) lo = mid + 1; else hi = mid; } } f([0, 0, 0]);",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the search reads the array at its midpoint");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the midpoint is below the length at {pc}");
     }
 }
 
@@ -563,30 +590,140 @@ fn a_captured_slot_read_in_an_inner_function_takes_the_slots_settled_cell() {
 }
 
 #[test]
-fn an_unread_global_this_and_an_eval_in_a_dead_function_keep_the_world_closed() {
+fn a_decrement_keeps_the_bound_on_the_index_it_lowers() {
+    let program = program("function f(a) { var i = 0; while (i < a.length) { i += 1; i -= 1; a[i] = 0; } } f([0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`i - 1` after `i + 1` keeps `i` below the length at {pc}");
+    }
+}
+
+#[test]
+fn an_alias_of_the_array_keeps_the_bound_the_test_proved() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { var b = a; b[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the copy `b` holds `a`'s bound at {pc}");
+    }
+}
+
+#[test]
+fn a_call_that_writes_no_element_of_the_array_keeps_its_bound() {
+    let program = program("function g(b) { return b.length; } function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { g(1); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "a callee that writes no element keeps the bound at {pc}");
+    }
+}
+
+#[test]
+fn a_call_that_stores_into_the_array_retires_its_bound() {
+    let program = program("function g(b) { b[0] = 1; } function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { g(a); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "a callee that stores into the array retires the bound at {pc}");
+    }
+}
+
+#[test]
+fn an_index_accessor_the_program_defines_retires_the_bound_on_element_accesses() {
     let program = program(
-        "var g = this; function Pair(a) { this.a = a; } \
-         Pair.prototype.toString = function () { return 'p' + this.a; }; \
-         function jsNew(c) { return eval('new c()'); } \
-         var p = new Pair(1); p.toString();",
+        "function f() { var a = [0, 0, 0]; Object.defineProperty(Array.prototype, '0', { get: function () { return 1; } }); \
+         for (var i = 0; i < a.length; i++) { a[i] = i; } } f();",
     );
-    assert!(analyze(&program).closed(), "the global object is never read, and the eval is in a function nothing reaches");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "an index accessor may run at {pc}");
+    }
+}
+
+#[test]
+fn a_number_keyed_read_of_an_array_runs_nothing_in_a_closed_world() {
+    let program = program("function f() { var a = [1, 2]; var i = 1; return a[i]; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        let effects = facts.function_facts(f as u32).site_effects(pc);
+        assert!(!effects.may_call_js && !effects.may_throw, "a Number-keyed read of a closed array runs no guest code at {pc}");
+    }
+}
+
+#[test]
+fn an_index_accessor_the_program_defines_keeps_an_element_read_open() {
+    let program = program(
+        "function f() { var a = [1, 2]; var i = 1; return a[i]; } f(); \
+         Object.defineProperty(Array.prototype, '0', { get: function () { return 1; } });",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        assert!(facts.function_facts(f as u32).site_effects(pc).may_call_js, "an index accessor may run at {pc}");
+    }
+}
+
+#[test]
+fn a_constructor_store_of_an_inherited_setters_name_makes_no_field_of_it() {
+    let program = program("(function () { class P { set x(v) { this.last = v; } } function C() { this.x = 7; this.y = 1; } Object.setPrototypeOf(C.prototype, P.prototype); new C(); })();");
+    let facts = analyze(&program);
+    let (c, x) = (function_named(&program, "C") as u32, atom_named(&program, "x"));
+    match facts.class_layout(c) {
+        None => {}
+        Some(layout) => assert!(!layout.contains(&x), "the store runs the inherited setter, which makes no field of x"),
+    }
+}
+
+#[test]
+fn a_getter_read_through_a_subclass_instance_takes_the_superclass_getters_return() {
+    let program = program("(function () { class P { get x() { return 3; } } class C extends P {} function f(o) { return o.x; } f(new C()); })();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the read of x on a C instance is P's getter");
+}
+
+#[test]
+fn an_unread_global_this_and_an_eval_in_a_dead_function_keep_the_world_closed() {
+    // The global object is held but never read by a computed or named key, and the eval sits in a function nothing calls:
+    // no reached code opens the closed world, so its solve verifies.
+    let program = program("var g = this; function dead() { eval('1'); } function f(a) { return a | 1; } f(2);");
+    assert_eq!(world(&program), World::Closed);
 }
 
 #[test]
 fn a_computed_read_of_a_global_this_reaches_the_global_functions_so_the_world_is_open() {
-    let program = program("function f() { return eval('1'); } var g = this, k = 'f'; g[k]();");
-    assert!(!analyze(&program).closed(), "g[k]() may call any global function, which holds the eval");
+    // `g[k]` may name any global, including `f`, and calls what it reads: the closed world cannot see that call.
+    let program = program("function f() { return 1; } var k = 'f'; var g = this; g[k]();");
+    assert_eq!(world(&program), World::Open);
 }
 
 #[test]
 fn a_named_read_of_the_global_object_may_call_a_global_function_so_the_world_is_open() {
-    let program = program("function f() { return eval('1'); } var h = globalThis.f; h();");
-    assert!(!analyze(&program).closed(), "the read gives a global function that the call reaches by name");
+    // `g.f` reads a global function off the global object by name, and the call through it is not a closed call.
+    let program = program("function f() { return 1; } var g = this; f(); g.f();");
+    assert_eq!(world(&program), World::Open);
 }
 
 #[test]
 fn a_reached_eval_keeps_the_world_open() {
-    let program = program("function f() { return eval('1'); } f();");
-    assert!(!analyze(&program).closed());
+    // The eval runs at the top level, so new code is reached and the closed world's assumption fails.
+    let program = program("function f(a) { return a | 1; } f(2); eval('1');");
+    assert_eq!(world(&program), World::Open);
 }

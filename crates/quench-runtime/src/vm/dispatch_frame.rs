@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
@@ -107,16 +109,16 @@ pub struct RecoveredCalls {
 /// Where a lane run that no general loop started left its frames (`Vm::native_callback_in_lane`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
-pub struct LaneExit {
+pub struct LaneHandoff {
     pub executing: ExecutingProgram,
     pub raised: Option<JsError>,
 }
 
 /// Where a general loop resumes its entry frame other than at its PC: after a lane run
-/// (`LaneExit`), or with the transition its linked native body already made there
+/// (`LaneHandoff`), or with the transition its linked native body already made there
 /// (`Vm::complete_pushed_call`), which the loop consumes as if its own entry had made it.
 pub(super) enum GeneralResume {
-    Lane(LaneExit),
+    Lane(LaneHandoff),
     #[cfg(feature = "native-execution")]
     Native(crate::vm::engine_types::JsNativeStep),
 }
@@ -560,6 +562,10 @@ impl Vm {
         result: Result<FrameOutcome, JsError>,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
+        // A captured run took its frames into its chain (`capture_chain_parked`): none is left to retire.
+        if result.as_ref().is_err_and(JsError::is_captured) {
+            return result;
+        }
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
         match result? {
@@ -1112,11 +1118,11 @@ impl Vm {
             return Ok(None);
         };
         let anchor = self
-            .object_data(template.anchor)
+            .heap.object(template.anchor)
             .expect("arguments template anchor is an object");
         let iterator = self
             .heap
-            .property_get(anchor, template.iterator_slot)
+            .property_get_ref(anchor, template.iterator_slot)
             .expect("arguments template has an iterator method");
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
         properties[template.length_slot] = Value::number(args.len() as f64);
@@ -1124,7 +1130,7 @@ impl Vm {
             callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
         } else {
             self.heap
-                .property_get(anchor, template.callee_slot)
+                .property_get_ref(anchor, template.callee_slot)
                 .expect("arguments template has a callee accessor")
         };
         properties[template.iterator_slot] = iterator;
@@ -1140,15 +1146,16 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.object_data_mut(arguments)
+            self.heap.object_mut(arguments)
                 .expect("arguments object is an array")
+                .record_mut_departing()
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.object_data_mut(arguments) {
-            object.set_arguments_object();
+        if let Some(object) = self.heap.object_mut(arguments) {
+            object.record_mut_departing().set_arguments_object();
         }
         let length = self.length_atom;
         self.set_property_with_attributes(
@@ -1248,17 +1255,17 @@ impl Vm {
             return;
         }
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
-        let Some(object) = self.object_data(arguments) else {
+        let Some(object) = self.heap.object(arguments) else {
             return;
         };
         let proto = object.proto();
-        let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
+        let Some(iterator_method) = self.heap.property_get_ref(object, iterator_slot) else {
             return;
         };
         properties[iterator_slot] = iterator_method;
         let (_, expose_callee) = key;
         if !expose_callee {
-            let Some(thrower) = self.heap.property_get(object, callee_slot) else {
+            let Some(thrower) = self.heap.property_get_ref(object, callee_slot) else {
                 return;
             };
             properties[callee_slot] = thrower;
@@ -1567,7 +1574,7 @@ impl Vm {
         outcome
     }
 
-    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneExit`), the calls pending
+    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneHandoff`), the calls pending
     /// above the loop's entry frame in `pending_calls`: the general loop runs from there as it
     /// runs after its own lane run, until the entry frame returns.
     pub fn run_frames_after_lane_exit(
@@ -1575,7 +1582,7 @@ impl Vm {
         entry_program: &ResidualProgram,
         frame: usize,
         pending_calls: &mut Vec<PendingGeneralCall>,
-        exit: LaneExit,
+        exit: LaneHandoff,
     ) -> Result<FrameOutcome, JsError> {
         let previous_global = self.realm.globals;
         let caller_registers = self.active_registers;
@@ -1633,7 +1640,7 @@ impl Vm {
             }
             self.frames[running].pc = pc;
             let raised = self.lane_completion.take_raised();
-            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
+            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneHandoff { executing, raised })
         })();
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
@@ -1752,7 +1759,7 @@ impl Vm {
         #[cfg(feature = "native-execution")]
         let mut entered = None;
         let (mut executing_program, mut current_program, raised) = match resume {
-            Some(GeneralResume::Lane(LaneExit { executing, raised })) => (executing.id, executing.retained, Some(raised)),
+            Some(GeneralResume::Lane(LaneHandoff { executing, raised })) => (executing.id, executing.retained, Some(raised)),
             #[cfg(feature = "native-execution")]
             Some(GeneralResume::Native(step)) => {
                 entered = Some(step);
@@ -2747,6 +2754,10 @@ impl Vm {
             match self.exception_handler_target(p, frame, function, throwing_pc, error) {
                 Ok(target) => return Ok((frame, target)),
                 Err(unhandled) => {
+                    // A capture took the frames the pending calls name: the run ends with the chain.
+                    if unhandled.is_captured() {
+                        return Err(unhandled);
+                    }
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     let Some(mut pending) = pending_calls.pop() else {
@@ -2810,7 +2821,8 @@ impl Vm {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
-        if error.is_execution_terminated() { return Err(error); }
+        // A captured run's frames are gone and a termination is uncatchable: neither has a handler.
+        if error.is_execution_terminated() || error.is_captured() { return Err(error); }
         let error = self.name_non_callable_callee(program, frame, function, throwing_pc, error);
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or

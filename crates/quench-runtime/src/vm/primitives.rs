@@ -343,7 +343,7 @@ fn native_string_raw(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: V
 fn native_string_is_well_formed(vm: &mut Vm, _p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
     let text = vm.string_receiver_text(this)?;
     let span = crate::staged::spans::concrete_span(text.units());
-    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    let mut stage = crate::staged::concrete_over_vm(vm);
     let lone = if span.form.wide() {
         crate::staged::strings::lone_surrogate_row(&mut stage, span.units, span.length, 0)
     } else {

@@ -159,7 +159,7 @@ pub(crate) fn yield_star_kind(i: &LaneInstruction) -> Suspension {
 #[inline(always)]
 pub(crate) fn suspension_row_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction,
     (kind, suspender): (Suspension, Suspender)) -> Resumed {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     // Only an async activation's or an await's conversion resolves promises through the lane's host.
     let mut frame = if suspender.asynchronous() || kind == Suspension::Await {
         LaneFrame::<ACC_NONE>::hosted(r, Carried::script(cx), cx)

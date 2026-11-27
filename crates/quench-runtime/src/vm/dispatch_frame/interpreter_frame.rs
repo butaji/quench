@@ -8,7 +8,6 @@ use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::value::TypeofKind;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
-use crate::staged::CallFrame as _;
 use crate::staged::CallRecord;
 use crate::vm::call_out::{CallSite, Loaded};
 use crate::vm::var_owner::VarOwner;
@@ -110,8 +109,29 @@ impl<'a> InterpreterFrame<'a> {
         }
     }
 
+    /// The call's general form, run by the VM on the running activation (`Vm::call_form_step`). Its
+    /// completion is a result the frame defines (`Step::Value`, the row's edge follows), or the step
+    /// the call ends in (`pushed`, the activation or tail call the run stops on, or a return); a raise
+    /// is stashed for the runner.
+    #[inline(always)]
+    fn call_general(&mut self, form: CallRecord, instruction: WideInstruction, pc: usize) -> Option<Step<u64, InterpreterControl>> {
+        let VarOwner::Frame(frame) = self.site.owner else { return None };
+        let (program, allow) = (self.program, self.allow_inline_calls);
+        match self.vm().call_form_step(program, frame, form, instruction, pc, allow) {
+            Ok(StepResult::Continue) => Some(Step::Value(0)),
+            Ok(result) => {
+                self.pushed = Some(result);
+                Some(Step::Value(0))
+            }
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
     /// The general call `form` of the call-family record `instruction` at resume PC `pc` on frame `frame`, run
-    /// after the record's staged row declined (`CallFrame::call_general`). Its completion is `Done` where the
+    /// after the record's staged row declined (`call_general`). Its completion is `Done` where the
     /// call completed its result, else the step the VM's call ends in (`Stop`).
     #[inline(always)]
     pub(in crate::vm) fn call_row(vm: *mut Vm, program: &'a ResidualProgram, frame: usize, pc: usize,
@@ -137,7 +157,8 @@ impl<'a> InterpreterFrame<'a> {
     pub(in crate::vm) fn step_row(vm: *mut Vm, program: &'a ResidualProgram, frame: usize, pc: usize,
         allow_inline_calls: bool, instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
         let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
-        let step = crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation);
+        // SAFETY: `vm` is the running VM, live for the row (`Self::over`).
+        let step = crate::staged::step(&mut crate::staged::concrete_over_vm(unsafe { &*vm }), &mut interpreted, operation);
         if let Some(error) = interpreted.raised.take() {
             return RowRun::Stop(Err(error));
         }
@@ -565,28 +586,7 @@ impl crate::staged::Frame<Concrete> for InterpreterFrame<'_> {
 
 impl crate::staged::GlobalFrame<Concrete> for InterpreterFrame<'_> {}
 
-impl crate::staged::CallFrame<Concrete> for InterpreterFrame<'_> {
-    /// The call's general form, run by the VM on the running activation (`Vm::call_form_step`). Its
-    /// completion is a result the frame defines (`Step::Value`, the row's edge follows), or the step
-    /// the call ends in (`pushed`, the activation or tail call the run stops on, or a return); a raise
-    /// is stashed for the runner.
-    #[inline(always)]
-    fn call_general(&mut self, form: CallRecord, instruction: WideInstruction, pc: usize) -> Option<Step<u64, InterpreterControl>> {
-        let VarOwner::Frame(frame) = self.site.owner else { return None };
-        let (program, allow) = (self.program, self.allow_inline_calls);
-        match self.vm().call_form_step(program, frame, form, instruction, pc, allow) {
-            Ok(StepResult::Continue) => Some(Step::Value(0)),
-            Ok(result) => {
-                self.pushed = Some(result);
-                Some(Step::Value(0))
-            }
-            Err(error) => {
-                self.raised = Some(error);
-                None
-            }
-        }
-    }
-}
+impl crate::staged::CallFrame<Concrete> for InterpreterFrame<'_> {}
 
 impl crate::staged::ElementFrame<Concrete> for InterpreterFrame<'_> {}
 

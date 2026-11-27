@@ -5,14 +5,6 @@
 #[allow(unused_imports)]
 pub use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
 
-// The vector steps' classes and operands read bytecode and the Wasm kernels: runtime only.
-#[cfg(not(stencil_build))]
-use crate::bytecode::{Class, InstructionField, Op, WideInstruction};
-#[cfg(not(stencil_build))]
-use crate::wasm::memory::{MemoryLoad, MemoryStore};
-#[cfg(not(stencil_build))]
-use crate::wasm::simd::SimdKernel;
-
 #[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Simd {
@@ -30,61 +22,11 @@ pub enum Simd {
 }
 #[cfg(not(stencil_build))]
 impl Simd {
-    /// The vector step `op` is, with `tag` its selector where the opcode takes one: a selector
-    /// or access the tiers do not run is none.
-    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
-        match op.class() {
-            Class::WasmSimd if SimdKernel::of(tag).is_some() => Some(Self::Operator { selector: tag }),
-            Class::WasmSimdShuffle => Some(Self::Shuffle),
-            Class::WasmMemoryAddress => Some(Self::Address),
-            Class::WasmMemoryLoad => match MemoryLoad::from_tag(tag) {
-                Some(MemoryLoad::V128Load) => Some(Self::Load),
-                _ => None,
-            },
-            Class::WasmMemoryStore => match MemoryStore::from_tag(tag) {
-                Some(MemoryStore::V128Store) => Some(Self::Store),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
     /// Whether the step reads a memory.
-    pub(crate) const fn reads_memory(self) -> bool {
+    pub const fn reads_memory(self) -> bool {
         matches!(self, Self::Address | Self::Load | Self::Store)
     }
-
-    /// The register naming the memory the step reads, where it reads one.
-    pub fn memory(self, instruction: WideInstruction) -> Option<u16> {
-        match self {
-            Self::Address => Some(instruction.c()),
-            Self::Load | Self::Store => Some(instruction.b()),
-            Self::Operator { .. } | Self::Shuffle => None,
-        }
-    }
-
-    /// The register whose slot the plan records for the step: the address of an access, else
-    /// the first operand.
-    pub(crate) fn operand(self, instruction: WideInstruction) -> u16 {
-        match self {
-            Self::Load | Self::Store => instruction.c(),
-            _ => instruction.b(),
-        }
-    }
-
-    /// Whether `field` is the unused second operand of a one-operand operator, which lowering
-    /// leaves naming register 0 and nothing reads.
-    pub(crate) fn leaves_unread(self, field: InstructionField) -> bool {
-        match self {
-            Self::Operator { selector } => {
-                field == InstructionField::C
-                    && SimdKernel::of(selector).is_some_and(|(kernel, _)| kernel.right.is_none())
-            }
-            _ => false,
-        }
-    }
 }
-
 
 // The interpreter's vector records as a staged operation (`Decoder::WasmVector`): runtime only.
 #[cfg(not(stencil_build))]
@@ -94,15 +36,15 @@ pub use operation::{VectorOperation, step};
 pub mod operation {
 use crate::staged::register_frame::WasmRep;
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
-use crate::staged::{Concrete, Constant, DecodeContext, Fields, Frame, Operation, Step};
+use crate::staged::{Concrete, Constant, Frame, Step};
 use crate::staged::wasm_simd_rules::WasmSimd;
-use crate::bytecode::{Op, Register};
+use crate::bytecode::Register;
 use crate::wasm::simd::SimdKernel;
 use crate::{WasmType, WasmValue};
 
 
 /// A Wasm vector operation on the lane's registers: a SIMD operator on its operands, or a byte
-/// shuffle of two vectors by a constant's lane indices.
+/// shuffle of two vectors by a constant's lane indices. Its decoders are `glue.rs`.
 #[derive(Clone, Copy)]
 pub enum VectorOperation {
     /// `destination = operator(left, right)`, the operator and its lane immediate `selector`
@@ -111,37 +53,6 @@ pub enum VectorOperation {
     /// `destination = shuffle(left, right)` by the sixteen lane indices of `indices`
     /// (`WasmSimdShuffle`).
     Shuffle { destination: Register, left: Register, right: Register, indices: Constant },
-}
-
-impl VectorOperation {
-    /// The operation `instruction` denotes (`Decoder::WasmVector`): an operator's selector is its
-    /// immediate, a shuffle's indices its constant (read through `context`, or the lane's own).
-    pub(crate) fn decode<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
-        let op = instruction.op();
-        let wide = instruction.wide();
-        Some(match op {
-            Op::WasmSimd => Self::Operator {
-                destination: wide.a(),
-                left: wide.b(),
-                right: wide.c(),
-                selector: wide.imm(),
-            },
-            Op::WasmSimdShuffle => Self::Shuffle {
-                destination: wide.a(),
-                left: wide.b(),
-                right: wide.c(),
-                indices: instruction.constant(context)?,
-            },
-            _ => return None,
-        })
-    }
-}
-
-impl<W, P> Operation<W, P> {
-    /// The Wasm vector operation `instruction` denotes (`Decoder::WasmVector`).
-    pub fn decode_wasm_vector<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
-        VectorOperation::decode(instruction, context).map(Self::WasmVector)
-    }
 }
 
 /// Run `operation` on `frame`: its vector, or `Unresolved` where the frame leaves it. A scalar
@@ -223,3 +134,9 @@ fn store_vector<F: Frame<Concrete>>(
     }
 }
 }
+
+// The decoders read bytecode and sit in `glue.rs`: the `Simd` step queries and the vector records.
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;
