@@ -128,7 +128,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         self.push_native(stage, callee, this, call.registers, room)?;
         let entry = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let entry = self.proven_entry(stage, callee, room.cell, entry);
-        let signature = crate::compiled::lane_body_abi::body_shim_signature(types::I64, stage.builder.func.signature.call_conv);
+        let signature = crate::compiled::lane_body_abi::body_shim_signature(types::I64);
         let signature = stage.builder.import_signature(signature);
         let shim = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), call.context,
             field(std::mem::offset_of!(CallContext, head.body_shim)));

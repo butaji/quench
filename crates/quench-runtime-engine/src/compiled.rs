@@ -5703,13 +5703,13 @@ impl MemoryArguments {
     }
 }
 
-/// The calling convention of compiled Wasm bodies and of the calls between them. `Tail` makes a
-/// flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows
-/// only between functions of one convention that supports tail calls). The entry trampoline
-/// (`build_entry`) keeps the default convention and calls its body with this one; the callouts
-/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting),
-/// `Tail` saves the SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
-const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
+/// The calling convention of compiled bodies, Wasm and lane JavaScript alike, and of the calls between them. `Tail`
+/// makes a flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows only between
+/// functions of one convention that supports tail calls). The entry trampoline (`build_entry`) and the lane body
+/// shim (`lane_body_abi::body_shim`) keep the default convention and call their body with this one; the callouts
+/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting), `Tail` saves the
+/// SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
+pub(crate) const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
 
 /// The internal signature of a compiled function: the context, the memory
 /// arguments, then the Wasm parameters.
