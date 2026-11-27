@@ -234,3 +234,33 @@ pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, fl
                 && flow.calls.iter().all(|call| !may_define_index(program, call, aliased))
         })
 }
+
+/// Names whose presence lets a property of an object change with no store the flows record: a descriptor-defining builtin
+/// (`defineProperty`, `defineProperties`, `assign`), a prototype setter that retargets a function's chain (`setPrototypeOf`,
+/// `__proto__`), and the reflective and proxy objects that write through a trap or `Reflect.set`.
+const APPLY_WRITE_NAMES: [&str; 7] = ["defineProperty", "defineProperties", "assign", "setPrototypeOf", "__proto__", "Reflect", "Proxy"];
+
+/// Whether a write of `key` names property `atom` (`Member`, `MemberAny` or `MemberOn`): a store the census counts.
+fn writes_named(key: Key, atom: u32) -> bool {
+    matches!(key, Key::Member(name) | Key::MemberAny(name) | Key::MemberOn { atom: name, .. } if name == atom)
+}
+
+/// Whether property `apply` of every function is `Function.prototype.apply`, the builtin, so `f.apply(this, arguments)` reaches
+/// the builtin for every `f`. Only the closed world proves it: code added at run time may store `apply`. Given a closed world,
+/// it holds when no flow stores `apply` under a name, no store through a computed key may write a named property
+/// (`FunctionFlow::member_wild`), and the program names no builtin that writes a property the flows do not record
+/// (`APPLY_WRITE_NAMES`). A program that never names `apply` has no such call, so it holds.
+pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
+    let names = |name: &str| program.atoms.iter().any(|atom| {
+        let text: &str = atom.as_ref();
+        text == name
+    });
+    let Some(apply) = program.atoms.iter().position(|atom| {
+        let text: &str = atom.as_ref();
+        text == "apply"
+    }) else { return true };
+    let apply = apply as u32;
+    world == World::Closed
+        && !APPLY_WRITE_NAMES.iter().any(|name| names(name))
+        && flows.iter().all(|flow| !flow.member_wild && flow.writes.iter().all(|(key, _)| !writes_named(*key, apply)))
+}
