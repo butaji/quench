@@ -94,6 +94,9 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 // The runtime's root names its stencil layout numbers `layout_offsets`; the stencils' are `crate::layout`.
 pub(crate) use crate::layout as layout_offsets;
+// The encoding modules the staged rows read, as the runtime's `staged::{object_encoding, value_encoding}`.
+pub(crate) use crate::layout::{object_encoding, value_encoding};
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/bump.rs"] pub(crate) mod bump;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/protocol.rs"] pub(crate) mod protocol;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/native_frame.rs"] pub(crate) mod native_frame;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use protocol::CallOperation;

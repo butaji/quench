@@ -68,6 +68,6 @@ pub fn enable() {
         typescript_parameter_sites: Engine::typescript_parameter_sites_source,
         standalone_source_demands: Engine::standalone_source_demands_parsed,
         freeze_call_sites: crate::vm::call_printer::freeze_source_call_sites,
-        unfrozen_call_sites: crate::vm::call_printer::unfrozen_call_sites,
+        unfrozen_call_sites: super::call_sites::unfrozen_call_sites,
     });
 }

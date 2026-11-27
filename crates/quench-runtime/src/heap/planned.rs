@@ -62,7 +62,13 @@ impl Heap {
             return None;
         }
         let object = Object::from_inline_header(header, inline)?;
-        // The cursor's next id is the call-free case; a spent cursor takes the per-id claim.
+        // The record's stub is the next of region 0's cursor, claimed once the record's id is taken (the
+        // stub's header names the record). The stub cursor is peeked first, so a spent one returns `None`
+        // with nothing claimed.
+        if !self.class_space.stub_cursor_open() {
+            return None;
+        }
+        // The record cursor's next id is the call-free case; a spent cursor takes the per-id claim.
         let id = match self.object_records.cursor_take() {
             Some(id) => id,
             None => {
@@ -71,9 +77,12 @@ impl Heap {
                 id
             }
         };
+        let Some(granule) = self.class_space.claim_stub_quick(id) else {
+            unreachable!("the stub cursor was checked open before the record's id was taken");
+        };
         // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
-        unsafe { self.object_records.record_ptr(id).write(OrdinaryRecord { object, stub: 0 }) };
-        Some(self.publish_object_record(id))
+        unsafe { self.object_records.record_ptr(id).write(OrdinaryRecord { object, stub: granule }) };
+        Some(Value::direct_object(granule))
     }
 
     /// A fresh direct object record claimed with nothing written: its `Value` and the address

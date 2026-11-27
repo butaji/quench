@@ -28,7 +28,7 @@ impl Heap {
     /// Whether `prototype` appears on `object`'s internal prototype chain, read from heap
     /// records without invoking Proxy traps; a cyclic or non-object chain ends the walk.
     fn prototype_chain_contains(&self, object: Value, prototype: Value) -> bool {
-        let Some(mut current) = self.object(object).map(Object::proto) else {
+        let Some(mut current) = self.object(object).map(|o| o.proto()) else {
             return false;
         };
         let mut seen = HashSet::new();
@@ -256,60 +256,37 @@ impl Heap {
         self.object_record_by_id(self.class_space.record_of(granule))
     }
 
-    /// The read view of the ordinary object `value` names (`object_view`). Same reach as `object`: a class
-    /// cell or a record. Callers use this in place of `object` and keep the view's method calls.
+    /// The read view of the ordinary object `value` names: a class cell, or a record for every other
+    /// object. Callers read through the view's methods, and reach the rest through `record()`.
     #[inline(always)]
-    pub fn object_ref(&self, value: Value) -> Option<ObjectRef<'_>> {
-        self.object(value).map(ObjectRef::Record)
-    }
-
-    /// The exclusive view of the ordinary object `value` names, the counterpart of `object_mut`.
-    #[inline(always)]
-    pub fn object_mut_ref(&mut self, value: Value) -> Option<ObjectMut<'_>> {
-        self.object_mut(value).map(ObjectMut::Record)
-    }
-
-    /// The exclusive view of `value` for a store of `stored`, the counterpart of `object_store_mut`.
-    #[inline(always)]
-    pub fn object_store_mut_ref(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> {
-        self.object_store_mut(value, stored).map(ObjectMut::Record)
-    }
-
-    /// The exclusive view of `value` with the value arena, the counterpart of `object_and_arena_mut`.
-    #[inline(always)]
-    pub fn object_and_arena_mut_ref(&mut self, value: Value) -> Option<(ObjectMut<'_>, &mut ValueArena)> {
-        self.object_and_arena_mut(value).map(|(object, arena)| (ObjectMut::Record(object), arena))
-    }
-
-    #[inline(always)]
-    pub fn object(&self, value: Value) -> Option<&Object> {
+    pub fn object(&self, value: Value) -> Option<ObjectRef<'_>> {
         if let Some(object) = value.direct_object_index() {
             let record_id = self.record_id(object);
             // SAFETY: a direct-object Value is only created after the
             // ObjectRecord is initialized, and records retire after weak pruning.
-            return Some(&unsafe { self.object_records.get_live(record_id) }.object);
+            return Some(ObjectRef::Record(&unsafe { self.object_records.get_live(record_id) }.object));
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: a direct-array Value names an initialized array record.
-            return Some(unsafe { self.array_records.get_live(record_id) });
+            return Some(ObjectRef::Record(unsafe { self.array_records.get_live(record_id) }));
         }
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: a direct-function Value names an initialized function record.
-            return Some(&unsafe { self.function_records.get_live(record_id) }.object);
+            return Some(ObjectRef::Record(&unsafe { self.function_records.get_live(record_id) }.object));
         }
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: a direct-promise Value names an initialized promise record.
-            return Some(&unsafe { self.promise_records.get_live(record_id) }.object);
+            return Some(ObjectRef::Record(&unsafe { self.promise_records.get_live(record_id) }.object));
         }
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: a direct-iterator Value names an initialized iterator record.
-            return Some(&unsafe { self.iterator_records.get_live(record_id) }.object);
+            return Some(ObjectRef::Record(&unsafe { self.iterator_records.get_live(record_id) }.object));
         }
         if let Some(record_id) = value.direct_collection_index() {
             // SAFETY: a direct-collection Value names an initialized collection record.
-            return Some(&unsafe { self.collection_records.get_live(record_id) }.object);
+            return Some(ObjectRef::Record(&unsafe { self.collection_records.get_live(record_id) }.object));
         }
-        self.get(value)?.object()
+        self.get(value)?.object().map(ObjectRef::Record)
     }
 
     /// An iterator's record (`IteratorRecord`).
@@ -457,80 +434,82 @@ impl Heap {
         self.function(value).is_some()
     }
 
+    /// The exclusive view of the ordinary object `value` names. Its record's narrow run widens here, so a
+    /// caller that mutates the record sees the full run.
     #[inline(always)]
-    pub fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
+    pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let object = &mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object;
             widen_narrow_run(object, &mut self.properties);
-            return Some(object);
+            return Some(ObjectMut::Record(object));
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.array_records.get_live_mut(record_id, &self.properties) });
+            return Some(ObjectMut::Record(unsafe { self.array_records.get_live_mut(record_id, &self.properties) }));
         }
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.function_records.get_live_mut(record_id, &self.properties) }.object);
+            return Some(ObjectMut::Record(&mut unsafe { self.function_records.get_live_mut(record_id, &self.properties) }.object));
         }
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.promise_records.get_live_mut(record_id, &self.properties) }.object);
+            return Some(ObjectMut::Record(&mut unsafe { self.promise_records.get_live_mut(record_id, &self.properties) }.object));
         }
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) }.object);
+            return Some(ObjectMut::Record(&mut unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) }.object));
         }
         if let Some(record_id) = value.direct_collection_index() {
             // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.collection_records.get_live_mut(record_id, &self.properties) }.object);
+            return Some(ObjectMut::Record(&mut unsafe { self.collection_records.get_live_mut(record_id, &self.properties) }.object));
         }
-        self.get_mut(value)?.object_mut()
+        self.get_mut(value)?.object_mut().map(ObjectMut::Record)
     }
 
     /// `object_mut` for a store of `stored`: the write barrier applies only when `stored`
     /// is a heap reference.
     #[inline(always)]
-    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
+    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
             // narrow value in place and widen the run for any other.
-            return Some(&mut unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) }.object);
+            return Some(ObjectMut::Record(&mut unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) }.object));
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored, &self.properties) });
+            return Some(ObjectMut::Record(unsafe { self.array_records.get_live_mut_storing(record_id, stored, &self.properties) }));
         }
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
-            return Some(
+            return Some(ObjectMut::Record(
                 &mut unsafe { self.function_records.get_live_mut_storing(record_id, stored, &self.properties) }.object,
-            );
+            ));
         }
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
-            return Some(
+            return Some(ObjectMut::Record(
                 &mut unsafe { self.promise_records.get_live_mut_storing(record_id, stored, &self.properties) }.object,
-            );
+            ));
         }
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
-            return Some(
+            return Some(ObjectMut::Record(
                 &mut unsafe { self.iterator_records.get_live_mut_storing(record_id, stored, &self.properties) }
                     .object,
-            );
+            ));
         }
         if let Some(record_id) = value.direct_collection_index() {
             // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
-            return Some(
+            return Some(ObjectMut::Record(
                 &mut unsafe { self.collection_records.get_live_mut_storing(record_id, stored, &self.properties) }
                     .object,
-            );
+            ));
         }
-        self.get_mut_storing(value, stored)?.object_mut()
+        self.get_mut_storing(value, stored)?.object_mut().map(ObjectMut::Record)
     }
 
     /// `get_mut` for a store of `stored` into the cell: as for a record
@@ -598,12 +577,12 @@ impl Heap {
         self.array_mut(value)
     }
 
-    /// `object_mut` with the property arena, borrowed apart so a caller can grow an owner's
-    /// storage in one lookup. A legacy owner passes the generational write barrier first.
+    /// The exclusive view of `value` with the property arena, borrowed apart so a caller can grow an
+    /// owner's storage in one lookup. A legacy owner passes the generational write barrier first.
     pub(crate) fn object_and_arena_mut(
         &mut self,
         value: Value,
-    ) -> Option<(&mut Object, &mut ValueArena)> {
+    ) -> Option<(ObjectMut<'_>, &mut ValueArena)> {
         let reference = value.heap_reference()?;
         if let HeapReference::LegacySlot(index) = reference {
             self.remember(index as usize);
@@ -620,38 +599,38 @@ impl Heap {
             properties,
             ..
         } = self;
-        let object: &mut Object = match reference {
+        let object = match reference {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive. The stub's
             // header names the record.
             HeapReference::ObjectRecord(granule) => {
                 let record_id = class_space.record_of(granule);
-                &mut unsafe { object_records.get_live_mut(record_id, properties) }.object
+                ObjectMut::Record(&mut unsafe { object_records.get_live_mut(record_id, properties) }.object)
             }
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            HeapReference::ArrayRecord(record_id) => unsafe {
+            HeapReference::ArrayRecord(record_id) => ObjectMut::Record(unsafe {
                 array_records.get_live_mut(record_id, properties)
-            },
+            }),
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
             HeapReference::FunctionRecord(record_id) => {
-                &mut unsafe { function_records.get_live_mut(record_id, properties) }.object
+                ObjectMut::Record(&mut unsafe { function_records.get_live_mut(record_id, properties) }.object)
             }
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
             HeapReference::PromiseRecord(record_id) => {
-                &mut unsafe { promise_records.get_live_mut(record_id, properties) }.object
+                ObjectMut::Record(&mut unsafe { promise_records.get_live_mut(record_id, properties) }.object)
             }
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             HeapReference::IteratorRecord(record_id) => {
-                &mut unsafe { iterator_records.get_live_mut(record_id, properties) }.object
+                ObjectMut::Record(&mut unsafe { iterator_records.get_live_mut(record_id, properties) }.object)
             }
             // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
             HeapReference::CollectionRecord(record_id) => {
-                &mut unsafe { collection_records.get_live_mut(record_id, properties) }.object
+                ObjectMut::Record(&mut unsafe { collection_records.get_live_mut(record_id, properties) }.object)
             }
             HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) | HeapReference::WasmGcRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
-                slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
+                ObjectMut::Record(slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?)
             }
         };
         Some((object, properties))
@@ -660,8 +639,8 @@ impl Heap {
     #[quench_macros::test_visible]
     /// Changes a published object's shape, retiring target-shape readers first.
     pub(crate) fn set_object_shape(&mut self, value: Value, shape: u32) {
-        let (object, arena) = self.object_and_arena_mut(value).expect("shape owner is an object");
-        object.set_shape(shape, arena);
+        let (mut object, arena) = self.object_and_arena_mut(value).expect("shape owner is an object");
+        object.record().set_shape(shape, arena);
     }
 
     /// A detached object may be a clone of a published one; notify conservatively.
@@ -673,11 +652,11 @@ impl Heap {
     /// Two objects never share arena storage: sweeping either would free the other's values.
     pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
         self.admit_object_contents(source);
-        let Some((object, properties)) = self.object_and_arena_mut(target) else {
+        let Some((mut object, properties)) = self.object_and_arena_mut(target) else {
             return false;
         };
         let storage = properties.duplicate(source.properties());
-        let previous = object.copy_property_storage_from(source, storage, properties);
+        let previous = object.record().copy_property_storage_from(source, storage, properties);
         properties.release(previous);
         true
     }
@@ -1005,8 +984,8 @@ impl Heap {
     }
 
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
-        for (family, handle) in self.record_families() {
-            family.for_each_live_id(&mut |record_id| visit(handle(record_id)));
+        for family in self.record_families() {
+            family.for_each_live_id(&mut |record_id| visit(family.value_of(record_id)));
         }
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.is_live() {

@@ -4287,7 +4287,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object_ref(array) else { return };
+        let Some(record) = vm.heap_reads().object(array) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4518,7 +4518,7 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
     if receiver.direct_object_index().is_none() {
         return "non-direct-object";
     }
-    let Some(object) = vm.heap_reads().object_ref(receiver) else { return "missing-object"; };
+    let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
     if object.record().inline_properties().is_some() {
         "inline-storage"
     } else if object.record().plain_storage_start().is_none() {
@@ -10342,13 +10342,13 @@ mod tests {
         let receiver_atom = vm.intern_atom("receiver");
         let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
         let atom = vm.intern_atom("edgeValue");
-        let shape = vm.heap_reads().object_ref(receiver).unwrap().shape();
+        let shape = vm.heap_reads().object(receiver).unwrap().shape();
         let slot = vm.shape_slot(shape, atom).unwrap();
         vm.store_property_slot(receiver, slot, Value::integer(2));
         assert!(published.lease().is_some());
         vm.store_property_slot(receiver, slot, Value::number(0.5));
         assert!(published.lease().is_none(), "widening retires future entry at the write");
-        assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object_ref(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
         assert!(weak.upgrade().is_none());
@@ -10414,7 +10414,7 @@ mod tests {
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-            let shape = vm.heap_reads().object_ref(receiver).unwrap().shape();
+            let shape = vm.heap_reads().object(receiver).unwrap().shape();
             let slot = vm.shape_slot(shape, store.atom_index()).unwrap();
             let residual = (&program as *const ResidualProgram).addr() as u64;
             let machine = (&mut vm as *mut Vm).addr() as u64;
@@ -10433,7 +10433,7 @@ mod tests {
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
-            assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object_ref(receiver).unwrap(), slot), Some(Value::integer(1)));
+            assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
                 "the wider domain is admitted on the next entry");
@@ -10532,7 +10532,7 @@ mod tests {
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object_ref(receiver).unwrap().record().inline_properties().is_some());
+        assert!(vm.heap_reads().object(receiver).unwrap().record().inline_properties().is_some());
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let function = program.functions.iter().position(|function|
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
@@ -10542,8 +10542,8 @@ mod tests {
         let cache = vm.field_cache_entry(site);
         assert_ne!(cache.holder, quench_runtime::vm::NO_FIELD_HOLDER);
         assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap_reads().object_ref(receiver).unwrap().proto();
-        let holder = vm.heap_reads().object_ref(prototype).unwrap();
+        let prototype = vm.heap_reads().object(receiver).unwrap().proto();
+        let holder = vm.heap_reads().object(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);

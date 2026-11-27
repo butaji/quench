@@ -331,7 +331,7 @@ pub fn object_record_of<S: Stage>(stage: &mut S, records: S::Word, bits: S::Word
 
 /// The record id the direct object reference `bits` names: its granule `g` is a class cell's (at
 /// `class_base + g * CLASS_HEADER_BYTES`), whose header's high half is the id of the record the cell
-/// stands for (`heap::class_space::departed_header`). The hop is `hdr = load_u64 [class_base + g*8];
+/// stands for (`staged::object_encoding::departed_header`). The hop is `hdr = load_u64 [class_base + g*8];
 /// id = hdr >> 32`. Every ordinary object claims a stub, so its header names its record.
 #[inline(always)]
 pub fn object_record_id_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
