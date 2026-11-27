@@ -186,14 +186,6 @@ pub struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub compile_poll_interval: u16,
-    /// The entries of one epoch of a published body's audit, whose epochs alternate the body and
-    /// the interpreter (`LaneView::audit_entry`): one clock read per epoch.
-    pub(crate) audit_period: u32,
-    /// The epochs each side needs before the verdict (`LaneView::audit_verdict`).
-    pub(crate) audit_samples: u16,
-    /// How much shorter, per thousand, the body's median epoch must be than the interpreter's
-    /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
-    pub(crate) audit_margin_permille: u64,
 }
 
 /// The per-function JavaScript tier: the numeric optimizing tier.
@@ -309,7 +301,7 @@ impl crate::vm::Vm {
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
@@ -405,9 +397,6 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         max_inlined_instructions: 96,
         compile_poll_interval: 64,
-        audit_period: 64,
-        audit_samples: 16,
-        audit_margin_permille: 20,
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
@@ -759,13 +748,9 @@ mod tests {
 }
 
 /// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
-/// more functions than this as straight-line code, and the audit counts an entry made within this
-/// many activations of another of its function as a recursive one (`LaneView::audit_entry`).
+/// more functions than this as straight-line code.
 pub const RECURSION_DEPTH: usize = 4;
 
-/// The uncounted entries other bodies make while one body's audit runs, after which that audit,
-/// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.
-pub(crate) const AUDIT_LEASE_ENTRIES: u32 = 1 << 16;
 /// The machine bytes an inlined instruction of a lane body costs at most, with its guards and
 /// exits: what a unit's instruction budget (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) is
 /// derived from its code-size budget by.

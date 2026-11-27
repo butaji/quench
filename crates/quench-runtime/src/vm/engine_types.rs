@@ -34,7 +34,6 @@ use crate::code_dependencies::Invalidation;
 use crate::staged::js_step_head::JsStepHead;
 use quench_bjit::call_record::CallRecord;
 use super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-use super::lane_body_audit as audit;
 use crate::wasm::integer::I32BinaryOperator;
 use super::lane_values::LaneValues;
 use super::lane_activations::LaneActivations;
@@ -994,8 +993,6 @@ pub struct LaneTier {
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     pub history: std::cell::Cell<LaneBodyHistory>,
-    /// The epochs of its body's audit (`lane_body_audit`).
-    pub audit_epochs: std::cell::Cell<audit::Epochs>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
@@ -1686,8 +1683,6 @@ pub struct LaneBodyHistory {
     pub demanded: bool,
     /// Whether a loop region called it while it had no body (`LaneView::note_native_caller`).
     pub region_called: bool,
-    /// The timed runs of its current body and of the interpreter (`audit`).
-    pub audit: audit::Audit,
     /// The planned IR instructions of its body where that body compiled quick
     /// (`tier_model::compiles_quick`), else 0: its completions weigh an optimizing compile.
     pub quick_ir: u32,
@@ -1733,8 +1728,6 @@ pub struct LaneBodyStats {
     pub warming_leaves: std::cell::Cell<u32>,
     /// Why its body declined (`decline`).
     pub declined: std::cell::Cell<&'static str>,
-    /// The audit's verdict (`LaneView::audit_verdict`): `None` while it runs.
-    pub audit: std::cell::Cell<Option<audit::Verdict>>,
 }
 
 /// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
@@ -5017,9 +5010,8 @@ impl LaneBodyStats {
                 };
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
-            let audit = self.audit.get().map_or(String::from("null"), |verdict| verdict.report());
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"audit\":{audit},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
                 self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
             )
         })
@@ -5618,7 +5610,6 @@ impl Default for LaneTier {
             weigh_at: std::cell::Cell::new((0, 0, 0)),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
-            audit_epochs: Default::default(),
             body_stats: LaneBodyStats::default(),
             retired: std::cell::RefCell::default(),
             callers: std::cell::RefCell::default(),

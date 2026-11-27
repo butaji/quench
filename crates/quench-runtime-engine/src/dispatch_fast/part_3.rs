@@ -694,14 +694,6 @@ pub(super) const fn body_entry_row() -> Handler {
     protocol_row!({ quench_runtime::bytecode::BODY_ENTRY as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 })
 }
 
-/// Whether an activation of the function whose records start at `records` calls the newest
-/// activation, within `RECURSION_DEPTH` calls of it less `nearer` (those the caller already
-/// looked at): each activation's caller base is its caller's records.
-pub(super) fn activation_reentered(vm: &Vm, records: Ip, nearer: usize) -> bool {
-    use crate::compiled::tier_policy::RECURSION_DEPTH;
-    vm.lane_stack.activations().iter().rev().take(RECURSION_DEPTH - nearer).any(|activation| activation.caller_base() == records)
-}
-
 /// The receiver word a body is entered with: the activation's `this` (bound by `direct_call_this_in_lane`)
 /// where the body reads it (`LaneView::binds_this`), else `DELETED`, at which its `LoadThis` leaves.
 #[inline(always)]
@@ -713,8 +705,7 @@ pub(super) fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this: bool) -> 
 /// Where the lane continues after a run of `method`, `own`'s body, that ran on the
 /// activation `cx` holds, with registers `r`, and ended at `exit`: a returned run completes
 /// the activation (no leave to resolve, no frame to materialize), any other leave resumes
-/// where it names (`body_left_in_lane`); `started` is the audit's clock for this entry, read once
-/// the run's leave is resolved.
+/// where it names (`body_left_in_lane`).
 #[inline(always)]
 pub(super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit, function: u32) -> Resumed {
     let base = unsafe { (*cx).base };
@@ -1409,12 +1400,6 @@ pub(super) fn enter_cell_body_in_lane(
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
     let method = own.cell_method()?;
-    // Most entries of a published body come through its cell: one of the audit's interpreted
-    // epoch activates the call as the lane's own would (`lane_body_audit`).
-    // SAFETY: the running context; its records are the caller's.
-    if own.audit_entry(false, || unsafe { (*cx).base } == own.records() || activation_reentered(vm, own.records(), 1)) {
-        return None;
-    }
     let window = fill_window_in_lane(vm, target, passed, argc);
     if !body_admits_in_lane(cx, method, CALLEE_ACTIVATION_PENDING) {
         // SAFETY: the window starts at the stack's top, which the fill moved.

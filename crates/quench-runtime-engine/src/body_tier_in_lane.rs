@@ -313,7 +313,7 @@ impl LaneView {
             #[allow(unreachable_patterns)]
             _ => "other".into(),
         };
-        format!("{state} short={} unpaid={} demanded={} lifetimes={} declined={:?} audit={}", h.short, h.unpaid, h.demanded, h.lifetimes, self.tier().body_stats.declined.get(), self.tier().body_stats.audit.get().is_some_and(|verdict| verdict.retire))
+        format!("{state} short={} unpaid={} demanded={} lifetimes={} declined={:?}", h.short, h.unpaid, h.demanded, h.lifetimes, self.tier().body_stats.declined.get())
     }
 
     /// Native code (a loop region or a body) called this function, which has no body to enter: the
@@ -417,7 +417,6 @@ impl LaneView {
             unsafe { (*self.prologue.get()).handler }
         };
         use std::cell::Cell;
-        self.audit_restart();
         self.tier().history.set(LaneBodyHistory { optimize: false, ..self.tier().history.get() });
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
