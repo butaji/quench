@@ -107,6 +107,14 @@ pub(crate) const DEPARTED_CLASS: u32 = u32::MAX;
 pub(crate) const fn departed_header(record: u32) -> u64 {
     DEPARTED_CLASS as u64 | ((record as u64) << CLASS_RECORD_SHIFT)
 }
+
+/// `departed_header` over a Stage word: the record id `id` shifted above `CLASS_RECORD_SHIFT`, with `DEPARTED_CLASS` in the
+/// low half. The same two constants as the const fn, so the constant and the staged forms share one definition.
+#[inline(always)]
+pub(crate) fn departed_header_word<S: crate::staged::Stage>(stage: &mut S, id: S::Word) -> S::Word {
+    let high = stage.mul_imm(id, 1u64 << CLASS_RECORD_SHIFT);
+    stage.or_imm(high, u64::from(DEPARTED_CLASS))
+}
 /// The class space's regions: region `k` starts at granule `k << REGION_SHIFT` and holds cells of
 /// `2^k` granules, so a granule's local cell index is `(g & REGION_MASK) >> k`.
 pub(crate) const REGION_SHIFT: u32 = 29;

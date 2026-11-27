@@ -6,7 +6,7 @@
 use super::Stage;
 use super::region::Region;
 use super::layout_offsets::{CLASS_CELL_GRANULE_BYTES, NATIVE_CLASS_CELL_LAYOUT, NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR, OBJECT_RECORD_STUB};
-use super::object_encoding::{CLASS_RECORD_SHIFT, DEPARTED_CLASS};
+use super::object_encoding::departed_header_word;
 use super::value_encoding::DIRECT_OBJECT_TAG;
 
 /// The cursor at `cursor`'s next id and whether its run still has it.
@@ -76,28 +76,24 @@ pub struct EmptyObject<W> {
 }
 
 /// An ordinary empty object claimed inline (`EMPTY_OBJECT_ROW`): one record id from the object cursor and one granule
-/// from the region 0 stub cursor, both bumped. The stub's cell takes `departed_header(id)` (the word form of
-/// `object_encoding::departed_header`: `DEPARTED_CLASS` low, the id above `CLASS_RECORD_SHIFT`), the record takes the
+/// from the region 0 stub cursor, both bumped. The stub's cell takes `departed_header_word(id)`
+/// (`object_encoding`: `DEPARTED_CLASS` low, the id above `CLASS_RECORD_SHIFT`), the record takes the
 /// template's payload and layout and its stub granule, and the answer is the direct object word of the granule. The
 /// object is fresh, so no barrier. Both runs were occupied and charged when claimed, so no occupancy is written. A
-/// zero cursor or template, or a spent run, leaves at `miss` before anything is written.
+/// zero template or a spent run leaves at `miss` before anything is written.
 #[inline(always)]
 pub fn claim_empty_object<S: Stage>(stage: &mut S, object: EmptyObject<S::Word>, miss: S::Miss) -> Option<S::Word> {
-    // The pointers and the template are tested before any cursor is loaded through them.
-    let set = stage.ne_imm(object.object_cursor, 0u64);
-    let stubs = stage.ne_imm(object.stub_cursor, 0u64);
+    // The cursor pointers are always filled while a lane runs (`idle`, `reread_object_bases`), so only the template,
+    // which is captured lazily, is tested before the runs are read.
     let templated = stage.ne_imm(object.layout, 0u64);
-    let armed = stage.all(set, stubs);
-    let armed = stage.all(armed, templated);
-    stage.guard(armed, miss)?;
+    stage.guard(templated, miss)?;
     let (next, room) = cursor_next(stage, object.object_cursor);
     let (granule, stub_room) = cursor_next(stage, object.stub_cursor);
     let room = stage.all(room, stub_room);
     stage.guard(room, miss)?;
     cursor_bump(stage, object.object_cursor, next);
     cursor_bump(stage, object.stub_cursor, granule);
-    let id_high = stage.mul_imm(next, 1u64 << CLASS_RECORD_SHIFT);
-    let header = stage.or_imm(id_high, u64::from(DEPARTED_CLASS));
+    let header = departed_header_word(stage, next);
     let cell_offset = stage.mul_imm(granule, CLASS_CELL_GRANULE_BYTES as u64);
     let cell = stage.add(object.cells, cell_offset);
     stage.store_u64(Region::HeapMeta.mutable(), cell, NATIVE_CLASS_CELL_LAYOUT.header_offset as i32, header);
