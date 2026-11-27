@@ -83,7 +83,24 @@ impl Heap {
         self.class_space.write_header(granule, departed_header(record_id));
         self.class_space.delete_slack(granule, length);
         self.properties.note_class_departure(shape);
+        // A holder cell's departure ends its direct field reads (the holder-cell edge, R4-D1b(d)).
+        if self.class_space.take_holder_cell(granule) {
+            self.class_space.note_holder_departure();
+        }
         Some(record_id)
+    }
+
+    /// Marks the live class cell `holder` as the holder of a field entry, so its departure is an edge
+    /// the VM drains (`take_holder_departure`). A record holder needs no mark: its record stays put.
+    pub(crate) fn note_holder_cell(&mut self, holder: Value) {
+        if let Some(granule) = self.live_class_cell(holder) {
+            self.class_space.mark_holder_cell(granule);
+        }
+    }
+
+    /// Whether a holder cell departed since the last call; the caller clears the field caches.
+    pub(crate) fn take_holder_departure(&mut self) -> bool {
+        self.class_space.take_holder_departure()
     }
 
     /// The departure edge for a record-only view of `value` (`object_record_mut`, `object_and_arena_mut`,

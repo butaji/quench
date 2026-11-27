@@ -591,6 +591,7 @@ impl Vm {
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         // A class cell departs first (R4-C4), so the record it becomes takes the dictionary class here.
         self.heap.depart_class_object(object);
+        self.drop_departed_holder_entries();
         let Some(shape) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
@@ -1070,6 +1071,14 @@ impl Vm {
         };
         self.heap.property_set(object, slot, value);
     }
+    /// Clears the field caches when a holder cell departed (`Heap::take_holder_departure`): a holder
+    /// cell is marked only where a field entry names it, so only such departures pay the reset.
+    pub(super) fn drop_departed_holder_entries(&mut self) {
+        if self.heap.take_holder_departure() {
+            self.invalidate_field_caches();
+        }
+    }
+
     pub(super) fn invalidate_field_caches(&mut self) {
         self.reset_field_cache_tables();
         self.symbol_write_proofs.clear();
@@ -2278,6 +2287,7 @@ impl Vm {
                 return;
             }
             self.heap.depart_class_object(object);
+            self.drop_departed_holder_entries();
         }
         let record_id = self.heap.record_id(object.direct_object_index().expect("an add's receiver is an ordinary object")).expect("a departed receiver is a record");
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
@@ -3786,6 +3796,9 @@ impl Vm {
         {
             #[cfg(feature = "profile-lane-exits")]
             self.record_field_probe_path(site, atom, 4);
+            if let Some(proto) = self.heap.object(object).map(|object| object.proto()) {
+                self.heap.note_holder_cell(proto);
+            }
             self.record_field_cache(
                 site,
                 FieldCache {
