@@ -339,10 +339,12 @@ pub struct LaneView {
 }
 
 /// A call site dispatched on its receiver's class header (`planned_call_row`): one arm per class of the closed
-/// receiver union its plan names, in the plan's order.
+/// receiver union its plan names. The arms before the last are compared in the plan's order; the last class is
+/// `default`, which a receiver that no other arm's header names is (the union is closed, so it needs no compare).
 pub struct PlannedSite {
     pub pc: u32,
     pub arms: Box<[PlannedArm]>,
+    pub default: PlannedArm,
 }
 
 /// One class of a planned site: the function its method is (`function`), the class's header cell

@@ -5253,7 +5253,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let facts = self.programs.aot_facts(id);
-                let planned = self.programs.planned_call_sites(id, function);
+                let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
                         self.programs.tiers(), facts.as_deref(), planned)

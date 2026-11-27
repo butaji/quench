@@ -526,19 +526,22 @@ pub(super) unsafe fn set_script_calls_in_lane(cx: *mut LaneContext, allowed: boo
     }
 }
 
-/// The activation of `target`, a plain entry the leaf prove miss (`script_call_leaf_prove_miss`) found
-/// for the call record `i` at `ip` of argument count `ARGC`, as an unproven call makes it: an entry
-/// cell's body runs first where it pays its entry (`enter_cell_body_in_lane`), else the window is
-/// filled and the activation pushed (`enter_window_of_in_lane`). `None`, before any write, where the
-/// call takes the full form: a receiver whose binding reads the heap, or values past the window.
+/// The activation of `target`, a plain entry the planned row (`planned_call_row`) found for the call record `i` at `ip`
+/// of argument count `ARGC`, as an unproven call makes it: an entry cell's body runs first where it pays its entry
+/// (`enter_cell_body_in_lane`), else the window is filled and the activation pushed (`enter_window_of_in_lane`).
+/// `None`, before any write, where the call takes the full form: a receiver whose binding reads the heap. A lane
+/// stack without room grows as a call's own path does (`script_call_frame_in_lane`), and the call runs again. The
+/// argument count fits the callee's parameters and the fixed copies: the derivation admits only such sites
+/// (`planned_arm_admits`).
 #[inline(always)]
 pub(super) fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction,
     target: &ScriptCallTarget) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let this = direct_call_this_in_lane(vm, target, r.get(i.c))?;
     let argc = call_argument_count::<ARGC>(i);
-    if argc > FIXED_ARGUMENT_COPIES || !admits_window_in_lane(vm, target, argc) {
-        return None;
+    debug_assert!(argc <= FIXED_ARGUMENT_COPIES && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)));
+    if !activation_room_in_lane(vm, target) {
+        return Some(Resumed::Exit(script_call_frame_in_lane(ip, usize::from(target.room))));
     }
     // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and only an admitted one reaches here.
     debug_assert!(!vm.with_scope_entered);

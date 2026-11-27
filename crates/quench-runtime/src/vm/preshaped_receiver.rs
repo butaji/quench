@@ -173,17 +173,26 @@ impl Vm {
     }
 
     /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
-    /// (`ProgramStore::class_header`), once per class, and resolves the class's planned arms at that edge
-    /// (`layer_hooks::planned_class_recorded`). A class whose instances keep one layout (`AotFacts::class_layout`)
-    /// takes it from its first instance, and a planned call site (`planned_call_row`) reads a receiver's class from
-    /// that header: no receiver reaches such a site before its class's header is recorded.
+    /// (`ProgramStore::class_header`), once per class, at the class-header edge (`record_class_edge`). A class whose
+    /// instances keep one layout (`AotFacts::class_layout`) takes it from its first instance, and a planned call site
+    /// (`planned_call_row`) reads a receiver's class from that header: no receiver reaches such a site before its
+    /// class's header is recorded.
     pub fn record_class_header(&mut self, constructor: Value, this: Value) {
         let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
-        let Some(layout) = self.object_data(this).map(|object| object.layout_id()) else { return };
-        if let Some(header) = self.programs.class_header(program, class).filter(|header| header.get() == 0) {
-            header.set(layout);
-            layer_hooks::planned_class_recorded(self, program, class, this);
+        let Some((layout, prototype)) = self.object_data(this).map(|object| (object.layout_id(), object.proto())) else { return };
+        if self.programs.class_header(program, class).is_some_and(|header| header.get() == 0) {
+            self.record_class_edge(program, class, layout, prototype);
         }
+    }
+
+    /// The class-header edge, the one path a construction and a restored snapshot both take: sets class `class`'s
+    /// header of program `program` to `layout`, records its instances' `prototype`, and resolves the class's planned
+    /// arms from that prototype (`layer_hooks::planned_class_recorded`).
+    pub(crate) fn record_class_edge(&mut self, program: ProgramId, class: u32, layout: u32, prototype: Value) {
+        let Some(header) = self.programs.class_header(program, class) else { return };
+        header.set(layout);
+        self.programs.record_class_prototype(program, class, prototype);
+        layer_hooks::planned_class_recorded(self, program, class, prototype);
     }
 
     /// Gives `this`, a just-allocated empty receiver of template shape `start` that no code has

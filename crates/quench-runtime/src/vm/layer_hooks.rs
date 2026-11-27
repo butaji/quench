@@ -69,9 +69,10 @@ layer_hooks! {
     /// `Vm::new` makes a runtime: a VM only restored at rest (`Vm::new_at_rest`) names neither.
     fn enable_jit => quench_layer_enable_jit() -> ();
     /// Resolves the planned arms of `class` (a constructor's function id) in `program` once its header is recorded:
-    /// `this` is the instance the first construction made, whose prototype holds the arms' methods. Called after the
-    /// header is set, so a planned row that reads the header reads a target already resolved.
-    fn planned_class_recorded => quench_layer_planned_class_recorded(vm: &mut Vm, program: ProgramId, class: u32, this: Value) -> ();
+    /// `prototype` is the prototype its instances hold, which holds the arms' methods. Called after the header is set,
+    /// so a planned row that reads the header reads a target already resolved. The class-header edge makes the call
+    /// for a construction and for a restored snapshot alike (`Vm::record_class_edge`).
+    fn planned_class_recorded => quench_layer_planned_class_recorded(vm: &mut Vm, program: ProgramId, class: u32, prototype: Value) -> ();
     /// The entry of an Intl or Temporal native (`None` for any other native), which the core's
     /// `native_table` holds. A build without the layer claims none.
     fn intl_entry => quench_layer_intl_entry(native: Native) -> Option<native_table::NativeFn>;
