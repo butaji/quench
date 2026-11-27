@@ -179,7 +179,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     assert_eq!(vm.profile.field_primitives.count(Path::HintOwnRead), 1);
     // The child inherits exactly the own data slot the warmed entry proves.
     let holder_hint = FieldCache {
-        receiver: vm.heap.object(child).unwrap().exact_shape(),
+        receiver: vm.heap.object_ref(child).unwrap().exact_shape(),
         holder: hint.receiver,
         slot: hint.slot,
         holder_id: NO_FIELD_HOLDER_LAYOUT,
@@ -282,7 +282,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let receiver_atom = vm.intern_atom("receiver");
     let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
     vm.collect_now(&program);
-    let shape = vm.heap.object(receiver).unwrap().shape();
+    let shape = vm.heap.object_ref(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
         receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_id: NO_FIELD_HOLDER_LAYOUT,
@@ -294,7 +294,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert!(unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
         "widening declines before exposing a raw writer to an active native caller");
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
-    assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
+    assert_eq!(vm.heap.property_get_ref(vm.heap.object_ref(receiver).unwrap(), slot), Some(Value::integer(1)));
     // The next admission consumes the already-widened domain.
     let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
     for value in [Value::number(0.5), Value::number(-0.0), Value::number(f64::NAN), Value::integer(7)] {
@@ -314,7 +314,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
-    assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));
+    assert_eq!(vm.heap.property_get_ref(vm.heap.object_ref(receiver).unwrap(), slot), Some(child));
 }
 
 #[test]
