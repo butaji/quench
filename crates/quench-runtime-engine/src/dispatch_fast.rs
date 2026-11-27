@@ -904,6 +904,10 @@ pub(crate) unsafe fn record_pc(cx: *const LaneContext, ip: Ip) -> usize {
 /// `ip` is a record of the view whose records start at `base`.
 #[inline(always)]
 pub(crate) unsafe fn pc_in_view(base: Ip, ip: Ip) -> usize {
+    // A record of an inlined view (N7) is at its origin's PC, whichever records `base` starts.
+    if inlined_views::may_be_inlined(ip) && let Some(pc) = inlined_views::original_pc(ip) {
+        return pc;
+    }
     // SAFETY: the function's contract.
     unsafe { ip.offset_from(base) as usize }
 }
@@ -9365,6 +9369,7 @@ fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r: Registers
 }
 
 pub(crate) mod leaf_calls;
+pub(crate) mod inlined_views;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, AdmittedWindow, materialize_running_leaf_in_lane, leaf_call_handler};
 
 /// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a

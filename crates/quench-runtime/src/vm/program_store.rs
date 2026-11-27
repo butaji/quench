@@ -2800,6 +2800,22 @@ impl ProgramStore {
         Some((fresh, entry.views_in_lane.derived(function)))
     }
 
+    /// A second view of `function` that `derive` makes from its code (an inlined view, N7), stored in
+    /// the program's arena beside its own view, at an address fixed while the program holds it. The
+    /// function's cell keeps its own view.
+    pub fn store_extra_lane_view(
+        &self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(&crate::bytecode::Function, &[Value], crate::bytecode::ProgramKind, &[crate::bytecode::FieldSite])
+            -> Option<crate::vm::engine_types::LaneView>,
+    ) -> Option<*const crate::vm::engine_types::LaneView> {
+        let entry = self.entry_in_lane(id)?;
+        let code = entry.residual.function_get(function as usize)?;
+        let view = derive(code, &entry.constants, entry.residual.kind, &entry.residual.field_sites)?;
+        Some(entry.views_in_lane.store(view).as_ptr().cast_const())
+    }
+
     pub fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
         self.constants(id).get(index).copied()
     }

@@ -2654,6 +2654,15 @@ impl Function {
             || self.evals_in_scope() && self.instructions_of(|op| matches!(op, Op::ResolveName | Op::LoadResolvedName)).next().is_some()
     }
 
+    /// This function with `instructions` as its code and `registers` registers: the code of an
+    /// inlining unit (N7, `lane_unit::Unit`), whose records a lane view derives as its own. Every
+    /// other fact is the function's: its per-PC tables stay the original's, which the unit's
+    /// origins map to. `None` where the unit is too long to index.
+    pub fn with_unit_code(&self, instructions: &[WideInstruction], registers: u16) -> Option<Function> {
+        let code = (0..instructions.len()).map(Instr::wide).collect::<Option<Vec<_>>>()?;
+        Some(Function { code, wide: instructions.to_vec(), registers, ..self.clone() })
+    }
+
     /// Every instruction in fixed-width form.
     pub fn instructions(&self) -> impl Iterator<Item = WideInstruction> + '_ {
         self.code.iter().map(|&packed| self.widened(packed))
