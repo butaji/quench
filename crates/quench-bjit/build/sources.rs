@@ -12,8 +12,9 @@ use std::{
 
 /// The attribute that names a module's file.
 const PATH_ATTRIBUTE: &str = "#[path = \"";
-/// The files the graph starts from, relative to the crate: the build script and the stencil directory.
-const ROOTS: [&str; 2] = ["build.rs", "stencils"];
+/// The files the graph starts from, relative to the crate: the build script, the stencil directory and quench-staged's
+/// sources (the stencil rows compile against them).
+const ROOTS: [&str; 3] = ["build.rs", "stencils", "../quench-staged/src"];
 
 /// The files to watch, relative to `crate_dir`.
 pub fn watched(crate_dir: &Path) -> BTreeSet<PathBuf> {
