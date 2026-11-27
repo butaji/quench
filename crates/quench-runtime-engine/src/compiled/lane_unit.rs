@@ -193,8 +193,7 @@ fn throws(instruction: WideInstruction) -> bool {
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
         _ if quench_runtime::staged::Operation::<u64, ()>::is_unit_rewritten(instruction) => true,
-        _ if matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))
-            && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
+        _ if site_field_read(instruction) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
                 WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
@@ -204,6 +203,14 @@ fn renamable(instruction: WideInstruction) -> bool {
             super::osr_loop::renamed(plain, &|register| register, 0, &|target| Some(target)).is_some()
         }
     }
+}
+
+/// Whether `instruction` reads a field through its lookup site (`FieldLookup::Site`, a nested
+/// lookup's), returning or not: the site keeps its base, which the lowering renames, so the record
+/// keeps its operands and only its result register renames.
+fn site_field_read(instruction: WideInstruction) -> bool {
+    matches!(crate::compiled::decoded_completed(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))
+        && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))
 }
 
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
@@ -540,8 +547,7 @@ impl Emitter {
                 WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
             _ if super::meaning_compiled::is_construct(instruction) => super::meaning_compiled::construct_record(register(instruction.a()), register(instruction.b()),
                 register(instruction.c()), instruction.imm()),
-            _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))
-                && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
+            _ if site_field_read(instruction) => {
                 let flags = instruction.result_flags();
                 super::meaning_compiled::get_field_record(flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
             }
@@ -557,8 +563,8 @@ impl Emitter {
     #[allow(clippy::too_many_arguments)]
     fn emit_returning(&mut self, instruction: WideInstruction, origin: Origin, register: &dyn Fn(Register) -> Register,
         receiver: Register, result: Register, continuation: u32, target_of: &dyn Fn(u32) -> Option<u32>) -> Option<()> {
-        let computed = if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::GetField { .. })) && instruction.b() == quench_runtime::bytecode::FieldBase::NESTED {
-            // A nested lookup keeps its site, whose base the lowering renames.
+        let computed = if site_field_read(instruction) {
+            // A nested lookup keeps its site, whose base the lowering renames (`site_field_read`).
             WideInstruction::new(instruction.op(), register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
         } else {
             let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
