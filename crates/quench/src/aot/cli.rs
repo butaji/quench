@@ -315,6 +315,26 @@ fn compile(options: Options) -> Result<(), String> {
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
     // A core image's closed world: the realm and engine entries its catalog names, which its saved realm is built on.
     let closed = realm.as_ref().map(|realm| (realm, demand.execution_table()));
+    // A core entry is probed before anything is saved: one that reaches its end with no input folds
+    // to a replay image, and any other saves its realm and program at the last point it can
+    // capture (`core_rest`, which names the frames that cannot be captured).
+    if let (true, Some((realm, execution))) = (core, &closed) {
+        let reach = super::core_rest::probe(&native_entry, realm, execution)?;
+        report["core_probe"] = match &reach {
+            super::core_rest::Reach::Folds => json!({"status": "folds"}),
+            super::core_rest::Reach::Input(input) => json!({"status": "input", "input": input, "save_point": "realm_and_program"}),
+            super::core_rest::Reach::Unfinished(diagnostic) => json!({"status": "unfinished", "diagnostic": diagnostic, "save_point": "realm_and_program"}),
+        };
+        if matches!(reach, super::core_rest::Reach::Folds) {
+            super::strict::fold_image(&output, &work.0)?;
+            report["status"] = json!("compiled");
+            report["support_variant"] = json!("strict");
+            report["execution_mode"] = json!("replay");
+            report["engine_linked"] = json!(false);
+            write_report(report_path.as_deref(), &report)?;
+            return Ok(());
+        }
+    }
     let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, closed, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {

@@ -120,12 +120,7 @@ pub(super) fn compile(entry: &Path, output: &Path, work: &Path, report: &mut Val
         report["strict"] = json!({"status": "dynamic_input", "input": WAITED_INPUT});
         return Ok(Outcome::Dynamic);
     }
-    let source = work.join("strict_image.rs");
-    fs::write(&source, replay_source(&variants)).map_err(|error| error.to_string())?;
-    let mut rustc = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
-    rustc.args(["--edition", "2024", "--crate-type", "bin", "-C", "panic=abort", "-C", "opt-level=s", "-C", "strip=symbols", "-C", "link-arg=-lc"])
-        .arg("-o").arg(output).arg(&source);
-    quench_runtime::native_link::checked_output(&mut rustc, "strict image link")?;
+    link_replay(&variants, output, work)?;
     report["strict"] = json!({"status": "image", "evaluation": variants.iter().map(|variant| json!({
         "answers": variant.answers.iter().map(|(question, answer)| (question.key(), *answer)).collect::<Vec<_>>(), "writes": variant.effects.len(),
         "bytes": variant.effects.iter().map(|(_, bytes)| bytes.len()).sum::<usize>(), "exit": variant.exit,
@@ -171,6 +166,22 @@ fn explore_variants(entry: &Path, work: &Path, answers: Answers, variants: &mut 
         Some("dynamic") => Ok(Some(left["input"].as_str().unwrap_or("an unnamed input").to_owned())),
         _ => Err(format!("build-time evaluation journal: unknown status {}", left["status"])),
     }
+}
+
+/// The strict image of a core program that ends with no input (`core_rest::probe`): it makes no
+/// effect and exits with status 0, which is all its run left.
+pub(super) fn fold_image(output: &Path, work: &Path) -> Result<(), String> {
+    link_replay(&[Variant { answers: Vec::new(), waits: false, effects: Vec::new(), exit: 0 }], output, work)
+}
+
+/// Links the replay image of `variants` to `output`, its source written in `work` (`replay_source`).
+fn link_replay(variants: &[Variant], output: &Path, work: &Path) -> Result<(), String> {
+    let source = work.join("strict_image.rs");
+    fs::write(&source, replay_source(variants)).map_err(|error| error.to_string())?;
+    let mut rustc = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
+    rustc.args(["--edition", "2024", "--crate-type", "bin", "-C", "panic=abort", "-C", "opt-level=s", "-C", "strip=symbols", "-C", "link-arg=-lc"])
+        .arg("-o").arg(output).arg(&source);
+    quench_runtime::native_link::checked_output(&mut rustc, "strict image link").map(drop)
 }
 
 /// The image of the program's `variants`: as it starts it asks the questions the variants
