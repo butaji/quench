@@ -11,9 +11,7 @@
 
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 #[cfg(target_arch = "aarch64")]
-use quench_runtime::vm::jit_backend::relocatable_code::Relocation;
-#[cfg(target_arch = "aarch64")]
-use cranelift_codegen::binemit::Reloc;
+use quench_runtime::vm::jit_backend::relocatable_code::{RelocKind, Relocation};
 
 /// AArch64 `ldr xN, label` and the branch over its word.
 const A64_LDR_LITERAL_MASK: u32 = 0xFF00_0000;
@@ -40,13 +38,13 @@ pub(crate) fn rewrite(code: &mut RelocatableCode) -> Result<(), String> {
     {
         let mut relocations = Vec::with_capacity(code.relocations.len());
         for relocation in code.relocations.iter() {
-            if relocation.kind != Reloc::Abs8 {
+            if relocation.kind != RelocKind::Abs8 {
                 relocations.push(*relocation);
                 continue;
             }
             let [page, offset] = page_reference(&mut code.code, relocation.offset)?;
-            relocations.push(Relocation { offset: page, kind: Reloc::Arm64Page21, ..*relocation });
-            relocations.push(Relocation { offset, kind: Reloc::Arm64PageOff12, ..*relocation });
+            relocations.push(Relocation { offset: page, kind: RelocKind::Arm64Page21, ..*relocation });
+            relocations.push(Relocation { offset, kind: RelocKind::Arm64PageOff12, ..*relocation });
         }
         code.relocations = relocations.into_boxed_slice();
     }

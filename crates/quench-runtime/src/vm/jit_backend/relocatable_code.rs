@@ -25,16 +25,56 @@ const ARM64_ADD_IMM12_MASK: u32 = 0xFFF << ARM64_ADD_IMM12_SHIFT;
 const ARM64_ADD_OPCODE_MASK: u32 = 0x7F00_0000;
 const ARM64_ADD_OPCODE: u32 = 0x1100_0000;
 
-/// The relocation kinds `apply_relocation` fills, in the order an image file numbers them
-/// (`aot_image::file` writes a kind as its index here), so a new kind is appended.
-pub const PATCHABLE: [Reloc; 8] = [
-    Reloc::Abs8, Reloc::X86PCRel4, Reloc::X86CallPCRel4, Reloc::X86CallPLTRel4, Reloc::Arm64Call,
-    Reloc::Arm64Page21, Reloc::Arm64PageOff12, Reloc::Abs4,
-];
+/// The field kinds `apply_relocation` fills: every relocation an image carries. The discriminant
+/// is the kind's tag in an image file (`aot_image::file`), so a new kind is appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RelocKind {
+    Abs8,
+    X86PCRel4,
+    X86CallPCRel4,
+    X86CallPLTRel4,
+    Arm64Call,
+    Arm64Page21,
+    Arm64PageOff12,
+    Abs4,
+}
 
-/// Whether `apply_relocation` fills relocations of `kind`.
-pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
-    PATCHABLE.contains(&kind)
+impl RelocKind {
+    /// Every kind, in discriminant order: an image file's tag indexes it.
+    pub const ALL: [Self; 8] = [
+        Self::Abs8, Self::X86PCRel4, Self::X86CallPCRel4, Self::X86CallPLTRel4, Self::Arm64Call,
+        Self::Arm64Page21, Self::Arm64PageOff12, Self::Abs4,
+    ];
+
+    /// The kind of Cranelift's `kind`, where an image can fill it; `None` for any other.
+    pub fn of_cranelift(kind: Reloc) -> Option<Self> {
+        Some(match kind {
+            Reloc::Abs8 => Self::Abs8,
+            Reloc::X86PCRel4 => Self::X86PCRel4,
+            Reloc::X86CallPCRel4 => Self::X86CallPCRel4,
+            Reloc::X86CallPLTRel4 => Self::X86CallPLTRel4,
+            Reloc::Arm64Call => Self::Arm64Call,
+            Reloc::Arm64Page21 => Self::Arm64Page21,
+            Reloc::Arm64PageOff12 => Self::Arm64PageOff12,
+            Reloc::Abs4 => Self::Abs4,
+            _ => return None,
+        })
+    }
+
+    /// This kind as Cranelift's object module names it.
+    pub fn cranelift(self) -> Reloc {
+        match self {
+            Self::Abs8 => Reloc::Abs8,
+            Self::X86PCRel4 => Reloc::X86PCRel4,
+            Self::X86CallPCRel4 => Reloc::X86CallPCRel4,
+            Self::X86CallPLTRel4 => Reloc::X86CallPLTRel4,
+            Self::Arm64Call => Reloc::Arm64Call,
+            Self::Arm64Page21 => Reloc::Arm64Page21,
+            Self::Arm64PageOff12 => Reloc::Arm64PageOff12,
+            Self::Abs4 => Reloc::Abs4,
+        }
+    }
 }
 
 /// One relocation of compiled code: the field at `offset` takes the address of symbol
@@ -42,7 +82,7 @@ pub(in crate::vm) fn patchable(kind: Reloc) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Relocation {
     pub offset: usize,
-    pub kind: Reloc,
+    pub kind: RelocKind,
     pub namespace: u32,
     pub key: u32,
     pub addend: i64,
@@ -72,12 +112,11 @@ impl RelocatableCode {
                 return Err(format!("relocation {:#x} targets no user symbol ({:?})", relocation.offset, relocation.target));
             };
             let name = names.get(*name).ok_or_else(|| format!("relocation {:#x} names a symbol the function does not hold", relocation.offset))?;
-            if !patchable(relocation.kind) {
-                return Err(format!("relocation {:#x} names {:?}, which an image cannot patch", relocation.offset, relocation.kind));
-            }
+            let kind = RelocKind::of_cranelift(relocation.kind)
+                .ok_or_else(|| format!("relocation {:#x} names {:?}, which an image cannot patch", relocation.offset, relocation.kind))?;
             relocations.push(Relocation {
                 offset: usize::try_from(relocation.offset).map_err(|_| format!("relocation {:#x} is out of range", relocation.offset))?,
-                kind: relocation.kind,
+                kind,
                 namespace: name.namespace,
                 key: name.index,
                 addend: relocation.addend,
@@ -103,7 +142,7 @@ impl RelocatableCode {
                 .ok_or_else(|| format!("unresolved symbol ({}, {})", relocation.namespace, relocation.key))?;
             // A branch into a code heap the loader placed away from the target takes its stub.
             let target = value.wrapping_add(relocation.addend as u64);
-            if relocation.kind == Reloc::Arm64Call && !arm64_call_reaches(address + relocation.offset as u64, target) {
+            if relocation.kind == RelocKind::Arm64Call && !arm64_call_reaches(address + relocation.offset as u64, target) {
                 value = veneer(target).wrapping_sub(relocation.addend as u64);
             }
             apply_relocation(&mut linked, address, (relocation.offset, relocation.kind, relocation.addend), value)
@@ -125,7 +164,7 @@ pub(crate) fn arm64_call_reaches(from: u64, to: u64) -> bool {
 
 /// Fills the field at `offset` of `code`, which will run at `address`, with `value` as
 /// relocation `kind` with `addend` says.
-pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, kind, addend): (usize, Reloc, i64), value: u64) -> Result<(), String> {
+pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, kind, addend): (usize, RelocKind, i64), value: u64) -> Result<(), String> {
     let site = address.checked_add(offset as u64).ok_or("relocation address overflow")?;
     let relative = || -> Result<i64, String> {
         (value as i64)
@@ -135,26 +174,26 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
     };
     let bytes = code.get_mut(offset..).ok_or("relocation is outside its code")?;
     match kind {
-        Reloc::Abs8 => {
+        RelocKind::Abs8 => {
             let word = value.wrapping_add(addend as u64).to_le_bytes();
             bytes.get_mut(..word.len()).ok_or("relocation is outside its code")?.copy_from_slice(&word);
         }
-        Reloc::Abs4 => {
+        RelocKind::Abs4 => {
             let word = u32::try_from(value.wrapping_add(addend as u64)).map_err(|_| "relocation is out of 32-bit range")?.to_le_bytes();
             bytes.get_mut(..word.len()).ok_or("relocation is outside its code")?.copy_from_slice(&word);
         }
-        Reloc::X86PCRel4 | Reloc::X86CallPCRel4 | Reloc::X86CallPLTRel4 => {
+        RelocKind::X86PCRel4 | RelocKind::X86CallPCRel4 | RelocKind::X86CallPLTRel4 => {
             let displacement = i32::try_from(relative()?).map_err(|_| "relocation is out of rel32 range")?.to_le_bytes();
             bytes.get_mut(..displacement.len()).ok_or("relocation is outside its code")?.copy_from_slice(&displacement);
         }
-        Reloc::Arm64Call => {
+        RelocKind::Arm64Call => {
             // A `bl imm26`, patched as the stencils' branches are (`quench_bjit::patch_branch`).
             let field = bytes.get_mut(..quench_bjit::patch::INSN_BYTES).ok_or("relocation is outside its code")?;
             let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
             let patched = quench_bjit::patch::patch_branch(word, quench_bjit::BRANCH26, relative()?).map_err(|_| "relocation is out of branch range")?;
             field.copy_from_slice(&patched.to_le_bytes());
         }
-        Reloc::Arm64Page21 => {
+        RelocKind::Arm64Page21 => {
             let target = value.wrapping_add(addend as u64);
             let page = |address: u64| (address >> ARM64_PAGE_BITS) as i64;
             let imm = page(target).wrapping_sub(page(site));
@@ -168,7 +207,7 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
             let immhi = ((imm as u32 >> 2) & ((1 << ARM64_ADRP_IMMHI_BITS) - 1)) << ARM64_ADRP_IMMHI_SHIFT;
             field.copy_from_slice(&((word & ARM64_ADRP_FIXED_MASK) | immlo | immhi).to_le_bytes());
         }
-        Reloc::Arm64PageOff12 => {
+        RelocKind::Arm64PageOff12 => {
             let target = value.wrapping_add(addend as u64);
             let field = bytes.get_mut(..ARM64_INSTRUCTION_BYTES).ok_or("relocation is outside its code")?;
             let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
@@ -178,7 +217,6 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
             let imm12 = (target & ARM64_PAGE_MASK) as u32;
             field.copy_from_slice(&((word & !ARM64_ADD_IMM12_MASK) | (imm12 << ARM64_ADD_IMM12_SHIFT)).to_le_bytes());
         }
-        _ => return Err("relocation kind is not patchable".into()),
     }
     Ok(())
 }
