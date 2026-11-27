@@ -209,7 +209,7 @@ pub(crate) fn lane_read_getter(
 ) -> Result<(Registers, Ip), Ip> {
     let writes = i.a & quench_runtime::bytecode::RETURN_REGISTER == 0;
     let mut call = LaneGetter { answer: LaneGetterAnswer { cx, memo: GetterMemo::Read(i) }, r, ip, i };
-    step_getter_call_of(&mut Concrete::new(std::ptr::null()), &mut call, getter, base, writes)
+    step_getter_call_of(&mut Concrete::pure(), &mut call, getter, base, writes)
 }
 
 /// `LaneGetter::call_native`: the native getter called as a lane `Call` of it with no arguments;
@@ -273,7 +273,7 @@ pub(crate) fn invoke_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: 
     let mut frame = super::lane_frame::getter_frame(cx, r, ip, target, base, getter_activation);
     // SAFETY: `ip` is the read record of the running view.
     let result = unsafe { (*ip).a };
-    match step_getter_invoke_of(&mut Concrete::new(std::ptr::null()), &mut frame, (), function, result) {
+    match step_getter_invoke_of(&mut Concrete::pure(), &mut frame, (), function, result) {
         Step::Control(LaneControl::Resumed(Resumed::At(registers, next, _))) => Some((registers, next)),
         _ => None,
     }

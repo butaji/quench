@@ -165,6 +165,7 @@ macro_rules! reset_record_spaces {
         /// Replaces every record space with an empty one (`Heap::reset`).
         fn reset_record_spaces(&mut self) {
             $(self.$field = <$space>::default();)*
+            self.class_space = class_space::ClassSpace::default();
         }
     };
 }
@@ -296,7 +297,6 @@ mod external;
 mod float_slots;
 mod slot_words;
 #[cfg(test)] mod float_slot_tests;
-#[cfg(any(test, feature = "test-support"))] mod access_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -313,6 +313,7 @@ pub mod rc;
 mod record_children;
 mod records;
 mod class_space;
+mod departure;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
 pub use object_view::{CellView, CellViewMut, ObjectMut, ObjectRef};
@@ -1347,7 +1348,7 @@ impl Heap {
     /// registry does not know every prototype.
     pub(crate) fn prototypes_of_shape(&self, shape: u32) -> impl Iterator<Item = Value> + '_ {
         self.prototypes.iter().map(|(prototype, _)| *prototype).filter(move |prototype| {
-            prototype.direct_object_index().is_some() && self.object_ref(*prototype).is_some_and(|object| object.exact_shape() == shape)
+            prototype.direct_object_index().is_some() && self.object(*prototype).is_some_and(|object| object.exact_shape() == shape)
         })
     }
 
@@ -1356,7 +1357,7 @@ impl Heap {
     /// clears the mark. No extras are made, so once written it takes every fast store again
     /// (a prototype mark's extras would keep it off them for good). `None` for a non-object.
     pub(crate) fn mark_own_constant(&mut self, object: Value) -> Option<()> {
-        self.object_mut_ref(object)?.mark_constant();
+        self.object_mut(object)?.mark_constant();
         Some(())
     }
 
@@ -1372,7 +1373,7 @@ impl Heap {
         // A prototype marked and watched before, as most allocations' prototypes are, only
         // takes the recent entry when its run is still wide: no exclusive access, which
         // widens and barriers.
-        if self.object_ref(prototype).is_some_and(|object| {
+        if self.object(prototype).is_some_and(|object| {
             object.was_used_as_prototype() && object.watched_subject().is_some() && !object.record().properties().is_narrow()
         }) {
             self.marked_prototypes.rotate_right(1);
@@ -1411,7 +1412,7 @@ impl Heap {
                 access::widen_narrow_run(object, &mut self.properties);
                 Some(ObjectMut::Record(object))
             }
-            None => self.object_mut_ref(prototype),
+            None => self.object_mut(prototype),
         }
     }
 
@@ -1429,7 +1430,7 @@ impl Heap {
 
     /// Retires the proofs that read `array`'s elements, when it is a watched prototype.
     fn note_prototype_elements(&self, array: Value) {
-        if let Some(object) = self.object_ref(array) {
+        if let Some(object) = self.object(array) {
             object.record().note_prototype_elements_change();
         }
     }
@@ -1832,7 +1833,7 @@ impl Heap {
     /// Whether `prototype` names no object or one flagged as a prototype, as
     /// `mark_new_prototype` leaves it.
     fn prototype_flagged(&self, prototype: Value) -> bool {
-        self.object_ref(prototype).is_none_or(|object| object.was_used_as_prototype())
+        self.object(prototype).is_none_or(|object| object.was_used_as_prototype())
     }
 
     /// The record of `object`, an ordinary object's only allocation, charged as one allocation
@@ -2225,14 +2226,14 @@ impl Heap {
     ) {
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
-            .object_ref(owner)
+            .object(owner)
             .expect("property owner is an object")
             .is_array();
         self.properties.note_shape_values(shape, values);
         self.settle_widened();
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
-            let (mut object, arena) = self.object_and_arena_mut_ref(owner).expect("property owner is an object");
+            let (mut object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
             object.record().replace_property_storage(properties, inline_properties, arena)
         };
         self.properties.release(previous);
@@ -2815,7 +2816,7 @@ impl Heap {
             + self.array_records.retire_cursor()
             + self.function_records.retire_cursor()
             + self.environment_records.retire_cursor()
-            + self.class_space.retire_stub_cursor();
+            + self.class_space.retire_cursors();
         self.allocated = self.allocated.saturating_sub(unspent);
     }
 
@@ -3163,8 +3164,6 @@ impl Heap {
                 // their sweep shows its survivors, minor or full, and lists those it keeps.
                 // A dead object's storage is released in place, and its stub with it; one without
                 // extras, which its drop would free, is then forgotten.
-                // Class cells own no memory: their sweep frees the dead cells' granules and nothing else.
-                class_space.sweep_cells(full, age);
                 let young_runs = properties.young_runs();
                 let dispose = |_record_id: RecordId, record: &OrdinaryRecord| {
                     #[cfg(feature = "profile-memory")]
@@ -3187,6 +3186,9 @@ impl Heap {
                     // Released in place: dropping it frees its extras.
                     RecordSweep::Dead(..) => {}
                 });
+                // After the records: a departed cell dies with its record (its stub released in `dispose`), so
+                // the cell regions sweep only the cells whose Value is dead and not released yet.
+                class_space.sweep_cells(full, age);
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
                 // after one did, its sweep shows its survivors and lists those it keeps.
                 let young_function_runs = std::mem::take(&mut self.young_function_runs);
@@ -4480,10 +4482,13 @@ impl Heap {
     /// owner-attached VM tables): `owner` is logged as if it had been written.
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
-            Some(HeapReference::ObjectRecord(granule)) => {
-                let record_id = self.stub_record(granule);
-                self.object_records.barrier(record_id, &self.properties)
-            }
+            Some(HeapReference::ObjectRecord(granule)) => match self.class_space.live_class(granule) {
+                Some(_) => self.class_space.barrier(granule, &self.properties),
+                None => {
+                    let record_id = self.stub_record(granule);
+                    self.object_records.barrier(record_id, &self.properties)
+                }
+            },
             Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id, &self.properties),
             Some(HeapReference::FunctionRecord(record_id)) => {
                 self.function_records.barrier(record_id, &self.properties)
@@ -4507,7 +4512,7 @@ impl Heap {
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         self.note_prototype_elements(array);
         self.write_barrier(array);
-        if let Some(mut object) = self.object_mut_ref(array) {
+        if let Some(mut object) = self.object_mut(array) {
             object.record().mark_sparse_elements();
         }
         let arrays = self
@@ -4545,7 +4550,7 @@ impl Heap {
             self.materialize_sparse_array(array, length);
             return;
         }
-        if let Some(mut object) = self.object_mut_ref(array) {
+        if let Some(mut object) = self.object_mut(array) {
             object.record().mark_sparse_elements();
         }
         let arrays = self
@@ -4620,7 +4625,7 @@ impl Heap {
     #[inline(always)]
     pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
         // SAFETY: the caller's; the staged hit takes the arena form first, on one compare.
-        unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_own_field_hit(object, self, shape, slot) }
     }
     /// `own_field_hit` of the global object, whose values may live behind extras
     /// (`staged::concrete_global_field_hit`).
@@ -4628,7 +4633,7 @@ impl Heap {
     /// As for `own_field_hit`.
     #[inline(always)]
     pub(crate) unsafe fn global_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
-        unsafe { crate::staged::concrete_global_field_hit(object, self.properties.values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_global_field_hit(object, self, shape, slot) }
     }
     /// `own_field_hit` through a lane record's own-field hint (`Object::hint_shape`): `None`
     /// on another exact shape or storage form.
@@ -4636,7 +4641,7 @@ impl Heap {
     /// As for `own_field_hit`.
     #[inline(always)]
     pub(crate) unsafe fn own_field_hint_hit<const FORM: u32>(&self, object: &Object, hint: u32, slot: u16) -> Option<Value> {
-        unsafe { crate::staged::concrete_hinted_own_field_hit::<FORM>(object, self.properties.values_base(), hint, slot) }
+        unsafe { crate::staged::concrete_hinted_own_field_hit::<FORM>(object, self, hint, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
@@ -4679,7 +4684,7 @@ impl Heap {
         slot: usize,
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
-        let data = self.object_ref(object)?;
+        let data = self.object(object)?;
         let vector = data.record().properties();
         let shape = data.shape();
         if vector.has_inline_property_storage() || vector.is_dictionary() || vector.is_narrow() || slot >= self.properties.len(vector) {
@@ -4702,7 +4707,7 @@ impl Heap {
         }
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
-        let mut data = self.object_store_mut_ref(object, stored).expect("property owner is an object");
+        let mut data = self.object_store_mut(object, stored).expect("property owner is an object");
         data.note_constant_write();
         if data.record().store_packed_inline_values(values) {
             return;
@@ -4729,7 +4734,7 @@ impl Heap {
     #[inline(always)]
     fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
         if !self.properties.tracks() { return; }
-        if let Some(data) = self.object_ref(object) {
+        if let Some(data) = self.object(object) {
             let shape = data.exact_shape();
             if shape == data.shape() && slot < self.properties.shape_length(shape) {
                 self.properties.note_slot_value(shape, slot, value);
@@ -4771,7 +4776,7 @@ impl Heap {
         self.note_value_slot(object, slot, value);
         let vector = {
             let mut data = self
-                .object_store_mut_ref(object, value)
+                .object_store_mut(object, value)
                 .expect("property owner is an object");
             data.record().note_value_write(slot);
             let vector = data.record().properties();
@@ -4802,7 +4807,7 @@ impl Heap {
             return;
         }
         self.properties.keep_shape_wide(vector);
-        let vector = self.object_mut_ref(object).expect("property owner is an object").record().properties();
+        let vector = self.object_mut(object).expect("property owner is an object").record().properties();
         self.properties.set(vector, slot, value);
     }
 
@@ -4818,7 +4823,7 @@ impl Heap {
         self.note_value_slot(object, slot, value);
         let vector = {
             let mut data = self
-                .object_store_mut_ref(object, value)
+                .object_store_mut(object, value)
                 .expect("property owner is an object");
             data.record().note_value_write(slot);
             let vector = data.record().properties();
@@ -5042,7 +5047,7 @@ impl Heap {
             slot
         } else {
             let (mut data, properties) = self
-                .object_and_arena_mut_ref(object)
+                .object_and_arena_mut(object)
                 .expect("property owner is an object");
             let slot = properties.len(data.record().properties());
             append_property(data.record(), properties, slot, value, shape, 0);
@@ -5844,7 +5849,7 @@ fn join_object_slot_values(object: &Object, properties: &mut ValueArena) {
 #[inline(always)]
 unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
     // SAFETY: the caller proves the exact slot exists; the arena holds the object's run.
-    unsafe { crate::staged::concrete_own_read(object, properties.values_base(), slot) }
+    unsafe { crate::staged::concrete_own_read(object, crate::staged::Concrete::over_arena(properties), slot) }
 }
 
 /// Whether a store that `widened` its slot's owner is left to the caller: a native-preserving

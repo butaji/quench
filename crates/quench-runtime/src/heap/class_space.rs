@@ -20,6 +20,7 @@ use crate::staged::object_encoding::{
     CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
 };
 use crate::value::Value;
+use crate::value_vec::ValueArena;
 use std::mem::{MaybeUninit, size_of};
 use std::ptr::NonNull;
 
@@ -222,32 +223,78 @@ impl ClassSpace {
         Some(granule(0, local))
     }
 
-    /// Frees the stub `g` of a dead object record (the record sweep's dispose). Region 0 is never swept on its
-    /// own: its stubs die only here. A departed cell in a cell region is freed by its own region's sweep, which
-    /// its mark decides (`sweep_cells`), so there is nothing to do for it here.
+    /// Frees stub `g` with its dead record (the record sweep's dispose). A stub is a region 0 cell,
+    /// or a class cell that departed (`Heap::depart_class_object`) and is its own stub. Region 0's
+    /// stubs die only here, and a departed cell dies with its record.
     pub(super) fn release_stub(&mut self, g: u32) {
         let (region, local) = locate(g);
-        if region == 0 {
-            self.regions.0.release_live(local);
+        match region {
+            0 => self.regions.0.release_live(local),
+            1 => self.regions.1.release_live(local),
+            2 => self.regions.2.release_live(local),
+            3 => self.regions.3.release_live(local),
+            4 => self.regions.4.release_live(local),
+            5 => self.regions.5.release_live(local),
+            _ => unreachable!("class cells lie in regions 0 to {}", CAPACITY_CLASSES - 1),
         }
     }
 
-    /// Withholds the freed granule `g` (a dead prototype's stub, or a departed cell's) from reuse until
-    /// `release_withheld_stubs`, as its record id is withheld: a Value naming it names no other object meanwhile.
+    /// Withholds stub `g`, a dead prototype's, from reuse until `release_withheld_stubs`,
+    /// as its record id is withheld: a Value naming the stub names no other object meanwhile.
     pub(super) fn withhold_stub(&mut self, g: u32) {
         let (region, local) = locate(g);
-        with_region_mut!(self.regions, region, |space| space.withhold(local));
+        match region {
+            0 => self.regions.0.withhold(local),
+            1 => self.regions.1.withhold(local),
+            2 => self.regions.2.withhold(local),
+            3 => self.regions.3.withhold(local),
+            4 => self.regions.4.withhold(local),
+            5 => self.regions.5.withhold(local),
+            _ => unreachable!("class cells lie in regions 0 to {}", CAPACITY_CLASSES - 1),
+        };
     }
 
-    /// Makes every withheld granule reusable again, in every region (`RecordSpace::release_withheld`).
+    /// Makes every withheld stub reusable again, in every region (`RecordSpace::release_withheld`).
     pub(super) fn release_withheld_stubs(&mut self) {
-        let regions = &mut self.regions;
-        regions.0.release_withheld();
-        regions.1.release_withheld();
-        regions.2.release_withheld();
-        regions.3.release_withheld();
-        regions.4.release_withheld();
-        regions.5.release_withheld();
+        self.regions.0.release_withheld();
+        self.regions.1.release_withheld();
+        self.regions.2.release_withheld();
+        self.regions.3.release_withheld();
+        self.regions.4.release_withheld();
+        self.regions.5.release_withheld();
+    }
+
+    /// The header word of granule `g`'s cell: a live class cell's class id (`live_header`), or a
+    /// departed one's `departed_header`. The space must be reserved.
+    #[inline(always)]
+    pub(super) fn header(&self, g: u32) -> u64 {
+        // SAFETY: `g` names a cell of the reserved space (`cell_ptr`), whose header is a readable word.
+        unsafe { *self.cell_ptr(g) }
+    }
+
+    /// Writes granule `g`'s header word. Only the class edges write one (`CellViewMut::set_class`,
+    /// `Heap::depart_class_object`).
+    #[inline(always)]
+    pub(super) fn write_header(&mut self, g: u32, header: u64) {
+        // SAFETY: as `header`, and `&mut self` is exclusive.
+        unsafe { *self.cell_ptr(g) = header };
+    }
+
+    /// Field `slot` of the cell at granule `g`: the word at `8 + 8 * slot` past its header.
+    #[inline(always)]
+    pub(super) fn field(&self, g: u32, slot: usize) -> Value {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` is the `Value` word `slot + 1` of the cell, inside its span (the assert).
+        unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).read() }
+    }
+
+    /// Makes fields `from..region_capacity(g)` of the cell at `g` slack: `Value::DELETED`, which the
+    /// collector traces as any field and no object reads.
+    pub(super) fn delete_slack(&mut self, g: u32, from: usize) {
+        for slot in from..region_capacity(g) as usize {
+            // SAFETY: field `slot` lies inside the cell at `g` (`region_capacity`), and `&mut self` is exclusive.
+            unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).write(Value::DELETED) };
+        }
     }
 
     /// The address of region 0's allocation cursor (`RecordCursor`): its `next` is the granule an inline
@@ -256,11 +303,18 @@ impl ClassSpace {
         std::ptr::addr_of!(self.regions.0.cursor) as usize
     }
 
-    /// Frees the unallocated rest of region 0's cursor run and empties the cursor, returning how many stubs
-    /// that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps this run, so every
-    /// collection retires it with the record cursors, before occupancy or a snapshot reads region 0.
-    pub(super) fn retire_stub_cursor(&mut self) -> usize {
-        self.regions.0.retire_cursor()
+    /// Frees the unallocated rest of every region's cursor run and empties the cursors, returning how many
+    /// granules that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps region 0's run,
+    /// and a cell allocation bumps its region's, so every collection retires all of them with the record
+    /// cursors, before occupancy or a snapshot reads the space.
+    pub(super) fn retire_cursors(&mut self) -> usize {
+        let regions = &mut self.regions;
+        regions.0.retire_cursor()
+            + regions.1.retire_cursor()
+            + regions.2.retire_cursor()
+            + regions.3.retire_cursor()
+            + regions.4.retire_cursor()
+            + regions.5.retire_cursor()
     }
 
     /// The class of granule `g`'s cell when the cell is live; `None` where it is departed (its header
@@ -340,6 +394,20 @@ impl ClassSpace {
         with_region!(self.regions, region, |space| space.rc_exact_count(local))
     }
 
+    /// The write barrier for a write into live cell `g` (`RecordSpace::barrier`). Only cell regions hold live cells.
+    pub(super) fn barrier(&mut self, g: u32, properties: &ValueArena) {
+        let (region, local) = locate(g);
+        let regions = &mut self.regions;
+        match region {
+            1 => regions.1.barrier(local, properties),
+            2 => regions.2.barrier(local, properties),
+            3 => regions.3.barrier(local, properties),
+            4 => regions.4.barrier(local, properties),
+            5 => regions.5.barrier(local, properties),
+            _ => unreachable!("a live class cell lies in a cell region"),
+        }
+    }
+
     /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed. Cells own no memory, so
     /// nothing is disposed. Region 0's stubs die with their records and are not swept here.
     pub(super) fn sweep_cells(&mut self, full: bool, age: PromotionAge) -> (usize, usize) {
@@ -410,6 +478,7 @@ pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
     // SAFETY: a direct object `Value` names a stub granule of the reserved class space, whose
     // header is a readable u64 at `base + g * CLASS_HEADER_BYTES`.
     let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
+    debug_assert_eq!(header_class(header), DEPARTED_CLASS, "a stub names its record only once its object departed");
     header_record(header)
 }
 
@@ -464,6 +533,12 @@ impl super::Heap {
     /// runs; a native entry rereads it with the other record bases.
     #[inline(always)]
     pub fn native_stub_cursor(&self) -> usize { self.class_space.stub_cursor_address() }
+}
+
+/// Whether granule `g` lies in a class cell's region (1 to 5), where an object is a cell until it departs.
+/// Region 0 holds the stubs of the record table's objects, which never hold a class.
+pub(super) const fn is_cell_granule(g: u32) -> bool {
+    g >> REGION_SHIFT != 0
 }
 
 /// The fields a cell at granule `granule` holds: its region's capacity, `2^k - 1` for region `k`. A

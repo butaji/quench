@@ -63,14 +63,14 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
     let objects = objects_of_every_form(&mut heap);
     let mut forms = std::collections::HashSet::new();
     for (object, values) in objects {
-        let data = heap.object_ref(object).unwrap().record();
+        let data = heap.object(object).unwrap().record();
         forms.insert(observed(data));
         for (slot, expected) in values.iter().enumerate() {
             // SAFETY: the object's exact shape holds every slot it was given.
             let reference = unsafe { heap.property_get_unchecked(data, slot) };
             assert_eq!(reference, *expected, "{:?} slot {slot}", observed(data));
             // SAFETY: as above; the heap's arena holds the object's run.
-            let staged = unsafe { concrete_own_read(data, heap.property_values_base(), slot) };
+            let staged = unsafe { concrete_own_read(data, Concrete::over(&heap), slot) };
             assert_eq!(staged, *expected, "{:?} slot {slot}", observed(data));
         }
     }
@@ -86,7 +86,7 @@ fn a_narrow_decode_inverts_every_narrow_encoding() {
     let limit = 1_i32 << (NarrowLayout::INTEGER_BITS - 1);
     let values = [Value::number(0.0), Value::number(f64::from(limit - 1)), Value::number(f64::from(-limit)),
         Value::UNDEFINED, Value::NULL, Value::TRUE, Value::FALSE, Value::DELETED, reference];
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     for value in values {
         let narrow = value.to_narrow().unwrap_or_else(|| panic!("{value:?} has a narrow form"));
         let decoded = decode_narrow(&mut stage, u64::from(narrow));
@@ -104,7 +104,7 @@ fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
     for link in edges.iter().flat_map(|edge| [edge.wrapping_sub(1), *edge, edge + 1]).filter(|link| *link <= OBJECT.proto_mask) {
         let interpreter = crate::heap::ProtoLink::from_bits(link).object_granule();
         if let Some(granule) = interpreter {
-            let staged = super::object::proto_record_id(&mut Concrete::new(std::ptr::null()), u64::from(link));
+            let staged = super::object::proto_record_id(&mut Concrete::pure(), u64::from(link));
             assert_eq!(u64::from(granule), staged, "link {link:#x}");
         }
     }

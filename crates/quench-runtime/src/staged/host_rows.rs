@@ -34,5 +34,5 @@ pub fn admit_plain_text<S: Stage>(stage: &mut S, arguments: &[S::Word], bound: u
 pub fn concrete_plain(row: Option<HostRow>, arguments: &[Value]) -> Option<u32> {
     let Some(HostRow::PlainText { bound, plain }) = row else { return None };
     let words: smallvec::SmallVec<[u64; 8]> = arguments.iter().map(|value| value.to_bits()).collect();
-    admit_plain_text(&mut super::Concrete::new(std::ptr::null()), &words, usize::from(bound), ()).map(|()| plain)
+    admit_plain_text(&mut super::Concrete::pure(), &words, usize::from(bound), ()).map(|()| plain)
 }

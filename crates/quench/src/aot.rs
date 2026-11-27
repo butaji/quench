@@ -17,7 +17,7 @@ mod variant;
 mod compiler;
 pub(crate) mod prefix;
 mod strict;
-pub(crate) mod image_dump;
+use quench_runtime::native_link::image_dump;
 pub use compiler::{ImageHost, SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 pub use quench_runtime::native_link::NativeImageInputs;
 

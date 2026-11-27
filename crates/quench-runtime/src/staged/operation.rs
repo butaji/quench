@@ -3,7 +3,16 @@
 
 use super::*;
 #[cfg(not(stencil_build))]
-use super::wasm_jump::WasmJump;
+use super::wasm_jump::{BranchTableWasmJumpExt, WasmJump, WasmJumpWasmJumpExt};
+#[cfg(not(stencil_build))]
+use super::{
+    superinstructions::ConstArrayPairSuperinstructionsExt, suspend::OperationSuspendExt,
+    wasm_access::OperationWasmAccessExt, wasm_state::OperationWasmStateExt,
+};
+#[cfg(not(stencil_build))]
+use super::wasm_float::OperationWasmFloatExt;
+#[cfg(not(stencil_build))]
+use super::wasm_simd::OperationWasmSimdExt;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]

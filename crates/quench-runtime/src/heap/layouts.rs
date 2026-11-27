@@ -69,7 +69,7 @@ extern "C" fn map_fixed_table() {
 static MAP_FIXED_TABLE: extern "C" fn() = map_fixed_table;
 
 /// The layout table's range where it sits at its fixed address, mapped before `main`: a dump of
-/// the process (`quench::aot::image_dump`) carries its written pages.
+/// the process (`native_link::image_dump`) carries its written pages.
 pub fn fixed_table_range() -> Option<(usize, usize)> {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     return Some((FIXED_TABLE, LAYOUT_CAPACITY * size_of::<u64>()));

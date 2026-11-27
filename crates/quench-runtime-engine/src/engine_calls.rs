@@ -245,6 +245,11 @@ fn quench_engine_vm_restore_native_snapshot(this: &mut Vm, bytes: quench_runtime
 }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_restore_native_snapshot = quench_engine_vm_restore_native_snapshot;
 #[unsafe(no_mangle)]
+fn quench_engine_vm_install_native_main(this: &mut Vm, native: &NativeJsProgram) -> Result<(), JsError> {
+    <Vm as crate::engine_prelude::NativeProgramVm>::install_native_main(this, native)
+}
+const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_install_native_main = quench_engine_vm_install_native_main;
+#[unsafe(no_mangle)]
 fn quench_engine_fn_define_lane_helper_symbols() { crate::compiled::define_lane_helper_symbols() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_define_lane_helper_symbols = quench_engine_fn_define_lane_helper_symbols;
 #[cfg(feature = "native-execution")]

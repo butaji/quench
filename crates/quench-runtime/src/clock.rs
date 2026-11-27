@@ -29,8 +29,17 @@ static INPUTS_WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// The first input a watched run read (`note_input`).
 static FIRST_INPUT: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
 
+thread_local! {
+    /// The execution a watched run is on, which the first input ends (`watch_inputs`). The run
+    /// and its clock reads share the thread that watches them.
+    static WATCHED_RUN: std::cell::RefCell<Option<crate::ExecutionInterrupt>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Starts watching the process's environment inputs (`note_input`), for the rest of the process.
-pub fn watch_inputs() {
+/// The watched run is `run`: its first input requests its termination (`note_watched_input`), so
+/// the input's handler ends the run there rather than letting the run go on past an input.
+pub fn watch_inputs(run: crate::ExecutionInterrupt) {
+    WATCHED_RUN.with(|watched| *watched.borrow_mut() = Some(run));
     INPUTS_WATCHED.store(true, Ordering::Relaxed);
 }
 
@@ -44,11 +53,29 @@ pub fn note_input(what: &'static str) {
 }
 
 /// The watched half of `note_input`, out of line so a run that watches nothing (every run but a
-/// strict AOT build) pays the one load and branch, not the lock's code in its clock read.
+/// strict AOT build) pays the one load and branch, not the lock's code in its clock read. The
+/// first input is recorded, and its handler ends the watched run: the run's effects past the input
+/// are never the build's to keep, since a build keeps only the state before its first input.
 #[cold]
 #[inline(never)]
 fn note_watched_input(what: &'static str) {
-    FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(what);
+    let first_now = {
+        let mut first = FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if first.is_none() {
+            *first = Some(what);
+            true
+        } else {
+            false
+        }
+    };
+    if first_now {
+        // Outside the lock: a termination wakes the run's native waiters, which may read inputs.
+        WATCHED_RUN.with(|watched| {
+            if let Some(run) = watched.borrow().as_ref() {
+                run.request_termination();
+            }
+        });
+    }
 }
 
 /// The first environment input a watched run read, if any.

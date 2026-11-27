@@ -57,7 +57,7 @@ impl Vm {
     /// virtual field names (`AtomClass::VIRTUAL_FIELD`); `None` for any other value.
     pub(super) fn virtual_field_view(&self, object: Value) -> Option<&Object> {
         if self.heap.is_map(object) || self.heap.is_set(object) {
-            return self.heap.object_ref(object).map(|view| view.record());
+            return self.heap.object(object).map(|view| view.record());
         }
         let cell = self.heap.get(object)?;
         if !matches!(cell, Cell::TypedArray { .. } | Cell::DataView { .. }) {

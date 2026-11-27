@@ -263,6 +263,8 @@ use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
 pub mod native_table;
 pub mod reachable_realm;
+mod native_effects;
+mod reachable_protocol;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;
@@ -1517,10 +1519,13 @@ pub(crate) enum DictionaryTrigger {
     /// and a field cache hit, which only records non-dictionary shapes, proves an ordinary
     /// receiver.
     ModuleNamespace,
+    /// A class cell's object departs its class on an add past its capacity or a delete
+    /// (`Heap::depart_class_object`), so it leaves the class's shape for a dictionary of its own.
+    ClassDeparture,
 }
 impl DictionaryTrigger {
     #[cfg(feature = "profile-aggregate")]
-    pub(crate) const COUNT: usize = 4;
+    pub(crate) const COUNT: usize = 5;
 
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn index(self) -> usize {
@@ -1529,6 +1534,7 @@ impl DictionaryTrigger {
             Self::DeletionPattern => 1,
             Self::PrototypeUse => 2,
             Self::ModuleNamespace => 3,
+            Self::ClassDeparture => 4,
         }
     }
 }
@@ -1714,6 +1720,7 @@ impl ShapeFacts {
             Some(DictionaryTrigger::DeletionPattern) => 2,
             Some(DictionaryTrigger::PrototypeUse) => 3,
             Some(DictionaryTrigger::ModuleNamespace) => 4,
+            Some(DictionaryTrigger::ClassDeparture) => 5,
         };
         Self((self.0 & !Self::DICTIONARY_MASK) | (code << Self::DICTIONARY_SHIFT))
     }
@@ -1725,7 +1732,8 @@ impl ShapeFacts {
             1 => Some(DictionaryTrigger::PropertyCount),
             2 => Some(DictionaryTrigger::DeletionPattern),
             3 => Some(DictionaryTrigger::PrototypeUse),
-            _ => Some(DictionaryTrigger::ModuleNamespace),
+            4 => Some(DictionaryTrigger::ModuleNamespace),
+            _ => Some(DictionaryTrigger::ClassDeparture),
         }
     }
 
@@ -2821,7 +2829,7 @@ impl Vm {
             let key = PropertyKey::string(atom);
             let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
                 if self
-                    .object_data(self.realm.globals)
+                    .heap_reads().object(self.realm.globals)
                     .is_some_and(|object| !object.is_extensible())
                 {
                     return Err(self.type_error(program, "cannot declare global function".into()));
@@ -2863,7 +2871,7 @@ impl Vm {
                 continue;
             }
             if self
-                .object_data(self.realm.globals)
+                .heap_reads().object(self.realm.globals)
                 .is_some_and(|object| !object.is_extensible())
             {
                 return Err(self.type_error(program, "cannot declare global var".into()));

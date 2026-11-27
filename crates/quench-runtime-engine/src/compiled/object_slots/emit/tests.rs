@@ -86,7 +86,7 @@ fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
             // SAFETY: the function reads the record and the arena run it names, both live.
             let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
             for (object, values) in &objects {
-                let data = heap.object(*object).unwrap();
+                let data = heap.object(*object).unwrap().record();
                 let Some(expected) = values.get(usize::from(slot)) else { continue };
                 let read = Value::from_bits(unsafe { run(data as *const Object as u64, heap.property_values_base() as u64) });
                 let storage = data.plain_property_storage();
@@ -143,7 +143,7 @@ fn emitted_string_reads_agree_with_the_interpreter_or_leave() {
     let records = heap.string_record_base().map_or(0, |base| base as u64);
     for string in strings_of_every_form {
         for index in [Value::integer(0), Value::integer(1), Value::integer(2), Value::integer(-1), Value::number(0.5), Value::UNDEFINED] {
-            let mut stage = Concrete::new(std::ptr::null());
+            let mut stage = Concrete::pure();
             let expected = strings::flat_string(&mut stage, records, string.to_bits(), ())
                 .and_then(|flat| strings::string_char_code_at(&mut stage, flat, index.to_bits(), ()))
                 .map_or(Value::DELETED, Value::from_bits);
@@ -362,11 +362,11 @@ fn a_float_slot_update_is_loads_arithmetic_and_a_store() {
         let mut heap = Heap::new();
         heap.track_slot_representations(&[(0, None), (3, None)]);
         let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::number(1.5), Value::number(2.0), Value::number(0.25)]);
-        let record = heap.object(object).unwrap() as *const Object as u64;
+        let record = heap.object(object).unwrap().record() as *const Object as u64;
         // SAFETY: the function reads and writes the record's arena run, which is live.
         let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, f64, f64)>(memory.pointer()) };
         unsafe { run(record, heap.property_values_base() as u64, 0.5, 4.0) };
-        let read = |slot| heap.property_get(heap.object(object).unwrap(), slot);
+        let read = |slot| heap.property_get_ref(heap.object(object).unwrap(), slot);
         assert_eq!((read(0), read(1), read(2)), (Some(Value::number(-2.5)), Some(Value::integer(2)), Some(Value::number(0.25))));
     });
 }
@@ -427,7 +427,7 @@ fn a_formed_arena_read_emits_no_inline_flag_test() {
     let mut heap = Heap::new();
     let objects = objects_of_every_form(&mut heap);
     let arena_object = objects.iter().map(|(object, _)| *object)
-        .find(|object| heap.object(*object).unwrap().plain_property_storage() == Some(PlainPropertyStorage::Arena))
+        .find(|object| heap.object(*object).unwrap().record().plain_property_storage() == Some(PlainPropertyStorage::Arena))
         .expect("a wide object keeps its values in the arena");
     let id = heap.object(arena_object).unwrap().hint_shape();
     assert_eq!(ic::form_of_layout(id), Form::Arena);

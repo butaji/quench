@@ -18,7 +18,7 @@ use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_memory_bytes::write_memory;
 use crate::staged::wasm_machine::ConcreteMemory;
 use crate::staged::wasm_memory::{Memory, fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
-use crate::staged::wasm_operation::{Operand, WasmOperation};
+use crate::staged::wasm_operation::{FormWasmOperationExt, Operand, WasmOperation, WasmOperationWasmOperationExt, wasm_operation_is_raw};
 use crate::staged::wasm_simd::{Simd, WasmSimd as _};
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::staged::wasm_step::{Family, Step};
@@ -415,7 +415,7 @@ impl Vm {
         pc: &mut usize,
         operation: WasmOperation,
     ) -> Result<(), JsError> {
-        let raw = WasmOperation::is_raw(i.op());
+        let raw = wasm_operation_is_raw(i.op());
         let nan_agnostic = match operation {
             WasmOperation::FloatBinary { operator, .. } => operator.nan_agnostic(),
             WasmOperation::FloatUnary { operator, .. } => operator.nan_agnostic(),

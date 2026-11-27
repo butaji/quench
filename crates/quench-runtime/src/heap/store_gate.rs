@@ -71,10 +71,11 @@ impl Heap {
         }
     }
 
-    /// Notes an object's move from shape `previous` to `next` (`ValueArena::note_shape_transition`),
-    /// which retires the code that holds `previous` stable past a call.
+    /// The class edge's retirement (R4-C4): an object's class moved from shape `previous` to `next`,
+    /// its header already written (by a staged add row, or `ObjectMut::set_class`). Retires the code
+    /// that holds `previous` stable past a call (`ValueArena::note_shape_transition`).
     #[inline(always)]
-    pub(crate) fn note_shape_departure(&mut self, previous: u32, next: u32) {
+    pub(crate) fn set_class(&mut self, previous: u32, next: u32) {
         self.properties.note_shape_transition(previous, next);
     }
 

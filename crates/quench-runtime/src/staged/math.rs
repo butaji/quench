@@ -116,8 +116,8 @@ pub enum FloatUnary {
 #[inline(always)]
 pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
     match operation {
-        FloatUnary::Round => f64::from_bits(round(&mut Concrete::new(core::ptr::null()), value.to_bits())),
-        FloatUnary::Sign => f64::from_bits(sign(&mut Concrete::new(core::ptr::null()), value.to_bits())),
+        FloatUnary::Round => f64::from_bits(round(&mut Concrete::pure(), value.to_bits())),
+        FloatUnary::Sign => f64::from_bits(sign(&mut Concrete::pure(), value.to_bits())),
         primitive => float_primitive(primitive, value),
     }
 }

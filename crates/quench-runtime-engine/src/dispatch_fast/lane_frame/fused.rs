@@ -52,10 +52,7 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
-            let property_values = if const { matches!(LaneFields::<A>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap_reads().arena_values_base()
-            } else { std::ptr::null() };
-            let mut stage = Concrete::new(property_values);
+            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             let raw_result = mode & quench_runtime::staged::raw_bit(0) != 0;
             frame.raw_result = raw_result;
@@ -126,7 +123,7 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
                 Operation::decode_flow(fields, quench_runtime::staged::DecodeContext::EMPTY)
             };
             let Some(operation) = decoded else { sibling!(general_step_in_lane, r, ip, view) };
-            let mut stage = Concrete::new(std::ptr::null());
+            let mut stage = Concrete::pure();
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::past_result(view) } else { view };
             // The jump's direction: a branch table's is its `BACKWARD` (entry edges); any other jump's is the record's `MODE_BACKWARD`.
             let backward = if const { quench_runtime::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } { BACKWARD } else { mode & quench_runtime::staged::MODE_BACKWARD != 0 };
@@ -157,10 +154,7 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         macro_rules! step_b { ($flag:expr) => {{
             let fields = LaneFields::<B, { $flag }>(i);
             let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
-            let property_values = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap_reads().arena_values_base()
-            } else { std::ptr::null() };
-            let mut stage = Concrete::new(property_values);
+            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             // `B` is the last link: its double result stays raw where the next record reads it (`MODE_RAW_OUT`).
             let raw_result = mode & quench_runtime::staged::MODE_RAW_OUT != 0;
@@ -212,10 +206,7 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
         macro_rules! link_flag { ($ip:ident, $i:ident, $L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
-            let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap_reads().arena_values_base()
-            } else { std::ptr::null() };
-            let mut stage = Concrete::new(property_values);
+            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             let raw_result = mode & quench_runtime::staged::raw_bit($k) != 0;
             frame.raw_result = raw_result;
@@ -238,10 +229,7 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
         macro_rules! last_flag { ($ip:ident, $i:ident, $L:ident, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
-            let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
-                unsafe { vm(cx) }.heap_reads().arena_values_base()
-            } else { std::ptr::null() };
-            let mut stage = Concrete::new(property_values);
+            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             // The last link's double result stays raw where the next record reads it (`CHAIN_RAW_OUT`, `MODE_RAW_OUT`).
             let raw_result = mode & quench_runtime::staged::MODE_RAW_OUT != 0;
@@ -274,7 +262,7 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
                     Operation::decode_flow(fields, quench_runtime::staged::DecodeContext::EMPTY)
                 };
                 let Some(operation) = decoded else { sibling!(general_step_in_lane, r, $ip, view) };
-                let mut stage = Concrete::new(std::ptr::null());
+                let mut stage = Concrete::pure();
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & quench_runtime::staged::MODE_BACKWARD != 0;
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::past_result(view) } else { view };

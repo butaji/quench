@@ -69,7 +69,7 @@ impl ConstructPlan {
             self.passed_values(vm, values, argument);
             return Some(());
         }
-        let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
+        let mut stage = quench_runtime::staged::Concrete::pure();
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             let class = self.classes[field];
             let staged = field_value(&mut stage, class, self.fallbacks[field].to_bits(), u64::from(self.operators[field]),
@@ -485,7 +485,7 @@ pub(crate) fn initialize_stores_in_lane(
         && let Some(layout) = vm.function_prototype_layout(callee)
     {
         plan.callee_layout = layout;
-        plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
+        plan.shape = vm.heap_reads().object(this).map_or(source_shape, |object| object.shape());
         // A nested field's root is read at each construction (`defaulted_construction_in_lane`).
         if plan.nested.is_some() {
             plan.kind = ConstructPlanKind::Defaulted;

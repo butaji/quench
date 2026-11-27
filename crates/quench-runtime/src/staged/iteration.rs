@@ -184,12 +184,12 @@ pub(crate) fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::W
 }
 
 /// The interpreter's reading of `for_in_next`: the key the step over `state` yields, among the array
-/// records at `arrays` and object records at `objects`, in collection epoch `epoch`; `None` leaves the
-/// step to the VM's full one, which also advances nothing the row did not.
+/// and object records of `heap`, in collection epoch `epoch`; `None` leaves the step to the VM's full
+/// one, which also advances nothing the row did not.
 #[inline(always)]
-pub(crate) fn concrete_for_in_next(arrays: *const crate::heap::ArrayObject, objects: *const crate::heap::Object, state: crate::Value,
-    epoch: u64) -> Option<crate::Value> {
-    let mut stage = Concrete::new(std::ptr::null());
+pub(crate) fn concrete_for_in_next(heap: &crate::heap::Heap, state: crate::Value, epoch: u64) -> Option<crate::Value> {
+    let (arrays, objects) = (heap.array_record_base()?, heap.object_record_base()?);
+    let mut stage = Concrete::over(heap);
     for_in_next(&mut stage, (arrays as u64, objects as u64), state.to_bits(), epoch, ()).map(crate::Value::from_bits)
 }
 
@@ -209,7 +209,7 @@ mod tests {
         let object = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(object, Value::integer(1), 1);
         heap.property_add(object, Value::integer(2), 2);
-        let shape = heap.object_ref(object).expect("an object").exact_shape();
+        let shape = heap.object(object).expect("an object").exact_shape();
         let snapshot = ArrayElements::from_slice(&[Value::integer(10), Value::integer(20)]);
         let keys = heap.alloc_array(ArrayObject::fresh(Value::NULL, snapshot));
         (heap, object, keys, shape)
@@ -221,7 +221,7 @@ mod tests {
     }
 
     fn step(heap: &Heap, state: Value, epoch: u64) -> Option<Value> {
-        concrete_for_in_next(heap.array_record_base().expect("array records"), heap.object_record_base().expect("object records"), state, epoch)
+        concrete_for_in_next(heap, state, epoch)
     }
 
     fn cursor(heap: &Heap, state: Value) -> Value {
@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(step(&heap, unmemoed, epoch), None, "the keys came from the general walk");
         let other_shape = state(&mut heap, held, [u64::from(shape) + 1, epoch]);
         assert_eq!(step(&heap, other_shape, epoch), None, "the object is not of the listed shape");
-        heap.object_mut_ref(object).expect("an object").mark_as_prototype();
+        heap.object_mut(object).expect("an object").mark_as_prototype();
         let prototype = state(&mut heap, held, [u64::from(shape), epoch]);
         assert_eq!(step(&heap, prototype, epoch), None, "an object with extras keeps keys outside its shape");
         for state in [stale, unmemoed, other_shape, prototype] {
