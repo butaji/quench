@@ -2282,6 +2282,34 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
     }
 }
 
+/// The JSON natives' entry: each of `JSON.parse`, `JSON.stringify`, `JSON.rawJSON` and
+/// `JSON.isRawJSON` runs its own function, and any other native is left to the next family.
+pub(super) fn entry(native: Native) -> Option<super::native_table::NativeFn> {
+    match native {
+        Native::JsonParse => Some(json_parse_native),
+        Native::JsonStringify => Some(json_stringify_native),
+        Native::JsonRawJson => Some(json_raw_json_native),
+        Native::JsonIsRawJson => Some(json_is_raw_json_native),
+        _ => None,
+    }
+}
+
+fn json_parse_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.json_parse(p, args)
+}
+
+fn json_stringify_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.json_stringify(p, args)
+}
+
+fn json_raw_json_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.json_raw_json(p, args)
+}
+
+fn json_is_raw_json_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.json_is_raw_json(args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
