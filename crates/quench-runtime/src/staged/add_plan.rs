@@ -227,7 +227,7 @@ mod tests {
         heap.object_mut(object).expect("an object").set_extensible(false);
         assert!(!add_by(&mut heap, object, first, Value::integer(1)), "a non-extensible object takes no property");
         heap.object_mut(object).expect("an object").set_extensible(true);
-        heap.object_mut(object).expect("an object").mark_as_prototype();
+        heap.object_mut_departing(object).expect("an object").mark_as_prototype();
         assert!(!add_by(&mut heap, object, first, Value::integer(1)), "a prototype keeps extras and shape readers");
         assert_eq!(shape_of(&heap, object), 0);
     }

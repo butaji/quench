@@ -372,6 +372,9 @@ impl Vm {
     /// The exclusive view of the object `value`, for a store (`Heap::object_mut`).
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut(value) }
+    /// The exclusive view of `value` for a record-only edit (`Heap::object_mut_departing`): a live class cell departs first.
+    #[inline(always)]
+    pub fn object_mut_departing(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut_departing(value) }
     /// The exclusive view of the object `value` for a store of `stored` (`Heap::object_store_mut`).
     #[inline(always)]
     pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> { self.heap.object_store_mut(value, stored) }

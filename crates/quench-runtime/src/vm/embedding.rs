@@ -1233,9 +1233,9 @@ impl Vm {
     pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
         let value = self.create_embedding_null_object()?;
         self.heap
-            .object_mut(value)
+            .object_record_mut(value)
             .expect("new native object")
-            .record().set_external_address(address);
+            .set_external_address(address);
         Ok(value)
     }
 

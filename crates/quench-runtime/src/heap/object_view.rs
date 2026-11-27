@@ -1,17 +1,17 @@
 //! The views through which callers reach an ordinary object. `Heap::object` and `Heap::object_mut`
-//! return an `ObjectRef` or `ObjectMut`: either a class cell (`heap/class_space.rs`, fixed class, fields
-//! inline) or a record (`&Object`, the record table, the form every object has today).
+//! return an `ObjectRef` or `ObjectMut`: either a live class cell (`heap/class_space.rs`, fixed class,
+//! fields inline) or a record (`&Object`, the record table).
 //!
-//! The read and mutation methods here are the ones callers use on an object: class, shape, prototype and
-//! flags. Each forwards to the `Object` method of the same name, so a caller keeps its method calls on the view. Anything else (extras, elements,
-//! arena runs, inline values, payload words) is reached through `record()`: on a cell that takes the
-//! departure edge (R4-C4), so the record view is always the full object.
-//!
-//! No class cell is allocated yet (R4-C2), so every `Cell` arm is unreachable for now.
+//! A cell's class facts (class, shape, prototype link, flags) live in its class word, so a cell view
+//! reads and edits them through `Object::of_class`: a record of that layout with no payload. A live
+//! cell has no extras and no arena run, so no other operation exists for it. Those operations (extras,
+//! elements, arena runs, dictionary mode, prototype marking) are record-only: they take the departure
+//! edge first (`Heap::object_mut_departing`, `Heap::object_record_mut`), so the view they use is a record.
 
 #![allow(dead_code)]
 
 use super::cell::{Object, ProtoLink};
+use super::class_space::{header_class, live_header};
 use super::Heap;
 use crate::value::Value;
 
@@ -23,7 +23,7 @@ pub struct CellView<'a> {
     fields: &'a [Value],
 }
 
-/// A class cell's mutable view. Its header is written only through the class edges (R4-C4).
+/// A class cell's mutable view. Its class changes in place through its header word.
 pub struct CellViewMut<'a> {
     header: &'a mut u64,
     fields: &'a mut [Value],
@@ -42,7 +42,27 @@ pub enum ObjectMut<'a> {
     Record(&'a mut Object),
 }
 
-// Read methods of `ObjectRef`: each forwards to the `Object` method of the same name.
+impl CellView<'_> {
+    /// The object the cell's class word describes: the reads of its class facts.
+    #[inline(always)]
+    fn object(&self) -> Object {
+        Object::of_class(header_class(*self.header))
+    }
+}
+
+impl CellViewMut<'_> {
+    /// Edits the cell's class in place: `edit` runs on the object its class word describes, and the cell
+    /// takes the class that object ends with. Only class-word edits go through here.
+    #[inline(always)]
+    fn edit_class(&mut self, edit: impl FnOnce(&mut Object)) {
+        let mut object = Object::of_class(header_class(*self.header));
+        edit(&mut object);
+        *self.header = live_header(object.layout_id());
+    }
+}
+
+// Read methods of `ObjectRef`: each forwards to the `Object` method of the same name, on the record or
+// on the object the cell's class word describes.
 macro_rules! read_methods {
     ($($name:ident -> $ret:ty;)*) => {
         $(
@@ -50,7 +70,7 @@ macro_rules! read_methods {
             pub fn $name(&self) -> $ret {
                 match self {
                     ObjectRef::Record(object) => object.$name(),
-                    ObjectRef::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+                    ObjectRef::Cell(cell) => cell.object().$name(),
                 }
             }
         )*
@@ -58,14 +78,26 @@ macro_rules! read_methods {
 }
 
 impl<'a> ObjectRef<'a> {
-    /// The record view of the object, for every operation a class cell cannot answer (extras, elements,
-    /// arena runs, inline values, payload words). On a cell this will take the departure edge first
-    /// (`Heap::depart_class_object`, R4-C4), so the returned record is the whole object.
+    /// The record view of the object. A live class cell has none: every operation that needs one
+    /// (extras, elements, arena runs) departs the cell first (`Heap::object_record_mut`).
     #[inline(always)]
     pub fn record(&self) -> &'a Object {
         match self {
             ObjectRef::Record(object) => *object,
-            ObjectRef::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectRef::Cell(_) => unreachable!("a live class cell has no record view; use a departing accessor"),
+        }
+    }
+
+    /// Whether the object holds extras-borne data that a cached define must not overwrite past: a boxed
+    /// primitive, stack or error data. A live class cell holds no extras.
+    #[inline(always)]
+    pub fn holds_define_extras(&self) -> bool {
+        match self {
+            ObjectRef::Record(object) => {
+                object.has_extras()
+                    && (object.boxed_primitive().is_some() || object.stack_data().is_some() || object.has_error_data())
+            }
+            ObjectRef::Cell(_) => false,
         }
     }
 
@@ -84,6 +116,7 @@ impl<'a> ObjectRef<'a> {
         is_array -> bool;
         is_module_namespace -> bool;
         watched_subject -> Option<u32>;
+        admits_cached_add -> bool;
     }
 }
 
@@ -93,17 +126,17 @@ impl<'a> ObjectMut<'a> {
     pub fn as_shared(&self) -> ObjectRef<'_> {
         match self {
             ObjectMut::Record(object) => ObjectRef::Record(&**object),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(cell) => ObjectRef::Cell(CellView { header: &*cell.header, fields: &*cell.fields }),
         }
     }
 
-    /// The record view of the object, for every operation a class cell cannot answer. On a cell this will
-    /// take the departure edge first (`Heap::depart_class_object`, R4-C4).
+    /// The record view of the object. A live class cell has none: a record-only edit reaches its
+    /// record through `Heap::object_mut_departing`, which departs the cell first.
     #[inline(always)]
     pub fn record(&mut self) -> &mut Object {
         match self {
             ObjectMut::Record(object) => &mut **object,
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(_) => unreachable!("a live class cell has no record view; use Heap::object_mut_departing"),
         }
     }
 
@@ -172,18 +205,17 @@ impl<'a> ObjectMut<'a> {
     pub fn set_class(&mut self, class: u32) {
         match self {
             ObjectMut::Record(object) => object.set_class(class),
-            ObjectMut::Cell(cell) => *cell.header = super::class_space::live_header(class),
+            ObjectMut::Cell(cell) => *cell.header = live_header(class),
         }
     }
 
-    // Mutations. A class cell departs before its mutable view is made (`Heap::object_mut`), so
-    // these reach records only; the cell arms are unreachable by construction.
+    // Flag edges with a class form (R4-C4): a cell takes the class the edit gives, in place.
 
     #[inline(always)]
     pub fn set_proto(&mut self, proto: Value) {
         match self {
             ObjectMut::Record(object) => object.set_proto(proto),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(cell) => cell.edit_class(|object| object.set_proto(proto)),
         }
     }
 
@@ -191,7 +223,7 @@ impl<'a> ObjectMut<'a> {
     pub fn set_extensible(&mut self, value: bool) {
         match self {
             ObjectMut::Record(object) => object.set_extensible(value),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(cell) => cell.edit_class(|object| object.set_extensible(value)),
         }
     }
 
@@ -199,15 +231,7 @@ impl<'a> ObjectMut<'a> {
     pub fn set_frozen(&mut self, value: bool) {
         match self {
             ObjectMut::Record(object) => object.set_frozen(value),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
-        }
-    }
-
-    #[inline(always)]
-    pub fn mark_as_prototype(&mut self) {
-        match self {
-            ObjectMut::Record(object) => object.mark_as_prototype(),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(cell) => cell.edit_class(|object| object.set_frozen(value)),
         }
     }
 
@@ -215,7 +239,7 @@ impl<'a> ObjectMut<'a> {
     pub fn mark_constant(&mut self) {
         match self {
             ObjectMut::Record(object) => object.mark_constant(),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(cell) => cell.edit_class(|object| object.mark_constant()),
         }
     }
 
@@ -223,16 +247,41 @@ impl<'a> ObjectMut<'a> {
     pub fn note_constant_write(&mut self) {
         match self {
             ObjectMut::Record(object) => object.note_constant_write(),
-            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+            ObjectMut::Cell(cell) => cell.edit_class(|object| object.note_constant_write()),
+        }
+    }
+
+    /// A prototype is a record: marking one departs its cell first (`Heap::object_record_mut`).
+    #[inline(always)]
+    pub fn mark_as_prototype(&mut self) {
+        match self {
+            ObjectMut::Record(object) => object.mark_as_prototype(),
+            ObjectMut::Cell(_) => unreachable!("a prototype is a record; mark it through Heap::object_record_mut"),
         }
     }
 }
 
 impl Heap {
+    /// The shared view of live class cell `granule`.
+    #[inline(always)]
+    pub(crate) fn live_cell(&self, granule: u32) -> ObjectRef<'_> {
+        ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields: self.class_space.cell_fields(granule) })
+    }
+
+    /// The exclusive view of live class cell `granule`, whose header and fields it edits in place.
+    #[inline(always)]
+    pub(crate) fn live_cell_mut(&mut self, granule: u32) -> ObjectMut<'_> {
+        let (header, fields) = self.class_space.cell_parts_mut(granule);
+        ObjectMut::Cell(CellViewMut { header, fields })
+    }
+
     /// The value of `slot` on `object`, as `property_get` reads it: a class cell's field, or a record's
     /// inline value or arena run. Slot reads go through here because a record's values live in the arena.
     #[inline(always)]
     pub fn property_get_ref(&self, object: ObjectRef<'_>, slot: usize) -> Option<Value> {
-        self.property_get(object.record(), slot)
+        match object {
+            ObjectRef::Cell(cell) => cell.fields.get(slot).copied(),
+            ObjectRef::Record(_) => self.property_get(object.record(), slot),
+        }
     }
 }

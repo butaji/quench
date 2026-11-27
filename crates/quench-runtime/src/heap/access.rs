@@ -261,6 +261,9 @@ impl Heap {
     #[inline(always)]
     pub fn object(&self, value: Value) -> Option<ObjectRef<'_>> {
         if let Some(object) = value.direct_object_index() {
+            if let Some(granule) = self.live_class_cell(value) {
+                return Some(self.live_cell(granule));
+            }
             let record_id = self.record_id(object);
             // SAFETY: a direct-object Value is only created after the
             // ObjectRecord is initialized, and records retire after weak pruning.
@@ -439,7 +442,9 @@ impl Heap {
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
-            self.depart_for_mutation(value);
+            if let Some(granule) = self.live_class_cell(value) {
+                return Some(self.live_cell_mut(granule));
+            }
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let object = &mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object;
@@ -474,7 +479,12 @@ impl Heap {
     #[inline(always)]
     pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
-            self.depart_for_mutation(value);
+            if let Some(granule) = self.live_class_cell(value) {
+                if stored.heap_index().is_some() {
+                    self.class_space.barrier(granule, &self.properties);
+                }
+                return Some(self.live_cell_mut(granule));
+            }
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
@@ -832,7 +842,11 @@ impl Heap {
         }
     }
 
+    /// The record of an ordinary object. `None` for a live class cell, which has no record until it departs.
     #[inline] pub fn object_record(&self, value: Value) -> Option<&Object> {
+        if self.live_class_cell(value).is_some() {
+            return None;
+        }
         let record_id = self.record_id(value.direct_object_index()?);
         Some(self.object_record_by_id(record_id))
     }
@@ -966,13 +980,21 @@ impl Heap {
         &unsafe { self.object_records.get_live(record_id) }.object
     }
 
-    #[quench_macros::test_visible]
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
+    /// The exclusive view of `value` for a record-only edit (extras, elements, arena runs, dictionary
+    /// mode, prototype marking): a live class cell departs first, so the view is always a record.
+    #[inline(always)]
+    pub(crate) fn object_mut_departing(&mut self, value: Value) -> Option<ObjectMut<'_>> {
         self.depart_for_mutation(value);
-        let record_id = self.record_id(value.direct_object_index()?);
-        // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
-        Some(&mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object)
+        self.object_mut(value)
+    }
+
+    /// The record of `value` for a record-only edit (`object_mut_departing`).
+    #[quench_macros::test_visible]
+    pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
+        match self.object_mut_departing(value)? {
+            ObjectMut::Record(object) => Some(object),
+            ObjectMut::Cell(_) => unreachable!("a departed class cell is a record"),
+        }
     }
 
     #[quench_macros::test_visible]

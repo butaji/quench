@@ -10,7 +10,7 @@
 //! dictionary shape lives in the VM's shape table. The record's class is the cell's class until then.
 
 use super::cell::Object;
-use super::class_space::{header_class, header_record, is_cell_granule, region_capacity};
+use super::class_space::{header_class, header_record, is_cell_granule, live_header, region_capacity};
 use super::{Heap, OrdinaryRecord, layouts};
 use crate::staged::object_encoding::{DEPARTED_CLASS, departed_header};
 use crate::value::Value;
@@ -62,13 +62,52 @@ impl Heap {
         Some(record_id)
     }
 
-    /// The departure edge for a mutable view of `value` (`object_mut` and its kin): a live class cell
-    /// departs first, so the record the view names is the whole object. A record or a departed cell
-    /// is unchanged, and a value that is no ordinary object is ignored.
+    /// The departure edge for a record-only view of `value` (`object_mut_departing`, `object_and_arena_mut`,
+    /// `object_record_mut`): a live class cell departs first, so the record the view names is the whole
+    /// object. A record or a departed cell is unchanged, and a value that is no ordinary object is ignored.
     #[inline(always)]
     pub(crate) fn depart_for_mutation(&mut self, value: Value) {
         if value.direct_object_index().is_some_and(|object| is_cell_granule(object.granule())) {
             self.depart_class_object(value);
         }
+    }
+
+    /// Notes a write to live cell `granule` (`Object::note_constant_write`): a constant mark clears in
+    /// place, its class word takes the cleared flags, and the readers of the mark retire.
+    #[inline(always)]
+    fn note_cell_write(&mut self, granule: u32) {
+        let class = header_class(self.class_space.header(granule));
+        let mut object = Object::of_class(class);
+        object.note_constant_write();
+        if object.layout_id() != class {
+            self.class_space.write_header(granule, live_header(object.layout_id()));
+        }
+    }
+
+    /// A store of `value` to field `slot` of live cell `granule`, in place (`Heap::property_set`): the
+    /// store gate's barrier for a heap reference, the constant mark's clear, then the field.
+    pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) {
+        if value.heap_index().is_some() {
+            self.class_space.barrier(granule, &self.properties);
+        }
+        self.note_cell_write(granule);
+        self.class_space.set_field(granule, slot, value);
+    }
+
+    /// The add of `value` as field `slot` along the class edge from class `before`'s shape to shape `after`,
+    /// in place for live cell `granule` where the field fits the cell's capacity (`region_capacity`). The cell
+    /// keeps its link and flags, takes the after-shape's class, and the readers of the old shape retire
+    /// (`Heap::set_class`). `false`, with nothing changed, where the field does not fit: the caller departs.
+    pub(crate) fn class_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) -> bool {
+        if slot >= region_capacity(granule) as usize {
+            return false;
+        }
+        self.class_cell_store(granule, slot, value);
+        let class = header_class(self.class_space.header(granule));
+        debug_assert_eq!(layouts::class_shape(class), before, "an add's cell holds its transition's before-shape");
+        let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class));
+        self.class_space.write_header(granule, live_header(next));
+        self.set_class(before, after);
+        true
     }
 }
