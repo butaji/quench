@@ -4,8 +4,9 @@
 use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
 use crate::heap::TypedArrayKind;
 use crate::typed_ir::{IntRange, Type};
+use std::collections::BTreeSet;
 use crate::ValueType;
-use super::quiet::{Arguments, BUILTINS};
+use super::quiet::{Arguments, BUILTINS, Proofs, Quiet, STRING_METHODS, StringBuiltins, StringMethod};
 use super::value::{Key, Origin};
 
 /// Names that reach the global object as a value (`globalThis`, Node's `global`, and the browser names `self` and `window`).
@@ -74,6 +75,12 @@ pub(super) struct Scope {
     pub(super) site_paths: Vec<Option<(crate::bytecode::FieldBase, u32, Option<u32>)>>,
     /// The builtins of `quiet::BUILTINS` the program names, as (object atom, name atom, arguments).
     builtins: Vec<(Option<u32>, u32, Arguments)>,
+    /// The atom the global `String` interns to, if the program names it (`String(x)` is a string conversion).
+    string_global: Option<u32>,
+    /// The atoms of the `STRING_METHODS` the program names, with their methods.
+    string_methods: Vec<(u32, StringMethod)>,
+    /// The atoms whose text is a canonical array index: a string key of one reads an element, not a named field.
+    index_names: BTreeSet<u32>,
 }
 
 impl Scope {
@@ -129,7 +136,28 @@ impl Scope {
                 };
                 Some((object, name, builtin.arguments))
             }).collect(),
+            string_global: atom_named(program, "String"),
+            string_methods: STRING_METHODS.iter().filter_map(|(name, method)| Some((atom_named(program, name)?, *method))).collect(),
+            index_names: program.atoms.iter().enumerate()
+                .filter(|(_, name)| {
+                    let name: &str = name.as_ref();
+                    is_array_index(name)
+                })
+                .map(|(atom, _)| atom as u32).collect(),
         }
+    }
+
+    /// The String builtins the program leaves as the host installed them, under the program's proofs (`Proofs`).
+    pub(super) fn string_builtins(&self, proofs: &Proofs) -> StringBuiltins {
+        StringBuiltins {
+            global: self.string_global.filter(|&atom| proofs.proves(Quiet::Intrinsic { object: None, name: atom })),
+            methods: self.string_methods.iter().copied().filter(|&(atom, _)| proofs.string_method(atom)).collect(),
+        }
+    }
+
+    /// Whether the string key `atom` names an array index, so a read of it is an element read.
+    pub(super) fn names_index(&self, atom: u32) -> bool {
+        self.index_names.contains(&atom)
     }
 
     /// The type of constant `index`: what the constant is, not what a register holds (`Word`).
@@ -183,6 +211,12 @@ impl Scope {
     pub(super) fn owner(&self, function: u32, depth: u16) -> Option<u32> {
         (0..=depth).try_fold(function, |owner, _| self.parents.get(owner as usize).copied().flatten())
     }
+}
+
+/// Whether `text` is a canonical array index: decimal digits with no leading zero, below 2^32 - 1.
+fn is_array_index(text: &str) -> bool {
+    let canonical = text == "0" || (!text.is_empty() && !text.starts_with('0') && text.bytes().all(|byte| byte.is_ascii_digit()));
+    canonical && text.parse::<u32>().is_ok_and(|index| index < u32::MAX)
 }
 
 /// The atom whose name is `text`, if the program names it.
