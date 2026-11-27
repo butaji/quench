@@ -32,6 +32,26 @@ pub(crate) struct VirtualObject {
 /// The most arguments a kept construction passes.
 const MAX_ARGUMENTS: u16 = 8;
 
+/// What the arrivals at a forward-only join (`Lowering::sealable`) carried of the receivers kept
+/// into it (`carry_virtuals`): how many arrived, the join's own receivers, with variables of
+/// their own for their arguments, and whether an arrival carried other receivers than the first.
+#[derive(Default)]
+pub(crate) struct JoinedVirtuals {
+    arrivals: usize,
+    objects: smallvec::SmallVec<[VirtualObject; 1]>,
+    mismatch: bool,
+}
+
+/// Whether `live` carries the same receivers as `template`: each register, callee, argument
+/// count, and per field the name, constant, type and whether it is an argument's.
+fn same_receivers(template: &[VirtualObject], live: &[VirtualObject]) -> bool {
+    template.len() == live.len() && template.iter().zip(live).all(|(kept, other)| kept.register == other.register
+        && kept.callee == other.callee && kept.arguments.len() == other.arguments.len()
+        && kept.fields.len() == other.fields.len()
+        && kept.fields.iter().zip(&other.fields).all(|(field, theirs)| field.0 == theirs.0 && field.1.is_some() == theirs.1.is_some()
+            && field.2 == theirs.2 && field.3 == theirs.3))
+}
+
 /// A loop `header..=end` whose entering edge tests, once, what each kept construction of
 /// `callee` in it would test (`LaneHelper::ConstructPlanHolds`): `variable` holds the answer
 /// there, 1 where it held.
@@ -192,11 +212,15 @@ impl Lowering<'_, '_> {
         let ends_block = self.blocks.get(pc + 1).is_some_and(Option::is_some)
             || !matches!(instruction.op().control_flow_layout(), quench_runtime::bytecode::ControlFlowLayout::Fallthrough)
             || instruction.returns_from_frame();
-        if ends_block && state.virtuals.iter().any(|kept| self.is_live(pc + 1, kept.register)) { return false; }
+        if ends_block && state.virtuals.iter().any(|kept| self.is_live(pc + 1, kept.register)) && !self.edges_carry(pc, instruction) { return false; }
         if virtual_use {
             return crate::compiled::meaning_compiled::is_get_field(instruction) && self.field_base(pc, instruction)
                 .and_then(|base| base.register_index())
                 .is_some_and(|base| state.virtuals.iter().any(|kept| kept.register == base && self.virtual_reads(instruction, kept)));
+        }
+        // A jump whose every edge enters a forward-only join carries the receivers into it (`carry_kept`).
+        if ends_block && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Jump) && self.edges_carry(pc, instruction) {
+            return true;
         }
         let op = instruction.op();
         let numbers = || (0..state.values.len()).filter(|register| uses.contains(*register))
@@ -211,6 +235,104 @@ impl Lowering<'_, '_> {
         instruction.result_flags() == 0 && !instruction.writes_current_this()
             && self.field_chain(instruction).is_some_and(|(parts, sink)| sink.is_none()
                 && matches!(parts[..], [(atom, _)] if kept.fields.iter().any(|(name, ..)| *name == atom)))
+    }
+
+    /// Whether every edge of the block-ending instruction at `pc` enters a forward-only join lowered
+    /// after it, which takes the kept receivers into its own variables (`carry_kept`).
+    pub(crate) fn edges_carry(&self, pc: usize, instruction: WideInstruction) -> bool {
+        let mut any = false;
+        let mut all = true;
+        quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| {
+            any = true;
+            all &= target > pc && self.coverage.lowered(target) && self.sealable.contains(target)
+                && self.blocks.get(target).is_some_and(Option::is_some);
+        });
+        any && all
+    }
+
+    /// The kept receivers at block leader `pc`, once its entry conforms: a forward-only join lowered
+    /// after this edge carries those live there (`carry_virtuals`); any other leader takes none, so a
+    /// live one declines the region. The state keeps none after.
+    pub(crate) fn carry_kept(&mut self, state: &mut State, pc: usize) {
+        if self.sealable.contains(pc) && self.at < pc {
+            if !self.carry_virtuals(state, pc) { self.valid = false; declined("a kept receiver reaches a join unevenly", pc); }
+        } else {
+            self.decline_kept(state, pc);
+        }
+        state.virtuals.clear();
+    }
+
+    /// A kept receiver live at `pc`, reaching an edge that no join carries, declines the region.
+    pub(crate) fn decline_kept(&mut self, state: &mut State, pc: usize) {
+        if state.virtuals.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; declined("a kept receiver reaches an edge", pc); }
+        state.virtuals.clear();
+    }
+
+    /// An arrival at the forward-only join `pc` carries the kept receivers live there: the first arrival
+    /// declares the join's variables for their arguments, and each arrival defines them from its own.
+    /// An arrival carrying other receivers than the first marks the join mismatched (`join_virtuals`),
+    /// and one carrying receivers then declines; false where it must decline.
+    fn carry_virtuals(&mut self, state: &State, pc: usize) -> bool {
+        let live: Vec<VirtualObject> = state.virtuals.iter().filter(|kept| self.is_live(pc, kept.register)).cloned().collect();
+        let mut joined = self.joined_virtuals.remove(&pc).unwrap_or_default();
+        joined.arrivals += 1;
+        if joined.arrivals == 1 {
+            match self.join_template(&live) {
+                Some(objects) => joined.objects = objects,
+                None => joined.mismatch = true,
+            }
+        } else if !same_receivers(&joined.objects, &live) {
+            joined.mismatch = true;
+        }
+        if !joined.mismatch {
+            for (template, kept) in joined.objects.iter().zip(&live) {
+                for (to, from) in template.arguments.iter().zip(&kept.arguments) {
+                    let bits = self.builder.use_var(*from);
+                    self.builder.def_var(*to, bits);
+                }
+            }
+        }
+        let carried = !joined.mismatch || live.is_empty();
+        self.joined_virtuals.insert(pc, joined);
+        carried
+    }
+
+    /// The join's own receivers for `live`: each keeps its callee, fields and constants, with fresh
+    /// variables for its arguments, and a field that reads an argument reads the join's variable for it.
+    fn join_template(&mut self, live: &[VirtualObject]) -> Option<smallvec::SmallVec<[VirtualObject; 1]>> {
+        let mut objects = smallvec::SmallVec::new();
+        for kept in live {
+            let arguments: smallvec::SmallVec<[Variable; 4]> = kept.arguments.iter().map(|_| self.builder.declare_var(types::I64)).collect();
+            let mut fields = smallvec::SmallVec::new();
+            for (atom, variable, constant, ty) in &kept.fields {
+                let variable = match variable {
+                    Some(variable) => Some(arguments[kept.arguments.iter().position(|argument| argument == variable)?]),
+                    None => None,
+                };
+                fields.push((*atom, variable, *constant, *ty));
+            }
+            objects.push(VirtualObject { register: kept.register, callee: kept.callee, fields, arguments });
+        }
+        Some(objects)
+    }
+
+    /// The kept receivers a forward-only join takes from all its arrivals (`carry_virtuals`), at its
+    /// entry. Any arrival that carried other receivers, or fewer arrivals than the join's forward
+    /// edges, declines the region: a receiver one path holds as an object cannot join as fields.
+    pub(crate) fn join_virtuals(&mut self, state: &mut State, pc: usize) {
+        let Some(joined) = self.joined_virtuals.remove(&pc) else { return };
+        if joined.objects.is_empty() { return; }
+        if joined.mismatch || self.forward.get(pc).copied().flatten() != Some(joined.arrivals) {
+            self.valid = false;
+            declined("a kept receiver reaches a join unevenly", pc);
+            return;
+        }
+        for kept in joined.objects {
+            let index = usize::from(kept.register);
+            state.values[index] = RegisterFact::definition(Type::ANY, Representation::Tagged);
+            state.proofs.homed.remove(index);
+            state.virtuals.push(kept);
+        }
     }
 
     /// Allocates each kept receiver live at `pc` by its plan, from the arguments it kept, into
