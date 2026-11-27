@@ -519,6 +519,11 @@ impl Vm {
         self.rebuild_program_cache_layouts();
         self.materialize_program_constants(ProgramId::MAIN, &main);
         self.set_active_program(ProgramId::MAIN);
+        // The recorded classes take the class-header edge again, so their headers and planned arms are as the snapshot
+        // left them (`ProgramStore::write_snapshot`).
+        for (program, class, layout, prototype) in self.programs.take_restored_classes() {
+            self.record_class_edge(program, class, layout, prototype);
+        }
     }
 
     /// The atom sequence `write_snapshot` wrote: the base table, then each appended name, which
