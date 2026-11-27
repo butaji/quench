@@ -58,6 +58,14 @@ pub(crate) fn store_admitted<S: Stage>(stage: &mut S, specialized: S::Word, miss
     Some(())
 }
 
+/// The type a store of `value` plans by: the narrower of `proven` (what the row proved of it) and
+/// `stage.fact(value)` (what the stage holds), or `proven` where neither is the narrower one.
+#[inline(always)]
+pub(crate) fn store_fact<S: Stage>(stage: &S, value: S::Word, proven: Type) -> Type {
+    let known = stage.fact(value);
+    if known.is_subtype(proven) { known } else { proven }
+}
+
 /// The payload word of the record at `record` (id `record_id`) once a store of `value` may
 /// proceed: its exact shape is `shape` (`admitted_word`), the store gate admits the write and
 /// its values are plain; `None` (leaving at `miss`) otherwise, changing nothing.
@@ -65,7 +73,8 @@ pub(crate) fn store_admitted<S: Stage>(stage: &mut S, specialized: S::Word, miss
 pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     admitted_word(stage, record, shape, hinted, miss)?;
-    gated_payload(stage, record, record_id, (value, Type::ANY), miss)
+    let fact = store_fact(stage, value, Type::ANY);
+    gated_payload(stage, record, record_id, (value, fact), miss)
 }
 
 /// Continues where a store of `value`, which the frame proved of type `fact`, into record
@@ -127,7 +136,8 @@ pub(crate) fn held_payload<S: Stage, const HELD: u8>(stage: &mut S, record: S::W
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     admitted_word(stage, record, id, true, miss)?;
     held_holds::<S, HELD>(stage, super::ic::layout_shape(id), slot, value, miss)?;
-    held_gate_open(stage, record_id, (value, Type::ANY), miss)?;
+    let fact = store_fact(stage, value, Type::ANY);
+    held_gate_open(stage, record_id, (value, fact), miss)?;
     Some(stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32))
 }
 
@@ -149,6 +159,7 @@ pub(crate) fn store_flat<S: Stage>(stage: &mut S, payload: S::Word, slot: u16, (
 pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
     (value, rep, fact): (S::Word, Representation, Type), miss: S::Miss) -> Option<()> {
     let word = admitted_word(stage, record, shape, false, miss)?;
+    let fact = store_fact(stage, value, fact);
     let payload = gated_payload(stage, record, record_id, (value, fact), miss)?;
     let inline = storage_form(stage, word, OBJECT.inline_form);
     let flat = stage.not(inline);
@@ -197,7 +208,7 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::W
         Form::Either => {}
     }
     // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, Type::ANY, miss)? };
+    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, store_fact(stage, value, Type::ANY), miss)? };
     stage.choose_leaving(inline, #[inline(always)] |stage| {
         let half = stage.mul_imm(slot, HALF_BYTES);
         let address = stage.add(record, half);
