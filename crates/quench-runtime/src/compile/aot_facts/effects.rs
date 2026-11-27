@@ -10,7 +10,7 @@ use self::fields::{base_fact, member_stores, member_type, named_word, prototype_
 use self::strings::{string_call, string_length};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Site, Sites, View};
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::typing::{self, Abstract};
@@ -299,6 +299,7 @@ fn value_of(
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
             elements: Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain, holes },
+            sites: Sites::Many,
             global: false,
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
@@ -307,11 +308,11 @@ fn value_of(
     // over a constant operand, a numeric one over registers), and an indexed read by its index. An increment is defined
     // by `typing::value` like the other Number operations.
     let before = Before { ctx, state };
-    // An object literal of a fixed shape is named by its allocation site (`Origin::Literal`): its keys and values are the
-    // literal's table (`Record::observe`), which a copy of it reads (`copies`).
+    // An object literal of a fixed shape is its allocation site's (`Cell::sites`): its keys and values are the site's table
+    // (`Record::note_literal`), which a copy of it reads (`copies`).
     if matches!(operation, Some(Operation::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. }, .. })) {
         let cell = operation.as_ref().and_then(|operation| typing::value(operation, &before)).unwrap_or(Cell::ANY);
-        return Word { cell, origin: Some(Origin::Literal { function: ctx.id, pc: pc as u32 }) };
+        return Word::of_cell(Cell { sites: Sites::one(Site { function: ctx.id, pc: pc as u32 }), ..cell });
     }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
@@ -381,6 +382,7 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
         elements: Elements { ty: stored, classes: Classes::Never, length: Length::Any, view: View::Plain, holes },
+        sites: Sites::Many,
         global: false,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
@@ -403,6 +405,7 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
             view: View::One(kind),
             holes: false,
         },
+        sites: Sites::Many,
         global: false,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })

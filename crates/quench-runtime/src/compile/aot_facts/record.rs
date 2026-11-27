@@ -68,7 +68,7 @@ pub(super) struct Record {
     element_stores: std::collections::BTreeMap<u32, ElementStore>,
     accessors: Vec<Accessor>,
     parents: Vec<(u32, u32)>,
-    /// Per allocation PC of an object literal of a fixed shape, its keys and the values they hold at the allocation (`Origin::Literal`).
+    /// Per allocation PC of an object literal of a fixed shape, its keys and the values they hold at the allocation (its `Cell::sites`).
     literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
     /// The shape of the function's copy scan (`CopyScan`), from which `copies` decides whether it is a copy helper.
     scan: CopyScan,
@@ -242,7 +242,7 @@ impl Record {
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements, global: stored.global };
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global };
                 self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
@@ -311,7 +311,7 @@ impl Record {
         }
     }
 
-    /// Notes the keys and values of an object literal of a fixed shape the instruction allocates (`Origin::Literal`): the keys are the
+    /// Notes the keys and values of an object literal of a fixed shape the instruction allocates (its `Cell::sites`): the keys are the
     /// site's, the values the registers of the literal's window (or its two registers), as the allocation holds them.
     fn note_literal(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32, state: &[Word]) {
         let Some((_, allocation)) = crate::staged::Allocation::decode(instruction, &[]) else { return };
