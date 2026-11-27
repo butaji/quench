@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::ClassLayout as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::ClassMethods as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -80,6 +80,10 @@ pub(crate) enum Symbol {
     /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where its
     /// prototype does not resolve. Keyed by the recipe, as `Shape`.
     ClassLayout(u32),
+    /// The method vector of the class shape recipe `key` builds: the `CallRecord` address of each method at its
+    /// prototype slot, which the loader binds and fills into `layouts::set_class_methods`. Keyed by the recipe, as
+    /// `ClassLayout`, and emitted beside it for each closed-set arm.
+    ClassMethods(u32),
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
@@ -117,6 +121,9 @@ pub(crate) struct SymbolTable {
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
     calls: Interned<(u32, u32, u32)>,
+    /// The method atoms closed-set calls name, numbered densely program-wide: a method's selector indexes every class's
+    /// method vector (`layouts::class_methods`), so every arm of a call reads its record at the same index.
+    selectors: Interned<u32>,
 }
 
 /// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
@@ -135,7 +142,12 @@ impl SymbolTable {
     pub(crate) fn new(program: &ResidualProgram) -> Self {
         let atoms = program.atoms.iter().map(Box::<str>::from).collect();
         Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(),
-            calls: Interned::default() }
+            calls: Interned::default(), selectors: Interned::default() }
+    }
+
+    /// The selector of method atom `atom`: its dense number among the atoms closed-set calls name (`selectors`).
+    pub(crate) fn selector(&mut self, atom: u32) -> u32 {
+        self.selectors.key(atom)
     }
 
     /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
@@ -173,6 +185,11 @@ impl SymbolTable {
         Symbol::ClassLayout(self.shapes.key(recipe))
     }
 
+    /// The method vector of the instances `recipe` builds (`Symbol::ClassMethods`): the same key as `class_layout`.
+    pub(crate) fn class_methods(&mut self, recipe: ShapeRecipe) -> Symbol {
+        Symbol::ClassMethods(self.shapes.key(recipe))
+    }
+
     pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16, access: GuardAccess) -> Option<u32> {
         guard_key(self.shapes.key(recipe), slot, access)
     }
@@ -196,7 +213,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 14] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 15] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -211,6 +228,7 @@ const KEYED: [(u32, fn(u32) -> Symbol); 14] = [
     (RelocKind::HolderValue as u32, Symbol::HolderValue),
     (RelocKind::GuardLayout as u32, Symbol::GuardLayout),
     (RelocKind::ClassLayout as u32, Symbol::ClassLayout),
+    (RelocKind::ClassMethods as u32, Symbol::ClassMethods),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
@@ -235,6 +253,7 @@ impl Symbol {
             Self::HolderValue(_) => RelocKind::HolderValue as u32,
             Self::GuardLayout(_) => RelocKind::GuardLayout as u32,
             Self::ClassLayout(_) => RelocKind::ClassLayout as u32,
+            Self::ClassMethods(_) => RelocKind::ClassMethods as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -247,7 +266,8 @@ impl Symbol {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
-                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) | Self::ClassLayout(key) => key,
+                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) | Self::ClassLayout(key)
+                | Self::ClassMethods(key) => key,
             Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
