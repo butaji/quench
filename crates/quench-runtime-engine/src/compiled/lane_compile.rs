@@ -401,14 +401,23 @@ impl Vm {
         each_once(bound)
     }
 
+    /// The AOT facts of `program`, where it is the running program: facts of another program name no call of it.
+    fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
+        self.programs.residual(self.active_program).filter(|running| std::ptr::eq(*running, program))
+            .and_then(|_| self.programs.aot_facts(self.active_program))
+    }
+
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
     /// it inlines is admitted.
     fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let Some(body) = program.function_get(function as usize) else { refuse(self, Refusal::NoUnit); return None; };
         let valid = std::cell::Cell::new(true);
-        let unit = lane_unit::with_trips(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
-            &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), trips,
+        // The call plans of the program the unit plans, which decide each covered site's inlining (`Planner::inline`).
+        let aot = self.aot_facts_of(program);
+        let plans = lane_region::bindings::CallPlans::new(program, aot.as_deref());
+        let unit = lane_unit::with_plans(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
+            &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), &|caller, pc| plans.at(caller, pc), trips,
             &|callee| program.function_get(callee as usize)).or_else(|| { refuse(self, Refusal::NoUnit); None })?;
         if !valid.get() { refuse(self, Refusal::InvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
@@ -474,6 +483,7 @@ impl Vm {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let active = self.active_program;
+        let aot = self.aot_facts_of(&program);
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, &*program))
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
@@ -487,7 +497,7 @@ impl Vm {
         number_reads.extend(typed);
         number_reads.sort_by_key(|read| read.pc);
         LoweringJob { views: super::body_views::body_views(self, function, unit), function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
-            helpers: Self::process_helpers(), facts: self.vm_facts(), aot: self.programs.aot_facts(self.active_program), method_cache_atoms: self.method_cache_atoms.bits().clone(),
+            helpers: Self::process_helpers(), facts: self.vm_facts(), aot, method_cache_atoms: self.method_cache_atoms.bits().clone(),
             invalidation, constants, tables, leaves, number_reads, entry, program }
     }
 
