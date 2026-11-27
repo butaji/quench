@@ -481,6 +481,11 @@ impl ArrayElements {
         self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
     }
 
+    /// A double backing's words that hold no hole (`ElementViews::Double`); `None` otherwise.
+    pub fn packed_double_values(&self) -> Option<&[f64]> {
+        self.double_values().filter(|_| self.holds_no_hole())
+    }
+
     #[inline(always)]
     fn double_words(&self) -> *mut u64 {
         // SAFETY: as in `values`: the words follow the header.
