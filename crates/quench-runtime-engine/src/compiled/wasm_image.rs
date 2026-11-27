@@ -95,7 +95,7 @@ pub(crate) fn linked(analysis: &Analysis<'_>, index: usize, memory_slot: Option<
     let mut code = rows.code.to_vec();
     for relocation in rows.relocations.iter() {
         let Some(Symbol::EntryCell(callee)) = crate::aot_image::symbols::SymbolTable::decode(image, relocation.namespace, relocation.key) else { return None };
-        if relocation.kind != cranelift_codegen::binemit::Reloc::Abs8 || !callable.get(callee as usize).copied().unwrap_or(false) {
+        if relocation.kind != quench_runtime::vm::jit_backend::relocatable_code::RelocKind::Abs8 || !callable.get(callee as usize).copied().unwrap_or(false) {
             return None;
         }
         let word = (cells.get(callee as usize)?.as_ptr() as i64).wrapping_add(relocation.addend) as u64;

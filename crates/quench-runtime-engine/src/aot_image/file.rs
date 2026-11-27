@@ -10,8 +10,7 @@ use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
-use quench_runtime::vm::jit_backend::relocatable_code::{PATCHABLE, RelocatableCode, Relocation};
-use cranelift_codegen::binemit::Reloc;
+use quench_runtime::vm::jit_backend::relocatable_code::{RelocKind, RelocatableCode, Relocation};
 
 const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x09";
 /// The memory slot of Wasm rows whose entry reads no memory.
@@ -23,8 +22,6 @@ const RECIPE_GLOBAL: u8 = 1;
 const RECIPE_STRING: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
 const RECIPE_CLOSURE_OF: u8 = 4;
-/// A relocation kind `RelocatableCode` never holds; the reader rejects it.
-const RELOC_UNPATCHABLE: u8 = u8::MAX;
 
 /// Serializes `image` (`from_bytes` reads it back).
 pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
@@ -213,20 +210,15 @@ fn put_code(out: &mut Vec<u8>, code: &RelocatableCode) {
     put_count(out, code.relocations.len());
     for relocation in &*code.relocations {
         out.extend((relocation.offset as u32).to_le_bytes());
-        out.push(reloc_tag(relocation.kind));
+        out.push(relocation.kind as u8);
         out.extend(relocation.namespace.to_le_bytes());
         out.extend(relocation.key.to_le_bytes());
         out.extend(relocation.addend.to_le_bytes());
     }
 }
 
-/// A relocation kind's tag: its index among the kinds the linker fills (`PATCHABLE`).
-fn reloc_tag(kind: Reloc) -> u8 {
-    PATCHABLE.iter().position(|patchable| *patchable == kind).map_or(RELOC_UNPATCHABLE, |index| index as u8)
-}
-
-fn reloc_of(tag: u8) -> Result<Reloc, String> {
-    PATCHABLE.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
+fn reloc_of(tag: u8) -> Result<RelocKind, String> {
+    RelocKind::ALL.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
 }
 
 type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>);

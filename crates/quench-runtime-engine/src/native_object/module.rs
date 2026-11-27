@@ -6,7 +6,8 @@ use crate::ext_traits::*;
 use super::{NativeData, NativeFunction};
 use crate::aot_image::demand::Demand;
 use quench_runtime::bytecode::{ProgramKind, ResidualProgram};
-use cranelift_codegen::{binemit::Reloc, ir};
+use cranelift_codegen::ir;
+use quench_runtime::vm::jit_backend::relocatable_code::RelocKind;
 use cranelift_module::{FuncId, Module, ModuleReloc, ModuleRelocTarget};
 use cranelift_object::ObjectModule;
 
@@ -23,7 +24,7 @@ pub struct NativeCode {
 /// `index` in `namespace` (`NATIVE_FUNCTION_NAMESPACE` or `NATIVE_DATA_NAMESPACE`) plus `addend`.
 pub struct NativeReloc {
     pub offset: u32,
-    pub kind: Reloc,
+    pub kind: RelocKind,
     pub namespace: u32,
     pub index: u32,
     pub addend: i64,
@@ -74,7 +75,7 @@ pub fn lower_native_js_module_for(program: &ResidualProgram, namespace: &str, ta
 /// Defines `code` as the already-compiled body of `id`, its relocations named by declaration.
 pub(crate) fn define_code(module: &mut ObjectModule, id: FuncId, code: NativeCode) -> Result<(), String> {
     let relocations = code.relocations.iter().map(|reloc| ModuleReloc {
-        kind: reloc.kind,
+        kind: reloc.kind.cranelift(),
         offset: reloc.offset,
         name: ModuleRelocTarget::User { namespace: reloc.namespace, index: reloc.index },
         addend: reloc.addend,
