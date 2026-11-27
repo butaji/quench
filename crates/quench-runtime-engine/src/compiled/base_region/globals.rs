@@ -40,7 +40,7 @@ pub(crate) struct Access {
 impl Access {
     fn of(slot: GlobalSlot) -> Option<Self> {
         Some(Self {
-            id: slot.global.direct_object_index()?.raw(),
+            id: slot.record,
             slot,
         })
     }

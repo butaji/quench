@@ -1,4 +1,4 @@
-use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, PromiseCell};
+use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, OrdinaryRecord, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -30,7 +30,7 @@ pub(super) trait TraceRecord {
     fn extend_children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
 }
 
-pub(super) type ObjectRecordSpace = RecordSpace<Object, OBJECT_RECORD_CAPACITY>;
+pub(super) type ObjectRecordSpace = RecordSpace<OrdinaryRecord, OBJECT_RECORD_CAPACITY>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject, ARRAY_RECORD_CAPACITY>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord, FUNCTION_RECORD_CAPACITY>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell, PROMISE_RECORD_CAPACITY>;
@@ -1026,9 +1026,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.remembered.len()
     }
 
-    #[cfg(test)]
-    pub(super) fn remove_live(&mut self, id: RecordId) -> T {
-        debug_assert!(self.is_occupied(id), "sweep removes an initialized record");
+    /// Frees the occupied record `id` without reading it: its value holds nothing to drop, or the
+    /// caller has taken it (`ClassSpace::release_stub`). The id is reusable as a swept dead record's is.
+    pub(super) fn release_live(&mut self, id: RecordId) {
+        debug_assert!(self.is_occupied(id), "a release frees an initialized record");
         let (block_index, record_index) = Self::split_id(id);
         self.blocks[block_index].release(record_index);
         self.blocks[block_index].marked[record_index / OCCUPANCY_WORD_BITS] &=
@@ -1036,8 +1037,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.free_cursor = self.next_id;
         self.free_word = 0;
         self.live -= 1;
-        // SAFETY: release cleared the bit and this id was initialized exactly once.
-        unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
+    }
+
+    #[cfg(test)]
+    pub(super) fn remove_live(&mut self, id: RecordId) -> T {
+        debug_assert!(self.is_occupied(id), "sweep removes an initialized record");
+        // SAFETY: the id is initialized (asserted above) and is read once, before it is released.
+        let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
+        self.release_live(id);
+        value
     }
 
     #[inline(always)] pub(super) fn mark(&mut self, id: RecordId) -> bool {

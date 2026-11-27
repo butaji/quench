@@ -29,6 +29,21 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
 fn verify_ir() -> bool { cfg!(debug_assertions) || cfg!(feature = "tier-stress") }
 
+/// The engine's region declarations for a function about to be compiled
+/// (`quench-runtime-engine`'s `compiled::regions::declare_regions`). Its argument is a Cranelift
+/// function, so the hook is declared here on the compiler side, not among the core's engine calls.
+unsafe extern "Rust" {
+    safe fn quench_engine_fn_declare_regions(function: &mut cranelift_codegen::ir::Function);
+}
+
+/// Declares the engine's regions in `function` before it is compiled.
+fn declare_regions(function: &mut cranelift_codegen::ir::Function) { quench_engine_fn_declare_regions(function) }
+
+/// The signature the engine's definition of `quench_engine_fn_declare_regions` is checked against.
+pub mod signatures {
+    #[allow(non_camel_case_types)] pub type quench_engine_fn_declare_regions = fn(&mut cranelift_codegen::ir::Function);
+}
+
 /// Publication determines relocation policy and code-generation effort, not language
 /// semantics or lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -303,7 +318,7 @@ pub fn compile_function_reading<T>(
     if !cfg!(feature = "jit") {
         return Err(NativeCompileRejection::Cranelift);
     }
-    crate::vm::engine_calls::declare_regions(&mut function);
+    declare_regions(&mut function);
     #[cfg(feature = "jit")]
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);

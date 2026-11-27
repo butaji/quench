@@ -1010,7 +1010,7 @@ impl Vm {
         right: RootId,
     ) -> Result<Value, JsError> {
         use crate::NativeArithmetic;
-        use oxc_ast::ast::BinaryOperator;
+        use crate::operator::BinaryOperator;
         let operation = match operation {
             NativeArithmetic::Add => BinaryOperator::Addition,
             NativeArithmetic::Multiply => BinaryOperator::Multiplication,
@@ -1042,7 +1042,7 @@ impl Vm {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
-        self.embedding_binary(oxc_ast::ast::BinaryOperator::Subtraction as u32, left, right)
+        self.embedding_binary(crate::operator::BinaryOperator::Subtraction as u32, left, right)
     }
 
     pub(crate) fn embedding_greater_than(
@@ -1084,7 +1084,7 @@ impl Vm {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
-        self.embedding_binary(oxc_ast::ast::BinaryOperator::BitwiseOR as u32, left, right)
+        self.embedding_binary(crate::operator::BinaryOperator::BitwiseOR as u32, left, right)
     }
 
     /// The binary operator `operator` of two rooted values.

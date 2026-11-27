@@ -16,9 +16,10 @@ fn snapshot_object(object: &Object, properties: &ValueArena, out: &mut Vec<Value
     );
 }
 
-impl records::TraceRecord for Object {
+impl records::TraceRecord for OrdinaryRecord {
     fn extend_children(&self, properties: &ValueArena, out: &mut Vec<Value>) {
-        snapshot_object(self, properties, out);
+        // The stub holds no edge: the record's object is what its children are.
+        snapshot_object(&self.object, properties, out);
     }
 }
 

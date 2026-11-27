@@ -194,6 +194,10 @@ heap_reads! {
     fn property_get(object: &Object, slot: usize) -> Option<Value>;
     /// The store-watch word compiled code compares (`Heap::store_watch_word`).
     fn store_watch_word() -> usize;
+    /// The class space's base, which a direct object's granule is added to (`Heap::class_space_base`).
+    fn class_space_base() -> usize;
+    /// The record id a direct object names (`Heap::record_id`): its stub's header, the record table's index.
+    fn record_id(object: crate::value::ObjectRef32) -> u32;
     /// The weight allocated since the last collection (`Heap::allocated_weight`).
     fn allocated_weight() -> usize;
     /// An object held as a record (`Heap::record_object_value`).

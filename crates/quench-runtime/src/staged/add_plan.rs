@@ -76,7 +76,8 @@ pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition:
     let added = add_property(&mut stage, record, u64::from(record_id), transition.edge(), form, value.to_bits(), ()).is_some();
     #[cfg(feature = "profile-memory")]
     if added {
-        heap.note_object_slots(crate::Value::direct_object(record_id), usize::from(transition.slot) + 1);
+        let value = heap.object_value(record_id);
+        heap.note_object_slots(value, usize::from(transition.slot) + 1);
     }
     added
 }

@@ -423,6 +423,20 @@ impl Object {
     }
 }
 
+impl OrdinaryRecord {
+    /// The object, then its stub's granule: the stub is written with the record table, and its
+    /// cell with the class space's region 0 (`heap::snapshot`).
+    pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        write_object(writer, &self.object)?;
+        writer.u32(self.stub);
+        Ok(())
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        Ok(Self { object: read_object(reader)?, stub: reader.u32()? })
+    }
+}
+
 impl FunctionRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self { object, env, kind } = self;

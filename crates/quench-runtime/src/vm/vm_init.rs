@@ -17,6 +17,9 @@ impl Vm {
     pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable, execution: &'static ExecutionTable) -> Self {
         let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>(), execution);
         vm.builtins = builtins;
+        if let Some(natives) = builtins.natives {
+            vm.native_table = super::native_table::NativeTable::closed(natives);
+        }
         vm
     }
 

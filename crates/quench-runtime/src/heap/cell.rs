@@ -929,6 +929,31 @@ impl std::ops::DerefMut for Object {
     }
 }
 
+/// An ordinary object's record: the object, and the granule of its stub cell in the class space's
+/// region 0 (`Heap::publish_object_record`). A direct object `Value` names the stub, so the record
+/// is reached by the stub header's hop (`ClassSpace::record_of`). Sixteen bytes: an address is
+/// `base + id << 4`.
+#[repr(C)]
+pub struct OrdinaryRecord {
+    pub(crate) object: Object,
+    pub(crate) stub: u32,
+}
+
+impl std::ops::Deref for OrdinaryRecord {
+    type Target = Object;
+    #[inline(always)]
+    fn deref(&self) -> &Object {
+        &self.object
+    }
+}
+
+impl std::ops::DerefMut for OrdinaryRecord {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Object {
+        &mut self.object
+    }
+}
+
 /// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
 /// by reference family: legacy slot indices, then one range per direct record space, then
 /// the null and undefined sentinels at the top.
@@ -1018,18 +1043,20 @@ impl ProtoLink {
         super::layouts::intern_class(shape, self, 0)
     }
 
-    /// The window link naming object record `id`; `None` past the object window, where the
-    /// record's link (if it is a prototype) is an overflow link (`heap::prototypes`).
+    /// The window link naming the ordinary object whose stub granule is `granule`; `None` past the
+    /// object window, where the object's link is an overflow link (`heap::prototypes`). The link
+    /// carries the granule itself, the same bits as the object's direct `Value`.
     #[inline(always)]
-    pub(crate) fn object_record(id: u32) -> Option<Self> {
-        ((id as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + id))
+    pub(crate) fn object_granule_link(granule: u32) -> Option<Self> {
+        ((granule as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + granule))
     }
 
-    /// The object record this link names, if it names one.
+    /// The stub granule of the ordinary object this link names in its window, if it names one. A
+    /// reader that needs the record id takes the header hop (`Heap::object_record_by_granule`).
     #[inline(always)]
-    pub fn object_record_id(self) -> Option<u32> {
+    pub fn object_granule(self) -> Option<u32> {
         // The object range starts at a power of two above its own power-of-two span, so a
-        // link in it holds the record id in its low bits: a mask, which addresses the record
+        // link in it holds the granule in its low bits: a mask, which addresses the granule
         // without the subtracted base as a 64-bit displacement.
         // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
         let span = OBJECT_PROTO_WINDOW as u32;
@@ -1097,7 +1124,7 @@ pub enum PlainPropertyStorage {
 /// Layout facts for the generated read-only ordinary-object field path. Keep these derived
 /// from the authoritative storage declarations; native code checks the object and extras
 /// representation bits before using any offset below.
-pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = std::mem::size_of::<Object>();
+pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = crate::staged::layout_offsets::OBJECT_RECORD_BYTES;
 pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object>();
 /// Where a record keeps its layout id; the header words are in the layout's table entry
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at
@@ -1424,6 +1451,8 @@ impl std::ops::DerefMut for FinalizationEntries {
 }
 /// An object is its header word and one payload word.
 const _: () = assert!(std::mem::size_of::<Object>() == 12);
+/// An ordinary object's record is its object and its stub granule: sixteen bytes.
+const _: () = assert!(std::mem::size_of::<OrdinaryRecord>() == 16);
 /// The payload word holds every inline slot as a narrow value.
 const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as usize);
 

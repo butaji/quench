@@ -152,7 +152,8 @@ fn global_layout(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fac
     let bits = stage.constant(cell.global.to_bits());
     if let Some((kept, len)) = frame.state.proofs.global && kept.fact() == fact && len == cell.storage_len { return Some((kept, bits)); }
     let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
-    let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
+    let class_base = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
+    let address = ObjectRecord::prove(stage.builder, bits, records, class_base, None, miss).address(stage.builder);
     let inline = inline_storage(stage.builder, address);
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
     let layout = CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?;

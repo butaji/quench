@@ -345,7 +345,7 @@ impl Vm {
         let receiver = self.object_data(instance)?;
         let shape = receiver.exact_shape();
         let link = receiver.proto_link();
-        let prototype = Value::direct_object(link.object_record_id()?);
+        let prototype = Value::direct_object(link.object_granule()?);
         let data = self.object_data(prototype)?;
         let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
         let constructor = self.heap_reads().property_get(data, slot)?;

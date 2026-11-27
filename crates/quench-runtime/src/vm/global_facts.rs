@@ -23,6 +23,8 @@ pub struct GlobalSlot {
     pub layout: GlobalLayoutFact,
     /// The global object, and the realm field that names it while its realm is active.
     pub global: Value,
+    /// The record id of the global object (`Heap::record_id`), read from the heap the code compiles against.
+    pub record: u32,
     pub realm_offset: i32,
 }
 
@@ -225,8 +227,9 @@ impl Vm {
         let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));
         let dependency = (ty != Type::ANY && ty != Type::NEVER)
             .then_some(SlotDependency { shape: hint.receiver, slot: hint.slot, ty });
+        let record = self.heap.record_id(globals.direct_object_index()?);
         Some(GlobalSlot { slot: hint.slot, storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
-            layout: crate::heap::global_layout_fact(table)?, global: globals,
+            layout: crate::heap::global_layout_fact(table)?, global: globals, record,
             realm_offset: Self::realm_globals_offset() })
     }
 

@@ -2286,7 +2286,7 @@ impl ProgramStore {
                                 count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                             }
                         } else if crate::staged::computes_unary(op)
-                            && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Typeof as u32
+                            && instruction.unary_operator() == crate::operator::UnaryOperator::Typeof as u32
                         {
                             guard_census.1 = guard_census.1.saturating_add(1);
                         } else if crate::staged::binary(op) {
@@ -3285,7 +3285,7 @@ fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<crate::vm::engi
 /// Counts a comparison in the guard census: strict (in)equality in its third column, an
 /// order (`<`, `<=`, `>`, `>=`) in its fourth.
 fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
-    use oxc_ast::ast::BinaryOperator;
+    use crate::operator::BinaryOperator;
     const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
     const ORDER: [BinaryOperator; 4] = [
         BinaryOperator::LessThan,

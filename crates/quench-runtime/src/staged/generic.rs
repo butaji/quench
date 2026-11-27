@@ -64,8 +64,8 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
         let own = match instruction.op() {
-            Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
-            _ => oxc_ast::ast::BinaryOperator::Multiplication,
+            Op::NumericAdd => crate::operator::BinaryOperator::Addition,
+            _ => crate::operator::BinaryOperator::Multiplication,
         } as u32;
         if instruction.binary_operator() != own { return None; }
         Self::decode_binary(instruction)

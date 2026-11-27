@@ -441,7 +441,7 @@ pub fn remainder(left: f64, right: f64) -> f64 {
 }
 
 /// The parser's binary and unary operator codes, as an instruction's operator field holds them
-/// (oxc's `BinaryOperator` and `UnaryOperator` discriminants), named as the parser names them.
+/// (`crate::operator`'s `BinaryOperator` and `UnaryOperator` discriminants, the parser's numbering), named as the parser names them.
 /// Plain numbers, so the rows that build or test an operator field read them in the stencil build
 /// too; `vm::operations` asserts each equals the parser's.
 #[allow(non_upper_case_globals)]

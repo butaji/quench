@@ -57,7 +57,8 @@ impl Heap {
     pub(crate) fn unrepresented_slots(&self) -> usize {
         if !self.properties.tracks() { return 0; }
         let mut unrepresented = 0;
-        self.object_records.for_each_live(|_, object| {
+        self.object_records.for_each_live(|_, record| {
+            let object = &record.object;
             let shape = object.exact_shape();
             if shape != object.shape() { return; }
             for slot in 0..self.properties.shape_length(shape) {

@@ -510,7 +510,7 @@ fn float_or_general_unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fr
     }
 }
 
-/// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
+/// The unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
 #[cfg(not(stencil_build))]
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {

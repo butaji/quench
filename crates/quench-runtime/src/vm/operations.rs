@@ -1,7 +1,7 @@
 use super::*;
 use super::array_modern::ArrayFromTarget;
 use crate::value::NumericPair;
-use oxc_ast::ast::{BinaryOperator, UnaryOperator};
+use crate::operator::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
 mod primitive_comparison;
@@ -256,7 +256,7 @@ pub fn number_relation(
 #[cfg(test)]
 mod numeric_instruction_tests {
     use super::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberUnary, Op, number_truthiness};
-    use oxc_ast::ast::{BinaryOperator, UnaryOperator};
+    use crate::operator::{BinaryOperator, UnaryOperator};
 
     #[test]
     fn arithmetic_bytecode_denotations_come_from_the_operation_table() {

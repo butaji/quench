@@ -21,6 +21,10 @@ pub struct JsStepHead<V> {
     /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
     /// of them, so each is read again after one (`refresh_heap_bases`).
     pub object_record_base: usize,
+    /// The class space's base (`Heap::class_space_base`): a direct object's cell is at this plus its
+    /// granule times 8, and its header's high half is the record id (R4-B2b). Zero where absent; refreshed
+    /// with the other record bases.
+    pub class_base: usize,
     /// The function record reservation, whose records' own fields reads take
     /// (`ObjectHeader::prove_readable`); zero where absent.
     pub function_record_base: usize,
