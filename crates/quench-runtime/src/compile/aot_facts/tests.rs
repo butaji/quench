@@ -902,3 +902,28 @@ fn a_store_whose_index_steps_by_two_covers_the_whole_array() {
     let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
     assert_eq!(store.indices, Indices::Whole, "a step of two leaves no span of the count");
 }
+
+#[test]
+fn constructors_sharing_one_class_factory_body_are_distinct_classes() {
+    // The raytrace shape: `Class.create` returns one body for every class it makes, so the two constructors share it.
+    let program = program(
+        "var Class = { create: function() { return function(x) { this.x = x; }; } }; \
+         var A = Class.create(); var B = Class.create(); \
+         function make() { return [new A(1), new B(2)]; } make();",
+    );
+    let facts = analyze(&program);
+    let make = function_named(&program, "make") as u32;
+    let mut classes: Vec<u32> = facts.construct_classes.iter()
+        .filter(|&(&(function, _), _)| function == make)
+        .map(|(_, &class)| class)
+        .collect();
+    classes.sort();
+    classes.dedup();
+    assert_eq!(classes.len(), 2, "each constructor is its own class");
+    let body = facts.classes.body(classes[0]);
+    assert_eq!(body, facts.classes.body(classes[1]), "both classes run the factory's one body");
+    assert!(classes.iter().all(|&class| class != body), "the classes are synthetic ids, not the body's id");
+    for class in classes {
+        assert!(facts.class_layout(class).is_some_and(|fields| fields.len() == 1), "each class keeps its own instance layout");
+    }
+}

@@ -166,8 +166,8 @@ struct Arrival {
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>,
-    feedback: &super::length_settle::Feedback) -> FunctionFlow {
+    resolved: &std::collections::BTreeMap<Key, u32>, classes: &super::class_ids::ClassIds, accessors: &std::collections::BTreeSet<u32>,
+    types: Option<&super::types::Types>, feedback: &super::length_settle::Feedback) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let whole = whole_literals(function);
@@ -177,6 +177,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         is_root: function.parent.is_none(),
         scope,
         resolved,
+        classes,
         registers: usize::from(function.registers),
         whole_literals: &whole[..],
         types,

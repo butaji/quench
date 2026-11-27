@@ -3,6 +3,7 @@
 //! A call resizes an array only where the settled effects say its class may be written (`FunctionFacts::may_write_elements_of`).
 
 use super::blocks::Blocks;
+use super::class_ids::ClassIds;
 use super::effects::{Ctx, step};
 use super::flow::{FunctionFlow, conditional_target, loop_headers, whole_literals};
 use super::lengths::{Lengths, Relation, advance, proves_below, refine, store_span};
@@ -185,7 +186,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
 
 /// The length relations of function `id` (`settle`), from its settled solve `flow` and the settled facts of the program.
 pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow, (scope, decode, records): (&Scope, DecodeContext<'_>, &[Register]),
-    resolved: &BTreeMap<Key, u32>, accessors: &BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>, feedback: &Feedback) -> Settled {
+    resolved: &BTreeMap<Key, u32>, classes: &ClassIds, accessors: &BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>, feedback: &Feedback) -> Settled {
     let whole = whole_literals(function);
     let ctx = Ctx {
         id,
@@ -193,6 +194,7 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         is_root: function.parent.is_none(),
         scope,
         resolved,
+        classes,
         registers: usize::from(function.registers),
         whole_literals: &whole[..],
         types: Some(types),

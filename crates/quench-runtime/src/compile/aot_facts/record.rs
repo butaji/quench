@@ -229,7 +229,7 @@ impl Record {
                     None => Word::UNKNOWN,
                 },
                 // A construction's receiver is the object it allocates: an instance of the class it constructs.
-                crate::staged::Receiver::Allocated => match callee.cell.ty.body_index() {
+                crate::staged::Receiver::Allocated => match ctx.classes.of_word(callee) {
                     Some(class) if construct => Word::instance(class),
                     _ => Word::of(Type::DIRECT_OBJECT_FAMILY),
                 },

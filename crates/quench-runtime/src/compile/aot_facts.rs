@@ -17,6 +17,7 @@
 mod accessors;
 mod blocks;
 mod census;
+mod class_ids;
 mod class_layout;
 mod copies;
 mod effects;
@@ -80,6 +81,13 @@ pub struct AotFacts {
     pub(crate) call_candidates: BTreeMap<(u32, u32), Box<[u32]>>,
     /// `(function, pc)` of a construction (`new`) → the function it always constructs.
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
+    /// `(function, pc)` of a construction (`new`) → the class id of the instance it allocates (`class_ids::ClassIds`): the
+    /// function's own class, or the synthetic class of its body and the key the constructor was read from. The class is a
+    /// fact of the site, so a runtime that records a class's header records it under this id.
+    pub(crate) construct_classes: BTreeMap<(u32, u32), u32>,
+    /// The class ids of the program's constructors (`class_ids::ClassIds`): the functions, and a synthetic class for each body
+    /// that several binding keys construct. Every class id of this table names a body through `ClassIds::body`.
+    pub(crate) classes: class_ids::ClassIds,
     /// Function id → register → the Number representation it always holds.
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
     /// Per field name, the type of the values every store of it writes, into an object of any class: the
@@ -150,6 +158,8 @@ impl AotFacts {
             guessed_calls: std::collections::BTreeSet::new(),
             call_candidates: BTreeMap::new(),
             construct_targets: BTreeMap::new(),
+            construct_classes: BTreeMap::new(),
+            classes: class_ids::ClassIds::default(),
             numbers: BTreeMap::new(),
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
@@ -287,9 +297,9 @@ impl AotFacts {
             && !self.element_classes.get(&crate::typed_ir::FactKey::Elements(first)).is_some_and(|members| members.contains(&crate::typed_ir::FactKey::Elements(second)))
     }
 
-    /// The functions some construction (`new`) always constructs.
-    pub fn constructed_functions(&self) -> std::collections::BTreeSet<u32> {
-        self.construct_targets.values().copied().collect()
+    /// The classes some construction (`new`) always constructs (`construct_classes`).
+    pub fn constructed_classes(&self) -> std::collections::BTreeSet<u32> {
+        self.construct_classes.values().copied().collect()
     }
 
     /// The facts of function `function`, for its lowering.
