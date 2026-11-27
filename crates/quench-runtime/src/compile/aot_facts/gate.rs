@@ -217,7 +217,7 @@ fn may_define_index(program: &ResidualProgram, call: &Call, aliased: bool) -> bo
 }
 
 /// Whether no index accessor can run for an element access of `program`, so that the access runs no guest code for a key that
-/// converts to none (`lengths::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
+/// converts to none (`lengths::transfer::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
 /// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::member_wild`),
 /// no `defineProperty` may name an index, and the program names no proxy or descriptor-defining builtin (`INDEX_ACCESSOR_NAMES`).
 pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
