@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use crate::bytecode::{Register, ResidualProgram, Traits};
-use crate::staged::effects::{call_form, CallForm, Signature};
+use crate::staged::effects::{call_form, tail_site, CallForm, Signature};
 use crate::staged::{Callee, DecodeContext, Invocation};
 use crate::typed_ir::{Cell, Classes, FactKey};
 
@@ -45,6 +45,17 @@ pub struct CallPlan {
     pub form: CallForm,
     pub arms: Box<[Arm]>,
     pub miss: Miss,
+    /// Whether the call is a tail site (`tail_of`): its value is the caller's result and the caller has nothing
+    /// to do after it, so the call need not keep the caller's frame. A tier lowers it by the form:
+    /// - `Framed`: the callee's frame replaces the caller's (the caller's activation is popped and the callee's
+    ///   pushed over its window), so a chain of tail calls keeps one frame and the stack does not grow;
+    /// - `Frameless`: the callee has no activation, so there is no caller frame to replace; the call is a direct
+    ///   jump to the callee's entry over the caller's window, and the callee's value is the caller's result;
+    /// - `Inline`: the callee's body is spliced into the caller's unit, so the return is the unit's and no frame exists.
+    ///
+    /// A construction is never a tail site (its value is the constructed object, which `construct_form` returns
+    /// without a proper tail call), and an async or generator callee is not (its activation outlives the call).
+    pub tail: bool,
 }
 
 /// The arms of a closed receiver union: each class in `ids` paired with the function `body` names for it
@@ -73,7 +84,22 @@ fn form_of(arms: &[Arm], inlinable: impl Fn(u32) -> bool, signature: impl Fn(u32
 fn single_target(function: u32, miss: Miss, signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
     let arms = vec![Arm { class: None, function }].into_boxed_slice();
     let form = form_of(&arms, inlinable, |function| signatures.of(function));
-    CallPlan { form, arms, miss }
+    CallPlan { form, arms, miss, tail: false }
+}
+
+/// Whether the call at `pc` of `function` is a tail site: `staged::effects::tail_site` of its record's return flag
+/// (`returns`) and of the caller's permission (`permits_js_tail_call_at`: strict, not a class initializer, no handler
+/// covering the call), with every arm an ordinary function. A construction is never one (`construct`). The
+/// interpreter's proper tail calls (`Vm::js_tail_call_allowed`, `call_forms`) take the same two facts, and add the
+/// host's permission, which the plan does not carry.
+fn tail_of(program: &ResidualProgram, function: u32, pc: u32, returns: bool, construct: bool, arms: &[Arm]) -> bool {
+    let caller = program.function(function as usize);
+    !construct
+        && tail_site(returns, caller.permits_js_tail_call_at(pc))
+        && arms.iter().all(|arm| {
+            let callee = program.function(arm.function as usize);
+            !callee.is_async && !callee.is_generator
+        })
 }
 
 /// The one closure body a call reaches when its callee holds `cell` (`Type::body_index`), with the miss of the
@@ -98,7 +124,7 @@ fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, 
     let keys: Vec<FactKey> = ids.iter().map(|&class| FactKey::Field { class, instance: true, atom }).collect();
     let miss = miss_of(&keys, |key| facts.live(key));
     let form = form_of(&arms, &inlinable, |function| signatures.of(function));
-    Some(CallPlan { form, arms, miss })
+    Some(CallPlan { form, arms, miss, tail: false })
 }
 
 /// The plan of the call at `pc` of `caller` whose callee is in `register`, or None where the site keeps its own
@@ -147,7 +173,10 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
                 Callee::Register(register) => register_plan(facts, signatures, function, pc, register, &inlinable),
             }
         };
-        site_plan.map(|site_plan| (pc, site_plan))
+        site_plan.map(|mut site_plan| {
+            site_plan.tail = tail_of(program, function, pc, invocation.returns, construct, &site_plan.arms);
+            (pc, site_plan)
+        })
     }).collect()
 }
 
@@ -214,9 +243,10 @@ mod tests {
     fn a_single_target_plan_names_no_key() {
         let arms = vec![Arm { class: None, function: 7 }].into_boxed_slice();
         let form = form_of(&arms, |_| false, |_| Signature::NEVER);
-        let plan = CallPlan { form, arms, miss: Miss::None };
+        let plan = CallPlan { form, arms, miss: Miss::None, tail: false };
         assert_eq!(plan.form, CallForm::Frameless);
         assert_eq!(plan.arms[0].class, None);
         assert_eq!(plan.miss, Miss::None);
+        assert!(!plan.tail);
     }
 }

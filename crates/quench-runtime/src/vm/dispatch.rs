@@ -77,12 +77,16 @@ impl Vm {
     }
 
     /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
-    /// permits them, the call returns from its frame, and the call site permits it.
+    /// permits them, and the call is a tail site of its caller (`staged::effects::tail_site`: it
+    /// returns from its frame and the caller's site permits it). The plan's `CallPlan::tail` takes the
+    /// same two facts without the host's permission.
     #[inline(always)]
     pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
         self.host.proper_tail_calls()
-            && i.returns_from_frame()
-            && p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32)
+            && crate::staged::effects::tail_site(
+                i.returns_from_frame(),
+                p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32),
+            )
     }
 
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
