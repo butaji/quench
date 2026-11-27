@@ -204,6 +204,8 @@ impl Lowering<'_, '_> {
     /// dense array). False where the call is not one.
     pub(crate) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // The power leaf's address is no image's to embed where its helpers are not named by symbol (`remainder`).
+        if matches!(inline, Inline::Math(MathCall::Power)) && self.helpers.links() && !self.helpers.names_symbols() { return false; }
         // A scalar native whose callee identity and arguments the loop's entry proved (`hoist_scalar_calls`): the call's
         // value is the one the entry computed, its callee being the same function on each iteration.
         if let Some(hoisted) = self.scalar_values.get(&pc).copied() && hoisted.fixed {

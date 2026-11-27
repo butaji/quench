@@ -1226,6 +1226,9 @@ lane_helper_inventory! {
     /// The runtime's Number remainder leaf (`RuntimeSlowPath::NumberRemainder`), which a body naming
     /// its helpers by symbol calls by this one (`slow_path_symbol`).
     NumberRemainder => quench_runtime::vm::operations::number_remainder,
+    /// The runtime's Number power leaf (`staged::power::number_power`), which a body naming its helpers by symbol calls
+    /// by this one (`slow_path_symbol`), as the remainder leaf.
+    NumberPower => quench_runtime::staged::power::number_power,
     /// A local, capture or name access's step over the running window or frame (`dispatch_fast::owner_step`): the owner
     /// step alone, which a helper row or slow arm of such an instruction makes in place of the general step.
     OwnerStep => crate::dispatch_fast::owner_step,

@@ -392,6 +392,15 @@ fn imul_row<const SPEC: bool>(mut frame: Places) -> Out {
     finish(frame, done)
 }
 
+/// `Math.pow` of the two operands (`NumberOperation::Power`): the staged product where the exponent is a constant
+/// `SmallPower` names. A stencil holds no call of the power leaf, so any other exponent leaves through `staged`.
+#[inline(always)]
+fn power_row(mut frame: Places) -> Out {
+    let operation = NumberOperation::Power { destination: DEST, base: Operand::register(LEFT), exponent: Operand::register(RIGHT) };
+    let done = staged(&mut frame, operation, Kind::<{ numeric::kind::POWER }>).is_some();
+    finish(frame, done)
+}
+
 /// `Math.clz32` of the first operand, an int32 (0..=32): `staged::math::leading_zeros` of its ToUint32. An int32 is its own bits;
 /// a Number whose ToUint32 is exact (`value::exact_uint32`, the one conversion the interpreter's `number_to_u32` also
 /// starts from) takes that. Any other word leaves with nothing written, for the interpreter's own conversion.
@@ -467,6 +476,8 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         imul_row::<SPEC>(frame)
     } else if const { K == CLZ32 } {
         clz32_row(frame)
+    } else if const { K == POW } {
+        power_row(frame)
     } else if const { K == INT_CASE } {
         int_case_row(frame)
     } else if const { K == BIT_TEST } {

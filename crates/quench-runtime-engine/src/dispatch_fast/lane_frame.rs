@@ -4335,6 +4335,8 @@ pub(crate) const fn binary_number_kind(operator: u32) -> u8 {
         kind::BITWISE
     } else if quench_runtime::number_relation_rows!(relation) {
         kind::RELATION_VALUE
+    } else if operator == code::Exponential {
+        kind::POWER
     } else {
         kind::ANY
     }
@@ -4880,6 +4882,8 @@ fn step_binary_number<const OPERATOR: u8, S: quench_runtime::staged::NumericStag
         step_of::<{ kind::BITWISE }, S, F>(stage, frame, number)
     } else if const { binary_number_kind(OPERATOR as u32) == kind::RELATION_VALUE } {
         step_of::<{ kind::RELATION_VALUE }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::POWER } {
+        step_of::<{ kind::POWER }, S, F>(stage, frame, number)
     } else {
         step_of::<{ kind::ANY }, S, F>(stage, frame, number)
     }
@@ -4900,6 +4904,7 @@ mod binary_number_kind_tests {
                 Some(NumberOperation::Remainder { .. }) => numeric::kind::REMAINDER,
                 Some(NumberOperation::Bitwise { .. }) => numeric::kind::BITWISE,
                 Some(NumberOperation::RelationValue { .. }) => numeric::kind::RELATION_VALUE,
+                Some(NumberOperation::Power { .. }) => numeric::kind::POWER,
                 Some(_) => panic!("operator {operator}: unexpected variant"),
                 None => numeric::kind::ANY,
             };
