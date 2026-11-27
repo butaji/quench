@@ -7965,7 +7965,6 @@ impl Vm {
             return None; // no run-time compile without the JIT: only image bodies run natively
         }
         let residual = self.programs.get(program_id)?;
-        self.keep_slot_representations();
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
@@ -10340,7 +10339,6 @@ mod tests {
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         vm.programs.enable_js_lane_methods();
-        vm.keep_slot_representations();
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
@@ -10410,7 +10408,6 @@ mod tests {
             let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             quench_runtime::test_support::execute(&mut vm, &program).unwrap();
             vm.programs.enable_js_lane_methods();
-            vm.keep_slot_representations();
             let reader = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|

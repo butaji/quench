@@ -5635,7 +5635,7 @@ impl LaneBody {
         match self {
             Self::Unspecialized { .. } => TierState::Warming,
             Self::Compiling { .. } => TierState::Compiling,
-            Self::Specialized { .. } if crate::jit_mode::quick_only() => TierState::QJit,
+            Self::Specialized { .. } if crate::vm::tier_policy::quick_only() => TierState::QJit,
             Self::Specialized { .. } => TierState::UJit,
             Self::Declined => TierState::Declined,
         }

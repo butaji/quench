@@ -477,6 +477,25 @@ pub fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
 }
 
+/// Whether a compile may start at all: some compiling tier is allowed.
+pub fn may_compile() -> bool {
+    crate::jit_mode::tiers_allowed(Tier::ANY)
+}
+
+/// Whether `tier` may publish a body: a tier the mode allows, with QuickJIT only where it is the only Cranelift tier.
+pub fn may_publish(tier: Tier) -> bool {
+    match tier {
+        Tier::Quick => crate::jit_mode::quick_only(),
+        tier => crate::jit_mode::tiers_allowed(&[tier]),
+    }
+}
+
+/// Whether QuickJIT is the only Cranelift tier (`--q-jit`): every Cranelift compile is `CompileLevel::Quick`, and a
+/// published lane body is a QuickJIT body.
+pub fn quick_only() -> bool {
+    crate::jit_mode::quick_only()
+}
+
 /// What `policy` lets the tiers compile.
 pub const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]

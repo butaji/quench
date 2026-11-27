@@ -73,7 +73,7 @@ impl CompileLevel {
     /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
     /// `quick-compile` experiment measures that level.
     pub fn run_default() -> Self {
-        if crate::jit_mode::quick_only() || crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
+        if crate::vm::tier_policy::quick_only() || crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
     }
 
     /// The Cranelift settings a level fixes, applied after the publication's.

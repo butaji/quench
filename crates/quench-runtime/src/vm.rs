@@ -3589,17 +3589,6 @@ impl Vm {
         }
     }
 
-    /// Only native code (Cranelift's, `--b-jit`'s stencils, or an AOT image's) reads slot representations, so only a
-    /// runtime that runs native bodies keeps them, from its shape table and what its live objects hold: from its first
-    /// compile or image install on (each such entry asks; the first call starts them), so a run that never compiles
-    /// never pays for them. No mode decides it: an image's typed field reads under `--no-jit` stand on the slots'
-    /// types as a JIT body's do, and a slot nobody tracks has no type for them to stand on.
-    pub fn keep_slot_representations(&mut self) {
-        if !self.heap.tracks_slot_representations() {
-            let layouts = self.shape_layouts();
-            self.heap.track_slot_representations(&layouts);
-        }
-    }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
