@@ -99,7 +99,8 @@ impl Vm {
         };
         let result = Ok(outcome);
         self.deactivate_frame(&mut frame, &result);
-        self.settle_stop(p, StopOwner::Async(resume), Some(frame), result)?;
+        let (popped, result) = super::settle::split_stop(frame, result);
+        self.settle_stop(p, StopOwner::Async(resume), popped, result)?;
         self.resume_async_generator_queue(p, generator)?;
         Ok(promise)
     }

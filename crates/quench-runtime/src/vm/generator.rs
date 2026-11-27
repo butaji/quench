@@ -77,7 +77,7 @@ impl Vm {
     /// delegate's own result a `yield*` passes on.
     pub fn finish_materialized_generator_step(
         &mut self,
-        mut frame: Box<Frame>,
+        frame: Box<FrameRecord>,
         resume: GeneratorResume,
         value: Value,
         stop: MaterializedStop,
@@ -85,7 +85,6 @@ impl Vm {
         let generator = self.pop_host_frame().expect("a resumed generator's activation");
         let done = match stop {
             MaterializedStop::Yielded { destination, delegated_result } => {
-                frame.with_objects = self.with_stack.split_off(frame.with_base);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.suspend(Continuation::suspend(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED));
                 }
@@ -96,8 +95,7 @@ impl Vm {
             }
             MaterializedStop::Awaited { .. } => unreachable!("only an async generator's frame awaits in place"),
             MaterializedStop::Returned => {
-                self.finish_frame_scopes(&frame);
-                self.pool_frame(frame);
+                self.pool_frame(frame.into_buffers(self.with_stack.len()));
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.complete();
                 }
@@ -286,7 +284,7 @@ impl Vm {
         };
         *source = generator;
         ext.generator = Some(Box::new(GeneratorRecord::new(
-            Continuation::suspend(frame, Completion::GeneratorStart, None, Value::UNDEFINED),
+            Continuation::suspend(FrameRecord::capture(frame), Completion::GeneratorStart, None, Value::UNDEFINED),
             realm,
         )));
         Ok(generator)
@@ -1334,7 +1332,7 @@ impl Vm {
     pub(super) fn park_generator_frame(
         &mut self,
         generator: Value,
-        frame: Box<Frame>,
+        frame: Box<FrameRecord>,
         (value, destination): (Value, crate::bytecode::Register),
         delegated_result: Option<Value>,
     ) -> GeneratorStep {
@@ -1522,7 +1520,7 @@ impl Vm {
         p: &ResidualProgram,
         generator: Value,
         promise: Value,
-        frame: Box<Frame>,
+        frame: Box<FrameRecord>,
         value: Value,
         destination: u16,
         delegated: bool,
