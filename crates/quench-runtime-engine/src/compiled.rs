@@ -2715,7 +2715,7 @@ fn stitched_entry(
 ) -> Option<Vec<u8>> {
     let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
     // The indirect call row calls the non-diagnostic reference callout.
-    if !admission::stitched_rows_admitted(vm) {
+    if !admission::wasm_module_routes_to_stencils() {
         return None;
     }
     // The program's image may hold the rows already (`wasm_image::linked`).

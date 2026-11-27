@@ -211,7 +211,7 @@ pub(crate) struct DirectFacts {
     pub(crate) capture: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
     pub(crate) global_this: Option<u64>,
-    /// An arrow, which binds no receiver (`DirectCallee::lexical`).
+    /// An arrow, which binds no receiver (only an AOT image's proven row names one).
     pub(crate) lexical: bool,
     pub(crate) registers: u16,
     /// A construction site's forwarding record: not a plain call.
@@ -247,7 +247,8 @@ impl DirectFacts {
             env: callee.target.context_words().0,
             capture: callee.target.context_words().1,
             global_this: callee.sloppy.map(|global| global.to_bits()),
-            lexical: callee.lexical,
+            // A live callee is never an arrow: no direct row binds a lexical `this` (only an AOT image's proven row does).
+            lexical: false,
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
             held,

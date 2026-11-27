@@ -104,7 +104,7 @@ impl Held {
 pub(crate) struct ThisForm {
     /// A sloppy function binds the global object for an `undefined` or `null` receiver.
     pub(crate) sloppy: bool,
-    /// An arrow binds none (`DirectCallee::lexical`).
+    /// An arrow binds none (its image row reads its environment's `this`).
     pub(crate) lexical: bool,
 }
 

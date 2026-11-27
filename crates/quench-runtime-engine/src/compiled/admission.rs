@@ -405,7 +405,25 @@ pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
 
 /// Whether loop regions take the stencil tier in place of Cranelift (`jit_mode::base_regions`).
 #[inline]
-pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
+fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
+
+/// Whether every loop region is a stencil region: no region ever leaves for Cranelift.
+#[inline]
+pub(crate) fn every_region_is_base() -> bool { stencil_regions() }
+
+/// The `base` flag a region keeps: its own pick, cleared wherever every region is a stencil one (there none is
+/// promoted or kept as a u-jit region).
+#[inline]
+pub(crate) fn default_mode_picks_base(base: bool) -> bool { base && !stencil_regions() }
+
+/// Whether the default mode promotes a b-jit region to u-jit once it has run long enough.
+#[inline]
+pub(crate) fn regions_promote_to_ultra() -> bool { !stencil_regions() }
+
+/// Whether a site BaseJIT declined compiles again as a u-jit region: never where every region is a stencil one, and
+/// only where UltraJIT runs.
+#[inline]
+pub(crate) fn declined_regions_recompile_ultra() -> bool { !stencil_regions() && tier_runs(&[Tier::Ultra]) }
 
 /// Whether any of `tiers` runs in this VM: compiled execution, a memory policy that compiles them
 /// (`tier_policy::tier_may_run`), and a JIT mode that allows one. A build whose profiles count
@@ -460,10 +478,6 @@ pub(crate) fn unbuilt_region_declined() -> bool { !cranelift_runs() }
 /// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
 #[inline]
 pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
-
-/// Whether a stitched Wasm entry is built: its indirect call row calls the non-diagnostic reference callout.
-#[inline]
-pub(crate) fn stitched_rows_admitted(vm: &Vm) -> bool { wasm_module_routes_to_stencils() && !diagnosing(vm) }
 
 /// Whether a lane body's start takes the tier below u-jit first: the default mode's rule, which an
 /// `admits_all` run and a body that does not start on the stencil tier do not take.

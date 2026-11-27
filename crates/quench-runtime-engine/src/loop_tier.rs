@@ -309,7 +309,7 @@ pub(crate) fn loop_compile_in_lane(
     // The tier of this compile: b-jit first, u-jit once the loop's native iterations repay it (`base_region`).
     // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
     let base = compiles_base(machine.programs.tiers(), site, region, tier);
-    tier.base = base && !crate::compiled::admission::stencil_regions();
+    tier.base = crate::compiled::admission::default_mode_picks_base(base);
     let _mark = quench_runtime::trace::CompileMark::begin(if base { "b-jit" } else { "u-jit" }, "region", site.function(), u32::from(region.header), || site.span() as usize);
     tier.promote_at = promotion_at(machine.programs.tiers(), site, region, tier);
     let program = machine.programs.get(machine.active_program);
@@ -389,8 +389,8 @@ fn promotion_at(tiers: &quench_runtime::vm::tier_policy::Tiers, site: &LoopSite,
 /// Whether a site whose b-jit region BaseJIT declined compiles again as a u-jit region: in the default mode, once
 /// (`LoopTier::stencil_declined`, which it sets), where the loop is not the stencil tier's alone.
 fn recompiles_ultra(region: &crate::compiled::LoopRegion, tier: &mut LoopTier, [base, unstarted, admitted]: [bool; 3]) -> bool {
-    use crate::compiled::admission::{stencil_regions, tier_runs, Tier};
-    let recompiles = base && unstarted && admitted && !region.stencil_only && !tier.stencil_declined && !stencil_regions() && tier_runs(&[Tier::Ultra]);
+    let recompiles = base && unstarted && admitted && !region.stencil_only && !tier.stencil_declined
+        && crate::compiled::admission::declined_regions_recompile_ultra();
     tier.stencil_declined |= recompiles;
     recompiles
 }
@@ -445,8 +445,8 @@ fn native_field_loads(machine: &Vm, own: Option<&super::LaneView>, region: &crat
     let (properties_base, properties_len) = machine.heap_reads().native_property_values();
     let available = machine.heap_reads().object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
     // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
-    // which code that embeds its shapes guards whole. Base regions read the live cache instead,
-    // whose entries name no form (the caller passes no view for one).
+    // which code that embeds its shapes guards whole. Only Cranelift's guarded loads lower the
+    // form (`formed_id`); a base region's reads ignore it.
     let reads: std::collections::HashMap<usize, usize> = region.field_reads().iter()
         .map(|(offset, index)| (*index, region.header as usize + *offset as usize)).collect();
     region.fields.iter().enumerate()

@@ -1529,9 +1529,6 @@ pub struct DirectCallee {
     /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
     /// takes any receiver as it is.
     pub sloppy: Option<Value>,
-    /// An arrow, which binds no receiver: its body reads its environment's `this`, so a call
-    /// passes the deleted marker (`body_call_helper`). Only BaseJIT's direct rows call one.
-    pub lexical: bool,
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub capture_values: *const Value,
     pub capture_len: usize,

@@ -98,7 +98,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), caller_base: unsafe { &*root_target.view }.records().addr(),
         cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,
-        sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals), lexical: false,
+        sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
         capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None, bound: Default::default(),
     });
     let root_method = vm.compile_lane_method(&program, root_target.function,

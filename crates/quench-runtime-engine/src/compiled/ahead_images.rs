@@ -428,7 +428,7 @@ impl AheadImages {
 fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
     let Some(body) = program.function_get(callee as usize) else { return false };
     let this = super::base_region::callees::ThisForm::of(body);
-    direct.sloppy.is_some() == this.sloppy && direct.lexical == this.lexical && plain_cell(direct, body.registers)
+    direct.sloppy.is_some() == this.sloppy && !this.lexical && plain_cell(direct, body.registers)
 }
 
 /// Whether `callee`'s entry cell holds the facts of a plain activation of `registers` registers, the
