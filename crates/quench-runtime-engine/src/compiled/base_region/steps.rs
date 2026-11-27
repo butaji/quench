@@ -221,29 +221,32 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
     if decoded.completes { Vec::new() } else { layout.spills(pc + 1) }
 }
 
-/// The frame offsets (`plan::operand`) of a `Math.pow` over two registers and its destination, for the leaf call
-/// (`call_plan::plan_leaf`): each is a frame slot, or a pinned register its spill writes to its slot. `None` where an
-/// operand is not a register or a home the spills do not cover (a constant), which the leaf row cannot read, and where
+/// The operands and holes of a `Math.pow` for the leaf call (`call_plan::plan_leaf`): each register operand is read from
+/// its frame slot (a pinned register its spill writes to the slot, so `Mem`), each constant operand from its own place
+/// and hole (`plan::operand`: `Const` or `Imm`). The destination is a register whose home the spills cover. `None` where
 /// the leaf has no address (no helper table names it), so the numeric row keeps the operation.
-pub(crate) fn leaf_holes(layout: &Layout, decoded: &Decoded, helpers: LaneHelpers) -> Option<[u64; 3]> {
+pub(crate) fn leaf_operands(layout: &Layout, decoded: &Decoded, helpers: LaneHelpers) -> Option<([Place; 2], [u64; 3])> {
     if call_plan::helper_address(helpers, LaneHelper::NumberPower)? == call_plan::HelperPlace::Address(0) {
         return None;
     }
-    let (Some(Source::Register(left)), Some(Source::Register(right)), Some(dst)) = (decoded.a, decoded.b, decoded.dst) else { return None };
     let covered = |register: Register| matches!(layout.homes.place(register), Place::Mem | Place::MemInt | Place::Pin(_) | Place::PinF(_));
-    if !(covered(left) && covered(right) && covered(dst)) {
-        return None;
-    }
-    let hole = |register| super::plan::operand(&layout.homes, Some(Source::Register(register))).1;
-    Some([hole(left), hole(right), hole(dst)])
+    let operand = |source: Option<Source>| -> Option<(Place, u64)> {
+        match source? {
+            Source::Register(register) => covered(register).then(|| (Place::Mem, super::plan::operand(&layout.homes, Some(Source::Register(register))).1)),
+            constant => Some(super::plan::operand(&layout.homes, Some(constant))),
+        }
+    };
+    let dst = decoded.dst.filter(|dst| covered(*dst))?;
+    let ((left, left_hole), (right, right_hole)) = (operand(decoded.a)?, operand(decoded.b)?);
+    Some(([left, right], [left_hole, right_hole, super::plan::operand(&layout.homes, Some(Source::Register(dst))).1]))
 }
 
-/// The chain of `Math.pow` at `pc` over the frame offsets `holes` (`leaf_holes`): the leaf call (`call_plan::plan_leaf`,
+/// The chain of `Math.pow` at `pc` over `operands` and `holes` (`leaf_operands`): the leaf call (`call_plan::plan_leaf`,
 /// the `NumberPower` leaf) between the spills of the live pinned registers and the reloads after it.
-pub(crate) fn leaf_plan(decoded: &Decoded, layout: &Layout, pc: u32, holes: [u64; 3], helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn leaf_plan(decoded: &Decoded, layout: &Layout, pc: u32, (operands, holes): ([Place; 2], [u64; 3]), helpers: LaneHelpers) -> Result<Planned, String> {
     let leaf = call_plan::helper_address(helpers, LaneHelper::NumberPower).ok_or("pow: no leaf address")?;
     let (spills, after) = (layout.spills(pc), reloads(layout, decoded, pc));
-    chained(call_plan::plan_leaf(pc, leaf, holes, &spills, &after)?, spills.len(), Vec::new())
+    chained(call_plan::plan_leaf(pc, leaf, operands, holes, &spills, &after)?, spills.len(), Vec::new())
 }
 
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where

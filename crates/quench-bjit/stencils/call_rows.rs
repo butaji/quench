@@ -48,7 +48,7 @@
 use crate::layout::call_record::{helper_outcome, DirectHole, HelperHole, LaneStatus, NumericLeafHole, Outcome, CALLEE_EXIT};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::bytecode::Operand;
-use crate::codes::MEM;
+use crate::codes::{CONST, IMM, MEM};
 use crate::heap_rows::{payload, word_at};
 use crate::places::{deliver, LEFT, RIGHT, Places};
 use crate::staged::{Concrete, NumericFrame};
@@ -206,40 +206,64 @@ unsafe extern "C" {
     fn leaf_branch(base: f64, exponent: f64) -> f64;
 }
 
-/// Numeric leaf row `call_numeric_leaf` (`CallRow::NumericLeaf`): the leaf of a Number binary operation over the two
-/// operands' frame slots (holes 1 and 2, `NumericLeafHole`), its result written canonically to the destination's slot
-/// (hole 0). The operands read as any Number row's do (`Places`, both `MEM`). An operand that is no Number leaves through
-/// EXIT0 at the instruction's pc with nothing written. The planner spills the live pinned registers before the row and
-/// reloads the live ones after it, so every pinned register is dead from the leaf's call on (`dead`).
+/// Numeric leaf rows `call_numeric_leaf_<left>_<right>` (`CallRow::NumericLeaf`): the leaf of a Number binary operation
+/// over the operands its places name (`Mem`: a frame slot at holes 1 and 2; `Const`, `Imm`: the constant in that hole,
+/// read as any Number row reads its operands, `Places`). The result is written canonically to the destination's slot
+/// (hole 0). An operand that is no Number leaves through EXIT0 at the instruction's pc with nothing written. The planner
+/// spills the live pinned registers before the row and reloads the live ones after it, so every pinned register is dead
+/// from the leaf's call on (`dead`). One row per pair of operand places, the macro's instances below.
 #[cfg(fixed_rows)]
-#[unsafe(no_mangle)]
-pub unsafe extern "rust-preserve-none" fn call_numeric_leaf(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-    unsafe {
-        let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-        let mut places = Places::new::<{ MEM }, { MEM }, { MEM }>(s);
-        let mut stage = Concrete::from_hole(0);
-        let operands = (places.number_operand(&mut stage, Operand::register(LEFT), ()), places.number_operand(&mut stage, Operand::register(RIGHT), ()));
-        let (base, exponent) = match operands {
-            (Some(base), Some(exponent)) => (base, exponent),
-            _ => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT0, dead(&places.s))
+macro_rules! numeric_leaf_row {
+    ($name:ident, $left:ident, $right:ident) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+            unsafe {
+                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                let mut places = Places::new::<{ MEM }, { $left }, { $right }>(s);
+                let mut stage = Concrete::from_hole(0);
+                let operands = (places.number_operand(&mut stage, Operand::register(LEFT), ()), places.number_operand(&mut stage, Operand::register(RIGHT), ()));
+                let (base, exponent) = match operands {
+                    (Some(base), Some(exponent)) => (base, exponent),
+                    _ => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT0, dead(&places.s))
+                    }
+                };
+                #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+                let result = leaf_branch(f64::from_bits(base.word()), f64::from_bits(exponent.word()));
+                #[cfg(not(all(target_arch = "aarch64", target_vendor = "apple")))]
+                let result = {
+                    let leaf: Leaf = transmute(hole64::<{ NumericLeafHole::Leaf as u8 }>() as usize);
+                    leaf(f64::from_bits(base.word()), f64::from_bits(exponent.word()))
+                };
+                // The frame's word of the result: the Number a `Value::number` boxes it as (`words::canonical`).
+                match deliver::<{ MEM }>(places.s, canonical(result)) {
+                    Out::Exit(s) => go!(HOLE_EXIT0, dead(&s)),
+                    Out::Next(s) | Out::Taken(s) => go!(HOLE_NEXT, dead(&s)),
+                }
             }
-        };
-        #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
-        let result = leaf_branch(f64::from_bits(base.word()), f64::from_bits(exponent.word()));
-        #[cfg(not(all(target_arch = "aarch64", target_vendor = "apple")))]
-        let result = {
-            let leaf: Leaf = transmute(hole64::<{ NumericLeafHole::Leaf as u8 }>() as usize);
-            leaf(f64::from_bits(base.word()), f64::from_bits(exponent.word()))
-        };
-        // The frame's word of the result: the Number a `Value::number` boxes it as (`words::canonical`).
-        match deliver::<{ MEM }>(places.s, canonical(result)) {
-            Out::Exit(s) => go!(HOLE_EXIT0, dead(&s)),
-            Out::Next(s) | Out::Taken(s) => go!(HOLE_NEXT, dead(&s)),
         }
-    }
+    };
 }
+
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_mem_mem, MEM, MEM);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_mem_const, MEM, CONST);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_mem_imm, MEM, IMM);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_const_mem, CONST, MEM);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_const_const, CONST, CONST);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_const_imm, CONST, IMM);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_imm_mem, IMM, MEM);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_imm_const, IMM, CONST);
+#[cfg(fixed_rows)]
+numeric_leaf_row!(call_numeric_leaf_imm_imm, IMM, IMM);
 
 /// The direct call: the staged call (`invoke::invoke`, its `enter_direct`) over the row's frame
 /// (`direct_frame::DirectFrame`), which holds the record's plan, the argument places, admission, the
