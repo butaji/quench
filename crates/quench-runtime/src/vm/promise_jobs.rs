@@ -87,7 +87,7 @@ impl Vm {
     ) -> Result<AggregateInput, JsError> {
         let input = self.heap.root_value(source).unwrap();
         if mode.is_keyed() {
-            if self.object_data(input).is_none() {
+            if self.heap.object(input).is_none() {
                 return Err(self.type_error(p, "Promise keyed input must be an object".into()));
             }
             let array = self.object_own_keys(p, input)?;
@@ -437,7 +437,7 @@ impl Vm {
 
     pub(super) fn enqueue_promise_reaction(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         reaction: PromiseReaction,
         state: PromiseState,
         value: Value,

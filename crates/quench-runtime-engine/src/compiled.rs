@@ -23,6 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use tier_policy::Tiers;
@@ -39,7 +40,7 @@ use quench_runtime::staged::wasm_step::Step;
 use quench_runtime::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage};
 use quench_runtime::staged::Stage as _;
 use quench_runtime::staged::wasm::{Width, integer_binary};
-use quench_runtime::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
+use quench_runtime::staged::wasm_operation::{Form, Operand as Right, WasmOperation, wasm_operation_of};
 use quench_runtime::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
@@ -115,7 +116,7 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 #[cfg(feature = "jit")]
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
@@ -297,7 +298,7 @@ pub use fault_handler::NativeFaultHandler;
 pub(crate) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
-    MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
+    MethodCalls, RegionAnalysisFailure, RegionRejection,
 };
 
 pub(crate) use quench_runtime::staged::Domain as NumberRelationDomain;
@@ -482,12 +483,13 @@ pub(crate) fn emit_dense_array_view(
     payload: ir::Value,
     base: ir::Value,
     writable: bool,
+    backing: quench_runtime::staged::elements::BackingAccess,
     fallback: ir::Block,
 ) -> DenseArrayView {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
     let record_base = emit_array_record_base(&mut stage, payload);
-    let backing = quench_runtime::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, backing)
         .expect("the emit stage continues past its guards");
     let quench_runtime::staged::elements::Backing { values, length, .. } = backing;
     if writable {
@@ -1543,7 +1545,7 @@ pub(crate) struct VmFacts<'a> {
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
     /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
     /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::plan_call`),
-    /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
+    /// its Number registers are entry types (`int_inputs::solved_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
@@ -4292,7 +4294,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object_ref(array) else { return };
+        let Some(record) = vm.heap_reads().object(array) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4523,7 +4525,7 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
     if receiver.direct_object_index().is_none() {
         return "non-direct-object";
     }
-    let Some(object) = vm.heap_reads().object_ref(receiver) else { return "missing-object"; };
+    let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
     if object.record().inline_properties().is_some() {
         "inline-storage"
     } else if object.record().plain_storage_start().is_none() {
@@ -5870,7 +5872,7 @@ fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Op
     if instruction.a() != register {
         return None;
     }
-    match WasmOperation::of(instruction.op(), instruction.imm())? {
+    match wasm_operation_of(instruction.op(), instruction.imm())? {
         WasmOperation::Test { nonzero } => Some((value != 0) == nonzero),
         WasmOperation::Binary {
             operator,
@@ -10327,13 +10329,13 @@ mod tests {
         let receiver_atom = vm.intern_atom("receiver");
         let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
         let atom = vm.intern_atom("edgeValue");
-        let shape = vm.heap_reads().object_ref(receiver).unwrap().shape();
+        let shape = vm.heap_reads().object(receiver).unwrap().shape();
         let slot = vm.shape_slot(shape, atom).unwrap();
         vm.store_property_slot(receiver, slot, Value::integer(2));
         assert!(published.lease().is_some());
         vm.store_property_slot(receiver, slot, Value::number(0.5));
         assert!(published.lease().is_none(), "widening retires future entry at the write");
-        assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object_ref(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
         assert!(weak.upgrade().is_none());
@@ -10399,7 +10401,7 @@ mod tests {
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");
             let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-            let shape = vm.heap_reads().object_ref(receiver).unwrap().shape();
+            let shape = vm.heap_reads().object(receiver).unwrap().shape();
             let slot = vm.shape_slot(shape, store.atom_index()).unwrap();
             let residual = (&program as *const ResidualProgram).addr() as u64;
             let machine = (&mut vm as *mut Vm).addr() as u64;
@@ -10418,7 +10420,7 @@ mod tests {
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
-            assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object_ref(receiver).unwrap(), slot), Some(Value::integer(1)));
+            assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
                 "the wider domain is admitted on the next entry");
@@ -10517,7 +10519,7 @@ mod tests {
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object_ref(receiver).unwrap().record().inline_properties().is_some());
+        assert!(vm.heap_reads().object(receiver).unwrap().record().inline_properties().is_some());
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let function = program.functions.iter().position(|function|
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
@@ -10527,8 +10529,8 @@ mod tests {
         let cache = vm.field_cache_entry(site);
         assert_ne!(cache.holder, quench_runtime::vm::NO_FIELD_HOLDER);
         assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap_reads().object_ref(receiver).unwrap().proto();
-        let holder = vm.heap_reads().object_ref(prototype).unwrap();
+        let prototype = vm.heap_reads().object(receiver).unwrap().proto();
+        let holder = vm.heap_reads().object(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);

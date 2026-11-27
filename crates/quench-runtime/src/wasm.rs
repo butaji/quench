@@ -34,6 +34,8 @@ mod inline;
 #[cfg(test)]
 pub(crate) use inline::COMPILED_CALLS_KEPT_FOR_TEST;
 mod scalar;
+mod scalar_types;
+mod memory_ops;
 mod types;
 pub use types::WasmTypes;
 pub mod simd;
@@ -42,7 +44,7 @@ pub use scalar::{CanonicalSignature, ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
     WasmHostSignature,
     WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,
-    WasmType, WasmValue,
+    WasmType, WasmValue, WasmValueScalarExt,
 };
 pub mod conversion;
 pub mod float;
@@ -780,8 +782,7 @@ impl Engine {
             declared_types: None,
             source_name: name.into(),
             source: None,
-            atoms: AtomTable::default(),
-            constants: program_constants.into(),
+            record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: program_constants.into() },
             functions: slots.into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),

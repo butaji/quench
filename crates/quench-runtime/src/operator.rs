@@ -34,6 +34,36 @@ pub enum BinaryOperator {
     Instanceof = 21,
 }
 
+impl BinaryOperator {
+    /// The operator as it appears in source code, the same text the parser's enum gives.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Equality => "==",
+            Self::Inequality => "!=",
+            Self::StrictEquality => "===",
+            Self::StrictInequality => "!==",
+            Self::LessThan => "<",
+            Self::LessEqualThan => "<=",
+            Self::GreaterThan => ">",
+            Self::GreaterEqualThan => ">=",
+            Self::Addition => "+",
+            Self::Subtraction => "-",
+            Self::Multiplication => "*",
+            Self::Division => "/",
+            Self::Remainder => "%",
+            Self::Exponential => "**",
+            Self::ShiftLeft => "<<",
+            Self::ShiftRight => ">>",
+            Self::ShiftRightZeroFill => ">>>",
+            Self::BitwiseOR => "|",
+            Self::BitwiseXOR => "^",
+            Self::BitwiseAnd => "&",
+            Self::In => "in",
+            Self::Instanceof => "instanceof",
+        }
+    }
+}
+
 /// A unary operator, numbered as the bytecode numbers it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]

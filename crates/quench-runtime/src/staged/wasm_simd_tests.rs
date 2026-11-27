@@ -4,7 +4,7 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::effective_address;
-use super::wasm_simd::{Lanes, Native, NativeOp, Simd, WasmSimd};
+use super::wasm_simd::{Lanes, Native, NativeOp, Simd, SimdWasmSimdExt, WasmSimd, simd_of};
 use super::wasm_simd_rules::{NATIVE, native, simd};
 use super::wasm_simd_concrete::{ConcreteSimd, execute};
 use super::wasm_step::Step;
@@ -125,24 +125,24 @@ fn the_shuffle_is_the_interpreters() {
 fn the_table_names_each_vector_opcode() {
     let selector = SimdOperator::V128And.selector(0);
     assert_eq!(
-        Simd::of(Op::WasmSimd, selector),
+        simd_of(Op::WasmSimd, selector),
         Some(Simd::Operator { selector })
     );
-    assert_eq!(Simd::of(Op::WasmSimd, u32::MAX), None);
-    assert_eq!(Simd::of(Op::WasmSimdShuffle, 0), Some(Simd::Shuffle));
-    assert_eq!(Simd::of(Op::WasmMemoryAddress, 0), Some(Simd::Address));
+    assert_eq!(simd_of(Op::WasmSimd, u32::MAX), None);
+    assert_eq!(simd_of(Op::WasmSimdShuffle, 0), Some(Simd::Shuffle));
+    assert_eq!(simd_of(Op::WasmMemoryAddress, 0), Some(Simd::Address));
     let (load, store) = (MemoryLoad::V128Load as u32, MemoryStore::V128Store as u32);
-    assert_eq!(Simd::of(Op::WasmMemoryLoad, load), Some(Simd::Load));
-    assert_eq!(Simd::of(Op::WasmMemoryStore, store), Some(Simd::Store));
+    assert_eq!(simd_of(Op::WasmMemoryLoad, load), Some(Simd::Load));
+    assert_eq!(simd_of(Op::WasmMemoryStore, store), Some(Simd::Store));
     assert_eq!(
-        Simd::of(Op::WasmMemoryLoad, MemoryLoad::I32Load as u32),
+        simd_of(Op::WasmMemoryLoad, MemoryLoad::I32Load as u32),
         None
     );
     assert_eq!(
-        Simd::of(Op::WasmMemoryStore, MemoryStore::I32Store as u32),
+        simd_of(Op::WasmMemoryStore, MemoryStore::I32Store as u32),
         None
     );
-    assert_eq!(Simd::of(Op::WasmI32Add, 0), None);
+    assert_eq!(simd_of(Op::WasmI32Add, 0), None);
     assert_eq!(
         Step::of(Op::WasmSimdShuffle, 0),
         Some(Step::Simd(Simd::Shuffle))

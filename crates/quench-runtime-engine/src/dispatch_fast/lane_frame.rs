@@ -1,10 +1,13 @@
 //! The interpreter's register frame: `staged` rows over the live file, a move or constant, a
 //! jump, an allocation, a suspension (`suspends`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt, OperationGenericExt, OperationElementRowsExt, InvocationFormsExt, ComparisonCompareExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use super::lane_reads::Reads;
+#[allow(unused_imports)] use quench_runtime::staged::wasm_float::OperationWasmFloatExt;
+#[allow(unused_imports)] use quench_runtime::staged::wasm_simd::OperationWasmSimdExt;
 use super::completions::return_record_in_lane;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
@@ -1092,7 +1095,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         code: &ResidualProgram, object: Value, atom: quench_runtime::bytecode::Atom) -> Option<Value> {
         let slot = Self::private_slot(cx, site, code, object, atom)?;
         let vm = unsafe { vm(cx) };
-        vm.heap_reads().property_get(vm.object_data(object)?, slot)
+        vm.heap_reads().property_get_ref(vm.heap_reads().object(object)?, slot)
     }
 
     /// The store of private field `atom` of `object` at the record address `site`, under its
@@ -1767,7 +1770,7 @@ unsafe fn environment_slot_read(cx: *mut (), slot: u16) -> Option<Value> {
     if !function.local_slot_uses_environment(usize::from(slot)) || aliases_arguments(function) {
         return None;
     }
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     if let Some(value) = quench_runtime::staged::environment::environment_slot(&mut stage, std::ptr::from_mut(storage) as u64, slot, ()) {
         return Some(Value::from_bits(value));
     }
@@ -2902,7 +2905,7 @@ macro_rules! target_prefix_row {
         macro_rules! prefix_at { ($flag:expr) => {{
             let fields = LaneFields::<$prefix, { $flag }>(prefix_i);
             let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(general_step_in_lane, $r, $at, $carried) };
-            let mut stage = Concrete::new(std::ptr::null());
+            let mut stage = Concrete::pure();
             let mut frame = row_frame::<$prefix, ACC_NONE, { $flag }>($cx, $r, $at, prefix_i, $carried);
             match row_step!(LaneFields::<$prefix>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
@@ -2945,7 +2948,7 @@ macro_rules! target_test { ($cx:ident, $r:ident, $at:ident, $test_i:ident, $carr
             (_, decoded) => decoded,
         };
         let Some(operation) = decoded else { sibling!(general_step_in_lane, $r, $at, $carried) };
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = row_frame::<$test, ACC_NONE, FLAG_UNREAD>($cx, $r, $at, $test_i, $carried);
         if let Some(word) = held {
             frame.reads = frame.reads.with_immediate(Value::integer(word as u32 as i32));
@@ -3584,7 +3587,7 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         let Some(operation) = decoded else {
             sibling!(general_step_in_lane, r, ip, view)
         };
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         // A loop's exit writes its result register, so no producer's accumulator carries past it.
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::past_result(view) } else { view };
         let mut frame = row_frame::<OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
@@ -3891,7 +3894,7 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
             let Some(operation) = decoded else {
                 sibling!(const { protocol_miss(MISS) }, r, ip, view)
             };
-            let mut stage = Concrete::new(std::ptr::null());
+            let mut stage = Concrete::pure();
             let mut frame = call_frame::<OP, ACC, MISS>(cx, r, ip, i, view);
             // The call decoder makes a call site, or for a `super(...)` construction a spread call: only a
             // construction's row keeps more than the call arm of the step (every arm was ~10 KB per instance).
@@ -3920,7 +3923,7 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
         let Some(operation) = row_decode!(OP, FLAG_UNREAD, fields) else {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         };
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
         if let Some(leaf) = const { return_form(MISS) } {
             frame.returns = Some((cx, leaf));
@@ -4124,7 +4127,7 @@ sharded_handler! { script_handler, returning_row_shards, returning_row_handler, 
         let Some(operation) = decoded else {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         };
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = row_frame::<OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
@@ -4168,7 +4171,7 @@ script_handler! {
         let Some(number) = number else {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         };
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = LaneFrame::<ACC_NONE> { reads: Reads::of_jump(cx, Some(i.constant())),
             ..row_frame::<OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view) };
         match step_binary_number::<OPERATOR, _, _>(&mut stage, &mut frame, number) {
@@ -4250,7 +4253,7 @@ script_handler! {
             requicken(ip, value);
             sibling!(value, r, ip, view)
         };
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
         // A Number form's refused operands (an int32 overflow, `a * k` past int32) widen to the next form
         // below, not to the VM's binary call-out: the frame's `binary` makes `step_number` answer every
@@ -4471,7 +4474,7 @@ unsafe fn delete_value_in_lane(cx: *mut (), base: Value, key: Value) -> Option<V
     let code = unsafe { &*(*cx).code };
     let plain = base.direct_object_index().is_some()
         && vm.heap_reads().string(key).is_some()
-        && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
+        && vm.heap_reads().object(base).is_some_and(|data| !data.is_module_namespace() && !data.record().is_arguments_object()); // a record-only flag, read from the record
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
 }
 
@@ -4655,7 +4658,7 @@ fn concat_value_in_lane(cx: *mut LaneContext, r: Registers, window: RegisterWind
 /// run; false, writing nothing, where the general path must make it.
 #[inline(always)]
 pub(crate) fn staged_delete(cx: *mut LaneContext, r: Registers, [destination, base, key]: [u16; 3], strict: bool) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = LaneFrame::<ACC_NONE>::hosted(r, Carried::script(cx), cx);
     matches!(quench_runtime::staged::step_of::<{ quench_runtime::staged::op_kind::DELETE }, _, _>(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
 }

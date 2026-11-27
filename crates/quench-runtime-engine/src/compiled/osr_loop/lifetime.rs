@@ -1,5 +1,6 @@
 //! Admission on value identities (JL10, `admit_lifetime_roles`): the fallback that splits each
 //! register into its webs where the register analysis rejects a loop for a reused register.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

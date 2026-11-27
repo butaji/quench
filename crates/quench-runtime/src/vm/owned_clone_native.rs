@@ -20,7 +20,7 @@ impl Vm {
         let v = self.embedding_value(root)?;
         if self.error_is_error(v) {
             let proto = self
-                .object_data(v)
+                .heap.object(v)
                 .map(|o| o.proto())
                 .unwrap_or(Value::NULL);
             let mut kind = "Error";

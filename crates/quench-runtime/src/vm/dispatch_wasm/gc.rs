@@ -7,7 +7,7 @@ use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
 use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess, static_offset};
 use crate::wasm::reference::ReferenceTarget;
 use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null};
-use crate::staged::wasm_call::Call;
+use crate::staged::wasm_call::{Call, call_of};
 use super::super::wasm_gc::stage::HeapStage;
 
 /// The one list of the GC value opcodes (`staged::wasm_gc::wasm_gc_table!`), which the lane's
@@ -79,7 +79,7 @@ impl Vm {
 /// Whether the GC value opcode `op` reads the running instance's environment: the
 /// operations that name one of its functions or tables' targets.
 #[inline(always)] pub const fn wasm_gc_reads_instance(op: Op) -> bool {
-    matches!(Call::of(op), Some(Call::IndirectTarget | Call::RefFunc))
+    matches!(call_of(op), Some(Call::IndirectTarget | Call::RefFunc))
 }
 
 impl Vm {
@@ -137,7 +137,7 @@ impl Vm {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Value, JsError> {
-        if matches!(Call::of(i.op()), Some(Call::IndirectTarget)) {
+        if matches!(call_of(i.op()), Some(Call::IndirectTarget)) {
             return self.wasm_indirect_target_of_operand(program, read(self, i.register_b()), read(self, i.register_c()), i.imm());
         }
         let residual = self.programs.get(program).ok_or_else(|| JsError::validation("missing Wasm program".into()))?;

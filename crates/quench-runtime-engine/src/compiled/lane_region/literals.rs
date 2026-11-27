@@ -115,20 +115,3 @@ impl Lowering<'_, '_> {
     }
 }
 
-/// The binary operators a string or BigInt takes (`facts::heap_primitive_binary`) by the facts
-/// from `entry`, which ask no Number of the function's parameters.
-pub(crate) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
-    constants: &[quench_runtime::bytecode::Constant], native_calls: bool, raises: &[super::super::facts::Raise]) -> quench_runtime::dataflow::BitSet {
-    // A unit with no generic operator has none to find, and needs no analysis to say so.
-    if !instructions.iter().any(|instruction| super::super::facts::heap_operator(*instruction)) { return quench_runtime::dataflow::BitSet::new(); }
-    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, raises, super::super::facts::Seeds::observing(super::super::facts::Observed::NONE));
-    let mut pcs = quench_runtime::dataflow::BitSet::with_capacity(instructions.len());
-    for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::heap_operator(**instruction) && facts.reached(*pc)) {
-        let operand = |operand| super::super::facts::operand_type(constants, operand, |register|
-            facts.before(pc, register, instructions, leaders, constants, &writes, native_calls));
-        if super::super::facts::heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c())).is_some() {
-            pcs.insert(pc);
-        }
-    }
-    pcs
-}

@@ -36,6 +36,7 @@
 //! validity word becomes the row's expected word, so a republish or withdrawal that bumps the
 //! validity sends the call to the helper row, which resolves the target anew.
 
+#[allow(unused_imports)] use quench_runtime::staged::{InvocationFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 pub(crate) mod inline;

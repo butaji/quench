@@ -3,6 +3,7 @@
 //! or `undefined`, a bitwise test, an ordering, an equality, `instanceof` or `in`, all by the
 //! staged step (whose answer picks the edge through `Frame::branch`). An operator the step does
 //! not name leaves the jump to the exact path.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -46,7 +47,7 @@ impl Lowering<'_, '_> {
     /// it. The unit is the one-character string's, so `===` holds exactly where the unit is the constant's.
     fn unit_compare_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, pending: PendingUnit) {
         let target = instruction.jump_target() as usize;
-        if target <= pc { self.interrupt_check(state, pc as u32); }
+        if target <= pc { self.back_edge_check(state, pc, target); }
         let equal = self.raw_compare_imm(Relation::Equal, pending.unit, i64::from(pending.constant));
         let holds = if pending.negated { self.raw_binary_imm(Binary::Xor, equal, 1) } else { equal };
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
@@ -69,7 +70,7 @@ impl Lowering<'_, '_> {
         // The jump is taken where the comparison fails, as `staged_jump` takes it.
         let holds = if negated { self.raw_binary_imm(Binary::Xor, equal, 1) } else { equal };
         let target = instruction.jump_target() as usize;
-        if target <= pc { self.interrupt_check(state, pc as u32); }
+        if target <= pc { self.back_edge_check(state, pc, target); }
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         self.branch_if(holds, (fall, &[]), (taken, &[]));
         self.continue_branch(state, pc, target, taken, fall);
@@ -158,7 +159,7 @@ impl Lowering<'_, '_> {
     /// held Boolean is false.
     fn decided_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: Variable) {
         let target = instruction.jump_target() as usize;
-        if target <= pc { self.interrupt_check(state, pc as u32); }
+        if target <= pc { self.back_edge_check(state, pc, target); }
         let word = self.builder.use_var(held);
         let holds = quench_runtime::staged::value::boolean_truthy(&mut emit(&mut self.builder), word);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
@@ -172,7 +173,7 @@ impl Lowering<'_, '_> {
     fn staged_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison,
         [left, right]: [Operand; 2]) {
         let (target, pc32) = (instruction.jump_target() as usize, pc as u32);
-        if target <= pc { self.interrupt_check(state, pc32); }
+        if target <= pc { self.back_edge_check(state, pc, target); }
         let exit = self.guard_exit_for(state, pc32, ExitFact::NumberKind);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         let row = Operation::CompareJump { comparison, left, right, negate: true };

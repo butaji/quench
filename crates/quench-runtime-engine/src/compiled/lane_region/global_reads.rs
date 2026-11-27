@@ -1,4 +1,5 @@
 //! By-name loads that read the global scope (`Vm::global_reads_in_lane`).
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

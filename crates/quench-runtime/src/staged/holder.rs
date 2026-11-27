@@ -35,7 +35,7 @@ pub(crate) fn string_holder_read<S: Stage>(stage: &mut S, receiver: S::Word, wat
 #[inline(always)]
 pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u64,
     watch: *const crate::code_dependencies::PublishedCode<()>, value: crate::Value) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     holder_read(&mut stage, record as *const crate::heap::Object as u64, guard, watch as u64, value.to_bits(), ())
         .map(crate::Value::from_bits)
 }
@@ -48,7 +48,7 @@ pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u
 #[inline(always)]
 pub(crate) unsafe fn concrete_own_constant_read(record: &crate::heap::Object, expected: u64,
     watch: *const crate::code_dependencies::PublishedCode<()>, value: crate::Value) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     super::ic::own_constant_read(&mut stage, record as *const crate::heap::Object as u64, expected, watch as u64, value.to_bits(), ())
         .map(crate::Value::from_bits)
 }
@@ -69,7 +69,7 @@ mod tests {
         let prototype = heap.alloc_object(Object::new(Value::NULL));
         let object = heap.alloc_object(Object::new(prototype));
         heap.property_add(object, Value::integer(1), 1);
-        let record = heap.object_ref(object).unwrap().record();
+        let record = heap.object(object).unwrap().record();
         let guard = record.guard_word();
         let header = crate::heap::layouts::word(guard as u32);
         assert_eq!(guard as u32, record.hint_shape());
@@ -93,7 +93,7 @@ mod tests {
         let second = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(first, Value::integer(1), 1);
         heap.property_add(second, Value::integer(1), 1);
-        let (one, other) = (heap.object_ref(first).unwrap().record(), heap.object_ref(second).unwrap().record());
+        let (one, other) = (heap.object(first).unwrap().record(), heap.object(second).unwrap().record());
         assert_eq!(one.guard_word(), other.guard_word(), "one layout");
         let expected = one as *const Object as u64;
         let watch = Rc::new(PublishedCode::new(()));

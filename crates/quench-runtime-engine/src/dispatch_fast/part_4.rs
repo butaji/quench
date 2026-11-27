@@ -1,5 +1,6 @@
 //! Functions of `dispatch_fast` in a codegen unit of their own (B1: a staged edit recompiles only the units that inline it).
 #![allow(unused_imports)]
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
 
 /// The environment of the environment window whose entries start at `entries`
@@ -267,7 +268,7 @@ pub(super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
         // The keeping row: the parameters, the kept values, and the rest register, whose
         // `undefined` in a rest view makes its reads take the kept values.
         quench_runtime::staged::call_keeping::fill_keeping(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64,
+            &mut quench_runtime::staged::Concrete::pure(), registers.expose_provenance() as u64,
             passed.expose_provenance() as u64, argc as u16, shape, rest.unwrap_or(Value::UNDEFINED).to_bits(),
         );
         stack.values.set_top(registers.add(window_size + lane_values::CONTEXT));
@@ -304,7 +305,7 @@ pub(super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
         (*cx).base = base;
     }
     quench_runtime::staged::call_keeping::enter_context(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
+        &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
     );
     if cross {

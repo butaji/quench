@@ -1,6 +1,8 @@
 //! The register dataflow of one function (`dataflow::solve` over its basic blocks): each
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{InvocationFormsExt};
 use super::blocks::Blocks;
 use super::effects::{Before, Ctx, settled, step};
 use super::record::Record;
@@ -476,7 +478,7 @@ fn mask_bounds(ctx: &Ctx<'_>, instruction: WideInstruction, masks: &mut [Option<
 
 /// The mask bound a store writes to the keys it stores to: a value the instruction reads that holds one (`mask_bounds`).
 fn stored_bounds(instruction: WideInstruction, writes: &[(Key, Word)], masks: &[Option<i64>], record: &mut Record) {
-    let Some(bound) = used_registers(instruction).find_map(|register| masks[usize::from(register)]) else { return };
+    let Some(bound) = used_registers(instruction).into_iter().find_map(|register| masks[usize::from(register)]) else { return };
     record.bounds.extend(writes.iter().map(|&(key, _)| (key, bound)));
 }
 

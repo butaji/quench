@@ -138,6 +138,9 @@ impl Vm {
 
     /// Deletes `object`'s property `key`, held at `slot` of its shape.
     pub(in crate::vm) fn delete_shape_slot(&mut self, object: Value, slot: usize, key: PropertyKey) {
+        // A class cell departs to its dictionary before the slot is vacated (`depart_class_cell_for_delete`),
+        // since the store below would depart it without that trigger.
+        self.depart_class_cell_for_delete(object);
         self.heap.property_set(object, slot, Value::DELETED);
         self.delete_shape_property(object, key);
     }

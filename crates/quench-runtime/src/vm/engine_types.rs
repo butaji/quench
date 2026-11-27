@@ -1,6 +1,8 @@
 //! The types the VM core holds for its engine layer (`quench-runtime-engine`: lane handlers
 //! and compiled tiers). Their behaviour stays in the engine, as extension traits on them.
 #![allow(unused_imports)]
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use crate::bytecode::InstructionField;
 use crate::staged::effects::CallForm;
@@ -29,7 +31,6 @@ use crate::staged::wasm_instance::Storage;
 use crate::staged::record_heads::CallContextHead;
 use crate::heap::TableWords;
 use super::dispatch_frame::PendingGeneralCall;
-use crate::typed_ir::Type;
 use crate::code_dependencies::Invalidation;
 use crate::staged::js_step_head::JsStepHead;
 use quench_bjit::call_record::CallRecord;
@@ -976,8 +977,8 @@ pub struct LaneMethod {
     /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
     /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
     pub realm_bound: bool,
-    /// Its entry types and its activation's result type (`TypeSummary`), where it is a
-    /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
+    /// A marker that its lowering made a summary, where it is a whole function's body: a direct caller's plan
+    /// reads the callee's result from the solve (`TypeSummary`, `DirectCallee::summary`).
     /// Read through `summary()`, which a withdrawal ends.
     pub summary: Option<TypeSummary>,
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
@@ -1430,14 +1431,10 @@ pub struct LaneRecoverySpace {
     pub activations: usize,
 }
 
-/// What a published lane body's activation returns natively, so a direct caller types the call's
-/// result with it (`call_results`): the join of the types its own activation returns, from the facts
-/// at each return. A value a leave returns to the caller is not in the result: the caller guards the
-/// result at its completion.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TypeSummary {
-    pub result: Type,
-}
+/// A published lane body whose lowering made a whole function's summary: a direct caller reads its callee's result
+/// from the solve's return cell (`FunctionFacts::return_cell`), never from the body, so the summary carries no type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TypeSummary;
 
 
 
@@ -1572,10 +1569,6 @@ pub struct InlinedCall {
     pub target: CallTarget,
     /// The register holding the callee, guarded at the call.
     pub callee_register: Register,
-    /// An OSR region's entry word holding the callee, which the region resolved at compile
-    /// time and dropped the caller's read for; the marker reads it there instead of the
-    /// register, which the loop may reuse.
-    pub callee_entry_word: Option<u32>,
     /// The register holding the call's receiver, the callee's `this`.
     pub receiver: Register,
     /// The call's first argument register.
@@ -4530,7 +4523,7 @@ impl LaneStack {
         object: Value,
         slot: usize,
     ) -> Option<ParameterHome> {
-        let (body, entries) = self.window_at(code, heap.object_ref(object)?.record().window_depth()?)?;
+        let (body, entries) = self.window_at(code, heap.object(object)?.record().window_depth()?)?;
         // SAFETY: an environment activation's window holds a local for each slot the function binds.
         let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(crate::vm::tier_queries::HeapReads::of(heap));
         (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })

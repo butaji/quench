@@ -101,7 +101,7 @@ fn written(kind: Kind, number: f64) -> Vec<u8> {
 fn run(kind: Kind, bytes: &mut [u8], (key, number): (i32, f64), operation: Operation<u64, ()>) -> Option<u64> {
     let view = TypedView { values: bytes.as_mut_ptr() as u64, length: (bytes.len() / kind.width()) as u64, kind: ViewKind::Dynamic(kind as u64), within: false };
     let mut frame = Typed { registers: [Value::UNDEFINED.to_bits(), Value::integer(key).to_bits(), number.to_bits()], view };
-    match step(&mut Concrete::new(std::ptr::null()), &mut frame, operation) {
+    match step(&mut Concrete::pure(), &mut frame, operation) {
         Step::Value(word) => Some(word),
         Step::Unresolved => None,
         Step::Control(_) => unreachable!("an element access transfers no control"),
@@ -134,7 +134,7 @@ fn a_read_leaves_past_the_elements_at_a_negative_index_and_for_a_kind_without_a_
     let mut bytes = [0_u8; 16];
     let view = TypedView { values: bytes.as_mut_ptr() as u64, length: 1, kind: ViewKind::Dynamic(Kind::BigInt64 as u64), within: false };
     let mut frame = Typed { registers: [0, Value::integer(0).to_bits(), 0], view };
-    assert!(matches!(step(&mut Concrete::new(std::ptr::null()), &mut frame, READ), Step::Unresolved));
+    assert!(matches!(step(&mut Concrete::pure(), &mut frame, READ), Step::Unresolved));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn proof(heap: &Heap, base: Value, access: ViewAccess) -> Option<TypedView<u64>>
     let (directory, pages) = heap.typed_view_directory();
     let records = TypedRecords { directory: directory.addr() as u64, pages: pages as u64,
         relocations: crate::heap::buffer_relocations_address().addr() as u64 };
-    prove_typed_view(&mut Concrete::new(std::ptr::null()), records, base.to_bits(), access, ())
+    prove_typed_view(&mut Concrete::pure(), records, base.to_bits(), access, ())
 }
 
 /// How often a proof is tried again: another test's buffer event, which the process's count
@@ -200,7 +200,7 @@ fn a_published_views_proof_reads_each_kinds_elements_through_a_site_kind_or_the_
             assert_eq!(view.length, 3, "{kind:?}");
             assert_eq!(matches!(view.kind, ViewKind::Static(_)), access.kind.is_some(), "{kind:?}: a site kind folds");
             for index in 0..3 {
-                let word = typed_read(&mut Concrete::new(std::ptr::null()), view, index, ()).expect("an element reads");
+                let word = typed_read(&mut Concrete::pure(), view, index, ()).expect("an element reads");
                 assert_eq!(word, read(kind, &bytes[index as usize * kind.width()..]).to_bits(), "{kind:?}[{index}]");
             }
         }
@@ -251,7 +251,7 @@ fn an_integer_kinds_element_reads_as_its_int32_word_inside_its_range_and_other_k
         let view = proved(&mut heap, array, ViewAccess { kind: Some(native), writable: false }).expect("a published view of the kind proves");
         for index in 0..3 {
             let number = read(kind, &bytes[index as usize * kind.width()..]);
-            let word = typed_read_integer(&mut Concrete::new(std::ptr::null()), view, index, ());
+            let word = typed_read_integer(&mut Concrete::pure(), view, index, ());
             assert_eq!(word.is_some(), native.is_int32(), "{kind:?}");
             if let Some(word) = word { assert_eq!(f64::from(word as u32 as i32), number, "{kind:?}[{index}]"); }
             if let Some(range) = native.element_type().int_range() {

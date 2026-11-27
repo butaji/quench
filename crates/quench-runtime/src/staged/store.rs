@@ -180,7 +180,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
         if form == OBJECT.inline_form {
             // Packed: the value's narrow form into its half of the payload word, behind the gate.
             let record = record as u64;
-            let mut stage = super::Concrete::storing(heap);
+            let mut stage = super::Concrete::over(heap);
             let fact = store_fact(&stage, value.to_bits(), Type::ANY);
             if gate_open(&mut stage, u64::from(record_id), (value.to_bits(), fact), ()).is_none() {
                 return false;
@@ -216,7 +216,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
         return true;
     }
     let record = record as u64;
-    let mut stage = super::Concrete::storing(heap);
+    let mut stage = super::Concrete::over(heap);
     own_store(&mut stage, record, u64::from(record_id), shape, hinted, slot, value.to_bits(), ()).is_some()
 }
 
@@ -262,13 +262,13 @@ mod tests {
         for shape in 1..=count as u32 {
             heap.property_add(object, Value::integer(0), shape);
         }
-        let shape = heap.object_ref(object).unwrap().exact_shape();
+        let shape = heap.object(object).unwrap().exact_shape();
         (object, shape)
     }
 
     fn read(heap: &Heap, object: Value, shape: u32, slot: u16) -> Option<Value> {
         // SAFETY: a live record of the shape, whose slot it holds.
-        unsafe { crate::staged::concrete_own_field_hit(heap.object_ref(object).unwrap().record(), heap.arena_values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_own_field_hit(heap.object(object).unwrap().record(), heap.arena_values_base(), shape, slot) }
     }
 
     fn store(heap: &mut Heap, object: Value, shape: u32, slot: u16, value: Value) -> bool {

@@ -46,17 +46,6 @@ pub(crate) const fn element_typed_row(read: bool, index: u32) -> Handler {
     rows!(0 1 2 3 4 5 6 7 8)
 }
 
-/// The typed array kind the element record at `pc` of `view` observed, where its row is a typed
-/// element row (`requicken_typed`); `None` for any other record.
-pub(crate) fn typed_element_kind(view: &LaneView, pc: usize) -> Option<TypedArrayKind> {
-    if pc >= view.records.len() { return None; }
-    // SAFETY: `pc` names a record of the view.
-    let record = unsafe { &*view.records.base().add(pc) };
-    (is_typed_element_row(record.handler, true) || is_typed_element_row(record.handler, false))
-        // SAFETY: a typed element record's immediate is its native kind's index (`requicken_typed`).
-        .then(|| quench_runtime::staged::typed_elements::native_kind_at(unsafe { record.operand.imm }).kind)
-}
-
 /// Whether `handler` is a typed keyed read row (`read`) or write row, of any kind (`element_typed_row`).
 pub(crate) fn is_typed_element_row(handler: *const (), read: bool) -> bool {
     (0..TYPED_KIND_SITES.len() as u32).any(|index| element_typed_row(read, index) as *const () == handler)
@@ -196,7 +185,7 @@ pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
 
 /// The storage-form class of a nested hop whose layout id is `layout`: `0` a flat run, `1` packed
 /// inline values; `None` for another form, whose hop keeps `NESTED_SITE`'s `Form::Either`. Reads the
-/// hint's form through `own_form_index`, which folds `FLOAT_SLOTS` at this requicken.
+/// hint's form through `own_form_index`.
 pub(super) fn nested_hop_class(layout: u32) -> Option<usize> {
     match own_form_index(Some(layout)) {
         6 => Some(0),
@@ -312,7 +301,6 @@ pub(super) fn returning_own_row(handler: *const ()) -> bool {
 
 pub(crate) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
-        || site == CELL_FLOAT_RUN_THIS || site == CELL_FLOAT_RUN_REGISTER || site == CELL_FLOAT_EXTRAS_THIS || site == CELL_FLOAT_EXTRAS_REGISTER
         || site == CELL_EXTRAS_THIS || site == CELL_EXTRAS_REGISTER
 }
 
@@ -336,8 +324,6 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
     let index = (site.wrapping_sub(1) / 2) as usize;
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
     else if index == OWN_FORMS.len() + 7 { quench_runtime::staged::TAGGED_SLOTS }
-    else if index == OWN_FORMS.len() + 31 { 0 }
-    else if index == OWN_FORMS.len() + 32 { quench_runtime::value_vec::EXTRAS_FORM }
     else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM | quench_runtime::staged::TAGGED_SLOTS }
     else if index == STORE_FLAT { 0 }
     else if index == STORE_INLINE { quench_runtime::value_vec::INLINE_FORM }
@@ -356,31 +342,27 @@ pub(crate) const fn own_site_decodes(site: u8) -> bool {
         && form != quench_runtime::value_vec::NARROW_FORM)
 }
 
-/// The value of slot word `word` an own-field read at a decoding site took: a fixed untagged form holds raw
-/// doubles (`own_formed_handler`), decoded untested; an unfixed form tests (`decode_staged_word`).
+/// The value of slot word `word` an own-field read at a decoding site took: a fixed form decodes as a
+/// Number untested (`decode_float_word`, the identity on tagged words); an unfixed form takes the staged decode.
 #[inline(always)]
 pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
     if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
 }
 
 /// The `OWN_FORMS` index of the storage form layout id `hint` names (`0`, the hinted form, for none).
-/// A narrow run's hint names neither inline values nor extras, so those tests fold away; packed and
-/// narrow slots never hold a raw double, and the other forms skip the decode where float slots are off.
+/// A narrow run's hint names neither inline values nor extras, so those tests fold away. Record slots are
+/// all tagged words (no arena word is raw), so a flat run, extras or inline form decodes nothing.
 pub(super) fn own_form_index(hint: Option<u32>) -> usize {
     use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    let tagged = !quench_runtime::vm::switches::float_slots();
     // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
     match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
         None => 0,
         Some(hint) if hint & NARROW_FORM != 0 => 5,
-        Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
-            (0, true) => 6,
-            (0, false) => 1,
-            (EXTRAS_FORM, true) => 7,
-            (EXTRAS_FORM, false) => 2,
-            (INLINE_FORM, _) => 3,
-            (_, true) => 8,
-            (_, false) => 4,
+        Some(hint) => match hint & (INLINE_FORM | EXTRAS_FORM) {
+            0 => 6,
+            EXTRAS_FORM => 7,
+            INLINE_FORM => 3,
+            _ => 8,
         },
     }
 }
@@ -1160,7 +1142,7 @@ pub(super) fn lane_private_field_slot_at(
     {
         let vm = unsafe { vm(cx) };
         if vm.private_classes.unique_name(atom)
-            && let Some(slot) = vm.private_site_homes.unique_field_slot(site, vm.object_data(object)?.shape())
+            && let Some(slot) = vm.private_site_homes.unique_field_slot(site, vm.heap_reads().object(object)?.shape())
         {
             return Some(slot);
         }
@@ -1360,7 +1342,6 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
     // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
@@ -1398,11 +1379,10 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = crate::compiled::admission::diagnosing(vm);
-    let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let work = match work {
         // A looping caller's trips pay for the body as its own iterations do (`looped`).
         crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: seen, called, caller, .. } =>
-            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller, arrays: &arrays },
+            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller },
         poll => poll,
     };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();

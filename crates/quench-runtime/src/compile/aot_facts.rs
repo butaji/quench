@@ -375,6 +375,12 @@ impl<'a> FunctionFacts<'a> {
         self.facts.registers.get(&self.function).and_then(|cells| cells.source_at(pc, register)).unwrap_or(Source::Computed)
     }
 
+    /// The cell register `register` holds just after the instruction at `pc` (`RegisterCells::after`): what the instruction
+    /// writes it to, so a result's proven type. None where the solve did not settle or no path reaches `pc`.
+    pub fn cell_after(&self, pc: u32, register: u16) -> Option<crate::typed_ir::Cell> {
+        self.facts.registers.get(&self.function)?.after(pc, register)
+    }
+
     /// The cells of every register at the entry of the block starting at `pc` (`RegisterCells::entry`).
     pub fn block_entry(&self, pc: u32) -> Option<&'a [crate::typed_ir::Cell]> {
         self.facts.registers.get(&self.function)?.entry(pc)

@@ -2,6 +2,7 @@
 //! (`Lowering::resolve`): a counter below a bound, scaled and added to a base, all of them
 //! invariant but the counter.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
@@ -143,7 +144,7 @@ impl Lowering<'_, '_> {
     /// The proof of `shape` by the entry of the outermost loop it can be made in, where its array's
     /// view is hoisted a register's.
     pub(crate) fn resolve(&self, (nest, ranges): (Nest<'_>, &IntRanges), model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
-        let array = self.loop_array(shape.pc, Some(shape.array)).filter(|array| matches!(array.source, ArraySource::Register(_)))?;
+        let array = self.loop_array(shape.pc, Some(shape.array))?;
         let base = match (shape.base, shape.add) { (Some(operand), Some(add)) => Some(self.term(nest, add, operand, true)?), _ => None };
         let scale = match shape.scale { Some((operand, multiply)) => Some(self.term(nest, multiply, operand, false)?), None => None };
         let header = self.checking_loop((nest, model, ranges), shape, array, [base, scale])?;
@@ -199,7 +200,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is `counter++`.
-    fn steps_by_one(&self, instruction: WideInstruction, counter: Register) -> bool {
+    pub(crate) fn steps_by_one(&self, instruction: WideInstruction, counter: Register) -> bool {
         use quench_runtime::staged::{DecodeContext, NumberOperation, Operation};
         instruction.result_flags() == 0
             && matches!(Operation::<ir::Value, EmitProof>::decode(instruction, DecodeContext::of(self.program)),

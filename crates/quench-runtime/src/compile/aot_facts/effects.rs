@@ -1,10 +1,12 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin, PrototypeBase};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
-use crate::bytecode::{Register, Traits, WideInstruction};
+use crate::bytecode::{Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing::{self, Abstract};

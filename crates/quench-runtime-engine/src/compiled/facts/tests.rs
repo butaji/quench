@@ -1,8 +1,8 @@
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
-use quench_runtime::typed_ir::IntRange;
 
 #[test]
 fn native_call_retires_conditional_shapes_in_cfg_facts() {
@@ -62,7 +62,7 @@ fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
     let mut candidates: quench_runtime::dataflow::BitSet = quench_runtime::dataflow::BitSet::with_capacity(initial.len());
     for register in &homes { candidates.insert(usize::from(*register)); }
     inductive_int32(&mut initial, candidates, header..=back, &instructions, &leaders, &program.constants,
-        &super::super::lane_region::writes, &|_| None, false, &[], Observed::NONE);
+        &super::super::lane_region::writes, &|_| None, false, &[]);
     (initial, homes)
 }
 
@@ -124,19 +124,17 @@ fn zero_register_blocks_keep_reachability_without_allocating_type_rows() {
 }
 
 /// The unit PCs of `source`'s first function whose int32 arithmetic or step the run proves
-/// overflow-free, and the PCs of all its arithmetic and steps, entered with register 0 typed
-/// `input` and guarded to the `entering` ranges.
-fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, IntRange)]) -> (Vec<usize>, Vec<usize>) {
+/// overflow-free, and the PCs of all its arithmetic and steps.
+fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) {
     use quench_runtime::vm::operations::NumberArithmetic;
     let program = quench_runtime::Engine::specialize(source, "ranges.js").unwrap();
     let function = program.function(1);
     let instructions: Vec<_> = function.instructions().collect();
     let leaders = super::super::lane_region::leaders(&instructions);
-    let mut initial = vec![Type::ANY; usize::from(function.registers)];
-    initial[0] = input;
+    let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
         written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
-    let seeds = Seeds { entering, ..Seeds::observing(Observed::NONE) };
+    let seeds = Seeds::typed();
     let mut free = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(&program.constants, instructions[pc]) { free.push(pc); }
@@ -147,8 +145,6 @@ fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, Int
         .map(|(pc, _)| pc).collect();
     (free, steps)
 }
-
-fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) { overflow_proofs_entered(source, Type::ANY, &[]) }
 
 #[test]
 fn a_counted_loops_induction_variable_and_sum_are_overflow_free() {
@@ -173,15 +169,6 @@ fn a_counter_below_a_proved_int32_bound_never_overflows_and_one_below_a_number_m
 }
 
 #[test]
-fn an_entry_guarded_range_seeds_its_input_and_an_unguarded_int32_proves_nothing() {
-    let source = "function run(k){const r=k-1;return r;}";
-    let (free, steps) = overflow_proofs_entered(source, Type::INT32, &[(0, IntRange::entering(0))]);
-    assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
-    let (free, _) = overflow_proofs_entered(source, Type::INT32, &[]);
-    assert!(free.is_empty(), "{free:?}");
-}
-
-#[test]
 fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let program = quench_runtime::Engine::specialize(
@@ -190,17 +177,17 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
     let instructions: Vec<_> = function.instructions().collect();
     let leaders = super::super::lane_region::leaders(&instructions);
     let byte = quench_runtime::staged::typed_elements::NativeKind::new(Kind::Uint8).unwrap().element_type();
-    let reads: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
-        .map(|(pc, _)| ObservedRead { pc, ty: byte, kind: None }).collect();
+    let reads: Vec<TypedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
+        .map(|(pc, _)| (pc, byte)).collect();
     assert!(!reads.is_empty());
     let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
         written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
-    let seeds = Seeds { observed: Observed(&reads), ..Seeds::observing(Observed::NONE) };
+    let seeds = Seeds { typed_reads: &reads, ..Seeds::typed() };
     let mut loaded = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
-        for read in reads.iter().filter(|read| read.pc + 1 == pc) {
-            loaded.push(point.types[usize::from(instructions[read.pc].result_register())]);
+        for (read, _) in reads.iter().filter(|(read, _)| read + 1 == pc) {
+            loaded.push(point.types[usize::from(instructions[*read].result_register())]);
         }
     });
     assert!(!loaded.is_empty() && loaded.iter().all(|ty| *ty == byte), "{loaded:?}");
@@ -218,7 +205,7 @@ fn a_midpoint_of_a_bounded_sum_is_below_the_bound_and_at_most_the_length_the_bou
     let mut relations = fresh();
     relations.bound(NumberRelation::LessThan, [Operand::register(lo), Operand::register(hi)]);
     assert_eq!(relations.atmost[usize::from(hi)], Some(array));
-    let non_negative = |_: Operand| Some(quench_runtime::typed_ir::IntRange::entering(0));
+    let non_negative = |_: Operand| Some(quench_runtime::typed_ir::IntRange::NON_NEGATIVE);
     relations.relate_sum_of(sum, lo, hi, &non_negative);
     assert_eq!(relations.twice[usize::from(sum)], Some(hi), "lo + hi is below twice hi");
     relations.relate_shift_of(mid, sum);
@@ -250,32 +237,4 @@ fn a_register_below_another_is_a_relation_that_dies_with_either_write_and_surviv
     assert_eq!(relations.under[usize::from(index)], Some(bound), "`bound > index` bounds the same register");
     relations.kill(index);
     assert!(relations.under[usize::from(index)].is_none());
-}
-
-/// A direct call whose callee's summary types its result (`lane_region::call_results`) types the
-/// register the call defines after it, where the lowering checks the result at the completion. Without
-/// the observed read the result is `ANY`, as every call's result was before.
-#[test]
-fn a_direct_call_result_takes_the_type_its_callee_summary_observed() {
-    let program = quench_runtime::Engine::specialize(
-        "function caller(f, value) { let r = f(value); return r; }", "summary-call.js").unwrap();
-    let function = program.function(1);
-    let instructions: Vec<_> = function.instructions().collect();
-    let call_pc = instructions.iter().position(|instruction| instruction.op().is_call()).unwrap();
-    let result = instructions[call_pc].result_register();
-    let leaders = super::super::lane_region::leaders(&instructions);
-    let initial = vec![Type::ANY; usize::from(function.registers)];
-    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
-        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: true, raises: &[] };
-    let typed_after = |reads: &[ObservedRead]| {
-        let seeds = Seeds { observed: Observed(reads), ..Seeds::observing(Observed::NONE) };
-        let mut after = None;
-        analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
-            if pc == call_pc + 1 { after = Some(point.types[usize::from(result)]); }
-        });
-        after
-    };
-    assert_eq!(typed_after(&[]), Some(Type::ANY), "an untyped call's result is ANY");
-    let reads = [ObservedRead { pc: call_pc, ty: Type::NUMBER, kind: None }];
-    assert_eq!(typed_after(&reads), Some(Type::NUMBER), "the summary's result types the call's result after it");
 }

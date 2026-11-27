@@ -5,13 +5,14 @@ use super::ConcreteWasm;
 use super::machine::{Machine, MachineStage};
 use super::wasm::{Width, binary_result, integer_binary, is_comparison};
 use super::wasm_float::{Float, Truncation};
-use super::wasm_operation::{Form, WasmOperation};
+use super::wasm_operation::{Form, WasmOperation, wasm_operation_of};
 use crate::bytecode::Op;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator as Binary, I64UnaryOperator as Unary,
 };
+use crate::wasm::WasmValueScalarExt;
 use crate::{WasmTrap, WasmType, WasmValue};
 
 /// Operands at the edges of both widths: zero, signs, shift counts at and past the width,
@@ -265,21 +266,21 @@ fn the_table_names_every_i32_form_of_an_operator() {
             })
         };
         assert_eq!(
-            WasmOperation::of(operator.register_op(), 0),
+            wasm_operation_of(operator.register_op(), 0),
             binary(Form::Register)
         );
         assert_eq!(
-            WasmOperation::of(operator.immediate_op(), 0),
+            wasm_operation_of(operator.immediate_op(), 0),
             binary(Form::Immediate)
         );
         assert_eq!(
-            operator.jump_op().and_then(|op| WasmOperation::of(op, 0)),
+            operator.jump_op().and_then(|op| wasm_operation_of(op, 0)),
             operator.jump_op().and(binary(Form::Branch))
         );
         assert_eq!(
             operator
                 .immediate_jump_op()
-                .and_then(|op| WasmOperation::of(op, 0)),
+                .and_then(|op| wasm_operation_of(op, 0)),
             operator
                 .immediate_jump_op()
                 .and(binary(Form::BranchImmediate))
@@ -291,7 +292,7 @@ fn the_table_names_every_i32_form_of_an_operator() {
 fn a_selector_opcode_is_the_operator_it_selects() {
     for operator in every_binary() {
         assert_eq!(
-            WasmOperation::of(Op::WasmI64Binary, operator as u32),
+            wasm_operation_of(Op::WasmI64Binary, operator as u32),
             Some(WasmOperation::Binary {
                 operator,
                 width: Width::I64,
@@ -299,21 +300,21 @@ fn a_selector_opcode_is_the_operator_it_selects() {
             })
         );
     }
-    assert_eq!(WasmOperation::of(Op::WasmI64Binary, u32::MAX), None);
-    assert_eq!(WasmOperation::of(Op::WasmI64Unary, u32::MAX), None);
-    assert_eq!(WasmOperation::of(Op::WasmI32Unary, u32::MAX), None);
-    assert_eq!(WasmOperation::of(Op::Move, 0), None);
+    assert_eq!(wasm_operation_of(Op::WasmI64Binary, u32::MAX), None);
+    assert_eq!(wasm_operation_of(Op::WasmI64Unary, u32::MAX), None);
+    assert_eq!(wasm_operation_of(Op::WasmI32Unary, u32::MAX), None);
+    assert_eq!(wasm_operation_of(Op::Move, 0), None);
 }
 
 #[test]
 fn a_comparison_is_the_only_operation_that_branches_without_writing() {
     for operator in I32BinaryOperator::ALL.iter().copied() {
-        let operation = WasmOperation::of(operator.register_op(), 0).expect("a register form");
+        let operation = wasm_operation_of(operator.register_op(), 0).expect("a register form");
         assert!(operation.writes() && !operation.jumps());
     }
-    let test = WasmOperation::of(Op::WasmJumpI32Zero, 0).expect("a test");
+    let test = wasm_operation_of(Op::WasmJumpI32Zero, 0).expect("a test");
     assert!(!test.writes() && test.jumps());
-    let add = WasmOperation::of(Op::WasmI32AddImmediateJumpNonZero, 0).expect("a fused add");
+    let add = wasm_operation_of(Op::WasmI32AddImmediateJumpNonZero, 0).expect("a fused add");
     assert!(add.writes() && add.jumps());
 }
 

@@ -137,10 +137,10 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
 /// An execution-only build (no `jit`) plans no run-time body: a loop runs the image's body
 /// where one published, and the interpreter otherwise.
-fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &LoopSite) {
+fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     #[cfg(not(feature = "jit"))]
     {
-        let _ = (cx, r, own);
+        let _ = (cx, own);
         *site.body.borrow_mut() = LoopBody::Declined;
     }
     #[cfg(feature = "jit")]
@@ -163,13 +163,6 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
         return;
     }
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
-    // The loop's arrays are the activation's registers live at its header now: sampled, as an
-    // OSR loop samples its own. A dead register may hold any value a window held before
-    // (`ResidualProgram::entry_fill`), so it reads as `undefined`.
-    let live = code.register_root_masks(function);
-    let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
-        if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
-    }));
     // A first plan waits for the iterations that pay for a body of the loop's span, as an unpaid one
     // waits below: planned before them, the plan would decline the loop's body for good.
     if pending.is_none() && vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header))).is_none() {
@@ -182,7 +175,7 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     }
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending, own),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
+        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, looped: Some((site.span(), site.body_iterations())), called: false, caller: own },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
         &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
@@ -229,7 +222,7 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
     let ready = site.body.borrow_mut().ready();
     let Some(method) = ready else {
-        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, r, own, site); }
+        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, own, site); }
         return None;
     };
     if !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }

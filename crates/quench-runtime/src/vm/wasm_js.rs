@@ -1618,7 +1618,7 @@ impl Vm {
                 }
                 return self.own_property(holder, atom);
             }
-            holder = self.object_data(holder)?.proto();
+            holder = self.heap.object(holder)?.proto();
             if holder.is_null() {
                 return None;
             }

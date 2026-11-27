@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 mod dependencies;
 mod dispatch_opcodes;
 #[cfg(feature = "profile-aggregate")]

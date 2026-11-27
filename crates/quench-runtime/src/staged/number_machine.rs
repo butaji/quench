@@ -185,11 +185,3 @@ pub fn truncated_int32_product<M: MachineScalar>(machine: &mut M, left: M::Word,
     (machine.raw_unary(Unary::Narrow(Lane::I32), product), exact)
 }
 
-/// Continues where the int32 `value` stands in `relation` to `bound`; else leaves at `miss`. The
-/// entering-range guard of a loop input (`Lowering::guard_entering_ranges`).
-pub fn guard_int_bound<S: NumericStage>(stage: &mut S, relation: NumberRelation, value: S::Word,
-    bound: i32, miss: S::Miss) -> Option<()> {
-    let bound = stage.i32_constant(bound);
-    let holds = stage.relation(relation, Domain::Int32, value, bound);
-    stage.guard(holds, miss)
-}

@@ -129,7 +129,7 @@ impl Int32<u64> {
     /// `guard` at the interpreter's stage: a tagged value's int32; `None` where it holds none.
     #[inline(always)]
     pub fn checked(value: crate::Value) -> Option<Self> {
-        Self::guard(&mut super::Concrete::new(core::ptr::null()), value.to_bits(), ())
+        Self::guard(&mut super::Concrete::pure(), value.to_bits(), ())
     }
 }
 
@@ -174,7 +174,7 @@ impl Float64<u64> {
     /// `guard` at the interpreter's stage: a tagged value's Number; `None` where it is none.
     #[inline(always)]
     pub fn checked(value: crate::Value) -> Option<Self> {
-        Self::guard(&mut super::Concrete::new(core::ptr::null()), value.to_bits(), ())
+        Self::guard(&mut super::Concrete::pure(), value.to_bits(), ())
     }
 }
 

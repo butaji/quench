@@ -5,6 +5,7 @@
 //! the callee's descriptor owned by the method like a Cranelift body's `direct`), any other call
 //! takes the helper row, and an instruction with no row leaves the body at its PC.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -311,10 +312,9 @@ impl Vm {
             shapes: &[],
         };
         let speculated = widened(generic);
-        // The typed kind each element record observed (`dispatch_fast::typed_element_kind`), from the region's header.
-        let typed: Vec<_> = self.programs.views_in_lane(self.active_program).and_then(|views| views.get(function as usize))
-            .and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .map(|view| (region.header as usize..=region.backedge as usize).map(|pc| crate::dispatch_fast::typed_element_kind(view, pc)).collect())
+        // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
+        let typed: Vec<_> = self.aot_facts_of(program)
+            .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
             .unwrap_or_default();
         let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[], typed: &typed };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
@@ -342,13 +342,13 @@ impl Vm {
     /// fold: the entry checks the receiver's exact shape and link.
     fn class_prototype_of(&self, program: &ResidualProgram, code: &[WideInstruction], (register, instance): (Register, Value), class: u32) -> Option<ClassProto> {
         instance.direct_object_index()?;
-        let receiver = self.object_data(instance)?;
+        let receiver = self.heap_reads().object(instance)?;
         let shape = receiver.exact_shape();
         let link = receiver.proto_link();
         let prototype = Value::direct_object(link.object_granule()?);
-        let data = self.object_data(prototype)?;
+        let data = self.heap_reads().object(prototype)?;
         let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
-        let constructor = self.heap_reads().property_get(data, slot)?;
+        let constructor = self.heap_reads().property_get_ref(data, slot)?;
         let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::User(_, index), .. }) = self.function_record(constructor) else { return None };
         let body = program.function_get(*index as usize)?;
         if !body.is_class_constructor || body.source_span.map(|span| span.start) != Some(class) { return None; }
@@ -363,10 +363,10 @@ impl Vm {
     /// The bits of `object`'s own data property `atom`: `None` for an absent name, or where the shape may hold accessors
     /// (`shape_may_have_accessors`), whose slot is no data value.
     fn own_data_bits(&self, object: Value, atom: Atom) -> Option<u64> {
-        let data = self.object_data(object)?;
+        let data = self.heap_reads().object(object)?;
         if self.shape_may_have_accessors(data.shape()) { return None; }
         let slot = self.shape_slot(data.shape(), atom)?;
-        self.heap_reads().property_get(data, slot).map(|value| value.to_bits())
+        self.heap_reads().property_get_ref(data, slot).map(|value| value.to_bits())
     }
 }
 

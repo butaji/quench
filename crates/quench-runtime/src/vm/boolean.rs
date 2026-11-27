@@ -22,8 +22,9 @@ impl Vm {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Boolean), prototype);
-        self.object_data_mut(prototype)
+        self.heap.object_mut(prototype)
             .expect("primitive prototype")
+            .record_mut_departing()
             .set_boxed_primitive(Value::FALSE);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();

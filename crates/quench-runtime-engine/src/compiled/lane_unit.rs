@@ -10,6 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::body_inlined_activation_in_lane`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Constant, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand, OperandKind, Register, RETURN_REGISTER, WideInstruction};
@@ -85,6 +86,15 @@ pub(crate) struct Unit {
 }
 
 impl Unit {
+    /// The effect row of the whole unit: the join of each instruction's row (`performed`), where an instruction
+    /// names no operation its row is ANY.
+    pub(crate) fn effects(&self) -> quench_runtime::staged::Effects {
+        self.instructions.iter().fold(quench_runtime::staged::Effects::NONE, |row, instruction| {
+            let effects = crate::compiled::performed(instruction).map_or(quench_runtime::staged::Effects::ANY, |operation| operation.effects());
+            row.join(effects)
+        })
+    }
+
     /// `frame` and the frames around it, outermost first: the activations a leave inside it
     /// makes.
     pub(crate) fn chain(&self, frame: usize) -> Vec<usize> {
@@ -581,7 +591,6 @@ impl Emitter {
                         call: pc as u32,
                         target: call.target,
                         callee_register: register(instruction.register_b()),
-                        callee_entry_word: None,
                         receiver: register(instruction.register_c()),
                         window: register(ImmediateLayout::call_window_base(instruction.imm())),
                         arguments: ImmediateLayout::argument_count(instruction.imm()), result: (!returns).then_some(call_result),

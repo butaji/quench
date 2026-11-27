@@ -101,7 +101,7 @@ impl Vm {
         let mut slots = Vec::with_capacity(parameters.len());
         for &key in parameters {
             let key = self.template_probe_key(key)?;
-            let data = self.heap.object_ref(template)?;
+            let data = self.heap.object(template)?;
             let shape = data.shape();
             let slot = self.property_shape_slot(shape, key)?;
             if self.shape_may_have_accessors(shape) && self.slot_attributes(data.record(), slot)?.accessor {
@@ -175,7 +175,7 @@ impl Vm {
                 self.new_array_with_prototype(Vec::new(), prototype)
             } else {
                 // A captured object's shape is its own: its id is renumbered with the others.
-                let (prototype, shape) = (node.prototype, self.heap.object_ref(node.source)?.shape());
+                let (prototype, shape) = (node.prototype, self.heap.object(node.source)?.shape());
                 values.clear();
                 values.extend_from_slice(&node.values);
                 for &(slot, child) in &node.fresh {
@@ -254,7 +254,7 @@ impl Vm {
         if let Some(&(_, paired, index)) = seen.iter().find(|(source, ..)| *source == template) {
             return (paired == witness).then_some(index);
         }
-        let (object, other) = (self.heap.object_ref(template)?, self.heap.object_ref(witness)?);
+        let (object, other) = (self.heap.object(template)?, self.heap.object(witness)?);
         let shape = object.exact_shape();
         let prototype = object.proto();
         if shape != other.exact_shape()
@@ -273,7 +273,7 @@ impl Vm {
         let mut values = Vec::with_capacity(len);
         let mut fresh = Vec::new();
         for slot in 0..len {
-            let (object, other) = (self.heap.object_ref(template)?, self.heap.object_ref(witness)?);
+            let (object, other) = (self.heap.object(template)?, self.heap.object(witness)?);
             let (value, paired) = (self.heap.property_get_ref(object, slot)?, self.heap.property_get_ref(other, slot)?);
             let parameter = parameters.iter().any(|&parameter| parameter as usize == slot);
             if value != paired && !parameter {
@@ -320,7 +320,7 @@ impl Vm {
     fn template_layout_object(&self, value: Value) -> Option<&crate::heap::Object> {
         match self.heap.function(value) {
             Some(function) => Some(&function.object),
-            None => self.heap.object_ref(value).map(|o| o.record()),
+            None => self.heap.object(value).map(|o| o.record()),
         }
     }
 
@@ -329,7 +329,7 @@ impl Vm {
     fn template_record(&self, value: Value) -> bool {
         let is_record = value.direct_object_index().is_some() || value.direct_array_index().is_some();
         is_record
-            && self.heap.object_ref(value).is_some_and(|object| {
+            && self.heap.object(value).is_some_and(|object| {
                 object.is_extensible()
                     && !object.was_used_as_prototype()
                     && !object.record().has_side_descriptors()

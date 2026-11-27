@@ -173,7 +173,7 @@ impl ConcreteString<'_> {
     fn flat(self) -> Option<FlatString<u64>> {
         match self {
             Self::Record { records, value } => {
-                let mut stage = super::Concrete::new(std::ptr::null());
+                let mut stage = super::Concrete::pure();
                 flat_string(&mut stage, records as u64, value.to_bits(), ())
             }
             Self::Units(units) => {
@@ -196,7 +196,7 @@ impl ConcreteString<'_> {
 #[inline(always)]
 pub fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option<Value> {
     let string = string.flat()?;
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     step_string_native_of(&mut stage, StringNative::CharCodeAt { string, index: index.to_bits() }, ()).map(Value::from_bits)
 }
 
@@ -206,7 +206,7 @@ pub fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option
 #[inline(always)]
 pub fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: Value) -> Option<Value> {
     let string = string.flat()?;
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     step_string_native_of(&mut stage, StringNative::CharAt { string, index: index.to_bits(), table: table as u64 }, ()).map(Value::from_bits)
 }
 
@@ -232,7 +232,7 @@ pub fn relative_index_row<S: Stage>(stage: &mut S, index: S::Word, length: S::Wo
 #[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn relative_index(index: i64, length: usize, from_end: bool) -> Option<usize> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     let (inside, position) = relative_index_row(&mut stage, index as u64, length as u64, from_end);
     inside.then_some(position as usize)
 }
@@ -294,7 +294,7 @@ pub fn code_point_units_row<S: Stage>(stage: &mut S, point: S::Word) -> S::Word 
 #[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn push_code_point_units(units: &mut Vec<u16>, point: u32) {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     let packed = code_point_units_row(&mut stage, u64::from(point));
     units.push(packed as u16);
     if packed >> 16 != 0 {
@@ -309,7 +309,7 @@ pub(crate) fn code_point_at(units: Units<'_>, index: usize) -> Option<u32> {
         return None;
     }
     let span = super::spans::concrete_span(units);
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     Some(code_point_at_row(&mut stage, span.form.wide(), span.units, span.length, index as u64) as u32)
 }
 
@@ -568,7 +568,7 @@ mod tests {
     use crate::staged::value::length_value;
     use crate::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
 
-    fn stage() -> Concrete { Concrete::new(std::ptr::null()) }
+    fn stage() -> Concrete { Concrete::pure() }
 
     /// The string rows of `value` on the heap's own records at `index`, as words.
     fn read(heap: &Heap, value: Value, index: Value) -> Option<(Option<u64>, Option<u64>)> {
