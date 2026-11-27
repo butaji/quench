@@ -90,7 +90,7 @@ impl NativeJsProgram {
         self.frozen.as_ref().is_some_and(|frozen| quench_runtime::test_support::invalidation_is_set(&frozen.invalidation))
     }
     fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
-        if !quench_runtime::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
+        if !quench_runtime::DYNAMIC_EXECUTION_ENABLED && program.call_sites.get().is_none() {
             return Err("native program has no frozen call-site descriptions".into());
         }
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {

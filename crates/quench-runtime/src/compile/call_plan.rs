@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use crate::bytecode::{Register, ResidualProgram, Traits};
 use crate::staged::effects::{call_form, Signature};
 pub use crate::staged::effects::{tail_site, CallForm};
-use crate::staged::{Callee, DecodeContext, Invocation};
+use crate::staged::{Arguments, Callee, DecodeContext, Invocation, Receiver};
 use crate::typed_ir::{Cell, Classes, FactKey};
 
 use super::aot_facts::AotFacts;
@@ -61,8 +61,15 @@ pub struct CallPlan {
     /// that property on its class's prototype, which the edge that records the class's header reads
     /// (`layer_hooks::planned_class_recorded`). None for any other plan.
     pub method: Option<u32>,
-    /// The argument count the call passes (`Arguments::count`), which `call_plans` sets for every plan.
+    /// The argument count the call passes (`Arguments::count`), which `call_plans` sets for every plan that is not
+    /// forwarding. A forwarding plan (`forwarding`) passes the caller's own arguments, so its count is not a constant:
+    /// it is the caller's actual argc at entry (the arguments it was called with, not its arity), which the lane reads
+    /// from the caller's frame. `argc` is 0 for such a plan and unused.
     pub argc: u16,
+    /// The `this` register of a forwarding call `f.apply(this, arguments)` (`CallForwardingArguments`): the first
+    /// argument `apply` is passed, which is the callee's `this`. The callee is the function `f` (the receiver of
+    /// `apply`, `forwarding_plan`), called with the caller's own arguments (`argc`). None for any other call.
+    pub forwarding: Option<Register>,
 }
 
 /// The arms of a closed receiver union: each class in `ids` paired with the function `body` names for it
@@ -91,7 +98,7 @@ fn form_of(arms: &[Arm], inlinable: impl Fn(u32) -> bool, signature: impl Fn(u32
 fn single_target(function: u32, miss: Miss, signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
     let arms = vec![Arm { class: None, function }].into_boxed_slice();
     let form = form_of(&arms, inlinable, |function| signatures.of(function));
-    CallPlan { form, arms, miss, tail: false, method: None, argc: 0 }
+    CallPlan { form, arms, miss, tail: false, method: None, argc: 0, forwarding: None }
 }
 
 /// Whether the call at `pc` of `function` is a tail site: `staged::effects::tail_site` of its record's return flag
@@ -138,7 +145,7 @@ fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, 
     let keys: Vec<FactKey> = ids.iter().map(|&class| FactKey::Field { class, instance: true, atom }).collect();
     let miss = miss_of(&keys, |key| facts.live(key));
     let form = form_of(&arms, &inlinable, |function| signatures.of(function));
-    Some(CallPlan { form, arms, miss, tail: false, method: Some(atom), argc: 0 })
+    Some(CallPlan { form, arms, miss, tail: false, method: Some(atom), argc: 0, forwarding: None })
 }
 
 /// The plan of a field access that runs an accessor (`AotFacts::accessor_arms`): its arms are the accessor per class of the
@@ -146,7 +153,7 @@ fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, 
 /// one argument is the stored value of a setter (`setter`), and no argument for a getter.
 fn accessor_plan(setter: bool, arms: &[Arm], signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
     let form = form_of(arms, &inlinable, |function| signatures.of(function));
-    CallPlan { form, arms: arms.into(), miss: Miss::None, tail: false, method: None, argc: u16::from(setter) }
+    CallPlan { form, arms: arms.into(), miss: Miss::None, tail: false, method: None, argc: u16::from(setter), forwarding: None }
 }
 
 /// The plan of the call at `pc` of `caller` whose callee is in `register`, or None where the site keeps its own
@@ -173,6 +180,24 @@ fn register_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32
     Some(single_target(function, Miss::None, signatures, &inlinable))
 }
 
+/// The plan of the forwarding call at `pc` of `caller`, `f.apply(this, arguments)` (`CallForwardingArguments`), which
+/// reaches `f` with the caller's own arguments. Only where `apply` is `Function.prototype.apply` in every function
+/// (`AotFacts::apply_is_builtin`, a closed-world fact): the callee register holds that builtin, so the call's target is
+/// the function its receiver `f` holds, which is the one arm, read off the receiver's settled cell at `pc` (`cell_at`).
+/// The census names no target for the callee register (`apply` is no closure body), so no key is subscribed: the cell's
+/// dependencies are the tier's, as for any register cell. The form is `Framed`, and never inlined: the arguments are the
+/// caller's, whose count only the entry knows, so no inlined body can take them.
+fn forwarding_plan(facts: &AotFacts, caller: u32, pc: u32, invocation: Invocation) -> Option<CallPlan> {
+    let Receiver::Register(receiver) = invocation.receiver else { return None };
+    let Arguments::Window { first: this, .. } = invocation.arguments else { return None };
+    if !facts.apply_is_builtin() {
+        return None;
+    }
+    let function = facts.function_facts(caller).cell_at(pc, receiver)?.ty.body_index()?;
+    let arms = vec![Arm { class: None, function }].into_boxed_slice();
+    Some(CallPlan { form: CallForm::Framed, arms, miss: Miss::None, tail: false, method: None, argc: 0, forwarding: Some(this) })
+}
+
 /// The entry form of a call target `function`: the form its composed signature gives (`call_form`), never inlined,
 /// of the facts of its program (`facts`, None where the program has no solve, whose signature is the top, so
 /// framed). This is the single-target plan's form (`single_target`) without inlining, which is the only form a lane
@@ -184,9 +209,10 @@ pub fn entry_form(facts: Option<&AotFacts>, function: u32) -> CallForm {
 
 /// The plans of every call `function` makes, by pc. A known function's call and a construction (`new`) with
 /// its one constructed function are proven single targets (`Miss::None`); a method call is planned by its name
-/// (`Callee::Method`, `method_plan`); a register callee by the target its key or its cell names (`register_plan`).
-/// A call no plan covers is absent from the map: its site is one the solve did not settle, and the tiers resolve
-/// that site at run time (`Vm::resolve_script_call_target`), with no plan-derived fact.
+/// (`Callee::Method`, `method_plan`); a register callee by the target its key or its cell names (`register_plan`); a
+/// forwarding call by its receiver's target (`forwarding_plan`). A call no plan covers is absent from the map: its site
+/// is one the solve did not settle, and the tiers resolve that site at run time (`Vm::resolve_script_call_target`), with
+/// no plan-derived fact.
 pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Signatures, function: u32, inlinable: impl Fn(u32) -> bool) -> BTreeMap<u32, CallPlan> {
     let decode = DecodeContext::of(program);
     let calls: Vec<(u32, bool, Invocation)> = program.with_record(function as usize, |record| {
@@ -198,6 +224,8 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
     let planned = calls.into_iter().filter_map(|(pc, construct, invocation)| {
         let site_plan = if construct {
             facts.function_facts(function).construct_target(pc).map(|target| single_target(target, Miss::None, signatures, &inlinable))
+        } else if invocation.forwards {
+            forwarding_plan(facts, function, pc, invocation)
         } else {
             match invocation.callee {
                 Callee::Known(known) => Some(single_target(u32::from(known), Miss::None, signatures, &inlinable)),
@@ -206,8 +234,12 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
             }
         };
         site_plan.map(|mut site_plan| {
-            site_plan.tail = tail_of(program, function, pc, invocation.returns, construct, &site_plan.arms);
-            site_plan.argc = invocation.arguments.count();
+            // A forwarding plan is never a tail site: its arguments are the caller's own, which a tail call would replace
+            // with the callee's frame before the callee reads them.
+            if site_plan.forwarding.is_none() {
+                site_plan.tail = tail_of(program, function, pc, invocation.returns, construct, &site_plan.arms);
+                site_plan.argc = invocation.arguments.count();
+            }
             (pc, site_plan)
         })
     });
@@ -220,6 +252,18 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
 mod tests {
     use super::*;
     use crate::typed_ir::Type;
+    use crate::Engine;
+
+    /// The id of the function named `name` in `program`.
+    fn function_named(program: &ResidualProgram, name: &str) -> u32 {
+        let named = |id: u32| program.with_record(id as usize, |function| {
+            function.name.is_some_and(|atom| {
+                let text: &str = program.atoms[atom as usize].as_ref();
+                text == name
+            })
+        });
+        (0..program.function_count() as u32).find(|&id| named(id)).expect("a function with that name")
+    }
 
     #[test]
     fn a_closed_union_of_four_classes_is_four_arms() {
@@ -276,13 +320,71 @@ mod tests {
     }
 
     #[test]
+    fn a_forwarding_call_with_builtin_apply_plans_its_receivers_body_framed_with_the_caller_argc() {
+        let program = Engine::specialize("function f(a) { return a; } function h() { return f.apply(this, arguments); } h(1);", "forwarding.js").unwrap();
+        let facts = crate::compile::aot_facts::analyze(&program);
+        assert!(facts.apply_is_builtin(), "no program stores `apply`, so apply is the builtin");
+        let (f, h) = (function_named(&program, "f"), function_named(&program, "h"));
+        let plans = facts.call_plans(&program, h);
+        let plan = plans.values().find(|plan| plan.forwarding.is_some()).expect("the forwarding call has a plan");
+        assert_eq!(plan.arms.as_ref(), &[Arm { class: None, function: f }]);
+        assert_eq!(plan.form, CallForm::Framed);
+        assert_eq!(plan.argc, 0, "the count is the caller's own at entry");
+        assert!(!plan.tail);
+    }
+
+    #[test]
+    fn a_store_to_apply_in_the_program_plans_no_forwarding_call() {
+        let program = Engine::specialize("var o = {}; o.apply = function (x) { return x; }; function f(a) { return a; } \
+            function h() { return f.apply(this, arguments); } h(1);", "forwarding-store.js").unwrap();
+        let facts = crate::compile::aot_facts::analyze(&program);
+        assert!(!facts.apply_is_builtin());
+        let h = function_named(&program, "h");
+        assert!(facts.call_plans(&program, h).values().all(|plan| plan.forwarding.is_none()));
+    }
+
+    #[test]
     fn a_single_target_plan_names_no_key() {
         let arms = vec![Arm { class: None, function: 7 }].into_boxed_slice();
         let form = form_of(&arms, |_| false, |_| Signature::NEVER);
-        let plan = CallPlan { form, arms, miss: Miss::None, tail: false, method: None, argc: 0 };
+        let plan = CallPlan { form, arms, miss: Miss::None, tail: false, method: None, argc: 0, forwarding: None };
         assert_eq!(plan.form, CallForm::Frameless);
         assert_eq!(plan.arms[0].class, None);
         assert_eq!(plan.miss, Miss::None);
         assert!(!plan.tail);
+    }
+}
+
+/// The selectors of a program's method names: each method atom its call plans name (`CallPlan::method`) gets one dense
+/// number, program-wide, in first-seen order over the functions and their call sites. A method's selector indexes every
+/// class's method vector (`layouts::class_methods`), so the image and the interpreter number a name alike.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selectors {
+    ids: std::collections::BTreeMap<u32, u32>,
+}
+
+impl Selectors {
+    /// The selectors of `program`, from its AOT facts' call plans.
+    pub fn of(program: &ResidualProgram, facts: &AotFacts) -> Self {
+        let mut ids = std::collections::BTreeMap::new();
+        for function in 0..program.function_count() {
+            for (_, plan) in facts.call_plans(program, function as u32) {
+                if let Some(atom) = plan.method {
+                    let next = ids.len() as u32;
+                    ids.entry(atom).or_insert(next);
+                }
+            }
+        }
+        Self { ids }
+    }
+
+    /// The selector of method atom `atom`, where a call plan names it.
+    pub fn get(&self, atom: u32) -> Option<u32> {
+        self.ids.get(&atom).copied()
+    }
+
+    /// How many selectors the program has: the length of each class's method vector.
+    pub fn count(&self) -> usize {
+        self.ids.len()
     }
 }

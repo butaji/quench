@@ -54,6 +54,9 @@ pub use gate::World;
 pub use registers::{RegisterCells, Source};
 pub use scope::constant_type;
 
+/// The length rounds: round 1 solves with no feedback, round 2 with the facts round 1 proved (`length_settle::Feedback`).
+const LENGTH_ROUNDS: usize = 2;
+
 /// The facts of one program, solved in `world`.
 pub struct AotFacts {
     /// The world the facts were solved in: which keys new code can move (`live`).
@@ -101,6 +104,9 @@ pub struct AotFacts {
     /// Whether no index accessor can run for an element access (`gate::index_accessors_absent`): an element access then runs
     /// no guest code for a key that converts to none (`lengths::element_runs_guest_code`).
     pub(crate) index_accessors_absent: bool,
+    /// Whether the property `apply` of every function is `Function.prototype.apply` (`gate::apply_is_builtin`): the callee
+    /// register of a `f.apply(this, arguments)` forwarding call then holds the builtin, which calls `f` with the caller's arguments.
+    pub(crate) apply_builtin: bool,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of an element access (a read or a store) whose base is a typed array of one native kind
@@ -151,6 +157,7 @@ impl AotFacts {
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
             index_accessors_absent: false,
+            apply_builtin: false,
             dependencies: BTreeMap::new(),
             element_views: BTreeMap::new(),
             captures: BTreeMap::new(),
@@ -186,6 +193,12 @@ impl AotFacts {
     /// not live needs no subscription and no recovery: a closed unit has no exits.
     pub fn live(&self, key: crate::typed_ir::FactKey) -> bool {
         self.world.live(key)
+    }
+
+    /// Whether the property `apply` of every function is `Function.prototype.apply` (`AotFacts::apply_builtin`): a closed-world
+    /// fact that a forwarding `f.apply(this, arguments)` call's callee is the builtin.
+    pub fn apply_is_builtin(&self) -> bool {
+        self.apply_builtin
     }
 
     /// Whether no code can be added to the program (`World::Closed`): no key is live, so a unit that
@@ -518,6 +531,18 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
     }
 
+    /// The register the index register `index` is below before the instruction at `pc`, where a comparison that held proves
+    /// `index < bound` (`lengths::refine`). A loop's entry compares the bound's reach with an array's length once (`bound_below`).
+    pub fn bound_below(&self, pc: u32, index: u16) -> Option<u16> {
+        self.facts.lengths.get(&self.function)?.bound_below(pc, index)
+    }
+
+    /// Whether the step at `pc` may resize an array of any class (a call that may write elements, a mutator, guest code, or an
+    /// element store the relations do not prove within its array). Where the solve recorded no lengths, the step may resize.
+    pub fn may_resize_length(&self, pc: u32) -> bool {
+        self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize(pc))
+    }
+
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
     pub(super) fn index_accessors_absent(&self) -> bool {
         self.facts.index_accessors_absent
@@ -548,6 +573,11 @@ impl<'a> FunctionFacts<'a> {
     pub fn may_write_elements_of(&self, pc: u32, array: ElementClass) -> bool {
         let writes = self.site_effects(pc).elements;
         writes == ElementWrites::Any || writes.entries().iter().any(|write| !self.facts.element_classes_distinct(write.class, array))
+    }
+
+    /// Whether the step at `pc` may write the elements of an array of any class (`may_write_elements_of` for every class).
+    pub(crate) fn may_write_any_elements(&self, pc: u32) -> bool {
+        self.site_effects(pc).elements != ElementWrites::Nothing
     }
 
     /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the
@@ -618,20 +648,21 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
 fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (AotFacts, bool) {
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, names: &std::collections::BTreeSet<u32>,
-        types: Option<&types::Types>| -> Vec<FunctionFlow> {
+        types: Option<&types::Types>, feedback: &length_settle::Feedback| -> Vec<FunctionFlow> {
         (0..program.function_count())
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, names, types)))
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, names, types, feedback)))
             .collect()
     };
     // The first pass finds the bindings that hold one closure; the second reads their loads as
     // that closure, so a class object or prototype reached through a binding keeps its identity
     // and its methods prove per class, not per property name. The first pass names no accessor: the names it finds
     // (`accessors::names_of`) are the ones the later passes read.
-    let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None);
+    let none = length_settle::Feedback::default();
+    let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None, &none);
     let accessor_names = accessors::names_of(&first);
     let resolved = Census::of(&first, world).singles();
-    let flows = analyze_typed(&resolved, &accessor_names, None);
+    let flows = analyze_typed(&resolved, &accessor_names, None, &none);
     let census = Census::of(&flows, world);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
@@ -658,32 +689,42 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     // the first pass that changes nothing. A solve that does not settle in `TYPE_PASSES` keeps no type.
     // A pass whose integer range still grows after `WIDENING_ROUNDS` widens it (`Types::widen`), so a counter that
     // climbs settles at int32's span rather than one step a pass.
-    let mut found = types::Types::of(&flows, &facts, &census, &scope).bottom();
-    let mut settled = false;
-    let mut grown = BTreeMap::new();
-    for _ in 0..types::TYPE_PASSES {
-        let next = types::Types::of(&analyze_typed(&resolved, &accessor_names, Some(&found)), &facts, &census, &scope).widen(&found, &mut grown);
-        settled = next == found;
-        found = next;
-        if settled { break; }
-    }
-    if crate::trace::Channel::AotLanes.on() {
-        let name = |id: u32| program.with_record(id as usize, |function| function.name).and_then(|atom| program.atoms.get(atom as usize)).map_or("?", |name| name.as_ref());
-        eprintln!("aot-lanes: types settled {settled}; parameters {:?}", found.parameter_types().iter().filter(|(_, types)| !types.is_empty()).map(|(id, types)| (name(*id), types)).collect::<Vec<_>>());
-    }
-    if crate::trace::Channel::AotLanes.on() {
-        let named = |atom: u32| program.atoms.get(atom as usize).map_or("?", |name| name.as_ref()).to_string();
-        eprintln!("aot-lanes: classes {:?}", found.class_trace().into_iter().map(|(key, class)| (match key { value::Key::Member(atom) => named(atom), other => format!("{other:?}") }, class)).collect::<Vec<_>>());
-    }
-    // A method read off a value whose class the solve found (`crate::typed_ir::Classes`, a field holding instances of one
-    // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
-    // take it from a flow over the settled types.
-    let mut reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>> = BTreeMap::new();
-    let mut field_readers = Readers::new(program);
-    let mut open_escapes = None;
+    // Whether the closed world's assumption holds for the final round's facts (`gate::verify`).
     let mut verified = false;
-    let mut settled_flows = if settled { analyze_typed(&resolved, &accessor_names, Some(&found)) } else { Vec::new() };
-    if settled {
+    // The length facts are solved in rounds (`length_settle::Feedback`). Round 1 solves with none. Round 2 solves again with
+    // the facts round 1 proved (filled allocations, hole-free stores, in-bounds reads), and so re-solves the types too: an element
+    // cell's holes are the stores' and the allocations', so the types the solve reads must see them. A round whose feedback is
+    // the one it solved with is final, so the facts of the last round are the ones its solve read.
+    let mut feedback = length_settle::Feedback::default();
+    for round in 0..LENGTH_ROUNDS {
+        let mut found = types::Types::of(&flows, &facts, &census, &scope).bottom();
+        let mut settled = false;
+        let mut grown = BTreeMap::new();
+        for _ in 0..types::TYPE_PASSES {
+            let next = types::Types::of(&analyze_typed(&resolved, &accessor_names, Some(&found), &feedback), &facts, &census, &scope).widen(&found, &mut grown);
+            settled = next == found;
+            found = next;
+            if settled { break; }
+        }
+        if crate::trace::Channel::AotLanes.on() {
+            let name = |id: u32| program.with_record(id as usize, |function| function.name).and_then(|atom| program.atoms.get(atom as usize)).map_or("?", |name| name.as_ref());
+            eprintln!("aot-lanes: round {round} types settled {settled}; parameters {:?}", found.parameter_types().iter().filter(|(_, types)| !types.is_empty()).map(|(id, types)| (name(*id), types)).collect::<Vec<_>>());
+        }
+        if crate::trace::Channel::AotLanes.on() {
+            let named = |atom: u32| program.atoms.get(atom as usize).map_or("?", |name| name.as_ref()).to_string();
+            eprintln!("aot-lanes: classes {:?}", found.class_trace().into_iter().map(|(key, class)| (match key { value::Key::Member(atom) => named(atom), other => format!("{other:?}") }, class)).collect::<Vec<_>>());
+        }
+        // A round that does not settle keeps the facts of the round before, which solved with its own feedback.
+        if !settled { break; }
+        // A method read off a value whose class the solve found (`crate::typed_ir::Classes`, a field holding instances of one
+        // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
+        // take it from a flow over the settled types.
+        let mut reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>> = BTreeMap::new();
+        let mut field_readers = Readers::new(program);
+        // The maps the settled flows fill by insertion start empty, so a round keeps no entry of the round before.
+        facts.element_views.clear();
+        facts.access_classes.clear();
+        let mut settled_flows = analyze_typed(&resolved, &accessor_names, Some(&found), &feedback);
         for (id, flow) in settled_flows.iter_mut().enumerate() {
             let id = id as u32;
             reads.insert(id, std::mem::take(&mut flow.reads));
@@ -725,19 +766,17 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
             field_readers.scan(program, id, &flow, &facts, &scope);
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
         }
-        open_escapes = Some(escapes::escapes(&settled_flows, &facts, &census, &scope));
+        let open_escapes = escapes::escapes(&settled_flows, &facts, &census, &scope);
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
         facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_functions());
-        if let (Some(openers), Some(escaped)) = (openers, open_escapes.as_ref()) {
-            verified = gate::verify(program, openers, &settled_flows, &facts, &census, escaped);
+        if let Some(openers) = openers {
+            verified = gate::verify(program, openers, &settled_flows, &facts, &census, &open_escapes);
         }
-    }
-    // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
-    let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
-    if settled {
+        // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
+        let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
-        if let Some(escaped) = &open_escapes { field_readers.finish(&facts.cells, escaped); }
+        field_readers.finish(&facts.cells, &open_escapes);
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
         facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
@@ -745,6 +784,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
         facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
+        facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
@@ -752,10 +792,13 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         // the arrays its settled effects may write (`FunctionFacts::may_write_elements_of`).
         let settled_lengths: BTreeMap<u32, length_settle::Settled> = settled_flows.iter().enumerate().map(|(id, flow)| {
             let settled = program.with_record(id, |function| length_settle::settle_function(id as u32, function, flow,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &accessor_names, &found, &facts.function_facts(id as u32)));
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &accessor_names, &found, &facts.function_facts(id as u32), &feedback));
             (id as u32, settled)
         }).collect();
         facts.lengths = settled_lengths;
+        let next = length_settle::Feedback::of(&facts.lengths);
+        if round + 1 == LENGTH_ROUNDS || next == feedback { break; }
+        feedback = next;
     }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());

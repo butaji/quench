@@ -30,16 +30,13 @@ thread_local! {
     /// The execution a watched run is on, which the first input ends (`watch_inputs`). The run
     /// and its clock reads share the thread that watches them.
     static WATCHED_RUN: std::cell::RefCell<Option<crate::ExecutionInterrupt>> = const { std::cell::RefCell::new(None) };
-    /// The heap state a watched run captured at its first input (`store_input_capture`), taken by
-    /// its build (`take_input_capture`).
-    static INPUT_CAPTURE: std::cell::RefCell<Option<Box<crate::vm::activation::FrameRecord>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Starts watching the process's environment inputs (`note_input`), for the rest of the process.
 /// The watched run is `run`: its first input requests its termination (`note_watched_input`), so
-/// the input's handler ends the run there rather than letting the run go on past an input. A core
-/// build arms the edge the same way and captures at the input native's entry instead
-/// (`input_edge_armed`, `store_input_capture`).
+/// the input's handler ends the run there rather than letting the run go on past an input. An input
+/// native's own entry captures instead (`input_edge_armed`): its run returns the caller chain as its
+/// outcome (`JsError::captured`), with no interrupt flag set.
 pub fn watch_inputs(run: crate::ExecutionInterrupt) {
     WATCHED_RUN.with(|watched| *watched.borrow_mut() = Some(run));
     INPUTS_WATCHED.store(true, Ordering::Relaxed);
@@ -50,17 +47,6 @@ pub fn watch_inputs(run: crate::ExecutionInterrupt) {
 #[inline]
 pub fn input_edge_armed() -> bool {
     INPUTS_WATCHED.load(Ordering::Relaxed)
-}
-
-/// Keeps a copy of the chain a watched run captured at its input native's entry, for the build's
-/// consumers. The run itself ends with the chain as its `Captured` exit, not by termination.
-pub fn store_input_capture(chain: Box<crate::vm::activation::FrameRecord>) {
-    INPUT_CAPTURE.with(|captured| *captured.borrow_mut() = Some(chain));
-}
-
-/// The chain a watched run captured at its input (`store_input_capture`), if it reached one.
-pub fn take_input_capture() -> Option<Box<crate::vm::activation::FrameRecord>> {
-    INPUT_CAPTURE.with(|captured| captured.borrow_mut().take())
 }
 
 /// Ends the watched run, if one is watched on this thread.

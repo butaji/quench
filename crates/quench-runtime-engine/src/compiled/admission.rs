@@ -22,10 +22,8 @@ pub(crate) enum Refusal {
     NotAmortized,
     /// The callee may not run inline (`CalleeUse::Inlined`) or frameless (`CalleeUse::Frameless`).
     CalleeNotEligible,
-    /// The unit does not plan from the function's body (`lane_unit::with_trips`).
+    /// The unit does not plan from the function's body (`lane_unit::unit`).
     NoUnit,
-    /// The unit's call bindings are not the ones the plan keeps.
-    InvalidBindings,
     /// An inlined frame of the unit is not admitted.
     FrameNotAdmitted,
     /// The unit has no instruction at the entry header.
@@ -50,8 +48,8 @@ pub(crate) enum Refusal {
 
 impl Refusal {
     /// The report's names, in `slot` order.
-    const NAMES: [&'static str; 18] = [
-        "not-amortized", "callee-not-eligible", "no-unit", "invalid-bindings", "frame-not-admitted",
+    const NAMES: [&'static str; 17] = [
+        "not-amortized", "callee-not-eligible", "no-unit", "frame-not-admitted",
         "no-entry", "compile-bound", "nothing-native", "dependencies",
         "region-too-large", "unsupported-instruction", "register-limit", "capture-limit", "array-limit",
         "field-limit", "field-store-limit", "field-mutation", "array-redefined",
@@ -63,21 +61,20 @@ impl Refusal {
             Self::NotAmortized => 0,
             Self::CalleeNotEligible => 1,
             Self::NoUnit => 2,
-            Self::InvalidBindings => 3,
-            Self::FrameNotAdmitted => 4,
-            Self::NoEntry => 5,
-            Self::CompileBound => 6,
-            Self::NothingNative => 7,
-            Self::Dependencies => 8,
-            Self::RegionTooLarge => 9,
-            Self::UnsupportedInstruction(_) => 10,
-            Self::RegisterLimit => 11,
-            Self::CaptureLimit => 12,
-            Self::ArrayLimit => 13,
-            Self::FieldLimit => 14,
-            Self::FieldStoreLimit => 15,
-            Self::FieldMutation => 16,
-            Self::ArrayRedefined => 17,
+            Self::FrameNotAdmitted => 3,
+            Self::NoEntry => 4,
+            Self::CompileBound => 5,
+            Self::NothingNative => 6,
+            Self::Dependencies => 7,
+            Self::RegionTooLarge => 8,
+            Self::UnsupportedInstruction(_) => 9,
+            Self::RegisterLimit => 10,
+            Self::CaptureLimit => 11,
+            Self::ArrayLimit => 12,
+            Self::FieldLimit => 13,
+            Self::FieldStoreLimit => 14,
+            Self::FieldMutation => 15,
+            Self::ArrayRedefined => 16,
         }
     }
 
@@ -86,7 +83,6 @@ impl Refusal {
         Some(match self {
             Self::NotAmortized => Miss::PlanNotAmortized,
             Self::NoUnit => Miss::PlanNoUnit,
-            Self::InvalidBindings => Miss::PlanInvalidBindings,
             Self::FrameNotAdmitted => Miss::PlanFrameNotAdmitted,
             Self::NoEntry => Miss::PlanNoEntry,
             Self::CompileBound => Miss::PlanCompileBound,

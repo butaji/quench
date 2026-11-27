@@ -48,14 +48,17 @@ pub(crate) static AHEAD_BUILD_ID_MARK: [u8; 32] = {
     mark
 };
 
-/// What names a program: a hash of its source text and every function's registers and opcodes
+/// What names a program: a hash of its string constants and every function's registers and opcodes (never its source
+/// text, which a core image strips when the program cannot observe it)
 /// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
 pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
     let mut hash = mix(FNV_OFFSET, &(super::LaneHelper::COUNT as u32).to_le_bytes());
-    hash = mix(hash, program.source_text().unwrap_or_default().as_bytes());
+    for constant in program.constants.iter() {
+        if let quench_runtime::bytecode::Constant::String(text) = constant { hash = mix(hash, text.as_bytes()); }
+    }
     // Each function as the image lowered it (`lowered_function`): a tier-0 record and its promoted
     // record differ in opcodes, so a program fingerprinted before and after a promotion would not match.
     for index in 0..program.function_count() {
@@ -66,28 +69,19 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     hash
 }
 
-/// The calls the unit of an image's lane body inlines: each call whose target the closed world
-/// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::plan_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
-/// at its call; any other leaves into its own activation, materialized from the unit's frame
-/// (`CallRecovery::Materialize`, the join's inlined leave).
-fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
-    let _ = program;
-    let target = facts.function_facts(caller).call_target(pc);
-    target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
-}
-
 /// The unit of `function`'s lane body under the closed world's call targets (`lane_unit::unit`, its
 /// default budget); `None` where a frame it inlines would leave by making the callee's activation.
-fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option<lane_unit::Unit> {
-    unit_or_refusal(program, function, facts).ok()
+fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts, graph: &quench_runtime::compile::call_graph::CallGraph) -> Option<lane_unit::Unit> {
+    unit_or_refusal(program, function, facts, graph).ok()
 }
 
 /// `unit_of`, or why there is none.
-fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Result<lane_unit::Unit, &'static str> {
+fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts, graph: &quench_runtime::compile::call_graph::CallGraph) -> Result<lane_unit::Unit, &'static str> {
     let body = program.function_get(function as usize).ok_or("no such function")?;
-    let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
-        .ok_or("no lane unit")?;
+    // The unit's callees are the arms of the closed world's call plans, bound by their functions (`CallPlans::targets`).
+    let plans = lane_region::bindings::CallPlans::new(program, Some(facts), Some(graph));
+    let unit = lane_unit::unit(program, Some(graph), function, body, &|caller, pc| plans.targets(caller, pc),
+        &|caller, pc| plans.at(caller, pc), &|callee| program.function_get(callee as usize)).ok_or("no lane unit")?;
     if quench_runtime::trace::Channel::AotLanes.on() {
         let targets: Vec<_> = (0..body.code.len() as u32).filter_map(|pc| facts.function_facts(function).call_target(pc).map(|target| (pc, target))).collect();
         let frames: Vec<_> = unit.frames.iter().map(|frame| (frame.target.function, frame.call)).collect();
@@ -142,25 +136,25 @@ fn rejection_reason(function: u32, rejection: NativeCompileRejection) -> &'stati
 /// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
 /// `None` where it gives no native record.
 #[cfg(feature = "jit")]
-pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
+pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> (Result<LaneImage, &'static str>, Vec<aot_image::CallSite>) {
-    let unit = match unit_or_refusal(program, function, facts) { Ok(unit) => unit, Err(why) => return (Err(why), Vec::new()) };
+    let unit = match unit_or_refusal(program, function, facts, graph) { Ok(unit) => unit, Err(why) => return (Err(why), Vec::new()) };
     // The calls the closed world proves that the unit keeps as calls take records of the lane's own (`lane_call_sites`).
     // The symbols name them as the lowering goes, so the image keeps them whether or not the lane lowers.
     let own = lane_call_sites(&unit, function, facts, calls);
-    let lane = lower_closed_lane(program, function, (facts, frozen), calls, &unit, &own, symbols, target);
+    let lane = lower_closed_lane(program, function, (facts, graph, frozen), calls, &unit, &own, symbols, target);
     (lane, own)
 }
 
 /// `closed_lane_image`'s lowering of `unit` with its own records `own`.
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen), calls: &[aot_image::CallSite],
+fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen), calls: &[aot_image::CallSite],
     unit: &lane_unit::Unit, own: &[aot_image::CallSite], symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
-    let proven = proven_calls(program, unit, function, &sites, facts, symbols);
+    let proven = proven_calls(program, unit, function, &sites, facts, graph, symbols);
     let plans = constructions::construct_plans(program, unit, function, facts, symbols);
     let strings = string_constants(program, unit, symbols);
     let fields = fields::class_fields(program, (unit, function), facts, symbols);
@@ -205,14 +199,14 @@ fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, call
             let named = |site: &aot_image::CallSite| site.function == function && site.pc == record && site.callee == callee;
             if calls.iter().any(named) || sites.iter().any(named) { continue; }
             sites.push(aot_image::CallSite { function, pc: record, callee,
-                record: quench_bjit::call_record::CallRecord { callee: aot_image::unbound_callee(), ..Default::default() } });
+                record: quench_bjit::call_record::CallRecord::default() });
         }
     }
     sites
 }
 
 #[cfg(not(feature = "jit"))]
-pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &ClosedFrozen),
+pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
     _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable, _: &aot_image::ImageTarget,
 ) -> (Result<LaneImage, &'static str>, Vec<aot_image::CallSite>) {
     (Err("ahead image lowering requires the jit feature"), Vec::new())
@@ -329,18 +323,22 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// layout key of its receiver class (`class_recipe`), where the call's plan names one, and whether the plan has no miss.
 #[cfg(feature = "jit")]
 fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], facts: &AotFacts,
-    symbols: &mut SymbolTable) -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
+    graph: &quench_runtime::compile::call_graph::CallGraph, symbols: &mut SymbolTable) -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
     let plans = if calls.is_empty() { BTreeMap::new() } else { facts.call_plans(program, function) };
     (0..unit.origins.len()).filter_map(|pc| {
         let arms: Vec<_> = proven_sites(program, unit, function, calls, pc).into_iter().map(|(site, callee, this)| {
             let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc, callee: site.callee });
             let plan = plans.get(&site.pc);
             let class = plan.and_then(|plan| plan.arms.iter().find(|arm| arm.function == site.callee)).and_then(|arm| arm.class);
-            let layout = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols))
-                .map(|recipe| symbols.class_layout(recipe))
+            let recipe = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols));
+            // The class's layout, keyed by the recipe the instances build.
+            let layout = recipe.map(|recipe| symbols.class_layout(recipe))
                 .and_then(|symbol| match symbol { Symbol::ClassLayout(key) => Some(key), _ => None });
+            // The method's selector: the index of its record in each class's method vector.
+            let selector = plan.and_then(|plan| plan.method).and_then(|atom| symbols.selector(atom));
             let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));
-            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed }
+            let inline = plan.is_some_and(|plan| quench_runtime::vm::tier_policy::arms_inline(plan, graph, program));
+            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed, selector, inline }
         }).collect();
         (!arms.is_empty()).then_some((pc, arms))
     }).collect()
@@ -500,7 +498,9 @@ impl Vm {
             refused("the image holds no lane body for it"); return None;
         };
         let fault_poll = lane.fault_poll;
-        let Some(unit) = unit_of(program, function, images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.world))) else {
+        let facts = images.facts.get_or_init(|| quench_runtime::compile::aot_facts::analyze_as(program, images.image.world));
+        let graph = images.graph.get_or_init(|| quench_runtime::compile::call_graph::CallGraph::of(program, facts));
+        let Some(unit) = unit_of(program, function, facts, graph) else {
             refused("no unit"); return None;
         };
         // The body is linked where it will run: its page- and displacement-relative fields are its
@@ -583,6 +583,39 @@ impl Vm {
         "bound"
     }
 
+
+    /// The `CalleeRecord` address of the closed-set arm of method `method` on class `class`, function `function`, bound to the
+    /// closure `closure` (resolved to `target`) at the class-header edge, for the class's method vector (`set_class_method`).
+    /// The record is the callee's: its words are the closure's, and each indirect call site of the method reads them from
+    /// this vector and keeps its own site words. The record is the one of the first call site of the program that reaches
+    /// the method on the class with this function. `None` where the program has no image, no site reaches the method on
+    /// the class with this function, or the closure's call is not admitted.
+    pub(crate) fn class_method_record(&mut self, code: &ResidualProgram, program: quench_runtime::vm::ProgramId, class: u32, method: u32, function: u32,
+        closure: quench_runtime::Value, target: crate::dispatch_fast::ScriptCallTarget) -> Option<usize> {
+        let facts = self.programs.aot_facts(program)?;
+        let mut sites = Vec::new();
+        for caller in 0..code.function_count() {
+            for (pc, plan) in facts.call_plans(code, caller as u32) {
+                if plan.method != Some(method) { continue; }
+                for arm in plan.arms.iter().filter(|arm| arm.class == Some(class)) {
+                    sites.push((caller as u32, pc, plan.argc, arm.function));
+                }
+            }
+        }
+        let (caller, pc, argc, _) = *sites.iter().find(|site| site.3 == function)?;
+        let images = self.programs.ahead_images(self.active_program, code)?;
+        let live = images.linked.as_ref()?;
+        let key = live.calls.key((caller, pc, function))?;
+        if !live.calls.names(key, closure) {
+            let views = self.programs.views_in_lane(self.active_program)?;
+            let view = views.get(caller as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
+            let mut direct = crate::dispatch_fast::direct_callee_in_lane(self, view, caller, pc as usize, argc, target)?;
+            (direct.method, direct.body) = (None, None);
+            if !admits_proven(code, target.function, &direct) { return None; }
+            live.calls.bind(key, direct, self)?;
+        }
+        live.calls.callee_record(key).map(|address| address as usize)
+    }
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.

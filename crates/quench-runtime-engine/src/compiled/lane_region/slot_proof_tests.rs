@@ -14,7 +14,7 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
-                storage: None, ty, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
+                storage: None, ty, inherited: None, function_shape: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let atoms = quench_runtime::bitset::BitSet::default();
@@ -24,9 +24,9 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
         None => VmFacts::STATIC,
     };
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        facts, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true)
+        facts, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense)
         .unwrap().function
 }
 

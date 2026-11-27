@@ -669,6 +669,11 @@ struct ProgramEntry {
     aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
     /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
     call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
+    /// The program's method selectors (`compile::call_plan::Selectors`), solved once beside `call_graph` (`selectors`).
+    selectors: std::cell::OnceCell<std::sync::Arc<crate::compile::call_plan::Selectors>>,
+    /// Per class layout: the method vector of the class's `CallRecord` addresses by selector, allocated on first write
+    /// (`set_class_method`), each of the selectors' count; `layouts::set_class_methods` holds its address.
+    class_method_vectors: std::cell::RefCell<FxHashMap<u32, Box<[usize]>>>,
     /// Per class (a constructor's function id): the layout id its constructed instances hold, 0 until the first
     /// construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
     class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
@@ -930,6 +935,28 @@ impl ProgramStore {
     pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
         let entry = self.entry(id)?;
         Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
+    }
+
+    /// The method selectors of program `id` (`compile::call_plan::Selectors`), solved on its first call from its AOT facts.
+    pub fn selectors(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::call_plan::Selectors>> {
+        let entry = self.entry(id)?;
+        Some(std::sync::Arc::clone(entry.selectors.get_or_init(|| {
+            let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
+            std::sync::Arc::new(crate::compile::call_plan::Selectors::of(&entry.residual, &facts))
+        })))
+    }
+
+    /// Writes `record` (a `CalleeRecord` address) as the entry of method `selector` in the method vector of class layout
+    /// `layout` of program `id`, allocating the vector zeroed on its first write, and publishes its address to
+    /// `layouts::set_class_methods`. Nothing is written where the program has no selectors.
+    pub fn set_class_method(&self, id: ProgramId, layout: u32, selector: u32, record: usize) {
+        let (Some(count), Some(entry)) = (self.selectors(id).map(|selectors| selectors.count()), self.entry(id)) else { return };
+        let mut vectors = entry.class_method_vectors.borrow_mut();
+        let vector = vectors.entry(layout).or_insert_with(|| vec![0_usize; count].into_boxed_slice());
+        if let Some(slot) = vector.get_mut(selector as usize) {
+            *slot = record;
+        }
+        crate::heap::layouts::set_class_methods(layout, vector.as_ptr() as usize);
     }
 
     /// The call graph of program `id` and its loop-or-cycle facts (`compile::call_graph::CallGraph`), solved on its first
@@ -1462,6 +1489,8 @@ impl ProgramStore {
             js_entry_facts: JsEntryFactsTable::default(),
             aot_facts: std::cell::OnceCell::new(),
             call_graph: std::cell::OnceCell::new(),
+            selectors: std::cell::OnceCell::new(),
+            class_method_vectors: Default::default(),
             class_headers: std::cell::OnceCell::new(),
             class_prototypes: Default::default(),
             planned_targets: Default::default(),

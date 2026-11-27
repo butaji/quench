@@ -2003,6 +2003,25 @@ impl Function {
             && self.handler_at(pc).is_none()
     }
 
+    /// `permits_js_tail_call_at` for the call at `pc`, read from the bit set derived once for every PC of
+    /// the function on its first call (`FunctionCaches::tail_sites`). Every input of the rule is fixed by
+    /// the record, so the bit never changes.
+    #[inline(always)]
+    pub fn tail_site_permitted(&self, pc: u32) -> bool {
+        let bits = self.caches().tail_sites.get_or_init(|| self.derive_tail_sites());
+        bits.get(pc as usize / 64).is_some_and(|word| *word & (1u64 << (pc % 64)) != 0)
+    }
+
+    fn derive_tail_sites(&self) -> Box<[u64]> {
+        let mut bits = vec![0u64; self.code.len().div_ceil(64)].into_boxed_slice();
+        for pc in 0..self.code.len() {
+            if self.permits_js_tail_call_at(pc as u32) {
+                bits[pc / 64] |= 1u64 << (pc % 64);
+            }
+        }
+        bits
+    }
+
     pub fn handler_at(&self, pc: u32) -> Option<Handler> {
         self.handlers
             .iter()
@@ -2667,6 +2686,7 @@ impl Function {
                 suspended_registers,
                 suspended_environment,
                 admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
+                tail_callee: !self.is_async && !self.is_generator,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,
@@ -3404,8 +3424,8 @@ pub(crate) enum LiteralStep {
     Array(u32),
     /// An object of an object site's keys, one value each.
     Object(u32),
-    /// The value of the JSON text at this byte of the program's source: a data script's
-    /// literal (`compile::data_literal`), which the source holds in place of its tree.
+    /// The value of the JSON text in this string constant: a data script's literal
+    /// (`compile::data_literal`), whose tree the program holds as the text instead.
     Json(u32),
 }
 
@@ -3792,102 +3812,28 @@ pub struct ProgramSource {
     /// that asks for one and shared by every copy of the source, so a copy (an error's captured
     /// call sites, a first-call chunk's program) copies no index.
     pub(crate) layout: std::cell::OnceCell<std::sync::Arc<SourceLayout>>,
-    /// Complete static call-printing facts for native images. An unset cell
-    /// leaves the dynamic error-path renderer in charge; an empty table is final.
-    pub call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
 }
 
 impl ProgramSource {
-    /// Project admitted facts with a retained wrapper body, without reparsing it.
-    pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
-        self.text = text;
-        self.base = base;
-        self.layout.take();
-        if let Some(sites) = self.call_sites.take() {
-            self.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.iter().filter_map(|site| {
-                let offset = site.offset.checked_sub(base)?;
-                if offset as usize >= self.text.len() { return None; }
-                let expression = site.expression.and_then(|span| Some(SourceSpan {
-                    start: span.start.checked_sub(base)?, end: span.end.checked_sub(base)?,
-                })).filter(|span| span.end as usize <= self.text.len());
-                Some(CallSiteDescription { offset, construct: site.construct, callee: site.callee.clone(), expression })
-            }).collect::<Vec<_>>()));
-        }
-    }
-
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        // `layout` is a memo of `text`, made again on the first position read. A binary without
-        // the source frontend writes the call sites its source froze, if any (`source_routes`).
-        if let Some(routes) = crate::compile::source_routes::routes() {
-            (routes.freeze_call_sites)(self);
-        }
-        let Self { text, typescript, base, line_offset, column_offset, layout: _, call_sites } = self;
+        // `layout` is a memo of `text`, made again on the first position read.
+        let Self { text, typescript, base, line_offset, column_offset, layout: _ } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
-        writer.bool(call_sites.get().is_some());
-        if let Some(sites) = call_sites.get() {
-            writer.len(sites.len());
-            for site in sites.iter() {
-                writer.u32(site.offset);
-                writer.bool(site.construct);
-                writer.str(&site.callee);
-                writer.bool(site.expression.is_some());
-                if let Some(span) = site.expression {
-                    writer.u32(span.start);
-                    writer.u32(span.end);
-                }
-            }
-        }
     }
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let mut source = Self {
+        Ok(Self {
             text: SourceText::read_snapshot(reader)?,
             typescript: reader.bool()?,
             base: reader.u32()?,
             line_offset: reader.u32()?,
             column_offset: reader.u32()?,
-            call_sites: Default::default(),
             layout: Default::default(),
-        };
-        if reader.bool()? {
-            let count = reader.len()?;
-            let mut sites = Vec::with_capacity(count);
-            for _ in 0..count {
-                sites.push(CallSiteDescription {
-                    offset: reader.u32()?, construct: reader.bool()?, callee: reader.str()?.into(),
-                    expression: if reader.bool()? {
-                        Some(SourceSpan { start: reader.u32()?, end: reader.u32()? })
-                    } else { None },
-                });
-            }
-            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
-            source.validate_call_sites().map_err(crate::snapshot::SnapshotError)?;
-        }
-        Ok(source)
-    }
-
-    pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
-        if let Some(sites) = self.call_sites.get() {
-            let mut previous = None;
-            for site in sites.iter() {
-                let key = (site.offset, site.construct);
-                if previous.is_some_and(|old| old >= key) || !self.text.is_char_boundary(site.offset as usize) || site.callee.is_empty() {
-                    return Err("invalid frozen call-site descriptions".into());
-                }
-                if let Some(span) = site.expression
-                    && (span.start > site.offset || span.end < site.offset || span.start >= span.end
-                        || !self.text.is_char_boundary(span.start as usize)
-                        || !self.text.is_char_boundary(span.end as usize)
-                        || self.text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}']))
-                    { return Err("invalid frozen call-site expression".into()); }
-                previous = Some(key);
-            }
-        }
-        Ok(())
+        })
     }
 
     pub(crate) fn byte_offset(&self, position: SourcePosition) -> Option<u32> {
@@ -4008,13 +3954,43 @@ impl CacheSiteCounts {
     }
 }
 
-/// The part of a program that a native reads at run time: its atom names and its constants. A
-/// native that needs nothing else of the program takes `&ProgramRecord`; a `&ResidualProgram`
-/// passes there by deref coercion, so the program's own fields are reached as before.
-#[derive(Clone, Debug)]
+/// The part of a program that a native reads at run time: its atom names, its constants and the
+/// descriptions of its failed calls. A native that needs nothing else of the program takes
+/// `&ProgramRecord`; a `&ResidualProgram` passes there by deref coercion, so the program's own
+/// fields are reached as before. None of it needs the program's source text.
+#[derive(Clone, Debug, Default)]
 pub struct ProgramRecord {
     pub atoms: AtomTable,
     pub constants: append_vec::AppendVec<Constant>,
+    /// The callee each call names in its TypeError, frozen (`call_printer::freeze_call_sites`).
+    /// Empty for a program without source; unset until frozen.
+    pub call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
+    /// The source offset of each call instruction, by function and pc (`freeze_native_diagnostics`),
+    /// so a call's description is found without the program's position table.
+    pub(crate) call_pcs: std::cell::OnceCell<Box<[CallPc]>>,
+}
+
+/// A call instruction's source offset, sorted by function and pc (`ProgramRecord::call_pcs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CallPc {
+    pub(crate) function: u32,
+    pub(crate) pc: u32,
+    pub(crate) offset: u32,
+}
+
+/// What an image keeps of a program beyond its atoms, constants and call-site descriptions.
+/// Derived from the realm a program reaches (`ReachableRealm`), never configured.
+#[derive(Clone, Copy, Debug)]
+pub struct ImageRetention {
+    /// The source text: `Function.prototype.toString`, and the line and column a position names.
+    pub source_text: bool,
+    /// The pc-to-position table: a stack trace's entries.
+    pub stack_positions: bool,
+}
+
+impl ImageRetention {
+    /// Everything: what the compiler and the snapshot keep.
+    pub const ALL: Self = Self { source_text: true, stack_positions: true };
 }
 
 impl std::ops::Deref for ResidualProgram {
@@ -4138,17 +4114,66 @@ impl ResidualProgram {
         self.source.as_ref().map(|source| source.text.as_ref())
     }
 
-    /// The source from compiled byte `start` on, where a data script's literal starts
-    /// (`LiteralStep::Json`); `None` when the program keeps no text there.
-    pub(crate) fn data_literal_text(&self, start: u32) -> Option<&str> {
-        let source = self.source.as_ref()?;
-        let text: &str = source.text.as_ref();
-        text.get(start.checked_sub(source.base)? as usize..)
-    }
-
-    /// Resolve source-derived native error descriptions before publication.
+    /// Resolves the source-derived native error descriptions before publication: their callees
+    /// (`freeze_call_sites`) and the source offset of every call (`freeze_call_pcs`).
     pub fn freeze_native_diagnostics(&self) {
         crate::vm::freeze_call_sites(self);
+        crate::vm::freeze_call_pcs(self);
+    }
+
+    /// Moves the kept text to a wrapper body at `base` of the text the program compiled from
+    /// (`ProgramSource`), and rebases the call descriptions to it, dropping those outside it.
+    pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
+        let Some(source) = &mut self.source else { return };
+        source.text = text;
+        source.base = base;
+        source.layout.take();
+        let length = source.text.len();
+        let rebase = |offset: u32| offset.checked_sub(base).filter(|offset| (*offset as usize) < length);
+        if let Some(sites) = self.record.call_sites.take() {
+            let rebased = sites.iter().filter_map(|site| {
+                let expression = site.expression.and_then(|span| Some(SourceSpan {
+                    start: span.start.checked_sub(base)?, end: span.end.checked_sub(base)?,
+                })).filter(|span| span.end as usize <= length);
+                Some(CallSiteDescription { offset: rebase(site.offset)?, construct: site.construct, callee: site.callee.clone(), expression })
+            });
+            self.record.call_sites = std::cell::OnceCell::from(rebased.collect::<Vec<_>>().into());
+        }
+        if let Some(pcs) = self.record.call_pcs.take() {
+            let rebased = pcs.iter().filter_map(|call| Some(CallPc { offset: rebase(call.offset)?, ..*call }));
+            self.record.call_pcs = std::cell::OnceCell::from(rebased.collect::<Box<[CallPc]>>());
+        }
+    }
+
+    /// The call-site descriptions and call offsets are sorted and well formed. Their offsets
+    /// and expressions are checked against the text when the program keeps it.
+    pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
+        let text = self.source.as_ref().map(|source| source.text.as_ref());
+        let on_boundary = |offset: u32| text.is_none_or(|text| text.is_char_boundary(offset as usize));
+        if let Some(sites) = self.record.call_sites.get() {
+            let mut previous = None;
+            for site in sites.iter() {
+                let key = (site.offset, site.construct);
+                if previous.is_some_and(|old| old >= key) || !on_boundary(site.offset) || site.callee.is_empty() {
+                    return Err("invalid frozen call-site descriptions".into());
+                }
+                if let Some(span) = site.expression {
+                    let Some(text) = text else { return Err("invalid frozen call-site expression".into()) };
+                    if span.start > site.offset || span.end < site.offset || span.start >= span.end
+                        || !text.is_char_boundary(span.start as usize)
+                        || !text.is_char_boundary(span.end as usize)
+                        || text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}'])
+                    { return Err("invalid frozen call-site expression".into()); }
+                }
+                previous = Some(key);
+            }
+        }
+        if let Some(pcs) = self.record.call_pcs.get()
+            && pcs.windows(2).any(|pair| (pair[0].function, pair[0].pc) >= (pair[1].function, pair[1].pc))
+        {
+            return Err("invalid frozen call offsets".into());
+        }
+        Ok(())
     }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
@@ -4429,7 +4454,12 @@ impl ResidualProgram {
             .sum()
     }
     pub fn write_binary(&self, path: &std::path::Path) -> Result<(), String> {
-        binary::write_program(self, path)
+        self.write_binary_retaining(path, ImageRetention::ALL)
+    }
+
+    /// `write_binary`, keeping of the program only what `retention` names.
+    pub fn write_binary_retaining(&self, path: &std::path::Path, retention: ImageRetention) -> Result<(), String> {
+        binary::write_program(self, path, retention)
     }
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
@@ -4469,7 +4499,7 @@ impl ResidualProgram {
     /// This program as a snapshot keeps it (`crate::snapshot`): its own atom ids, which the
     /// snapshot's atom table keeps, and its source written apart (`SourceText`).
     pub(crate) fn encode_snapshot(&self) -> Vec<u8> {
-        binary::encode_snapshot_program(self)
+        binary::encode_snapshot_program(self, ImageRetention::ALL)
     }
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the

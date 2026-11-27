@@ -84,16 +84,16 @@ impl Vm {
     pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
         crate::staged::effects::tail_site(
             i.returns_from_frame(),
-            p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32),
+            p.function(self.frames[f].function as usize).tail_site_permitted(pc.saturating_sub(1) as u32),
         )
     }
 
     /// Whether a tail call at `pc` of frame `f` reuses the frame for `callee`: the call is a tail site
-    /// (`js_tail_call_allowed`) and its callee is an ordinary body, which `prepare_user_tail` can bind over the
-    /// frame. A generator or async callee keeps its own activation.
+    /// (`js_tail_call_allowed`) and the callee's call plan says it is an ordinary body (`CallPlan::tail_callee`),
+    /// which `prepare_user_tail` can bind over the frame. A generator or async callee keeps its own activation.
     #[inline(always)]
     pub(super) fn tail_call_reuses_frame(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize, callee: &crate::bytecode::Function) -> bool {
-        self.js_tail_call_allowed(p, f, i, pc) && !callee.is_async && !callee.is_generator
+        self.js_tail_call_allowed(p, f, i, pc) && callee.call_plan(p).tail_callee
     }
 
     /// Starts a plain or array-spread call of an eligible same-realm user function as an

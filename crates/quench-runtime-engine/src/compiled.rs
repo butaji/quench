@@ -117,6 +117,7 @@ pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
 pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
+pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
 #[cfg(feature = "jit")]
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
@@ -1461,20 +1462,11 @@ pub(crate) struct ScalarConstructPlan {
     pub(crate) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
 }
 
-/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: a closure
-/// the VM made, or in an ahead image the `Symbol::HeapValue` key of the closure the closed world
-/// proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
+/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: the `Symbol::HeapValue` key of
+/// the closure the closed world proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PlanCallee {
-    Live(Value),
     Image(u32),
-}
-
-impl PlanCallee {
-    /// The closure, where the VM made it.
-    pub(crate) fn live(self) -> Option<Value> {
-        match self { Self::Live(callee) => Some(callee), Self::Image(_) => None }
-    }
 }
 
 /// Where a field of a `ScalarConstructPlan` takes its value.
@@ -1548,6 +1540,9 @@ pub(crate) struct VmFacts<'a> {
     /// its Number registers are entry types (`int_inputs::solved_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
+    /// The call graph of the program a lane body lowers (`ProgramStore::call_graph`), which the inlining rule
+    /// (`tier_policy::inlines`) reads to decide the callees a call plan's arms inline; None where no program is.
+    pub(crate) graph: Option<&'a quench_runtime::compile::call_graph::CallGraph>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
@@ -1566,7 +1561,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1574,7 +1569,7 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
 }
 
@@ -3457,16 +3452,11 @@ unsafe extern "C" fn truthy_in_lane(vm: u64, _residual: u64, bits: Value) -> u64
 /// Admit a bound slot's write domain before any guest effect or raw store.
 unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
-    let raw_double = domain & RAW_DOUBLE_WRITES != 0;
-    let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
+    let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    u64::from(vm.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
+    u64::from(vm.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
 }
-
-/// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
-/// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
-pub(crate) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
@@ -10321,7 +10311,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+            &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
@@ -10395,7 +10385,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| matches!(quench_runtime::staged::Operation::<u64, ()>::of(*i),
                 Some(quench_runtime::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+                &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
             let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
@@ -10422,7 +10412,7 @@ mod tests {
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
             assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
-            assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
+            assert!(vm.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
             assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
@@ -10629,8 +10619,7 @@ mod tests {
             "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
             "nested-poll-binding.js").unwrap();
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
-            &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
+        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = frame_in_lane();
         // The real outer landing must survive an inner trampoline overwriting it.

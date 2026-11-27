@@ -45,10 +45,10 @@ impl LaneView {
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, looped: None, called: self.called_by_bodies(), caller: self }), recompiles, stuck, 0)
+                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, looped: None, called: self.called_by_bodies(), caller: self }), recompiles, stuck, 0)
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
-                (work(crate::compiled::LaneBodyWork::Poll(pending, self)), recompiles, stuck, looks.saturating_add(1)),
+                (work(crate::compiled::LaneBodyWork::Poll(pending)), recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
         *body = self.body_after(outcome, quench_runtime::vm::tier_policy::body_tier_in_lane(), entry, recompiles, stuck, looks);
@@ -81,7 +81,7 @@ impl LaneView {
     }
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
-    /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
+    /// flight is what it waits on.
     fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: quench_runtime::jit_mode::Tier, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
@@ -92,7 +92,6 @@ impl LaneView {
         }
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
-                self.tier().history.set(LaneBodyHistory { shrinks: crate::compiled::pending_lane_ref(&*pending).shrinks(), ..self.tier().history.get() });
                 let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(self.tiers.lane_body.compile_poll_interval);
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }

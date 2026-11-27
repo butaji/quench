@@ -17,7 +17,7 @@
 //! and `stop` end a run at a host operation before it runs, and a core probe (`Probe`,
 //! `core_rest::probe`) ends its run at the input the runtime notes, and makes no output of its own.
 //! What a build keeps is the state before its first input: a core probe's input native captures the
-//! frames that called it (`clock::take_input_capture`), and `finish` reports that capture.
+//! frames that called it, and the run ends with them as its `Captured` exit (`vm::exit::Exit`).
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -125,8 +125,8 @@ impl Question {
 pub(crate) type HeldOperations = (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>, Vec<u16>);
 
 /// What a build-time run left: its effects in order; a question it asked with no answer
-/// assumed, which a run per answer specializes; a dynamic input it read, named; or the caller
-/// chain captured at its first input (`clock::take_input_capture`, C5 D1c).
+/// assumed, which a run per answer specializes; or a dynamic input it read, named. A captured
+/// caller chain is the run's own exit (`vm::exit::Exit::Captured`), not a residual.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
     /// The run's effects up to its first wait for input, the runtime there as a snapshot, and
@@ -134,8 +134,6 @@ pub(crate) enum Residual {
     Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>, HeldOperations),
     Question(Question),
     Dynamic(String),
-    /// The run ended at an input native's entry: the frames that called it, parked there.
-    Captured(Box<quench_runtime::vm::activation::FrameRecord>),
 }
 
 /// Makes this process's entry run a build-time evaluation, which assumes each of `answers`.
@@ -264,9 +262,6 @@ pub(crate) fn finish() -> Residual {
     }
     if let Some(question) = state.choice.take() {
         return Residual::Question(question);
-    }
-    if let Some(chain) = quench_runtime::clock::take_input_capture() {
-        return Residual::Captured(chain);
     }
     let effects = std::mem::take(&mut state.effects);
     match state.rest.take() {

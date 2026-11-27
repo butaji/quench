@@ -17,7 +17,7 @@ fn region(source: &str, left: bool) -> ir::Function {
 /// `region` over the element `views`.
 fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let at = |class: Class| -> Vec<usize> { unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().class().eq(&class)).map(|(pc, _)| pc).collect() };
@@ -25,7 +25,7 @@ fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &generic, &BTreeMap::new(), &[], &*isa, &[], Coverage::PrefixFrom(header), Completion::Body, views, true).expect("a loop region").function
+        &generic, &BTreeMap::new(), &[], &*isa, &[], Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
 }
 
 /// The instructions of `function`'s loop blocks.

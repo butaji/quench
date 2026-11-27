@@ -43,7 +43,6 @@ fn policies_name_their_tables_and_page_release() {
         memory_first.surviving_young_budget(0, SURVIVAL_SCALE, false),
         memory_first.young_budget(0)
     );
-    assert!(throughput.maximum_cap_backoff > memory_first.maximum_cap_backoff);
 }
 
 #[test]
@@ -59,10 +58,10 @@ fn full_collection_follows_old_growth_or_the_allocation_cap_under(pacing: Genera
     // table's minimum interval.
     let growth = pacing.old_growth.of(live).max(pacing.minimum_old_growth);
     let cap = pacing.allocation_cap.of(live).max(pacing.minimum_allocation_cap);
-    assert!(!pacing.full_due(live, live + growth - 1, 0, 0));
-    assert!(pacing.full_due(live, live + growth, 0, 0));
-    assert!(!pacing.full_due(live, live, cap - 1, 0));
-    assert!(pacing.full_due(live, live, cap, 0));
+    assert!(!pacing.full_due(live, live + growth - 1, 0));
+    assert!(pacing.full_due(live, live + growth, 0));
+    assert!(!pacing.full_due(live, live, cap - 1));
+    assert!(pacing.full_due(live, live, cap));
     assert_eq!(pacing.young_budget(0), pacing.minimum_young);
     // A live set whose young share lies between the minimum and the maximum budget, in a
     // table whose budget may grow with the live set.
@@ -111,9 +110,6 @@ fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutco
         live_weight_after_full: previous_live,
         allocated,
         since_full: allocated,
-        resident_at_start: 0,
-        resident_live: 0,
-        since_previous_full: 0,
         aged: AgedFates::default(),
     }
 }
@@ -210,29 +206,6 @@ fn promotions_that_live_on_keep_the_first_age_and_memory_first_never_ages() {
 }
 
 #[test]
-fn unproductive_full_collections_back_off_the_allocation_cap_up_to_the_table_limit() {
-    for policy in MemoryPolicy::ALL {
-        let pacing = policy.table();
-        let mut state = PacingState::default();
-        let live = 1 << 20;
-        // Full collections that keep everything they were expected to keep reclaim nothing.
-        let unproductive = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 0) };
-        for _ in 0..=pacing.maximum_cap_backoff {
-            pacing.plan(&mut state, unproductive);
-        }
-        assert_eq!(state.cap_backoff, pacing.maximum_cap_backoff);
-        let cap = pacing.allocation_cap.of(live).max(pacing.minimum_allocation_cap);
-        let backed_off = cap << pacing.maximum_cap_backoff;
-        assert!(!pacing.allocation_cap_reached(live, backed_off - 1, state.cap_backoff));
-        assert!(pacing.allocation_cap_reached(live, backed_off, state.cap_backoff));
-        // A productive one restores the cap.
-        let productive = CollectionOutcome { live_weight: 0, ..unproductive };
-        pacing.plan(&mut state, productive);
-        assert_eq!(state.cap_backoff, 0);
-    }
-}
-
-#[test]
 fn high_young_survival_switches_to_full_collections_and_probes_back() {
     for policy in MemoryPolicy::ALL {
         high_young_survival_switches_to_full_collections_and_probes_back_under(policy.table());
@@ -254,7 +227,7 @@ fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing
     let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
     assert_eq!(state.regime(&pacing), Regime::FullOnly);
     // The next full collection keeps the interval measured from the last full one.
-    let interval = pacing.old_sizing.headroom(&state.old_generation).of(3 * live / 2) - live / 2;
+    let interval = pacing.headroom.of(3 * live / 2) - live / 2;
     assert_eq!(next, NextCollection { threshold: interval.max(pacing.minimum_young), full: true });
     // After `probe_interval` full collections, a minor probes survival again.
     let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };
@@ -269,7 +242,7 @@ fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing
 }
 
 #[test]
-fn aging_turning_off_resets_the_full_collection_back_off() {
+fn aging_turning_off_restores_the_table_promotion_age() {
     let pacing = MemoryPolicy::Throughput.table();
     let live = 1 << 14;
     let mut state = PacingState::default();
@@ -277,23 +250,12 @@ fn aging_turning_off_resets_the_full_collection_back_off() {
     let freed = AgedFates { died: 9, promoted: 1 };
     pacing.plan(&mut state, CollectionOutcome { aged: freed, ..minor(live, live, 1 << 14) });
     assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
-    // Fulls finding nothing the minors had not freed back the cap off.
-    for _ in 0..pacing.maximum_cap_backoff {
-        pacing.plan(&mut state, full_after_promoting(live, 0, 0));
-    }
-    assert_eq!(state.cap_backoff, pacing.maximum_cap_backoff);
-    // Aged survivors outliving their second minor turn aging off and drop the back-off, and
-    // the full right after, which finds those promotions living, does not raise it again.
+    // Aged survivors outliving their second minor turn aging off.
     let outliving = AgedFates { died: 1, promoted: 9 };
     for _ in 0..2 {
         pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, 1 << 14) });
     }
     assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
-    assert_eq!(state.cap_backoff, 0);
-    pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
-    assert_eq!(state.cap_backoff, 0);
-    pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
-    assert_eq!(state.cap_backoff, 1);
 }
 
 #[test]

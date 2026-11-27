@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 /// `source`'s function 1 lowered ahead and compiled to an image, with its caller registers.
 fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let program = quench_runtime::Engine::specialize(source, "ahead-image.js").unwrap();
-    let unit = lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
     let image = quench_runtime::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).unwrap();
@@ -141,10 +141,10 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
     for source in WIDER {
         let program = quench_runtime::Engine::specialize(source, "ahead-wider.js").unwrap();
         let id = program.function_count() - 1;
-        let unit = lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
+        let unit = lane_unit::unit(&program, None, id as u32, program.function(id), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
         let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).expect(source);
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).expect(source);
         let image = quench_runtime::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).expect(source);

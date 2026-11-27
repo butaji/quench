@@ -13,12 +13,12 @@ pub(crate) struct DirectFacts {
     pub(crate) validity: u64,
     pub(crate) facts: CellFacts,
     /// The caller's call record and base, and the callee's function: the header words (`CallRecord::call`,
-    /// `caller_base`, `packed`).
+    /// `caller_base`, and `CalleeRecord::function` with the site's `CallRecord::packed`).
     pub(crate) call: u64,
     pub(crate) caller_base: u64,
     pub(crate) function: u32,
     pub(crate) captures: u64,
-    /// The callee's closure environment and captures pointer (`CallRecord::env`, `capture`).
+    /// The callee's closure environment and captures pointer (`CalleeRecord::env`, `capture`).
     pub(crate) env: u64,
     pub(crate) capture: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
@@ -36,7 +36,7 @@ pub(crate) struct DirectFacts {
     pub(crate) closed: bool,
     /// The address of the callee's `DirectCallee`, which the body owns (`Callees::owned`, moved into the
     /// published method or region whole, so the address holds): the native header's descriptor word
-    /// (`CallRecord::descriptor`), as the u-jit's `push_native` writes it. Zero where none is known yet
+    /// (`CalleeRecord::descriptor`), as the u-jit's `push_native` writes it. Zero where none is known yet
     /// (an AOT record before its binding, `aot_image::bound`), which the row refuses to the helper.
     pub(crate) descriptor: u64,
 }

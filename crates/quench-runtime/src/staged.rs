@@ -72,6 +72,7 @@ mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub mod division;
 pub mod math;
+pub mod power;
 pub(crate) mod int_math;
 mod names;
 pub mod protocol_literals;
@@ -274,7 +275,7 @@ pub use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub use region::Access;
 #[allow(unused_imports)]
-pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_global_field_hit, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub use ic::{HINTED_FORM, concrete_global_field_hit, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 #[allow(unused_imports)]
 pub use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 

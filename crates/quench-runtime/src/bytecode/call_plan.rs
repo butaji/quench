@@ -41,6 +41,7 @@ call_plan_bits!(
     suspended_registers,
     suspended_environment,
     admits_direct_eval,
+    tail_callee,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -109,6 +110,9 @@ pub struct CallPlan {
     /// and the eval promotes the window's environment into the activation's record, which owns
     /// the eval's variable environment (`Vm::eval_owner`).
     pub admits_direct_eval: bool,
+    /// An ordinary body (neither async nor a generator), which a proper tail call binds over the caller's
+    /// frame (`Vm::tail_call_reuses_frame`); a suspending body keeps its own activation.
+    pub tail_callee: bool,
 }
 
 impl CallPlan {

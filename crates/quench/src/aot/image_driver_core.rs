@@ -67,14 +67,15 @@ fn start_state() -> Result<Box<Rest>, String> {
 fn dump_state() -> Result<(), String> {
     let mut rest = fresh_state()?;
     quench_runtime::clock::watch_inputs(rest.runtime.execution_interrupt_handle());
-    {
+    // The run ends at its input with the caller chain as its outcome, taken before anything
+    // allocates (the chain is not rooted in flight).
+    let outcome = {
         let Rest { runtime, program, .. } = &mut *rest;
-        // The run ends at its input, which is the error here; the chain it kept is what matters.
-        let _ = runtime.execute_restored(program.residual());
-    }
-    match quench_runtime::clock::take_input_capture() {
-        Some(chain) => rest.resume = Some(chain),
-        None => rest = fresh_state()?,
+        runtime.execute_restored(program.residual())
+    };
+    match outcome {
+        Err(quench_runtime::vm::exit::Exit::Captured(chain)) => rest.resume = Some(chain),
+        _ => rest = fresh_state()?,
     }
     // The dump keeps the realm the closed world reaches: the closure of the program over the
     // global names the build recorded and the natives this image keeps (`close`), and the chain.

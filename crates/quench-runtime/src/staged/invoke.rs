@@ -21,7 +21,7 @@
 use super::plan::{CallEntry, CalleeKind, DirectPlan, Identity, NativeId, WordList};
 use super::region::Region;
 use super::property::get_field;
-use super::protocol::{bind_this_with, complete_call, fill_call, guard_received};
+use super::protocol::{bind_this_dynamic, bind_this_with, complete_call, fill_call, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup};
@@ -86,6 +86,20 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     /// (`call_room`) rather than fixing them in the plan; `None` for the plan's.
     #[inline(always)]
     fn call_fill(&self) -> Option<u16> {
+        None
+    }
+
+    /// The callee's window size where the frame reads it at run time (an indirect callee's record): the admission and the
+    /// fill take it in place of the plan's `registers`. `None` for the plan's.
+    #[inline(always)]
+    fn call_registers_dynamic(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
+    /// The callee's sloppiness where the frame reads it at run time: a word true where the callee is sloppy, in place of
+    /// the plan's `sloppy` (`callee_this`). `None` for the plan's.
+    #[inline(always)]
+    fn call_sloppy_dynamic(&mut self, _stage: &mut S) -> Option<S::Word> {
         None
     }
 
@@ -322,6 +336,13 @@ pub fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, 
     let receiver = receiver_word(stage, frame, file, miss, site.receiver)?;
     callee_word(stage, frame, file, miss, (site, plan, Some(receiver)))?;
     let this = plan.bound.map_or(receiver, |bound| stage.constant(bound.this));
+    if let Some(flag) = frame.call_sloppy_dynamic(stage) {
+        let sloppy = stage.ne_imm(flag, 0_u64);
+        let binder = &mut *frame;
+        let this = bind_this_dynamic(stage, this, sloppy, |stage: &mut S| binder.call_global(stage).unwrap_or_else(|| stage.constant(0)), miss)?;
+        frame.call_this_bound(stage, this, miss)?;
+        return Some(this);
+    }
     let binder = &mut *frame;
     let global = plan.sloppy.map(|global| move |stage: &mut S| binder.call_global(stage).unwrap_or_else(|| stage.constant(global)));
     let this = bind_this_with(stage, this, global, miss)?;
@@ -355,6 +376,18 @@ pub fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file:
     Some(())
 }
 
+/// `fill_arguments` where the callee's window has `words` registers at run time (`CallFrame::call_registers_dynamic`): the
+/// call's arguments are its window's, with no bound prefix and no words the frame holds; else `None`.
+pub(super) fn fill_arguments_dynamic<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
+    (site, plan): (&Invocation, &DirectPlan), words: S::Word) -> Option<()> {
+    if plan.bound.is_some() || frame.call_words().is_some() { return None; }
+    let Arguments::Window { first, count } = site.arguments else { return None };
+    let arguments = stage.add_imm(file, word_bytes(first));
+    let undefined = stage.constant(Value::UNDEFINED.to_bits());
+    stage.fill_window_dynamic(top, undefined, arguments, count, words);
+    Some(())
+}
+
 /// How a direct call ended its step: the callee returned the word, or the frame handed the call to
 /// the callee's activation (`CallFrame::call_hand_over`), whose control the step ends in.
 enum Direct<W, C> {
@@ -375,7 +408,10 @@ fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fra
     if let Some(control) = frame.call_hand_over(stage, this, room) {
         return Some(Direct::Activated(control));
     }
-    fill_arguments(stage, frame, file, room.top, (site, &plan, frame.call_fill().unwrap_or(plan.registers)))?;
+    match frame.call_registers_dynamic(stage) {
+        Some(words) => fill_arguments_dynamic(stage, frame, file, room.top, (site, &plan), words)?,
+        None => fill_arguments(stage, frame, file, room.top, (site, &plan, frame.call_fill().unwrap_or(plan.registers)))?,
+    }
     let entered = frame.call_enter(stage, this, room)?;
     let receiver = constructs.then_some(this);
     let value = complete_call(stage, entered.status, entered.word, receiver, plan.returned, entered.unfinished)?;

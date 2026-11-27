@@ -138,12 +138,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The semantic type the lowering's state holds of the register: a static fact.
     fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
-    /// The register's float64 view (`operand_number`): a Number by its fact, so no test runs.
-    fn stored_number(&mut self, stage: &mut Emit<'b, 'c>, register: Register, miss: ir::Block) -> Option<ir::Value> {
-        if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) { return None; }
-        super::frame::operand_number(stage.builder, self.registers, self.state, self.constants, quench_runtime::bytecode::Operand::register(register), miss).map(quench_runtime::staged::Float64::word)
-    }
-
     fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
         let entry = self.entry().or(self.table_entry)?;
         Some(headers::object_table_base(stage.builder, entry, self.payload))
@@ -285,10 +279,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         self.loop_slot_store(stage, site, value, miss)
-    }
-
-    fn entry_slot_raw(&self) -> bool {
-        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| super::number_domains::is_double(slot.domain))
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not

@@ -462,7 +462,7 @@ use this_binding::ThisBinding;
 pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
 pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, planned_inline_quick_in_lane, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
-pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, scalar_construct_plan, construct_plan_holds};
+pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, construct_plan_holds};
 use accessor_protocol::AccessorCall;
 pub(crate) mod list_calls;
 pub(crate) mod loop_runs;
@@ -1253,7 +1253,7 @@ const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 #[quench_macros::ext(ScriptCallTargetOps1)]
 impl ScriptCallTarget {
     /// The closure environment and captures pointer its activation's window holds
-    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CalleeRecord::env`, `capture`).
     #[inline(always)]
     pub(crate) fn context_words(&self) -> (u64, u64) {
         (self.env.to_bits(), self.capture.expose_provenance() as u64)
@@ -2839,12 +2839,11 @@ const STORE_INLINE: usize = OWN_FORMS.len() + 12;
 
 /// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
 /// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
-/// `HINTED_FORM` reads the hint layout's own bits.
-const OWN_FORMS: [u32; 9] = {
-    use quench_runtime::staged::TAGGED_SLOTS;
+/// `HINTED_FORM` reads the hint layout's own bits. Every slot word is the one `Value` word, so
+/// each form is its storage form alone.
+const OWN_FORMS: [u32; 6] = {
     use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    [HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
-        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS]
+    [HINTED_FORM, INLINE_FORM, NARROW_FORM, 0, EXTRAS_FORM, EXTRAS_FORM | INLINE_FORM]
 };
 
 
@@ -3054,9 +3053,7 @@ macro_rules! own_sites {
     ($each:ident) => {
         [$each!(own_site(true, 0)), $each!(own_site(false, 0)), $each!(own_site(true, 1)), $each!(own_site(false, 1)),
             $each!(own_site(true, 2)), $each!(own_site(false, 2)), $each!(own_site(true, 3)), $each!(own_site(false, 3)),
-            $each!(own_site(true, 4)), $each!(own_site(false, 4)), $each!(own_site(true, 5)), $each!(own_site(false, 5)),
-            $each!(own_site(true, 6)), $each!(own_site(false, 6)), $each!(own_site(true, 7)), $each!(own_site(false, 7)),
-            $each!(own_site(true, 8)), $each!(own_site(false, 8))]
+            $each!(own_site(true, 4)), $each!(own_site(false, 4)), $each!(own_site(true, 5)), $each!(own_site(false, 5))]
     };
 }
 
@@ -4647,19 +4644,6 @@ impl Vm {
     #[inline(always)]
     fn cross_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
         self.cross_call_index(callee).map(|index| &self.lane_stack.cross_targets[index] as *const ScriptCallTarget)
-    }
-
-    /// Whether `callee` activates as `function` in place, in the active program, with an
-    /// ordinary `this`: the facts an inlined frame's recovery relies on
-    /// (`body_inlined_activation_in_lane`), admitted once when its body is published; a
-    /// lifecycle edge retires the body before they can expire.
-    pub(crate) fn inlined_target_admitted_in_lane(&mut self, code: &ResidualProgram, callee: Value, function: u32) -> bool {
-        self.resolve_script_call_target(code, callee).is_some_and(|target| target.program() == self.active_program
-            && target.function == function
-            && target.entry.activates_registers_only()
-            // An arrow that reads none of its maker's bindings has no receiver to bind.
-            && (target.this_binding.binds_receiver() || (target.this_binding == ThisBinding::Lexical
-                && !quench_runtime::bytecode::arrow_chain_reads_implicit_bindings(code, function))))
     }
 
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
@@ -6456,7 +6440,7 @@ script_handler! {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
             // Later runs of the site try the plan first. The site notes its callee, which a body
-            // reads to keep the receiver as its field values (`scalar_construct_plan`).
+            // reads to keep the receiver as its field values.
             vm.note_site_callee(unsafe { &(*ip).call_link }, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 {

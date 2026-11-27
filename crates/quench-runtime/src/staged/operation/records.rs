@@ -85,10 +85,10 @@ impl OperationOperationRecordsExt for Operation<u64, ()> {
         instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericUnary
     }
 
-    /// Whether `instruction` is a call through its callee register (`Call`, including the eval
-    /// forms that decode to no operation), which an inlined unit plans and admits as a call.
+    /// Whether `instruction` is a call through its callee register and a window of arguments (`Call`, and
+    /// `CallForwardingArguments`, whose window the same record names), which an inlined unit plans and admits as a call.
     fn is_plain_call(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::Call
+        matches!(instruction.op(), Op::Call | Op::CallForwardingArguments)
     }
 
     /// Whether `instruction` is an ordinary call through its callee register, with a window or a

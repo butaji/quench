@@ -180,7 +180,7 @@ fn number_operands(number: &NumberOperation) -> Vec<Operand> {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Relation { left, right, .. }
         | NumberOperation::RelationValue { left, right, .. } | NumberOperation::Bitwise { left, right, .. }
         | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
-        | NumberOperation::Imul { left, right, .. } => vec![left, right],
+        | NumberOperation::Imul { left, right, .. } | NumberOperation::Power { base: left, exponent: right, .. } => vec![left, right],
         NumberOperation::Unary { source, .. } | NumberOperation::BitwiseNot { source, .. } | NumberOperation::Math { source, .. } => vec![source],
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![Operand::register(source)],
         NumberOperation::IntCase { .. } => Vec::new(),

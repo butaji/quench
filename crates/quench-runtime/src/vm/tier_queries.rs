@@ -21,6 +21,11 @@ impl Vm {
     #[inline(always)]
     pub fn collection_due(&self) -> bool { self.heap.should_collect() }
 
+    /// Whether byte charges made a collection due (`Heap::byte_due`): what a back-edge poll
+    /// tests (DESIGN 4.7), so a poll services only debt that allocation in the loop made.
+    #[inline(always)]
+    pub fn byte_due(&self) -> bool { self.heap.byte_due() }
+
     /// The function record of `value`, a closure, native or bound function (`Heap::function`): a tier
     /// reads a callee's kind, environment and program through it.
     #[inline(always)]
@@ -127,11 +132,11 @@ impl Vm {
     #[inline(always)]
     pub fn mark_prototype(&mut self, prototype: Value) { self.heap.mark_prototype(prototype) }
 
-    /// Admits the writes of `shape`'s `slot` as `writes` (`Heap::admit_slot_writes_as`), before a tier
+    /// Admits the writes of `shape`'s `slot` as `writes` (`Heap::admit_slot_writes`), before a tier
     /// stores raw words of that type.
     #[inline(always)]
-    pub fn admit_slot_writes_as(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type, raw_double: bool) -> bool {
-        self.heap.admit_slot_writes_as(shape, slot, writes, raw_double)
+    pub fn admit_slot_writes(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type) -> bool {
+        self.heap.admit_slot_writes(shape, slot, writes)
     }
 
     /// The elements of the record array `value` for an in-place store of `stored`, unlogged
@@ -240,8 +245,6 @@ heap_reads! {
     fn set_entries(value: Value) -> Option<&'a crate::heap::Entries<Value>>;
     /// Whether `value` is a symbol (`Heap::is_symbol`).
     fn is_symbol(value: Value) -> bool;
-    /// Whether `shape`'s `slot` holds raw doubles (`Heap::slot_holds_raw_doubles`).
-    fn slot_holds_raw_doubles(shape: u32, slot: usize) -> bool;
     /// A v128 cell's bytes (`Heap::v128`).
     fn v128(value: Value) -> Option<[u8; crate::wasm::V128_BYTES]>;
     /// The object part of a function receiver (`Heap::function_receiver`).

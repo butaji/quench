@@ -771,3 +771,27 @@ fn an_open_world_has_no_union() {
     let facts = analyze(&program);
     assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none());
 }
+
+#[test]
+fn a_read_of_a_filled_array_below_its_length_takes_no_undefined() {
+    let program = program("function f(n, k) { var a = new Array(n); for (var i = 0; i < n; i++) a[i] = 0; if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the fill loop writes every element of the array");
+}
+
+#[test]
+fn a_read_of_an_unfilled_array_below_its_length_keeps_undefined() {
+    let program = program("function f(n, k) { var a = new Array(n); if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "no element of the array is written, so a read may find a hole");
+}
+
+#[test]
+fn a_fill_loop_that_stops_short_of_the_length_keeps_the_holes() {
+    let program = program("function f(n, k) { var a = new Array(n); for (var i = 0; i < n - 1; i++) a[i] = 0; if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the last element is never written, so a read may find a hole");
+}

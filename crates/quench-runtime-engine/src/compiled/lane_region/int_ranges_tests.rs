@@ -10,13 +10,13 @@ fn lowered(source: &str, name: &str) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "int-ranges.cjs").unwrap();
     let caller = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-    let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
+    let unit = super::super::lane_unit::unit_planned(&program, None, caller as u32, program.function(caller),
         &|_, _| Vec::new(), &|id| program.function_get(id as usize)).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
-        &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).expect("loop region");
+        &[], Coverage::Full, Completion::Body, ElementViews::Dense).expect("loop region");
     cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
     region.function
 }

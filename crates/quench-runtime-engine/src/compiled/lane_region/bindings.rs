@@ -14,13 +14,16 @@ use quench_runtime::compile::call_plan::{call_plans, Arm, CallPlan, Miss};
 pub(crate) struct CallPlans<'a> {
     program: &'a quench_runtime::ResidualProgram,
     facts: Option<&'a AotFacts>,
+    /// The program's call graph, which decides the callees a plan's arms may inline (`lane_unit::inlines_whole`).
+    graph: Option<&'a quench_runtime::compile::call_graph::CallGraph>,
     functions: std::cell::RefCell<std::collections::BTreeMap<u32, std::collections::BTreeMap<u32, CallPlan>>>,
 }
 
 impl<'a> CallPlans<'a> {
-    /// The plans of `program`, from `facts` (the program's AOT facts), none computed yet.
-    pub(crate) fn new(program: &'a quench_runtime::ResidualProgram, facts: Option<&'a AotFacts>) -> Self {
-        Self { program, facts, functions: Default::default() }
+    /// The plans of `program`, from `facts` (the program's AOT facts) and `graph` (its call graph), none computed yet.
+    pub(crate) fn new(program: &'a quench_runtime::ResidualProgram, facts: Option<&'a AotFacts>,
+        graph: Option<&'a quench_runtime::compile::call_graph::CallGraph>) -> Self {
+        Self { program, facts, graph, functions: Default::default() }
     }
 
     /// The plan of the call at `pc` of `function`, if a plan covers it.
@@ -30,11 +33,19 @@ impl<'a> CallPlans<'a> {
         plans.get(&pc).cloned()
     }
 
+    /// The callees the call at `pc` of `function` reaches, as its plan names them: one target per arm, bound by its
+    /// function (`CalleeBinding::Function`), which the plan's miss guards. None where no plan covers the call.
+    pub(crate) fn targets(&self, function: u32, pc: u32) -> Vec<crate::compiled::CallTarget> {
+        self.at(function, pc).into_iter().flat_map(|plan| plan.arms.into_vec())
+            .map(|arm| crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Function, function: arm.function })
+            .collect()
+    }
+
     /// Every plan of `function` (`call_plans`), with inlinability from the program's bodies (`inlines_whole`).
     fn plans_of(&self, function: u32) -> std::collections::BTreeMap<u32, CallPlan> {
         let Some(facts) = self.facts else { return Default::default() };
         let Some(signatures) = facts.signatures() else { return Default::default() };
-        let inlinable = |callee: u32| super::super::lane_unit::inlines_whole(self.program, callee);
+        let inlinable = |callee: u32| super::super::lane_unit::inlines_whole(self.graph, self.program, callee);
         call_plans(self.program, facts, signatures, function, &inlinable)
     }
 }

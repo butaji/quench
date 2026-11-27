@@ -261,7 +261,7 @@ impl Vm {
         self.frames[f].pc_is_resume = true;
         let callee_function = p.function(function_index as usize);
         let proper_tail = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            i.returns_from_frame() && !callee_function.is_async && !callee_function.is_generator
+            i.returns_from_frame() && callee_function.call_plan(p).tail_callee
         } else {
             self.tail_call_reuses_frame(p, f, i, pc, callee_function)
         };

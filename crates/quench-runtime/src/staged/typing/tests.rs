@@ -140,6 +140,14 @@ fn math_functions_are_nan_for_a_nan_argument_and_sqrt_for_a_negative_one() {
 }
 
 #[test]
+fn rounding_an_integer_range_keeps_the_range() {
+    for operation in [FloatUnary::Floor, FloatUnary::Ceil, FloatUnary::Round, FloatUnary::Trunc] {
+        assert_eq!(math(operation, range(-3, 7)), range(-3, 7));
+        assert_eq!(math(operation, Type::NOT_NAN_NUMBER), Type::NOT_NAN_NUMBER, "a non-integer rounds to an integer, unbounded here");
+    }
+}
+
+#[test]
 fn max_and_min_are_nan_only_where_an_operand_is() {
     assert_eq!(extreme(true, Type::NOT_NAN_NUMBER, range(0, 3)), Type::NOT_NAN_NUMBER);
     assert_eq!(extreme(true, Type::NUMBER, range(0, 3)), Type::NUMBER, "Math.max(NaN, 1)");
