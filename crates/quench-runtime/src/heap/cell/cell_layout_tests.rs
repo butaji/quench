@@ -32,6 +32,7 @@ fn native_array_layout_is_derived_from_the_current_storage_types() {
 #[test]
 fn native_object_layout_is_derived_from_the_current_storage_types() {
     assert_eq!(NATIVE_OBJECT_RECORD_SIZE, std::mem::size_of::<OrdinaryRecord>());
+    assert_eq!(NATIVE_OBJECT_RECORD_SIZE, crate::staged::layout_offsets::OBJECT_RECORD_BYTES);
     assert_eq!(NATIVE_OBJECT_RECORD_ALIGN, std::mem::align_of::<Object>());
     assert_eq!(
         NATIVE_OBJECT_LAYOUT_OFFSET,

@@ -696,7 +696,7 @@ fn emit_js_cached_field_slot(
 ) -> (ir::Value, ir::Value) {
     use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
+    use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_of, plain_payload, proto_link, proto_object_record_id};
     use quench_runtime::staged::region::Region;
     use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
@@ -711,7 +711,10 @@ fn emit_js_cached_field_slot(
     }
 
     let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
-        .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
+        .unwrap_or_else(|| {
+            let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
+            object_slots::ObjectHeader::prove(builder, base, records, class_base, None, fallback)
+        });
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
@@ -767,8 +770,9 @@ fn emit_js_cached_field_slot(
         builder.switch_to_block(holder_block);
         let mut stage = object_slots::emit(builder);
         let link = proto_link(&mut stage, object);
-        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = object_record_at(&mut stage, records, id);
+        // The link names the prototype's stub granule (R4-B2b, option B): the record is reached by the hop.
+        let granule = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = object_record_of(&mut stage, records, granule);
         let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);
         let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
         stage.guard(same_holder, fallback);
@@ -960,7 +964,6 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// object the binding checked once, and only the tables are tested.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
     use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
-    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
@@ -968,25 +971,31 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
         properties: builder.declare_var(types::I64),
     };
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
+    let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
     let (found, done) = (builder.create_block(), builder.create_block());
-    let mut stage = object_slots::emit(builder);
+    // The payload is the stage's, so the record hop's class base reads the dispatch head (`Table::ClassSpace`).
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default() };
     let none = stage.raw_const(Lane::I32, i64::from(quench_runtime::vm::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
     let outside = stage.raw_const(Lane::I8, 0);
     stage.builder.def_var(receiver.shape, none);
     stage.builder.def_var(receiver.inline, outside);
     stage.builder.def_var(receiver.object, null);
-    let record_id = stage.raw_unary(Unary::Narrow(Lane::I32), this);
-    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, record_id, layout.record_capacity as i64);
+    // The direct object's granule must name a cell of the class space; its cell's header then names the record.
+    let granule = stage.raw_unary(Unary::Narrow(Lane::I32), this);
+    let granule = stage.raw_unary(Unary::ZeroExtend(Lane::I64), granule);
+    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, granule, i64::from(quench_runtime::staged::layout_offsets::CLASS_SPACE_GRANULES));
     let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
+    let has_classes = stage.raw_compare_imm(Relation::NotEqual, class_base, 0);
     let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
     let ok = if trusted { in_range } else {
         let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
         stage.raw_binary(Binary::And, object, in_range)
     };
     let ok = stage.raw_binary(Binary::And, ok, has_records);
+    let ok = stage.raw_binary(Binary::And, ok, has_classes);
     let ok = stage.raw_binary(Binary::And, ok, has_properties);
     stage.branch_if(ok, (found, &[]), (done, &[]));
     stage.builder.switch_to_block(found);
@@ -3465,7 +3474,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
         match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
             Some(id) => {
-                let object = vm.heap_reads().object_record_by_id(id.raw());
+                let object = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(id));
                 if object.plain_storage_start().is_some() { StoreStorage::Arena }
                 else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
                 else { StoreStorage::OtherRecord }
@@ -4150,6 +4159,7 @@ impl JsStepDispatch {
             head: JsStepHead {
                 loop_entry: 0,
                 array_record_base: 0, collection_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
+                class_base: 0,
                 object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
@@ -4232,6 +4242,7 @@ impl JsStepDispatch {
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
         self.array_cursor = vm.heap_reads().native_array_cursor();
         self.object_record_base = vm.heap_reads().object_record_base().map_or(0, |base| base as usize);
+        self.class_base = vm.heap_reads().class_space_base();
         self.function_record_base = vm.heap_reads().function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap_reads().array_record_base().map_or(0, |base| base as usize);
         self.collection_record_base = vm.heap_reads().collection_record_base().map_or(0, |base| base as usize);
@@ -4519,8 +4530,7 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         if cache.holder != NO_FIELD_HOLDER {
             if cache.receiver != object.exact_shape() {
                 "prototype-receiver-shape-miss"
-            } else if let Some(record) = object.proto_link().object_record_id() {
-                let holder = vm.heap_reads().object_record_by_id(record);
+            } else if let Some(holder) = object.proto_link().object_granule().and_then(|granule| vm.heap_reads().object_record(quench_runtime::Value::direct_object(granule))) {
                 if holder.exact_shape() != cache.holder {
                     "prototype-holder-shape-miss"
                 } else if holder.record().inline_properties().is_some() {

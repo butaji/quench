@@ -3051,6 +3051,7 @@ impl Lowering<'_, '_> {
         }
         let mut admitted = vec![None; count + 1];
         let mut records = None;
+        let mut classes = None;
         for owner in owners.iter() {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             admitted[owner] = Some(if owner == count {
@@ -3068,7 +3069,9 @@ impl Lowering<'_, '_> {
                 // An unwritten register holds its entry value at either start, in the file.
                 let base = self.registers_base;
                 let bits = self.raw_load(Lane::I64, regions::frame(), base, register_offset(owner as Register));
-                ObjectRecord::prove(&mut self.builder, bits, records, None, exit)
+                let class_base = *classes.get_or_insert_with(|| emit_js_payload_word(&mut self.builder,
+                    self.payload, std::mem::offset_of!(JsStepDispatch, head.class_base)));
+                ObjectRecord::prove(&mut self.builder, bits, records, class_base, None, exit)
             });
         }
         admitted
