@@ -341,6 +341,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
+    report["retained_mechanisms"] = json!(audit.footprint.retained_mechanisms);
     let dumps = super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
