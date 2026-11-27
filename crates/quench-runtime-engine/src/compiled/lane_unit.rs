@@ -424,6 +424,14 @@ impl Planner<'_, '_> {
     }
 }
 
+/// Whether `function` inlines whole into a lane unit: its code renames (`lowerable`) and fits the longest
+/// body a lane inlines. The inline form of a call plan's arm of this function (`call_plans`).
+pub(crate) fn inlines_whole(program: &quench_runtime::ResidualProgram, function: u32) -> bool {
+    let Some(callee) = program.function_get(function as usize) else { return false };
+    let code = decoded(callee);
+    code.len() <= super::tier_policy::STATIC_ROWS.lane_body.max_inlined_instructions && lowerable(&code)
+}
+
 /// Whether every instruction of an inlined callee renames, and one of them completes it (a
 /// multi-instruction completion or a returning call).
 fn lowerable(code: &[WideInstruction]) -> bool {

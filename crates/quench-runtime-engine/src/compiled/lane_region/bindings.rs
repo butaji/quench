@@ -1,28 +1,60 @@
 //! The admission of an inlined callee bound by its function (`CalleeBinding::Function`):
-//! the VM's cached in-loop call target answers inline, its binding helper otherwise; in an AOT
-//! image whose closed world proves the call's target (`AotFacts::call_target`), nothing: the fact
-//! is a dependency of the image where its world can change it (`closed_call`).
+//! the VM's cached in-loop call target answers inline, its binding helper otherwise; a call whose
+//! call plan (`compile::call_plan`) names exactly its target admits with no compare, the plan's
+//! miss deciding what retires the code (`plan_call`).
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
+use quench_runtime::compile::aot_facts::AotFacts;
+use quench_runtime::compile::call_plan::{call_plans, Arm, CallPlan, Miss};
 
-impl Lowering<'_, '_> {
-    /// Whether the closed world proves that inlined `frame`'s call always calls its target: its
-    /// admission then compares nothing. The block holds the fact under the image's invalidation word
-    /// (`hold_stable`), read once, never per call; a closed world has no word to read (`fact_may_change`).
-    pub(crate) fn closed_call(&mut self, state: &mut State, exit: ir::Block, frame: usize) -> bool {
-        let proved = self.closed_proves(frame);
-        if proved { self.hold_stable(state, exit); }
-        proved
+/// The call plans of a lowered function and of every function its unit inlines, by function and pc
+/// (`call_plans`). Empty where the program's facts or their signatures did not settle.
+#[derive(Default)]
+pub(crate) struct CallPlans(std::collections::BTreeMap<u32, std::collections::BTreeMap<u32, CallPlan>>);
+
+impl CallPlans {
+    /// The plans of `function` and the functions `unit` inlines, from the program's facts and signatures.
+    pub(crate) fn of(program: &quench_runtime::ResidualProgram, facts: Option<&AotFacts>, function: u32, unit: &super::super::lane_unit::Unit) -> Self {
+        let Some(facts) = facts else { return Self::default() };
+        let Some(signatures) = facts.signatures() else { return Self::default() };
+        let inlinable = |callee: u32| super::super::lane_unit::inlines_whole(program, callee);
+        let functions: std::collections::BTreeSet<u32> = std::iter::once(function)
+            .chain(unit.frames.iter().map(|frame| frame.target.function)).collect();
+        Self(functions.into_iter().map(|callee| (callee, call_plans(program, facts, signatures, callee, &inlinable))).collect())
     }
 
-    /// Whether the closed world proves inlined `frame`'s target (`closed_call`), which no entry admits either.
-    pub(crate) fn closed_proves(&self, frame: usize) -> bool {
-        let Some(closed) = self.vm.facts else { return false };
+    /// The plan of the call at `pc` of `function`, if a plan covers it.
+    pub(crate) fn at(&self, function: u32, pc: u32) -> Option<&CallPlan> {
+        self.0.get(&function)?.get(&pc)
+    }
+}
+
+impl Lowering<'_, '_> {
+    /// The miss of inlined `frame`'s call when its plan names exactly the frame's target as its one arm, with
+    /// no class: `Miss::None` where no key it read can move, else the key whose edge retires the code. None where
+    /// the plan names another target, a class arm, or no plan covers the call.
+    pub(crate) fn planned_target(&self, frame: usize) -> Option<Miss> {
         let call = self.unit.frames[frame];
+        if call.target.callee != CalleeBinding::Function { return None; }
         let caller = call.parent.map_or(self.function_id, |parent| self.unit.frames[parent].target.function);
-        call.target.callee == CalleeBinding::Function && closed.function_facts(caller).proven_call_target(call.call) == Some(call.target.function)
+        let plan = self.plans.at(caller, call.call)?;
+        match &*plan.arms {
+            [Arm { class: None, function }] if *function == call.target.function => Some(plan.miss),
+            _ => None,
+        }
+    }
+
+    /// Whether inlined `frame`'s call admits its target with no compare (`planned_target`). Where no key it read
+    /// can move, the block holds that under the image's invalidation word (`hold_stable`), read once, never per call.
+    /// Where a key is live, the block subscribes it (`StableUses::cells`), and an edge that moves it retires the code.
+    pub(crate) fn plan_call(&mut self, state: &mut State, exit: ir::Block, frame: usize) -> bool {
+        match self.planned_target(frame) {
+            Some(Miss::None) => { self.hold_stable(state, exit); true }
+            Some(Miss::Edge(key)) => { self.stable.cells.insert(key); true }
+            None => false,
+        }
     }
 
     pub(crate) fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {

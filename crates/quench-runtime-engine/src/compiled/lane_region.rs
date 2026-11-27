@@ -616,6 +616,9 @@ pub(crate) struct Lowering<'a, 'f> {
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
+    /// The call plans of the lowered function and of its inlined callees (`bindings::CallPlans`): each call
+    /// site's arms and miss decide its admission.
+    plans: bindings::CallPlans,
     /// The Stable facts the code folded, each a code dependency of its publication.
     stable: stable::StableUses,
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
@@ -2090,6 +2093,7 @@ pub(crate) fn lower(
         poll_latches: super::SecondaryMap::new(),
         shared_headers,
         global_reads,
+        plans: bindings::CallPlans::of(program, vm.facts, function_id, unit),
         vm,
         stable: Default::default(),
         generic,
@@ -2854,7 +2858,7 @@ impl Lowering<'_, '_> {
                     }
                     if call.alternative.is_none()
                         && numeric
-                        && !self.closed_proves(frame)
+                        && self.planned_target(frame).is_none()
                         && let Some(root) = aliases[usize::from(call.callee_register)] {
                         let binding = (root, call.target);
                         if !admitted.contains(&binding) {
@@ -3775,7 +3779,7 @@ impl Lowering<'_, '_> {
             CalleeBinding::Function => (
                 if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
                     || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame))
-                    || self.closed_call(state, exit, frame) { None }
+                    || self.plan_call(state, exit, frame) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
                 Some(Type::function_body(inlined.target.function)),
             ),
