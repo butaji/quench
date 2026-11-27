@@ -1558,7 +1558,7 @@ pub(crate) struct LaneStackEntry {
     pub(crate) values_end: usize,
 }
 
-/// The addresses a lane run's direct calls push through (`Vm::lane_stack_storage`), bound once per run
+/// The addresses a lane run's direct calls push through (`Vm::stack_storage_in_lane`), bound once per run
 /// (`BodyRunContext::bind_run`). Each names a field of the `LaneStack` the `Vm` owns, or a table mapped
 /// once for the stack, so none moves while the run's `LaneStack` stands: a reallocation changes the
 /// values' or the records' buffer, never their top words.
@@ -6963,6 +6963,7 @@ script_handler! {
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
 fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: bool, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
+    if !now && own.counted_between_attempts(false) { return true; }
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -8796,10 +8797,10 @@ impl Vm {
     }
 
     /// The words a lane run's direct calls push onto (`compiled::DirectCallee`), bound together: the
-    /// per-entry words (`stack_entry_in_lane`) and the storage's addresses (`lane_stack_storage`).
+    /// per-entry words (`stack_entry_in_lane`) and the storage's addresses (`stack_storage_in_lane`).
     pub(crate) fn stack_words_in_lane(&mut self, frames: usize) -> LaneStackWords {
         let entry = self.stack_entry_in_lane(frames);
-        LaneStackWords { entry, storage: self.lane_stack_storage() }
+        LaneStackWords { entry, storage: self.stack_storage_in_lane() }
     }
 
     /// The per-entry words a lane run's direct calls push onto (`stack_words_in_lane`): the end of the
@@ -8836,7 +8837,7 @@ impl Vm {
 
     /// The addresses of the lane stack's storage a lane run's direct calls push through
     /// (`LaneStackStorage`). Unlike `stack_entry_in_lane`, this changes nothing.
-    pub(crate) fn lane_stack_storage(&self) -> LaneStackStorage {
+    pub(crate) fn stack_storage_in_lane(&self) -> LaneStackStorage {
         let stack = &self.lane_stack;
         // SAFETY: reads the records' top word's address alone; no reference into them is made.
         let records = unsafe { &*stack.activation_records.get() };

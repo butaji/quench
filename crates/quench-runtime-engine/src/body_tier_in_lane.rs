@@ -257,9 +257,11 @@ impl LaneView {
     /// over `RECURRENT_TICKS` warming entries of the program: an entry that runs long (a driver whose callees
     /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
     /// bodies run from the lane until it specializes and inlines them. Read every
-    /// `RECURRENT_ENTRIES`th entry.
+    /// `RECURRENT_ENTRIES`th entry. A body the model priced and refused (`body_unpaid`) looks again at its
+    /// warm-up's doublings alone: re-priced every 16 entries, a hot recursive callee spent ~1,500 Ir a call on attempts.
     fn recurrent(&self, entries: u32) -> bool {
-        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.tier().history.get().lifetimes == 0
+        let history = self.tier().history.get();
+        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && history.lifetimes == 0 && !history.unpaid
             && warm_clock().wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
 

@@ -18,6 +18,18 @@ impl LaneView {
         declined
     }
 
+    /// Counts an entry of a warming body between its attempts in place (not its first, which weighs the mode's decline):
+    /// whether it did. The full path cost a warming or unpaid recursive callee ~50 Ir a call (the mode's decline, the
+    /// image lookup, the body's move out and back; k02_fib under --u-jit).
+    pub(crate) fn counted_between_attempts(&self, looped: bool) -> bool {
+        // SAFETY: as `lane_body`.
+        let LaneBody::Unspecialized { entries, .. } = (unsafe { &mut *self.tier().tier_lane.get() }) else { return false };
+        let next = entries.saturating_add(1);
+        let between = *entries != 0 && !looped && !self.attempts_at(next) && !self.recurrent(next);
+        if between { *entries = next; }
+        between
+    }
+
     /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).
     pub(crate) fn body_epoch(&self) -> u32 { self.tier().body_epoch.get() }
 
@@ -26,6 +38,7 @@ impl LaneView {
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
     pub(crate) fn specialize_lane_body(&self, entry: Handler, looped: bool, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
+        if self.counted_between_attempts(looped) { return true; }
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.

@@ -120,7 +120,7 @@ impl Vm {
             };
             // A run's field cache entries and lane stack storage are bound once per run (`bind_run`), not per entry;
             // the frame's word follows a moved field table from then on (`Vm::rebind_lane_field_entries`).
-            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0), || self.lane_stack_storage()) {
+            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0), || self.stack_storage_in_lane()) {
                 self.programs.tier_events().record(Event::RunBound);
             }
             debug_assert_eq!((*dispatch).head.field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
