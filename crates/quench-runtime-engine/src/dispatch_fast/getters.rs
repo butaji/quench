@@ -298,7 +298,7 @@ unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *co
     // No values: every parameter `undefined` (a dangling, aligned pointer, never read for a count of 0).
     let none: &[Value] = &[];
     let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
-    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this, false);
     Resumed::At(registers, base, Carried::script(cx))
 }
 
@@ -326,7 +326,7 @@ unsafe fn leaf_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &Scrip
     // stack's length covers only once the leaf is materialized; no collection runs before.
     unsafe {
         let window = Registers(vm.lane_stack.values.top());
-        Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None))
+        Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None, false))
     }
 }
 
