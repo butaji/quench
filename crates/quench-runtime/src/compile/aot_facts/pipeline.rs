@@ -124,7 +124,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
                 (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, classes, names, types, feedback)))
             .collect();
-        copies::expand(&mut flows, scope.assign);
+        copies::expand(&mut flows, scope.assign, scope.prototype);
         flows
     };
     // The first pass finds the bindings that hold one closure; the second reads their loads as
