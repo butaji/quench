@@ -226,8 +226,7 @@ impl Lowering<'_, '_> {
     /// The view of the typed array `bits` of kind `native` an earlier access proved and no storage change retired
     /// (`Proofs::typed`), else proved here, leaving at `exit`, and kept for the accesses after.
     fn typed_view_kept(&mut self, state: &mut State, (base, bits, native): (Register, ir::Value, quench_runtime::staged::typed_elements::NativeKind), writable: bool, exit: ir::Block) -> TypedView<ir::Value> {
-        let kept = state.proofs.typed.iter().find(|proof| proof.register == base && proof.kind == native.kind && (proof.writable || !writable)).copied();
-        if let Some(proof) = kept {
+        if let Some(proof) = self.typed_view_of(state, (base, native.kind, writable), exit) {
             return TypedView { values: proof.values, length: proof.length, kind: quench_runtime::staged::typed_elements::ViewKind::Static(native), within: false };
         }
         // A unit that also stores into a typed array proves its views for stores at once: one proof serves both.
@@ -239,7 +238,7 @@ impl Lowering<'_, '_> {
             || state.values[register].tagged == super::TaggedView::Value(bits)).map(|register| register as Register).collect();
         state.proofs.typed.retain(|proof| !same.contains(&proof.register));
         for register in same {
-            state.proofs.typed.push(super::TypedProof { register, kind: native.kind, values: view.values, length: view.length, writable });
+            state.proofs.typed.push(super::TypedProof { register, kind: native.kind, values: view.values, length: view.length, writable, kept: false });
         }
         view
     }
@@ -513,7 +512,7 @@ impl Lowering<'_, '_> {
         }
         state.proofs.arrays.clear();
         // A typed-only store calls no VM store (`typed_only`), so no typed view moved.
-        if !keeps_typed { state.proofs.typed.clear(); }
+        if !keeps_typed { state.proofs.keep_typed_views(); }
         state.proofs.fields.clear();
         // The VM's store may write a prototype's element or a mapped argument.
         state.proofs.stable = false;

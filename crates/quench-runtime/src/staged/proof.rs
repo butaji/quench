@@ -334,3 +334,74 @@ impl<W: Copy> Linked<W> {
     #[inline]
     pub fn shaped(self) -> Shaped<W> { Shaped(self.0) }
 }
+
+/// A typed array's elements proved for one native kind: their address, their count and the kind
+/// whose element they are. A row reads or stores one at an index with the bounds test alone
+/// (`Viewed::view`, then `typed_elements`' rows): the record's kind, its stamp, its attachment
+/// and (to store) its unshared bytes were tested once, by the view guard (`prove_viewed`), or are
+/// a fact a code dependency holds (`HeldViews::hold`). The fields are private, so a typed access
+/// runs only past that guard or that fact.
+#[derive(Clone, Copy)]
+pub struct Viewed<W> {
+    values: W,
+    length: W,
+    kind: super::typed_elements::NativeKind,
+}
+
+/// A fact that a typed array's view proved earlier still holds: its bytes have not moved, its
+/// length has not changed, its buffer is attached and not shared. Only a view guard
+/// (`Viewed::fact`) or a held code dependency (`HeldViews::hold`) makes one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TypedViewFact(());
+
+impl<W: Copy> Viewed<W> {
+    /// The view the guard in this module tree (`typed_view::prove_viewed`) just tested.
+    #[inline]
+    pub(super) fn of_guard(values: W, length: W, kind: super::typed_elements::NativeKind) -> Self { Viewed { values, length, kind } }
+    /// The view `(values, length)` of kind `kind` an earlier guard proved and a fact keeps; no test runs.
+    #[inline]
+    pub fn by_fact(values: W, length: W, kind: super::typed_elements::NativeKind, _fact: TypedViewFact) -> Self { Viewed { values, length, kind } }
+    /// The elements' address.
+    #[inline]
+    pub fn values(self) -> W { self.values }
+    /// The elements' count.
+    #[inline]
+    pub fn length(self) -> W { self.length }
+    /// The kind of the elements.
+    #[inline]
+    pub fn kind(self) -> super::typed_elements::NativeKind { self.kind }
+    /// The fact this proof stands for, which a frame keeps for the later accesses of the same array.
+    #[inline]
+    pub fn fact(self) -> TypedViewFact { TypedViewFact(()) }
+    /// The access form the element rows take: this kind, the index still to bound.
+    #[inline]
+    pub fn view(self) -> super::typed_elements::TypedView<W> {
+        super::typed_elements::TypedView { values: self.values, length: self.length,
+            kind: super::typed_elements::ViewKind::Static(self.kind), within: false }
+    }
+}
+
+impl TypedViewFact {
+    /// The loop's entry proved the view once (`entry::entry_typed` reads what it recorded), and a
+    /// row inside the loop reads under it. Only a stencil row makes one (and the tests).
+    #[cfg(any(stencil_build, test))]
+    pub(crate) const fn entry_guard() -> Self { TypedViewFact(()) }
+}
+
+/// Whether a compiled unit holds the views it proved under a code dependency
+/// (`StableFacts::views`, `heap::subscribe_typed_views`): the first change of a live view's bytes
+/// (detached, resized, moved, shared) retires it. Holding is the only way a dependency makes a
+/// `TypedViewFact`: a view proved before a call stays proved after it with no test, the call that
+/// changed one having retired the code (its invalidation word, read after the call).
+#[cfg(not(stencil_build))]
+#[derive(Default)]
+pub struct HeldViews(bool);
+
+#[cfg(not(stencil_build))]
+impl HeldViews {
+    /// Holds every view the code proved: the code depends on them from now on, and the fact is the proof.
+    #[inline]
+    pub fn hold(&mut self) -> TypedViewFact { self.0 = true; TypedViewFact(()) }
+    /// Whether the code holds them, leaving it not.
+    pub fn take(&mut self) -> bool { std::mem::take(&mut self.0) }
+}
