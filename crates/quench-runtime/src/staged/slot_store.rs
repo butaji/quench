@@ -66,15 +66,14 @@ pub(crate) fn store_fact<S: Stage>(stage: &S, value: S::Word, proven: Type) -> T
     if known.is_subtype(proven) { known } else { proven }
 }
 
-/// The word a store writes into a slot of class `holds` (decision 4.1, R4-M1): a Number-class slot
-/// (`repr` Float64) holds raw double bits, so an int32 word converts to its double (`Stage::raw_number`);
-/// any other slot, and an untyped one (`None`), stores the word as it is.
+/// The word a store of `(value, fact)` writes into a slot of type `class` (decision 4.1, R4-M1), with
+/// the type the word has: a Number slot (`repr` Float64) holds raw double bits, so an int32 word converts
+/// to its double (`Stage::raw_number`) and its fact is the Number class; any other slot stores the word
+/// and fact as they are. The arm's slot type (`StoreArm::class`), not the type its test admits, decides:
+/// a value the slot already holds is still an int32 in a Number slot.
 #[inline(always)]
-pub(crate) fn class_word<S: Stage>(stage: &mut S, value: S::Word, holds: Option<Type>) -> S::Word {
-    match holds {
-        Some(class) if crate::typed_ir::repr(class) == Representation::Float64 => stage.raw_number(value),
-        _ => value,
-    }
+pub(crate) fn class_word<S: Stage>(stage: &mut S, (value, fact): (S::Word, Type), class: Type) -> (S::Word, Type) {
+    if crate::typed_ir::repr(class) == Representation::Float64 { (stage.raw_number(value), class) } else { (value, fact) }
 }
 
 /// The payload word of the record at `record` (id `record_id`) once a store of `value` may

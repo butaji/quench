@@ -67,7 +67,10 @@ impl Heap {
     pub(crate) fn add_observation_holds(&self, shape: u32, slot: usize, value: Value) -> bool {
         self.properties.tracks() && !value.is_deleted() && slot < self.properties.shape_length(shape) && {
             let held = self.properties.slot_observation(shape, slot);
-            held == crate::typed_ir::SlotType::Tagged || held.join(crate::typed_ir::SlotType::of(value)) == held
+            // A Number slot holds raw doubles, so an int32 is not its word: the held row would store it
+            // as is, so the add takes the joining path, whose words are `ValueArena::stored_word`.
+            let raw_int = held == crate::typed_ir::SlotType::Number && value.as_int().is_some();
+            held == crate::typed_ir::SlotType::Tagged || (!raw_int && held.join(crate::typed_ir::SlotType::of(value)) == held)
         }
     }
 
