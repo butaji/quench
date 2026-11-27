@@ -18,12 +18,16 @@ impl Heap {
         } else if cfg!(feature = "profile-aggregate") {
             None
         } else {
-            self.properties.young_run_padded(values, len).map(|start| Object::from_run_header(header, start))
+            // The run holds the arena words of `header`'s shape: a Number slot's raw double (`stored_word`).
+            let words: [Value; N] = std::array::from_fn(|slot| if slot < len { self.properties.stored_word(header.shape(), slot, values[slot]) } else { values[slot] });
+            self.properties.young_run_padded(&words, len).map(|start| Object::from_run_header(header, start))
         };
-        match object {
+        let value = match object {
             Some(object) => self.insert_object_record(object),
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
-        }
+        };
+        self.rewrite_widened_numbers();
+        value
     }
 
     /// `alloc_planned_object` of a receiver whose `len` fields fit its inline slots, passed as
@@ -33,9 +37,13 @@ impl Heap {
         debug_assert!(self.prototype_flagged(prototype) && len <= INLINE_PROPERTY_COUNT);
         self.properties.note_plan_values(header.shape(), &inline[..len]);
         let Some(object) = Object::from_inline_header(header, inline) else {
-            return self.alloc_object_with_properties(prototype, header.shape(), &inline[..len]);
+            let value = self.alloc_object_with_properties(prototype, header.shape(), &inline[..len]);
+            self.rewrite_widened_numbers();
+            return value;
         };
-        self.insert_object_record(object)
+        let value = self.insert_object_record(object);
+        self.rewrite_widened_numbers();
+        value
     }
 
     /// `alloc_planned_inline` where it calls nothing out of line: `None`, before any effect,

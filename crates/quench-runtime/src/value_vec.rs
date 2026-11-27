@@ -188,8 +188,8 @@ impl YoungRuns {
 /// Entries in the direct-mapped `ValueArena::reservations` table; a power of two.
 const RESERVATIONS: usize = 16;
 
-/// A young run taken past the class of its length for a constructor's receiver
-/// (`ValueArena::young_reserved_run`): `[start, end)` was bumped from the nursery whole, so no
+/// A young run taken past the class of its length by a growth that predicts more adds
+/// (`ValueArena::grow`, `reserve_predicted_run`): `[start, end)` was bumped from the nursery whole, so no
 /// other run holds any of it until the young cycle ends, and the run's owner may grow into it
 /// without moving (`ValueArena::reserved_room`). A run's capacity is otherwise a fact of its
 /// length (`ordered_capacity`), which every other reader still sees: the words past it are
@@ -391,6 +391,9 @@ pub(crate) struct ValueArena {
     /// Bumped whenever an owner's type or shape assignment changes: slots of two shapes encode
     /// alike only under one epoch, as `encodings_match` proved them.
     owner_epoch: u64,
+    /// Owners that widened from Int32 to Number (`widen_owner`) and whose int-tagged words the heap
+    /// has not rewritten yet (`Heap::rewrite_widened_numbers` drains it, once per observing call).
+    int_to_number: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -420,6 +423,7 @@ impl Default for ValueArena {
             shape_readers: crate::code_dependencies::CodeReaders::default(),
             tracking: false,
             owner_epoch: 0,
+            int_to_number: Vec::new(),
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -448,7 +452,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values: _, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _, owner_epoch: _ } = self;
+        let Self { values: _, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _, owner_epoch: _, int_to_number: _ } = self;
         writer.values(&self.values);
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));
@@ -618,6 +622,8 @@ impl ValueArena {
         self.slot_readers.reset();
         self.tracking = true;
         self.owner_types.fill(SlotType::None);
+        // Pending owners named the types just cleared: they widen nothing now.
+        self.int_to_number.clear();
         self.owner_epoch += 1;
     }
 
@@ -704,8 +710,25 @@ impl ValueArena {
         if self.slot_readers.retire(owner) {
             fact_stats::retired(FactKind::Slot, u64::from(owner));
         }
+        // The words its slots hold are int-tagged: the heap rewrites them as raw doubles (decision 4.1).
+        if self.owner_types[owner as usize] == SlotType::Int32 && class == SlotType::Number {
+            self.int_to_number.push(owner);
+        }
         self.owner_types[owner as usize] = class;
         true
+    }
+
+    /// Whether an Int32 owner widened to Number and its words are not rewritten yet.
+    #[inline(always)] pub(crate) fn has_widened_numbers(&self) -> bool {
+        !self.int_to_number.is_empty()
+    }
+
+    /// The owners that widened from Int32 to Number since the last call, sorted and unique.
+    pub(crate) fn take_widened_numbers(&mut self) -> Vec<u32> {
+        let mut owners = std::mem::take(&mut self.int_to_number);
+        owners.sort_unstable();
+        owners.dedup();
+        owners
     }
 
     /// `len` values of the run at `start`, for storage that holds them so (record slots are tagged words).
@@ -1028,28 +1051,9 @@ impl ValueArena {
         Some(start as u32)
     }
 
-    /// The start of an empty young run reserved for `slots` values (`Reservation`): the run
-    /// of a constructor's receiver whose fields its learned count says will reach `slots`,
-    /// bumped from the nursery's range whole, so the adds that follow append in place up to
-    /// that count (`reserved_room`) where the class of each length would move the run. Its
-    /// owner must be a direct object record, as for every young run. `None`, taking nothing,
-    /// where the nursery's range lacks the room: a reservation never grows the arena.
-    #[inline(always)]
-    pub(crate) fn young_reserved_run(&mut self, slots: usize) -> Option<u32> {
-        let capacity = capacity_class(slots);
-        let start = self.nursery.top;
-        if capacity > self.nursery.end - start {
-            return None;
-        }
-        self.nursery.top = start + capacity;
-        self.reservations[Reservation::index(start)] =
-            Reservation { start: start as u32, end: (start + capacity) as u32, cycle: self.reservation_cycle };
-        Some(start as u32)
-    }
-
     /// Whether `vector`, a young run outside dictionary and narrow storage, may hold `len`
     /// values in place, past the capacity its current length gives it: its reservation
-    /// (`young_reserved_run`) still holds, from its start, the whole capacity of `len` values
+    /// (`reserve_predicted_run`) still holds, from its start, the whole capacity of `len` values
     /// (`ordered_capacity`), which every later reader takes as the run's.
     #[inline(always)]
     pub(crate) fn reserved_room(&self, vector: ValueVec, len: usize) -> bool {
@@ -1704,19 +1708,6 @@ impl ValueArena {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
         // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
-        unsafe { self.set_flat_at(vector.start(), len, value) };
-    }
-
-    /// `push` of `value` to `vector` of `len` values, where its reservation has the room
-    /// (`reserved_room` of `len + 1`): the store alone.
-    ///
-    /// # Safety
-    /// `vector` is a young arena run outside dictionary storage of `len` values whose
-    /// reservation holds the capacity of `len + 1`.
-    #[inline(always)]
-    pub(crate) unsafe fn push_reserved(&mut self, vector: ValueVec, len: usize, value: Value) {
-        debug_assert!(len == self.len(vector) && self.reserved_room(vector, len + 1));
-        // SAFETY: the reservation holds the range from `start` past `len`, reserved in `values`.
         unsafe { self.set_flat_at(vector.start(), len, value) };
     }
 

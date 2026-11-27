@@ -1741,6 +1741,7 @@ impl Heap {
                 properties.note_slot_value(shape, slot, value);
             }
         }
+        self.rewrite_widened_numbers();
     }
 
     /// Whether `prototype` names no object or one flagged as a prototype, as
@@ -2179,7 +2180,10 @@ impl Heap {
         let class = ProtoLink::of(proto).class(shape);
         self.mark_prototype(proto);
         self.properties.note_shape_values(shape, values);
-        self.class_space.claim_cell(region, class, values, &mut self.allocated)
+        self.rewrite_widened_numbers();
+        // The cell's fields are the arena words of `shape` (`stored_words`): a Number slot holds its raw double.
+        let words = self.properties.stored_words(shape, values);
+        self.class_space.claim_cell(region, class, &words, &mut self.allocated)
     }
     /// `alloc_array` of a fresh array, given its first named
     /// properties `values` under `shape` first: the storage steps
@@ -2214,6 +2218,7 @@ impl Heap {
         // Observe the values first: the cell's stores write the slots' words, which depend on the observed types.
         if let Some(granule) = self.live_class_cell(owner) {
             self.properties.note_shape_values(shape, values);
+            self.rewrite_widened_numbers();
             if self.class_cell_initialize(granule, shape, values) {
                 return;
             }
@@ -2226,6 +2231,7 @@ impl Heap {
             .expect("property owner is an object")
             .is_array();
         self.properties.note_shape_values(shape, values);
+        self.rewrite_widened_numbers();
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
             let (object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
@@ -2346,6 +2352,7 @@ impl Heap {
     fn join_live_slot_values(&mut self) {
         if !self.properties.tracks() { return; }
         self.visit_live_objects(join_object_slot_values);
+        self.rewrite_widened_numbers();
     }
     /// Moves the surviving young runs of `owners`, live direct objects and functions
     /// (`YoungOwner`), out of the nursery's young range, in the order of their starts, and
@@ -4768,6 +4775,7 @@ impl Heap {
                 self.properties.note_slot_value(shape, slot, value);
             }
         }
+        self.rewrite_widened_numbers();
     }
 
     /// The word a store of `value` writes at `slot` of `object` (`ValueArena::stored_word` of the
@@ -4812,6 +4820,7 @@ impl Heap {
         } else if !data.store_inline_narrow(slot, value) {
             self.property_set(object, slot, value);
         }
+        self.rewrite_widened_numbers();
     }
 
     pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
@@ -4925,6 +4934,7 @@ impl Heap {
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe { self.object_records.get_live_mut_storing(record_id, value, &self.properties) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
+        self.rewrite_widened_numbers();
         stored
     }
 
@@ -4947,6 +4957,7 @@ impl Heap {
         // SAFETY: the caller's contract; `&mut self` is exclusive.
         let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
+        self.rewrite_widened_numbers();
         stored
     }
 
@@ -5072,6 +5083,7 @@ impl Heap {
             return false;
         }
         let stored = store_exact_slot(data, properties, slot, value, layout);
+        self.rewrite_widened_numbers();
         if !stored {
             return false;
         }
@@ -5110,6 +5122,7 @@ impl Heap {
             append_property(data, properties, slot, value, shape, 0);
             slot
         };
+        self.rewrite_widened_numbers();
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, _slot + 1);
     }
@@ -5136,6 +5149,7 @@ impl Heap {
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
         debug_assert_eq!(slot, properties.len(data.properties()));
         append_property(data, properties, slot, value, shape, want);
+        self.rewrite_widened_numbers();
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
@@ -5164,6 +5178,7 @@ impl Heap {
         // exclusive, and the barrier logs nothing for this store.
         let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
         data.append_plain(properties, slot, value, shape);
+        self.rewrite_widened_numbers();
         #[cfg(feature = "profile-memory")]
         let value = self.object_value(record_id);
         self.memory_profile.object_slots_changed(value, slot + 1);
