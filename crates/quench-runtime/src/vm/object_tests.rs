@@ -368,8 +368,8 @@ fn object_spread_of_a_plain_source_adopts_its_shape_in_key_order() {
     let src = vm.own_property(globals, src_name).unwrap();
     let out = vm.own_property(globals, out_name).unwrap();
     let result = vm.own_property(globals, result_name).unwrap();
-    let src_shape = vm.object_data(src).unwrap().shape();
-    let out_shape = vm.object_data(out).unwrap().shape();
+    let src_shape = vm.heap.object(src).unwrap().shape();
+    let out_shape = vm.heap.object(out).unwrap().shape();
     assert_eq!(out_shape, src_shape, "the copy adopts the source's shape");
     assert_eq!(vm.to_string(&program, result).unwrap(), "b,a,c|1,x,true|b,a,c|b,c");
 }
@@ -919,7 +919,7 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
             );
             let third_atom = vm.intern_atom("third");
             let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
-            let third_shape = vm.object_data(third).unwrap().shape();
+            let third_shape = vm.heap.object(third).unwrap().shape();
             let method_atom = vm.intern_atom("method");
             let target = vm
                 .call_target(vm.own_property(third, method_atom).unwrap())
@@ -1205,7 +1205,7 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
             assert!(
                 field_cache_entries(&vm, &program, noncanonical)
                     .iter()
-                    .any(|entry| entry.receiver == vm.object_data(view).unwrap().shape()),
+                    .any(|entry| entry.receiver == vm.heap.object(view).unwrap().shape()),
                 "noncanonical typed-array names use ordinary shape storage"
             );
         }
@@ -1452,8 +1452,8 @@ fn assign_shape_adoption_yields_to_prototype_setters_read_only_keys_and_proto() 
         let target = vm.own_property(globals, target_name).unwrap();
         assert_eq!(vm.adopt_source_shape_for_set(target, src), expected, "{source_expr} after {setup:?}");
         if expected {
-            let src_shape = vm.object_data(src).unwrap().shape();
-            assert_eq!(vm.object_data(target).unwrap().shape(), src_shape);
+            let src_shape = vm.heap.object(src).unwrap().shape();
+            assert_eq!(vm.heap.object(target).unwrap().shape(), src_shape);
         } else {
             assert!(vm.own_named_keys(target).is_empty(), "a refused adoption has no effect");
         }

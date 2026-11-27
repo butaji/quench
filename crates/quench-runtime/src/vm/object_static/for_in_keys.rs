@@ -273,8 +273,9 @@ impl Vm {
     #[inline(always)]
     fn for_in_snapshot_current(&self, object: Value, keys: Value) -> bool {
         let Some(listed) = self.for_in.own_keys.as_ref() else { return false };
-        self.object_data(object)
-            .filter(|data| !data.has_side_descriptors())
+        // Side descriptors are record data.
+        self.heap.object(object)
+            .filter(|data| !data.record().has_side_descriptors())
             .and_then(|data| listed.keys(data.shape(), self.heap.collection_epoch()))
             == Some(keys)
     }
@@ -322,7 +323,7 @@ impl Vm {
             if !self.shape_lists_enumerable_keys(current) {
                 return None;
             }
-            let data = self.object_data(current)?;
+            let data = self.heap.object(current)?;
             let (shape, prototype) = (data.shape(), data.proto());
             let slots = self.shape_enumerable_slots(current);
             let enumerable = match &slots {
@@ -342,8 +343,8 @@ impl Vm {
         // The walk's objects up to the last enumerable key decide each key's enumerability.
         let walked = last.map_or(0, |last| last + 1);
         let provable = chain[..walked].iter().all(|&(object, _)| {
-            self.object_data(object).is_some_and(|data| {
-                !data.has_side_descriptors() && !self.shape_is_dictionary(data.shape())
+            self.heap.object(object).is_some_and(|data| {
+                !data.record().has_side_descriptors() && !self.shape_is_dictionary(data.shape())
             })
         });
         if let Some(slots) = receiver_slots.filter(|_| memoized && last.is_none_or(|last| last == 0)) {
@@ -436,9 +437,10 @@ impl Vm {
             return false;
         }
         chain.iter().enumerate().all(|(index, &(walked_object, shape))| {
-            self.object_data(walked_object).is_some_and(|data| {
+            self.heap.object(walked_object).is_some_and(|data| {
                 data.shape() == shape
-                    && !data.has_side_descriptors()
+                    // Side descriptors are record data.
+                    && !data.record().has_side_descriptors()
                     && chain.get(index + 1).is_none_or(|&(next, _)| data.proto() == next)
             })
         })

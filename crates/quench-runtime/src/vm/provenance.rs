@@ -133,7 +133,7 @@ impl Vm {
     }
 
     fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
-        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let Some(shape) = self.heap.object(function).map(|object| object.shape()) else { return; };
         // A first original name makes the function record what it constructs.
         if shape_names(&self.shapes, shape).0.is_none() {
             self.constructed_shapes.fill(ConstructedShape::EMPTY);
@@ -148,7 +148,7 @@ impl Vm {
         let Some(record_id) = function.direct_function_index() else {
             return false;
         };
-        let Some(shape) = self.object_data(function).map(Object::shape) else {
+        let Some(shape) = self.heap.object(function).map(|object| object.shape()) else {
             return false;
         };
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), shape, name) else {
@@ -174,7 +174,7 @@ impl Vm {
     /// plain layouts, and `before` already records an original name, so the naming moves no
     /// construction memo (`capture_function_name_atom`).
     pub(super) fn record_function_name_edge(&mut self, site: u16, function: Value, name: Atom, ((before, layout), slot): ((u32, u32), usize)) {
-        let Some(after) = self.object_data(function).map(Object::shape) else {
+        let Some(after) = self.heap.object(function).map(|object| object.shape()) else {
             return;
         };
         let Ok(slot) = u16::try_from(slot) else {
@@ -194,7 +194,7 @@ impl Vm {
     /// collection, which cleared `constructed_shapes`, so no memo entry names it.
     pub(super) fn capture_fresh_closure_name(&mut self, function: Value, name: Option<Atom>) {
         let name = name.unwrap_or(self.runtime_atoms.empty);
-        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let Some(shape) = self.heap.object(function).map(|object| object.shape()) else { return; };
         debug_assert!(shape_names(&self.shapes, shape).0.is_none(), "a fresh closure has no original name");
         self.append_function_name(function, shape, name);
     }
@@ -227,17 +227,18 @@ impl Vm {
         if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
             || !self.heap.is_function_value(function)
         { return false; }
-        let Some(object) = self.object_data(function) else { return false; };
+        let Some(object) = self.heap.object(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         name.is_some() && !reconfigured
             && self.shape_entries(object.shape()).nth(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| candidate == key)
-            && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
+            // The prototype-lookup flag is record data.
+            && (!object.was_used_as_prototype() || object.record().prototype_lookup_ready())
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
         if !self.heap.is_function_value(function) { return; }
-        let Some(object) = self.object_data(function) else { return; };
+        let Some(object) = self.heap.object(function) else { return; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         if name.is_none() { return; }
         let transition = match key {
@@ -282,17 +283,18 @@ impl Vm {
             return;
         }
         let receiver = object;
-        while let Some(data) = self.object_data(object) {
+        while let Some(data) = self.heap.object(object) {
             if self.proxy_parts(object).is_some() { return; }
             if self.own_property(object, atom).is_some() {
                 if self.heap.is_function_value(object) {
                     let facts = self.shapes[data.shape() as usize].facts;
                     if facts.function_named() && !if name { facts.name_reconfigured() } else { facts.length_reconfigured() } {
                         let mut current = receiver;
-                        while let Some(data) = self.object_data(current) {
-                            if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
+                        while let Some(data) = self.heap.object(current) {
+                            // The prototype-lookup flag is record data.
+                            if self.proxy_parts(current).is_some() || data.record().prototype_lookup_ready() { break; }
                             let next = data.proto();
-                            self.object_data_mut(current).expect("lookup object").prepare_prototype_lookup();
+                            self.heap.object_mut(current).expect("lookup object").record_mut_departing().prepare_prototype_lookup();
                             current = next;
                         }
                     }
@@ -312,7 +314,7 @@ impl Vm {
         while let Some(record) = object.direct_object_index().map(|r| self.heap.record_id(r)) {
             object = self.heap.object_record_by_id(record).proto();
         }
-        while let Some(data) = self.object_data(object) {
+        while let Some(data) = self.heap.object(object) {
             if self.proxy_parts(object).is_some() {
                 return false;
             }
@@ -325,7 +327,7 @@ impl Vm {
     }
 
     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
-        let object = self.object_data(function)?;
+        let object = self.heap.object(function)?;
         shape_names(&self.shapes, object.shape()).0
     }
 
@@ -412,7 +414,7 @@ impl Vm {
         constructor: Value,
         new_target_is_base: bool,
     ) {
-        let Some(shape) = self.object_data(value).map(Object::shape) else {
+        let Some(shape) = self.heap.object(value).map(|object| object.shape()) else {
             return;
         };
         let shape = self.constructed_shape(shape, constructor, new_target_is_base);
@@ -462,7 +464,7 @@ impl Vm {
     }
 
     pub(super) fn constructed_name(&self, value: Value) -> Option<JsString> {
-        let object = self.object_data(value)?;
+        let object = self.heap.object(value)?;
         if object.was_used_as_prototype() {
             return None;
         }
