@@ -258,7 +258,7 @@ pub use property_key::PropertyKey;
 use root_bindings::RootBinding;
 use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
-mod native_table;
+pub mod native_table;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;

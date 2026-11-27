@@ -728,10 +728,6 @@ impl Vm {
             Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
             #[cfg(not(feature = "wasm"))]
             Native::WebAssemblyInitialize => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
-            Native::IntlInitialize => {
-                let (global, object_prototype) = (self.realm.globals, self.object_proto);
-                layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)
-            }
             Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
             Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
             Native::WeakRefInitialize => self.install_weak_ref(p).map(|()| Value::UNDEFINED),
@@ -739,306 +735,6 @@ impl Vm {
                 self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
             }
             Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
-            Native::TemporalInitialize
-            | Native::IntlNumberFormat
-            | Native::IntlNumberFormatSupportedLocalesOf
-            | Native::IntlDisplayNamesSupportedLocalesOf
-            | Native::IntlNumberFormatFormatGetter
-            | Native::IntlNumberFormatFormat
-            | Native::IntlNumberFormatFormatToParts
-            | Native::IntlNumberFormatFormatRange
-            | Native::IntlNumberFormatFormatRangeToParts
-            | Native::IntlNumberFormatResolvedOptions
-            | Native::IntlPluralRulesSupportedLocalesOf
-            | Native::IntlPluralRulesSelect
-            | Native::IntlPluralRulesSelectRange
-            | Native::IntlPluralRulesResolvedOptions
-            | Native::IntlGetCanonicalLocales
-            | Native::IntlSupportedValuesOf
-            | Native::IntlLocale
-            | Native::IntlLocaleToString
-            | Native::IntlLocaleMaximize
-            | Native::IntlLocaleMinimize
-            | Native::IntlLocaleGetCalendars
-            | Native::IntlLocaleGetCollations
-            | Native::IntlLocaleGetHourCycles
-            | Native::IntlLocaleGetNumberingSystems
-            | Native::IntlLocaleGetTimeZones
-            | Native::IntlLocaleGetTextInfo
-            | Native::IntlLocaleGetWeekInfo
-            | Native::IntlLocaleBaseNameGetter
-            | Native::IntlLocaleLanguageGetter
-            | Native::IntlLocaleScriptGetter
-            | Native::IntlLocaleRegionGetter
-            | Native::IntlLocaleVariantsGetter
-            | Native::IntlLocaleCalendarGetter
-            | Native::IntlLocaleCollationGetter
-            | Native::IntlLocaleHourCycleGetter
-            | Native::IntlLocaleCaseFirstGetter
-            | Native::IntlLocaleFirstDayOfWeekGetter
-            | Native::IntlLocaleNumberingSystemGetter
-            | Native::IntlLocaleNumericGetter
-            | Native::IntlRelativeTimeFormat
-            | Native::IntlRelativeTimeFormatResolvedOptions
-            | Native::IntlRelativeTimeFormatSupportedLocalesOf
-            | Native::IntlRelativeTimeFormatFormat
-            | Native::IntlRelativeTimeFormatFormatToParts
-            | Native::IntlSegmenterSupportedLocalesOf
-            | Native::IntlSegmenterSegment
-            | Native::IntlSegmenterResolvedOptions
-            | Native::IntlSegmenterSegmentsIterator
-            | Native::IntlSegmenterSegmentsContaining
-            | Native::IntlSegmenterIteratorNext
-            | Native::IntlCollator
-            | Native::IntlCollatorSupportedLocalesOf
-            | Native::IntlCollatorCompareGetter
-            | Native::IntlCollatorCompare
-            | Native::IntlCollatorResolvedOptions
-            | Native::IntlDateTimeFormat
-            | Native::IntlDisplayNamesOf
-            | Native::IntlDisplayNamesResolvedOptions
-            | Native::IntlDurationFormatSupportedLocalesOf
-            | Native::IntlDurationFormatFormatGetter
-            | Native::IntlDurationFormatFormat
-            | Native::IntlDurationFormatFormatToParts
-            | Native::IntlDurationFormatResolvedOptions
-            | Native::IntlListFormatFormatGetter
-            | Native::IntlListFormatFormat
-            | Native::IntlListFormatFormatToParts
-            | Native::IntlListFormatResolvedOptions
-            | Native::IntlListFormatSupportedLocalesOf
-            | Native::IntlDateTimeFormatFormatGetter
-            | Native::IntlDateTimeFormatFormat
-            | Native::IntlDateTimeFormatFormatToParts
-            | Native::IntlDateTimeFormatFormatRange
-            | Native::IntlDateTimeFormatFormatRangeToParts
-            | Native::IntlDateTimeFormatSupportedLocalesOf
-            | Native::IntlDateTimeFormatResolvedOptions
-            | Native::TemporalToLocaleString
-            | Native::TemporalDuration
-            | Native::TemporalDurationFrom
-            | Native::TemporalDurationCompare
-            | Native::TemporalDurationAdd
-            | Native::TemporalDurationSubtract
-            | Native::TemporalDurationWith
-            | Native::TemporalDurationAbs
-            | Native::TemporalDurationNegated
-            | Native::TemporalDurationTotal
-            | Native::TemporalDurationRound
-            | Native::TemporalDurationToString
-            | Native::TemporalDurationToJSON
-            | Native::TemporalDurationValueOf
-            | Native::TemporalDurationYearsGetter
-            | Native::TemporalDurationMonthsGetter
-            | Native::TemporalDurationWeeksGetter
-            | Native::TemporalDurationDaysGetter
-            | Native::TemporalDurationHoursGetter
-            | Native::TemporalDurationMinutesGetter
-            | Native::TemporalDurationSecondsGetter
-            | Native::TemporalDurationMillisecondsGetter
-            | Native::TemporalDurationMicrosecondsGetter
-            | Native::TemporalDurationNanosecondsGetter
-            | Native::TemporalDurationSignGetter
-            | Native::TemporalDurationBlankGetter
-            | Native::TemporalPlainDate
-            | Native::TemporalPlainDateFrom
-            | Native::TemporalPlainDateCompare
-            | Native::TemporalPlainDateCalendarIdGetter
-            | Native::TemporalPlainDateYearGetter
-            | Native::TemporalPlainDateMonthGetter
-            | Native::TemporalPlainDateMonthCodeGetter
-            | Native::TemporalPlainDateDayGetter
-            | Native::TemporalPlainDateEraGetter
-            | Native::TemporalPlainDateEraYearGetter
-            | Native::TemporalPlainDateDayOfWeekGetter
-            | Native::TemporalPlainDateDayOfYearGetter
-            | Native::TemporalPlainDateWeekOfYearGetter
-            | Native::TemporalPlainDateYearOfWeekGetter
-            | Native::TemporalPlainDateDaysInWeekGetter
-            | Native::TemporalPlainDateDaysInMonthGetter
-            | Native::TemporalPlainDateDaysInYearGetter
-            | Native::TemporalPlainDateMonthsInYearGetter
-            | Native::TemporalPlainDateInLeapYearGetter
-            | Native::TemporalPlainDateToString
-            | Native::TemporalPlainDateToJSON
-            | Native::TemporalPlainDateToLocaleString
-            | Native::TemporalPlainDateToPlainDateTime
-            | Native::TemporalPlainDateToPlainMonthDay
-            | Native::TemporalPlainDateToPlainYearMonth
-            | Native::TemporalPlainDateToZonedDateTime
-            | Native::TemporalPlainDateEquals
-            | Native::TemporalPlainDateWith
-            | Native::TemporalPlainDateWithCalendar
-            | Native::TemporalPlainDateValueOf
-            | Native::TemporalPlainDateAdd
-            | Native::TemporalPlainDateSubtract
-            | Native::TemporalPlainDateUntil
-            | Native::TemporalPlainDateSince
-            | Native::TemporalPlainDateTime
-            | Native::TemporalPlainDateTimeFrom
-            | Native::TemporalPlainDateTimeCompare
-            | Native::TemporalPlainDateTimeAdd
-            | Native::TemporalPlainDateTimeSubtract
-            | Native::TemporalPlainDateTimeRound
-            | Native::TemporalPlainDateTimeUntil
-            | Native::TemporalPlainDateTimeSince
-            | Native::TemporalPlainDateTimeToString
-            | Native::TemporalPlainDateTimeToJSON
-            | Native::TemporalPlainDateTimeToPlainDate
-            | Native::TemporalPlainDateTimeToPlainTime
-            | Native::TemporalPlainDateTimeValueOf
-            | Native::TemporalPlainDateTimeToZonedDateTime
-            | Native::TemporalPlainDateTimeWith
-            | Native::TemporalPlainDateTimeWithCalendar
-            | Native::TemporalPlainDateTimeWithPlainTime
-            | Native::TemporalPlainDateTimeCalendarIdGetter
-            | Native::TemporalPlainDateTimeYearGetter
-            | Native::TemporalPlainDateTimeMonthGetter
-            | Native::TemporalPlainDateTimeMonthCodeGetter
-            | Native::TemporalPlainDateTimeDayGetter
-            | Native::TemporalPlainDateTimeEraGetter
-            | Native::TemporalPlainDateTimeEraYearGetter
-            | Native::TemporalPlainDateTimeDayOfWeekGetter
-            | Native::TemporalPlainDateTimeDayOfYearGetter
-            | Native::TemporalPlainDateTimeWeekOfYearGetter
-            | Native::TemporalPlainDateTimeYearOfWeekGetter
-            | Native::TemporalPlainDateTimeDaysInWeekGetter
-            | Native::TemporalPlainDateTimeDaysInMonthGetter
-            | Native::TemporalPlainDateTimeDaysInYearGetter
-            | Native::TemporalPlainDateTimeMonthsInYearGetter
-            | Native::TemporalPlainDateTimeInLeapYearGetter
-            | Native::TemporalPlainDateTimeHourGetter
-            | Native::TemporalPlainDateTimeMinuteGetter
-            | Native::TemporalPlainDateTimeSecondGetter
-            | Native::TemporalPlainDateTimeMillisecondGetter
-            | Native::TemporalPlainDateTimeMicrosecondGetter
-            | Native::TemporalPlainDateTimeNanosecondGetter
-            | Native::TemporalPlainDateTimeEquals
-            | Native::TemporalPlainTime
-            | Native::TemporalPlainTimeFrom
-            | Native::TemporalPlainTimeCompare
-            | Native::TemporalPlainTimeAdd
-            | Native::TemporalPlainTimeSubtract
-            | Native::TemporalPlainTimeEquals
-            | Native::TemporalPlainTimeHourGetter
-            | Native::TemporalPlainTimeMinuteGetter
-            | Native::TemporalPlainTimeSecondGetter
-            | Native::TemporalPlainTimeMillisecondGetter
-            | Native::TemporalPlainTimeMicrosecondGetter
-            | Native::TemporalPlainTimeNanosecondGetter
-            | Native::TemporalPlainTimeValueOf
-            | Native::TemporalPlainTimeRound
-            | Native::TemporalPlainTimeUntil
-            | Native::TemporalPlainTimeSince
-            | Native::TemporalPlainTimeToString
-            | Native::TemporalPlainTimeToJSON
-            | Native::TemporalPlainTimeWith
-            | Native::TemporalPlainMonthDay
-            | Native::TemporalPlainMonthDayFrom
-            | Native::TemporalPlainMonthDayCompare
-            | Native::TemporalPlainMonthDayCalendarIdGetter
-            | Native::TemporalPlainMonthDayDayGetter
-            | Native::TemporalPlainMonthDayMonthCodeGetter
-            | Native::TemporalPlainMonthDayEquals
-            | Native::TemporalPlainMonthDayToPlainDate
-            | Native::TemporalPlainMonthDayWith
-            | Native::TemporalPlainMonthDayValueOf
-            | Native::TemporalPlainYearMonth
-            | Native::TemporalPlainYearMonthFrom
-            | Native::TemporalPlainYearMonthCompare
-            | Native::TemporalPlainYearMonthCalendarIdGetter
-            | Native::TemporalPlainYearMonthYearGetter
-            | Native::TemporalPlainYearMonthMonthGetter
-            | Native::TemporalPlainYearMonthMonthCodeGetter
-            | Native::TemporalPlainYearMonthEraGetter
-            | Native::TemporalPlainYearMonthEraYearGetter
-            | Native::TemporalPlainYearMonthReferenceISODayGetter
-            | Native::TemporalPlainYearMonthDaysInMonthGetter
-            | Native::TemporalPlainYearMonthDaysInYearGetter
-            | Native::TemporalPlainYearMonthMonthsInYearGetter
-            | Native::TemporalPlainYearMonthInLeapYearGetter
-            | Native::TemporalPlainYearMonthEquals
-            | Native::TemporalPlainYearMonthAdd
-            | Native::TemporalPlainYearMonthSubtract
-            | Native::TemporalPlainYearMonthUntil
-            | Native::TemporalPlainYearMonthSince
-            | Native::TemporalPlainYearMonthWith
-            | Native::TemporalPlainYearMonthValueOf
-            | Native::TemporalPlainYearMonthToPlainDate
-            | Native::TemporalZonedDateTime
-            | Native::TemporalZonedDateTimeFrom
-            | Native::TemporalZonedDateTimeCompare
-            | Native::TemporalZonedDateTimeEquals
-            | Native::TemporalZonedDateTimeWith
-            | Native::TemporalZonedDateTimeWithTimeZone
-            | Native::TemporalZonedDateTimeWithCalendar
-            | Native::TemporalZonedDateTimeWithPlainTime
-            | Native::TemporalZonedDateTimeToInstant
-            | Native::TemporalZonedDateTimeToPlainDate
-            | Native::TemporalZonedDateTimeToPlainDateTime
-            | Native::TemporalZonedDateTimeToPlainTime
-            | Native::TemporalZonedDateTimeValueOf
-            | Native::TemporalZonedDateTimeAdd
-            | Native::TemporalZonedDateTimeSubtract
-            | Native::TemporalZonedDateTimeGetTimeZoneTransition
-            | Native::TemporalZonedDateTimeStartOfDay
-            | Native::TemporalZonedDateTimeRound
-            | Native::TemporalZonedDateTimeUntil
-            | Native::TemporalZonedDateTimeSince
-            | Native::TemporalZonedDateTimeToString
-            | Native::TemporalZonedDateTimeToJSON
-            | Native::TemporalZonedDateTimeToLocaleString
-            | Native::TemporalZonedDateTimeEpochNanosecondsGetter
-            | Native::TemporalZonedDateTimeTimeZoneIdGetter
-            | Native::TemporalZonedDateTimeCalendarIdGetter
-            | Native::TemporalZonedDateTimeYearGetter
-            | Native::TemporalZonedDateTimeMonthGetter
-            | Native::TemporalZonedDateTimeMonthCodeGetter
-            | Native::TemporalZonedDateTimeDayGetter
-            | Native::TemporalZonedDateTimeHourGetter
-            | Native::TemporalZonedDateTimeMinuteGetter
-            | Native::TemporalZonedDateTimeSecondGetter
-            | Native::TemporalZonedDateTimeMillisecondGetter
-            | Native::TemporalZonedDateTimeMicrosecondGetter
-            | Native::TemporalZonedDateTimeNanosecondGetter
-            | Native::TemporalZonedDateTimeEraGetter
-            | Native::TemporalZonedDateTimeEraYearGetter
-            | Native::TemporalZonedDateTimeDayOfWeekGetter
-            | Native::TemporalZonedDateTimeDayOfYearGetter
-            | Native::TemporalZonedDateTimeWeekOfYearGetter
-            | Native::TemporalZonedDateTimeYearOfWeekGetter
-            | Native::TemporalZonedDateTimeDaysInWeekGetter
-            | Native::TemporalZonedDateTimeDaysInMonthGetter
-            | Native::TemporalZonedDateTimeDaysInYearGetter
-            | Native::TemporalZonedDateTimeMonthsInYearGetter
-            | Native::TemporalZonedDateTimeInLeapYearGetter
-            | Native::TemporalZonedDateTimeEpochMillisecondsGetter
-            | Native::TemporalZonedDateTimeHoursInDayGetter
-            | Native::TemporalZonedDateTimeOffsetGetter
-            | Native::TemporalZonedDateTimeOffsetNanosecondsGetter
-            | Native::TemporalInstant
-            | Native::TemporalInstantFrom
-            | Native::TemporalInstantCompare
-            | Native::TemporalInstantFromEpochMilliseconds
-            | Native::TemporalInstantFromEpochNanoseconds
-            | Native::TemporalInstantEpochNanosecondsGetter
-            | Native::TemporalInstantEpochMillisecondsGetter
-            | Native::TemporalInstantToString
-            | Native::TemporalInstantToJSON
-            | Native::TemporalInstantValueOf
-            | Native::TemporalInstantEquals
-            | Native::TemporalInstantAdd
-            | Native::TemporalInstantSubtract
-            | Native::TemporalInstantRound
-            | Native::TemporalInstantSince
-            | Native::TemporalInstantUntil
-            | Native::TemporalInstantToZonedDateTimeISO
-            | Native::TemporalNowInstant
-            | Native::TemporalNowPlainDateISO
-            | Native::TemporalNowPlainDateTimeISO
-            | Native::TemporalNowPlainTimeISO
-            | Native::TemporalNowTimeZoneId
-            | Native::TemporalNowZonedDateTimeISO => super::layer_hooks::intl_temporal_call(self, p, native, this, args),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
             Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
@@ -1077,13 +773,6 @@ impl Vm {
             Native::Print => self.console_write(p, args, CapabilityId::WriteLine),
             Native::PrintError => self.console_write(p, args, CapabilityId::WriteErr),
             Native::Date => self.date_call(),
-            Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDurationFormat => {
-                Err(self.type_error(p, "constructor requires new".into()))
-            }
-            Native::IntlListFormat => Err(self.type_error(p, "constructor requires new".into())),
             Native::DateNow => Ok(self.date_now()),
             Native::DateGetTime
             | Native::DateValueOf
@@ -1419,14 +1108,6 @@ impl Vm {
             | Native::SymbolValueOf
             | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::TemporalPlainMonthDayToString
-            | Native::TemporalPlainMonthDayToJSON
-            | Native::TemporalPlainMonthDayToLocaleString
-            | Native::TemporalPlainYearMonthToString
-            | Native::TemporalPlainYearMonthToJSON
-            | Native::TemporalPlainYearMonthToLocaleString => {
-                layer_hooks::intl_temporal_call(self, p, native, this, args)
-            }
             Native::Object
             | Native::Array
             | Native::Map
@@ -2121,6 +1802,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .or_else(|| method_entry(native))
         .or_else(|| realm_entry(native))
         .or_else(|| value_entry(native))
+        .or_else(|| super::intl_core::entry(native))
         .unwrap_or(enter_table)
 }
 

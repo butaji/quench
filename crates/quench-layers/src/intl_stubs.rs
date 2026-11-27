@@ -7,6 +7,7 @@ use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::library_surface::Native;
 use quench_runtime::vm::error::JsError;
 use quench_runtime::vm::intl_core::Collation;
+use quench_runtime::vm::native_table::NativeFn;
 use quench_runtime::vm::layer_hooks::intl_signatures as signatures;
 use quench_runtime::vm::Vm;
 use quench_runtime::Value;
@@ -16,17 +17,13 @@ fn unavailable(vm: &mut Vm, p: &ResidualProgram) -> JsError {
     vm.type_error(p, "Intl is unavailable in this build".into())
 }
 
+/// Without the layer no Intl or Temporal native is claimed: their objects are never installed, so
+/// no program reaches one.
 #[unsafe(no_mangle)]
-pub fn quench_layer_intl_temporal_call(
-    vm: &mut Vm,
-    p: &ResidualProgram,
-    _native: Native,
-    _this: Value,
-    _args: &[Value],
-) -> Result<Value, JsError> {
-    Err(unavailable(vm, p))
+pub fn quench_layer_intl_entry(_native: Native) -> Option<NativeFn> {
+    None
 }
-const _: signatures::intl_temporal_call = quench_layer_intl_temporal_call;
+const _: quench_runtime::vm::layer_hooks::signatures::intl_entry = quench_layer_intl_entry;
 
 #[unsafe(no_mangle)]
 pub fn quench_layer_intl_temporal_construct(
