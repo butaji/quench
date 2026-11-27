@@ -15576,7 +15576,8 @@ script_handler! {
             let vm = unsafe { vm(cx) };
             if let Some(value) = vm.primary_own_field_hit(code, object, i.c) {
                 if object.direct_object_index().is_some() {
-                    set_field_hint(ip, vm.field_cache_entry(i.c));
+                    // The row compares layout ids (`form_hint`), not the entry's exact shape.
+                    set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
                 }
                 lane_return_value!(cx, ip, value, LEAF);
             }
