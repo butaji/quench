@@ -387,30 +387,6 @@ pub(crate) fn holding_construct_plan(vm: &Vm, callee: Value) -> Option<Construct
     holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
 }
 
-/// `callee`'s plan while it holds, as a body keeps a receiver it builds as its field values
-/// (`compiled::ScalarConstructPlan`): only a plan of fields passed or constant, with no nested,
-/// forwarded or parent construction, whose shape names each field by a string.
-pub(crate) fn scalar_construct_plan(vm: &Vm, callee: Value) -> Option<crate::compiled::ScalarConstructPlan> {
-    use crate::compiled::{ScalarConstructPlan, ScalarField};
-    let plan = &vm.lane_stack.construct_plans[holding_construct_plan_index(vm, callee)?];
-    let len = usize::from(plan.fields);
-    if plan.kind != ConstructPlanKind::Passed || plan.forwarded.is_some() || plan.nested.is_some()
-        || plan.super_parent != Value::UNDEFINED || (plan.defaulted | plan.computed) != 0 || len > CONSTRUCT_PLAN_FIELDS {
-        return None;
-    }
-    let keys = vm.shape_keys(plan.shape);
-    if keys.len() != len { return None; }
-    let fields = keys.iter().enumerate().map(|(field, key)| match key {
-        quench_runtime::vm::PropertyKey::String(atom) => Some((*atom, if plan.constant & (1 << field) != 0 {
-            ScalarField::Constant(plan.fallbacks[field])
-        } else {
-            ScalarField::Parameter(plan.parameters[field])
-        })),
-        _ => None,
-    }).collect::<Option<_>>()?;
-    Some(ScalarConstructPlan { callee: crate::compiled::PlanCallee::Live(callee), shape: plan.shape, fields })
-}
-
 /// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
 /// would not refuse (`body_construction_in_lane`): no construction under way, no collection due.
 /// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it

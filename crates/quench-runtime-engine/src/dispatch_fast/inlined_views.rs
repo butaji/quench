@@ -108,14 +108,16 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     let (vm, code, program) = unsafe { (super::vm(cx), &*(*cx).code, (*cx).program) };
     let body = code.function_get(function as usize)?;
     if !body.handlers.is_empty() || body.is_generator || body.is_async || body.has_dynamic_scope_access() { return None; }
+    // The leaves the call plans of the function's calls name, one per call (`CallPlans::targets`).
+    let aot = vm.programs.aot_facts(vm.active_program);
+    let graph = vm.programs.call_graph(vm.active_program);
+    let plans = crate::compiled::lane_region::bindings::CallPlans::new(code, aot.as_deref(), graph.as_deref());
     let targets = |caller: u32, pc: u32| -> Vec<crate::compiled::CallTarget> {
         if caller != function { return Vec::new(); }
-        super::unit_targets_in_lane(cx, caller, pc).into_iter()
-            .filter(|target| matches!(target.callee, crate::compiled::CalleeBinding::Identity(_)) && leaf_callee(code, target.function))
-            .take(1)
-            .collect()
+        plans.targets(caller, pc).into_iter().filter(|target| leaf_callee(code, target.function)).take(1).collect()
     };
-    let unit = crate::compiled::lane_unit::unit(code, function, body, &targets, &|callee| code.function_get(callee as usize))?;
+    let unit = crate::compiled::lane_unit::unit(code, graph.as_deref(), function, body, &targets, &|caller, pc| plans.at(caller, pc),
+        &|callee| code.function_get(callee as usize))?;
     if unit.frames.is_empty() || unit.registers > u16::from(u8::MAX) { return None; }
     // An inlined callee's stores to `this` store to its receiver register, which is the frame's
     // `this` the unit's other records read (`lane_unit` renames field bases, not these).
@@ -178,7 +180,7 @@ fn mark_call(record: &mut quench_runtime::vm::engine_types::LaneInstruction, fra
     let identity = frame.target.identity();
     match identity {
         // Registers past the callee's entry fill are written before any read (`entry_fill`).
-        Some(identity) if in_order && frame.function_call.is_none() && frame.registers <= u16::from(u8::MAX) => {
+        Some(identity) if in_order && frame.registers <= u16::from(u8::MAX) => {
             let fill = code.entry_fill(callee).clamp(passed as u16, frame.registers);
             record.handler = inlined_call_marker as Handler as *const ();
             record.a = frame.callee_register;

@@ -7,7 +7,7 @@
 use crate::ext_traits::*;
 use super::super::*;
 use super::{Hoist, Induction, Reach, Term, Version};
-use super::super::super::facts::{IndexProof, Model, Point};
+use super::super::super::facts::{IndexProof, Point};
 use super::super::super::operations::NumberArithmetic;
 use super::super::int_ranges::IntRanges;
 
@@ -104,7 +104,7 @@ impl Lowering<'_, '_> {
         if arithmetic_of(sum)? != NumberArithmetic::Add { return None; }
         let [left, right] = [sum.operand_b(), sum.operand_c()];
         let (counted, base) = [(left, right), (right, left)].into_iter()
-            .find_map(|(operand, base)| self.counted(instructions, add, operand, point).map(|counted| (counted, base)))?;
+            .find_map(|(operand, base)| self.counted(instructions, add, operand).map(|counted| (counted, base)))?;
         let from = counted.scale.map_or(add, |(_, multiply)| multiply);
         let (base_register, scale_register) = (base.register_index(), counted.scale.and_then(|(scale, _)| scale.register_index()));
         let low = point.int_range(counted.counter)?.min;
@@ -115,10 +115,11 @@ impl Lowering<'_, '_> {
             base: Some(base), scale: counted.scale })
     }
 
-    /// The counter the sum's `operand` counts: the operand itself below a bound, or a product of one and a scale.
-    fn counted(&self, instructions: &[WideInstruction], add: usize, operand: Operand, point: &Point) -> Option<Counted> {
+    /// The counter the sum's `operand` counts: the operand itself below a bound, or a product of one and a scale. A counter's
+    /// bound is the solve's at the sum (`Lowering::bound_below`).
+    fn counted(&self, instructions: &[WideInstruction], add: usize, operand: Operand) -> Option<Counted> {
         let register = operand.register_index()?;
-        if let Some(bound) = point.under_of(register) {
+        if let Some(bound) = self.bound_below(add, register) {
             return Some(Counted { operand: register, counter: register, bound, scale: None });
         }
         let multiply = self.local_definition(instructions, add, register)?;
@@ -127,7 +128,7 @@ impl Lowering<'_, '_> {
         let [left, right] = [product.operand_b(), product.operand_c()];
         [(left, right), (right, left)].into_iter().find_map(|(counted, scale)| {
             let counter = counted.register_index()?;
-            Some(Counted { operand: register, counter, bound: point.under_of(counter)?, scale: Some((scale, multiply)) })
+            Some(Counted { operand: register, counter, bound: self.bound_below(add, counter)?, scale: Some((scale, multiply)) })
         })
     }
 
@@ -143,11 +144,11 @@ impl Lowering<'_, '_> {
 
     /// The proof of `shape` by the entry of the outermost loop it can be made in, where its array's
     /// view is hoisted a register's.
-    pub(crate) fn resolve(&self, (nest, ranges): (Nest<'_>, &IntRanges), model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
+    pub(crate) fn resolve(&self, (nest, ranges): (Nest<'_>, &IntRanges), shape: &Shape) -> Option<Resolved> {
         let array = self.loop_array(shape.pc, Some(shape.array))?;
         let base = match (shape.base, shape.add) { (Some(operand), Some(add)) => Some(self.term(nest, add, operand, true)?), _ => None };
         let scale = match shape.scale { Some((operand, multiply)) => Some(self.term(nest, multiply, operand, false)?), None => None };
-        let header = self.checking_loop((nest, model, ranges), shape, array, [base, scale])?;
+        let header = self.checking_loop(nest, shape, array, [base, scale])?;
         let induction = shape.scale.zip(scale)
             .and_then(|((_, multiply), scale)| self.induction(nest, ranges, shape.counter, (multiply, scale)));
         let reach = match (shape.ceiling, shape.bound) {
@@ -172,18 +173,16 @@ impl Lowering<'_, '_> {
     }
 
     /// The header of the outermost loop around `shape`'s access, within its array's loop and the loops
-    /// that hoisted its terms, that writes no register it reads, holds each of them an int32 and
-    /// has no instruction that may change a length: the array's length on its entering edge is its
-    /// length at the access.
-    fn checking_loop(&self, (nest, model, ranges): (Nest<'_>, &Model<'_>, &IntRanges), shape: &Shape, array: LoopArray,
-        terms: [Option<Term>; 2]) -> Option<usize> {
+    /// that hoisted its terms, that writes no register it reads and holds each of them an int32. Its
+    /// entry compares the reach of the access with the array's length (`Lowering::version_loops`); whether
+    /// the body may change that length is settled over all versions (`IntRanges::settled_versions`).
+    fn checking_loop(&self, nest: Nest<'_>, shape: &Shape, array: LoopArray, terms: [Option<Term>; 2]) -> Option<usize> {
         let terms = terms.into_iter().flatten();
         let registers: Vec<Register> = shape.bound.into_iter().chain(terms.clone().filter_map(Term::register)).collect();
         let floor = terms.filter_map(Term::hoisted).filter_map(|pc| nest.hoists.iter().find(|hoist| hoist.pc == pc))
             .map(|hoist| hoist.header).fold(array.header, usize::max);
-        nest.around(shape.pc).into_iter().find(|&span| span.0 >= floor && !self.generic.contains(&span.0)
-            && nest.unwritten(span, &registers) && registers.iter().all(|register| self.int32_at(span.0, *register))
-            && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at], ranges.numeric_store(at))))
+        nest.around(shape.pc).into_iter().find(|&span| span.0 >= floor
+            && nest.unwritten(span, &registers) && registers.iter().all(|register| self.int32_at(span.0, *register)))
             .map(|(header, _)| header)
     }
 

@@ -116,7 +116,7 @@ impl Completion {
 
 /// The plan of a scalar entry: the whole function, its parameters in registers.
 pub(crate) fn plan(abi: ScalarAbi) -> RegionPlan {
-    RegionPlan { entry_bounds: true, coverage: Coverage::Full, completion: Completion::Scalar(abi), views: ElementViews::Dense }
+    RegionPlan { coverage: Coverage::Full, completion: Completion::Scalar(abi), views: ElementViews::Dense }
 }
 
 /// The scalar entry `specializer` lowers, if it fits a function's cell: its result is an int32

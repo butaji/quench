@@ -53,6 +53,8 @@ fn resolve_planned_class(vm: &mut Vm, program: ProgramId, class: u32, prototype:
     let Some(code) = vm.programs.residual(program) else { return };
     // SAFETY: the program store keeps a program's residual alive with the program, which outlives this resolution.
     let code: &ResidualProgram = unsafe { &*std::ptr::from_ref(code) };
+    // The class's layout, recorded by the edge before this resolution (`record_class_edge`): the method vector's key.
+    let layout = vm.programs.class_header(program, class).map_or(0, std::cell::Cell::get);
     for (function, method, slot) in arms {
         let Some(closure) = vm.own_property(prototype, method) else {
             debug_assert!(false, "a planned arm's method is an own data property of its class's prototype");
@@ -64,6 +66,12 @@ fn resolve_planned_class(vm: &mut Vm, program: ProgramId, class: u32, prototype:
         };
         debug_assert_eq!(target.function, function, "a planned arm's method is the arm's function");
         debug_assert!(target.entry == CallEntry::framed(Framed::Activates), "a framed method call's target activates its body");
+        // The class's method vector entry for the method, where the method has a selector (`class_method_record`).
+        if let (true, Some(selector)) = (layout != 0, vm.programs.selectors(program).and_then(|selectors| selectors.get(method))) {
+            if let Some(record) = vm.class_method_record(code, program, class, method, function, closure, target) {
+                vm.programs.set_class_method(program, layout, selector, record);
+            }
+        }
         // SAFETY: the slot is the program store's and lives with the program; a row reads it only after this edge
         // records the class's header, so no reader holds it while it is set.
         unsafe { (*slot).target.set(target) };

@@ -56,6 +56,17 @@ pub(crate) fn unbound_callee() -> u64 {
     quench_runtime::Value::DELETED.to_bits()
 }
 
+/// The callee record a site names until a binding (`BoundCalls::bind`): no callee (`unbound_callee`), every other word
+/// zero. Leaked once for the process, so a row reads a live record before and after any binding.
+pub(crate) fn unbound_callee_record() -> u64 {
+    static UNBOUND: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *UNBOUND.get_or_init(|| {
+        let record: &'static quench_bjit::call_record::CalleeRecord =
+            Box::leak(Box::new(quench_bjit::call_record::CalleeRecord { callee: unbound_callee(), ..Default::default() }));
+        std::ptr::from_ref(record).addr()
+    }) as u64
+}
+
 pub(crate) use quench_runtime::vm::engine_types::AotFunction;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneImage;
@@ -69,11 +80,12 @@ pub(crate) use quench_runtime::vm::jit_backend::NativeTarget as ImageTarget;
 pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageTarget) -> Result<AotImage, String> {
     // Every function lowers as a VM that loads the image runs it (`lowered_function`), so the image's PCs are its.
     for index in 0..program.function_count() { program.lowered_function(index); }
-    let mut symbols = symbols::SymbolTable::new(program);
+    let mut symbols = symbols::SymbolTable::new(program, std::sync::Arc::new(quench_runtime::compile::call_plan::Selectors::of(program, facts)));
     let frozen = crate::compiled::ClosedFrozen::of(program);
+    let graph = quench_runtime::compile::call_graph::CallGraph::of(program, facts);
     let mut sites = std::collections::BTreeMap::new();
     let functions = (0..program.function_count() as u32)
-        .map(|id| lower_function(program, (facts, &frozen), target, id, (&mut symbols, &mut sites)))
+        .map(|id| lower_function(program, (facts, &graph, &frozen), target, id, (&mut symbols, &mut sites)))
         .collect::<Result<Vec<_>, String>>()?;
     if quench_runtime::trace::Channel::AotLanes.on() {
         let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
@@ -140,7 +152,7 @@ fn regexps(program: &ResidualProgram) -> Vec<quench_runtime::vm::engine_types::A
 /// in place of stitching (`compiled::wasm_image::linked`); its base body is empty, every record generic.
 pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::ProgramId, program: &ResidualProgram,
     bindings: &[quench_runtime::WasmBindingType]) -> Result<AotImage, String> {
-    let mut symbols = symbols::SymbolTable::new(program);
+    let mut symbols = symbols::SymbolTable::new(program, Default::default());
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let wasm = {
         use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
@@ -180,13 +192,13 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
 #[cfg(feature = "jit")]
 fn lower_function(
     program: &ResidualProgram,
-    (facts, frozen): (&AotFacts, &crate::compiled::ClosedFrozen),
+    (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &crate::compiled::ClosedFrozen),
     target: &ImageTarget,
     id: u32,
     (symbols, sites): (&mut symbols::SymbolTable, &mut std::collections::BTreeMap<(u32, u32, u32), CallSite>),
 ) -> Result<AotFunction, String> {
     let (mut base, calls) = base::lower(program, target, id, symbols)?;
-    let (mut lane, lane_calls) = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?;
+    let (mut lane, lane_calls) = join::lower_lane(program, (facts, graph, frozen), target, id, (&base, &calls), symbols)?;
     // A linked body's absolute words become the page references Mach-O can link in text.
     crate::aot_image::page::rewrite(&mut base.code)?;
     if let Some(lane) = &mut lane {

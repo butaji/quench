@@ -21,6 +21,11 @@ impl Vm {
     #[inline(always)]
     pub fn collection_due(&self) -> bool { self.heap.should_collect() }
 
+    /// Whether byte charges made a collection due (`Heap::byte_due`): what a back-edge poll
+    /// tests (DESIGN 4.7), so a poll services only debt that allocation in the loop made.
+    #[inline(always)]
+    pub fn byte_due(&self) -> bool { self.heap.byte_due() }
+
     /// The function record of `value`, a closure, native or bound function (`Heap::function`): a tier
     /// reads a callee's kind, environment and program through it.
     #[inline(always)]

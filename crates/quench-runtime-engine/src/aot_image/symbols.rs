@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::ClassLayout as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::ClassMethods as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -80,6 +80,9 @@ pub(crate) enum Symbol {
     /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where its
     /// prototype does not resolve. Keyed by the recipe, as `Shape`.
     ClassLayout(u32),
+    /// The base of the class method table (`layouts::class_methods_base`), which a closed-set indirect call reads each
+    /// class's vector from by its layout id. One table for the process: keyed 0.
+    ClassMethods,
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
@@ -117,6 +120,9 @@ pub(crate) struct SymbolTable {
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
     calls: Interned<(u32, u32, u32)>,
+    /// The program's method selectors (`Selectors::of`, the same numbering the interpreter's store keeps): a method's
+    /// selector indexes every class's method vector (`layouts::class_methods`).
+    selectors: std::sync::Arc<quench_runtime::compile::call_plan::Selectors>,
 }
 
 /// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
@@ -132,10 +138,15 @@ pub(crate) struct Finished {
 impl SymbolTable {
     /// The table of `program`'s image: its atom texts by program atom number, the key `Symbol::Atom`
     /// and a recipe's field name carry (atom numbers are per VM, texts are not).
-    pub(crate) fn new(program: &ResidualProgram) -> Self {
+    pub(crate) fn new(program: &ResidualProgram, selectors: std::sync::Arc<quench_runtime::compile::call_plan::Selectors>) -> Self {
         let atoms = program.atoms.iter().map(Box::<str>::from).collect();
         Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(),
-            calls: Interned::default() }
+            calls: Interned::default(), selectors }
+    }
+
+    /// The selector of method atom `atom` (`Selectors::get`), where a call plan names it.
+    pub(crate) fn selector(&self, atom: u32) -> Option<u32> {
+        self.selectors.get(atom)
     }
 
     /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
@@ -173,6 +184,7 @@ impl SymbolTable {
         Symbol::ClassLayout(self.shapes.key(recipe))
     }
 
+
     pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16, access: GuardAccess) -> Option<u32> {
         guard_key(self.shapes.key(recipe), slot, access)
     }
@@ -196,7 +208,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 14] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 15] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -211,11 +223,17 @@ const KEYED: [(u32, fn(u32) -> Symbol); 14] = [
     (RelocKind::HolderValue as u32, Symbol::HolderValue),
     (RelocKind::GuardLayout as u32, Symbol::GuardLayout),
     (RelocKind::ClassLayout as u32, Symbol::ClassLayout),
+    (RelocKind::ClassMethods as u32, class_methods),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
 fn invalidation(_key: u32) -> Symbol {
     Symbol::Invalidation
+}
+
+/// The method table's base symbol: one table, keyed 0.
+fn class_methods(_key: u32) -> Symbol {
+    Symbol::ClassMethods
 }
 
 impl Symbol {
@@ -235,6 +253,7 @@ impl Symbol {
             Self::HolderValue(_) => RelocKind::HolderValue as u32,
             Self::GuardLayout(_) => RelocKind::GuardLayout as u32,
             Self::ClassLayout(_) => RelocKind::ClassLayout as u32,
+            Self::ClassMethods => RelocKind::ClassMethods as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -248,7 +267,7 @@ impl Symbol {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
                 | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) | Self::ClassLayout(key) => key,
-            Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
+            Self::Invalidation | Self::NarrowUpperWords | Self::Attention | Self::ClassMethods => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
         }

@@ -52,7 +52,7 @@ pub(crate) fn frame_memory_view(
 }
 
 /// A taken safepoint jump whose fuel ran out (`script_fuel_out`): leave the lane when a
-/// collection is due or termination requested, otherwise refill the fuel, credit the work
+/// byte charges made a collection due (`Vm::byte_due`) or termination is requested, otherwise refill the fuel, credit the work
 /// clock and dispatch the target from the lane loop,
 /// which unwinds the stack, with the accumulator `acc` the jump carries
 /// (`LaneContext::resumed_acc`): a loop head whose every edge carries a
@@ -63,7 +63,7 @@ pub(crate) fn frame_memory_view(
 pub(super) fn safepoint_at(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
     let cx = context_in_lane();
     // SAFETY: called only while a lane runs, from one of its handlers.
-    if unsafe { vm(cx) }.collection_due() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
+    if unsafe { vm(cx) }.byte_due() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
         // SAFETY: as above.
         unsafe { (*cx).fuel = 0 };
         return exit(ip);
@@ -497,8 +497,8 @@ pub(crate) fn running_function_in_lane(cx: *mut LaneContext) -> u32 {
     vm.lane_stack.innermost_function().unwrap_or_else(|| vm.frames[unsafe { (*cx).frame() }].function)
 }
 
-/// Notes the function a forwarded call calls as the site's callee, through its native `through`, for a body that
-/// inlines it (`lane_unit::Planner::through_call`).
+/// Notes the function a forwarded call calls as the site's callee, through its native `through`, for the site's
+/// callers that read its history (`site_targets_in_lane`).
 pub(super) fn note_forwarded_in_lane(vm: &mut Vm, i: &LaneInstruction, through: Value, callee: Value) {
     if let Some((program, function, _, false)) = vm.same_realm_script_target(callee) && program == vm.active_program {
         vm.note_site_callee(&i.call_link, crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Forwarded { through, callee }, function });

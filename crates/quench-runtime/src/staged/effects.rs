@@ -184,8 +184,8 @@ impl RegionSet {
     }
 }
 
-/// An operation's effect row. `may_collect` is separate from `may_alloc`: an allocation whose
-/// fast path is inline does not collect; only a slow helper and a safepoint do.
+/// An operation's effect row. `allocates` is the one bit for everything that can collect: the collector runs at an
+/// allocation's slow path and at a safepoint, so a row that cannot allocate cannot collect.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Effects {
     pub reads: RegionSet,
@@ -193,29 +193,30 @@ pub struct Effects {
     /// The elements of which arrays the row writes (`ElementWrites`). A row that writes the `Elements` region names its
     /// arrays here: `Any` where the kind row cannot name them, narrowed by the settled facts where they can.
     pub elements: ElementWrites,
-    pub may_alloc: bool,
-    pub may_collect: bool,
+    /// Whether the row may allocate, which is also whether it may collect. A throw allocates its error object, a
+    /// Number or element read or property read may run guest code that allocates, and a safepoint collects.
+    pub allocates: bool,
     pub may_call_js: bool,
     pub may_throw: bool,
 }
 
 impl Effects {
     pub const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE, elements: ElementWrites::Nothing,
-        may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
+        allocates: false, may_call_js: false, may_throw: false };
 
     pub const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
 
     pub const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
-    /// An operation that may run guest code or collect: it reads and writes every region. The top of every grade.
-    pub const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: true,
-        may_collect: true, may_call_js: true, may_throw: true };
+    /// An operation that may run guest code or allocate: it reads and writes every region. The top of every grade.
+    pub const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, allocates: true,
+        may_call_js: true, may_throw: true };
 
     /// A row that touches every region and runs nothing: no guest code, throw, collection or allocation. The settled
     /// facts grade a site with it where they prove it cannot leave and allocates nothing (`signatures::facts_grade`).
     /// Met with a kind row (`meet`) it clears those flags and keeps the kind's regions.
-    pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: false,
-        may_collect: false, may_call_js: false, may_throw: false };
+    pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, allocates: false,
+        may_call_js: false, may_throw: false };
 
     /// Whether the row may write `region`.
     pub const fn writes_region(self, region: Region) -> bool {
@@ -225,7 +226,7 @@ impl Effects {
     /// Whether the row may run guest code, allocate or collect: any of these may move records or change
     /// what a call leaves behind, so a word read across it is not fixed.
     pub const fn may_move_or_call(self) -> bool {
-        self.may_call_js || self.may_alloc || self.may_collect
+        self.may_call_js || self.allocates
     }
 
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
@@ -233,7 +234,7 @@ impl Effects {
     pub const fn join(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
             elements: self.elements.join(other.elements),
-            may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
+            allocates: self.allocates || other.allocates,
             may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
     }
 
@@ -245,12 +246,12 @@ impl Effects {
     /// Whether a row with this effect may change an existing object's exact shape or prototype link: it may run guest code (a
     /// getter, a setter, a proxy trap), or it writes an object's shape, slots or record words without allocating.
     pub const fn reshapes(self) -> bool {
-        self.may_call_js || (!self.may_alloc && self.writes.intersects(Self::OBJECT_REGIONS))
+        self.may_call_js || (!self.allocates && self.writes.intersects(Self::OBJECT_REGIONS))
     }
 
     /// Whether a row with this effect reads and nothing else: it writes no region, runs no guest code and allocates nothing.
     pub const fn reads_alone(self) -> bool {
-        self.writes.0 == RegionSet::NONE.0 && matches!(self.elements, ElementWrites::Nothing) && !self.may_call_js && !self.may_alloc
+        self.writes.0 == RegionSet::NONE.0 && matches!(self.elements, ElementWrites::Nothing) && !self.may_call_js && !self.allocates
     }
 
     /// Whether a row with this effect may rewrite the run's stores word: guest code may run in a nested run and specialize or
@@ -265,15 +266,15 @@ impl Effects {
     pub(crate) fn meet(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 & other.reads.0), writes: RegionSet(self.writes.0 & other.writes.0),
             elements: self.elements.meet(other.elements),
-            may_alloc: self.may_alloc && other.may_alloc, may_collect: self.may_collect && other.may_collect,
+            allocates: self.allocates && other.allocates,
             may_call_js: self.may_call_js && other.may_call_js, may_throw: self.may_throw && other.may_throw }
     }
 
-    /// Whether a step with this row can leave the activation: it may throw, run guest code or collect. A site's
+    /// Whether a step with this row can leave the activation: it may throw, run guest code or allocate (collect). A site's
     /// leave is this flag of its graded row (`signatures::site_grade`), so a fact that proves a site cannot leave
     /// clears those flags there, and the row's leave is never decided twice.
     pub(crate) const fn can_leave(self) -> bool {
-        self.may_throw || self.may_call_js || self.may_collect
+        self.may_throw || self.may_call_js || self.allocates
     }
 }
 
@@ -357,14 +358,14 @@ impl Signature {
                 }
             };
             signature = signature.join(Self { leaves, effects });
-            written |= effects.writes != RegionSet::NONE || effects.elements != ElementWrites::Nothing || effects.may_alloc;
+            written |= effects.writes != RegionSet::NONE || effects.elements != ElementWrites::Nothing || effects.allocates;
         }
         signature
     }
 }
 
 /// How a call site is lowered, by one rule in every tier (interpreter, b-jit, u-jit, AOT): an
-/// inlinable callee is inlined; a callee that cannot leave the activation, collect or run guest code
+/// inlinable callee is inlined; a callee that cannot leave the activation, allocate or run guest code
 /// needs no frame, so it is called frameless; any other callee is called with a frame.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CallForm {
@@ -377,7 +378,7 @@ pub enum CallForm {
 pub fn call_form(callee: Signature, inlinable: bool) -> CallForm {
     if inlinable {
         CallForm::Inline
-    } else if callee.leaves == Leaves::Never && !callee.effects.may_collect && !callee.effects.may_call_js {
+    } else if callee.leaves == Leaves::Never && !callee.effects.allocates && !callee.effects.may_call_js {
         CallForm::Frameless
     } else {
         CallForm::Framed
@@ -413,7 +414,7 @@ impl<W, P> Operation<W, P> {
     /// answers by a pure lookup or leaves where the VM would run a getter, so a read does not.
     pub fn moves_arrays(&self) -> bool {
         let effects = self.effects();
-        !matches!(self, Self::ElementRead { .. }) && (effects.writes.contains(Region::Elements) || effects.may_alloc || effects.may_call_js)
+        !matches!(self, Self::ElementRead { .. }) && (effects.writes.contains(Region::Elements) || effects.allocates || effects.may_call_js)
     }
 
     /// Whether the operation may create or replace the running activation's environment, which its environment storage word
@@ -421,7 +422,7 @@ impl<W, P> Operation<W, P> {
     /// `Region::Frame`), and anything that may run any code is conservative. A guard, a read or a store does not.
     pub fn makes_environment(&self) -> bool {
         let effects = self.effects();
-        effects.may_alloc && effects.writes.contains(Region::Frame)
+        effects.allocates && effects.writes.contains(Region::Frame)
     }
 
     /// Whether the operation may change an existing object's exact shape or prototype link (`Effects::reshapes`).
@@ -451,25 +452,25 @@ impl<W, P> Operation<W, P> {
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
             Self::IndexWrite { .. } => Effects { elements: ElementWrites::Any, ..Effects::writes(Region::Elements) },
-            Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), allocates: true, may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::ElementWrite { .. } => Effects::ANY,
             Self::DefineElement { .. } => Effects { elements: ElementWrites::Any, ..Effects::writes(Region::Elements) },
             // A closure promotes the activation's captured locals into its environment.
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
-                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), allocates: true, ..Effects::NONE },
             // A callee-argument regexp literal reads its callee register, and its shared object's
             // `lastIndex` and the proofs it is kept under (`Vm::regexp_literal_argument_of`).
             Self::Allocate { allocation: Allocation::RegExp { callee: Some(_), .. }, .. } => Effects {
                 reads: RegionSet::of(Region::Frame).with(Region::ObjectSlots).with(Region::ShapeWord).with(Region::Records),
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), allocates: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { callee: None, .. } | Allocation::ConstArray { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), allocates: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {
                 reads: RegionSet::of(Region::Frame), writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), allocates: true, ..Effects::NONE },
             _ => return self.property_effects(),
         })
     }
@@ -479,7 +480,7 @@ impl<W, P> Operation<W, P> {
     const fn property_effects(&self) -> Option<Effects> {
         Some(match self {
             Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
-                .with(Region::Records).with(Region::Payload), may_call_js: true, may_throw: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::Payload), allocates: true, may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::SetField { .. } | Self::StoreField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
             Self::FieldGetHost { .. } | Self::IndexGetHost { .. } => Effects::ANY,
             _ => return None,
@@ -496,13 +497,10 @@ impl<W, P> Operation<W, P> {
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Return { .. } => Effects::NONE,
             // A Number operation's miss (an operand that is not a Number: `valueOf`, `ToNumeric`) runs guest code and
             // throws; a site whose operands the facts prove are Numbers grades it to none (`signatures::facts_grade`).
-            Self::Number(_) => Effects { may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::Number(_) => Effects { allocates: true, may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
-            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
-            // The interpreter's safepoint collects only byte debt (`Heap::byte_due`, polled at a back edge): it does
-            // not allocate, so `may_collect` here is not `may_alloc`. Once the lane's back edge polls `byte_due` too,
-            // `may_collect` folds into `may_alloc` (GC47; plans/r4-class-layout.md). The bit is unchanged until then.
-            Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
+            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { allocates: true, may_throw: true, ..Effects::NONE },
+            Self::Safepoint { .. } => Effects { allocates: true, ..Effects::NONE },
             Self::Call(operation) => operation.effects(),
             // A suspension resumes the activation after anything: an `await` may run guest code
             // through PromiseResolve, and the frame's state is the generator's again.
@@ -553,7 +551,7 @@ mod tests {
         let store = ElementWrites::of([ClassWrite { class: ElementClass::Field(4), indices: Indices::Whole }]);
         let graded = Effects::ANY.meet(Effects { elements: store, ..Effects::ANY });
         assert_eq!(graded.elements, store);
-        assert!(graded.may_call_js && graded.may_throw && graded.may_collect, "an element store's grade clears no flag");
+        assert!(graded.may_call_js && graded.may_throw && graded.allocates, "an element store's grade clears no flag");
         assert_eq!(Effects::NONE.meet(Effects::ANY).elements, ElementWrites::Nothing);
     }
 

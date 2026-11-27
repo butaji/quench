@@ -142,7 +142,7 @@ impl Planned {
 
 /// A chain as one planned row: the row after the `spills` that lead it is the row itself, the
 /// spills run before it and the rest after it, all at the same PC.
-fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call_record::CallRecord>>) -> Result<Planned, String> {
+fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<crate::compiled::OwnedCallRecord>) -> Result<Planned, String> {
     let mut parts = parts.into_iter().map(Planned::of_part);
     let before: Vec<Planned> = parts.by_ref().take(spills).collect();
     let mut row = parts.next().ok_or("chain: no row")?;

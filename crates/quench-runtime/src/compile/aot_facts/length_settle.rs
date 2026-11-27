@@ -16,10 +16,11 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 /// The relations of every point of a function, by the pc each holds them before (`flow::Record`): a point that holds none
-/// is absent.
+/// is absent. Also the pcs whose step may resize an array (`lengths::advance`), which a loop's length check must account for.
 #[derive(Default)]
 pub(crate) struct Settled {
     points: Vec<(u32, Box<[Relation]>)>,
+    resizing: Vec<u32>,
 }
 
 impl Settled {
@@ -30,15 +31,35 @@ impl Settled {
         }
     }
 
+    /// Records that the step at `pc` may resize an array.
+    pub(super) fn resize(&mut self, pc: u32) {
+        self.resizing.push(pc);
+    }
+
     /// Orders the points by pc, so the lookups binary-search them.
     pub(super) fn sort(&mut self) {
         self.points.sort_by_key(|(pc, _)| *pc);
+        self.resizing.sort_unstable();
     }
 
     /// Whether `index + offset < length(array)` holds before the instruction at `pc`.
     pub(crate) fn proves_below(&self, pc: u32, index: Register, array: Register, offset: i64) -> bool {
         self.points.binary_search_by_key(&pc, |(at, _)| *at)
             .is_ok_and(|found| proves_below(&self.points[found].1, index, array, offset))
+    }
+
+    /// The register `index` is below before the instruction at `pc` (`index < bound` by a comparison that held), if any.
+    pub(crate) fn bound_below(&self, pc: u32, index: Register) -> Option<Register> {
+        let found = self.points.binary_search_by_key(&pc, |(at, _)| *at).ok()?;
+        self.points[found].1.iter().find_map(|relation| match *relation {
+            Relation::Less { index: held, bound } if held == index => Some(bound),
+            _ => None,
+        })
+    }
+
+    /// Whether the step at `pc` may resize an array of any class, as the settled solve reads it.
+    pub(crate) fn may_resize(&self, pc: u32) -> bool {
+        self.resizing.binary_search(&pc).is_ok()
     }
 }
 
@@ -84,7 +105,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
 
 /// The length relations of function `id` (`settle`), from its settled solve `flow` and the settled facts of the program.
 pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow, (scope, decode, records): (&Scope, DecodeContext<'_>, &[Register]),
-    resolved: &BTreeMap<Key, u32>, types: &Types, facts: &FunctionFacts<'_>) -> Settled {
+    resolved: &BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>) -> Settled {
     let whole = whole_literals(function);
     let ctx = Ctx {
         id,
@@ -97,6 +118,7 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         types: Some(types),
         decode,
         records,
+        accessors,
     };
     settle(&ctx, function, &flow.entries, facts)
 }
@@ -110,7 +132,10 @@ fn replay(ctx: &Ctx<'_>, function: &Function, facts: &FunctionFacts<'_>, range: 
         if let Some(settled) = record.as_mut() {
             settled.push(pc as u32, lengths.relations());
         }
-        advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
+        let (_, may_resize) = advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
+        if let (Some(settled), true) = (record.as_mut(), may_resize) {
+            settled.resize(pc as u32);
+        }
     }
     (words, lengths)
 }

@@ -286,7 +286,8 @@ fn row(instruction: WideInstruction, site: Site<'_>) -> Body {
     }
 }
 
-/// The steps of `program`'s function `function`, in code order.
+/// The steps of `program`'s function `function`, in code order. A field access that runs an accessor is a call of the
+/// accessor's arms (`AotFacts::accessor_arms`), so its step is their composed signature rather than its kind row.
 fn bodies(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Vec<Body> {
     let decode = DecodeContext::of(program);
     program.with_record(function as usize, |record| {
@@ -295,6 +296,11 @@ fn bodies(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Vec<Bod
             match Invocation::of(instruction, decode) {
                 Some(invocation) => Body::Call { pc, targets: reached(facts, function, pc, &invocation, instruction),
                     site: facts.function_facts(function).call_site(pc).cloned() },
+                None if facts.function_facts(function).accessor_arms(pc).is_some() => Body::Call {
+                    pc,
+                    targets: facts.function_facts(function).call_targets(pc).into_boxed_slice(),
+                    site: facts.function_facts(function).call_site(pc).cloned(),
+                },
                 None => row(instruction, Site { program, facts, function, pc }),
             }
         }).collect()
@@ -425,16 +431,14 @@ mod tests {
     }
 
     #[test]
-    fn call_form_is_frameless_only_when_nothing_leaves_collects_or_runs_guest_code() {
+    fn call_form_is_frameless_only_when_nothing_leaves_allocates_or_runs_guest_code() {
         assert_eq!(call_form(Signature::NEVER, false), CallForm::Frameless);
         let throws = Signature { leaves: Leaves::Never, effects: may_throw() };
         assert_eq!(call_form(throws, false), CallForm::Frameless);
         let leaves = Signature { leaves: Leaves::RestartCall, effects: Effects::NONE };
         assert_eq!(call_form(leaves, false), CallForm::Framed);
-        // `collects` stands for a signature whose only effect is a collection point (GC47: an interpreter safepoint
-        // collects only byte debt, and the bit is unchanged until `may_collect` folds into `may_alloc`).
-        let collects = Signature { leaves: Leaves::Never, effects: Effects { may_collect: true, ..Effects::NONE } };
-        assert_eq!(call_form(collects, false), CallForm::Framed);
+        let allocates = Signature { leaves: Leaves::Never, effects: Effects { allocates: true, ..Effects::NONE } };
+        assert_eq!(call_form(allocates, false), CallForm::Framed);
         let runs = Signature { leaves: Leaves::Never, effects: Effects { may_call_js: true, ..Effects::NONE } };
         assert_eq!(call_form(runs, false), CallForm::Framed);
         assert_eq!(call_form(Signature::ANY, false), CallForm::Framed);

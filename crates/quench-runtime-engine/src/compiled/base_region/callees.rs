@@ -249,8 +249,8 @@ const RECORD_HOLE: u8 = 0;
 /// An image's direct rows (`LaneHelpers::Ahead`) name their record by the site's `symbol`, which the
 /// loader places and binds (`aot_image::live`): the record the plan owns is the template the image
 /// carries (`aot_image::CallSite`), its address no hole of the code.
-pub(crate) fn name_records(parts: &mut [super::call_plan::CallPart], records: &[Box<quench_bjit::call_record::CallRecord>], symbol: crate::aot_image::Symbol) {
-    let addresses: Vec<u64> = records.iter().map(|record| std::ptr::from_ref(&**record).addr() as u64).collect();
+pub(crate) fn name_records(parts: &mut [super::call_plan::CallPart], records: &[crate::compiled::OwnedCallRecord], symbol: crate::aot_image::Symbol) {
+    let addresses: Vec<u64> = records.iter().map(|(record, _)| std::ptr::from_ref(&**record).addr() as u64).collect();
     for part in parts.iter_mut().filter(|part| addresses.contains(&part.holes[usize::from(RECORD_HOLE)])) {
         part.holes[usize::from(RECORD_HOLE)] = 0;
         part.symbols = [Some((RECORD_HOLE, symbol)), None];

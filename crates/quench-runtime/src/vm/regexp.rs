@@ -2451,16 +2451,13 @@ impl Vm {
     #[inline(always)]
     fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, exec: steady::ExecStart,
         steady: Option<steady::SteadyMatch>) -> Option<quench_regexp::Match> {
-        let steady::ExecStart { stateful, sticky, start } = exec;
+        let steady::ExecStart { sticky, start, .. } = exec;
         let prefiltered = steady.is_some_and(|steady| steady.prefiltered);
         // An ASCII rope not yet flat is searched through a reused buffer and stays a rope:
         // the match is ranges, which the caller reads out by the same units.
         if let Some(Some(found)) = input.with_ascii_rope_bytes(|bytes| {
             let length = bytes.len();
-            if !prefiltered
-                && ((stateful && start > length)
-                    || regex.excludes_search(length, start, sticky, || bytes.get(start).map(|byte| u16::from(*byte))))
-            {
+            if !prefiltered && steady::search_excluded(regex, exec, length, || bytes.get(start).map(|byte| u16::from(*byte))) {
                 return Some(None);
             }
             ascii::ascii_search(regex, bytes, start, sticky, steady::captures_read(steady))
@@ -2471,10 +2468,7 @@ impl Vm {
         let unkept = input.unkept_flat();
         let input = &unkept;
         let units = input.units();
-        if !steady.is_some_and(|steady| steady.prefiltered)
-            && ((stateful && start > units.len())
-                || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start))))
-        {
+        if !prefiltered && steady::search_excluded(regex, exec, units.len(), || (start < units.len()).then(|| units.at(start))) {
             return None;
         }
         if let Some(found) = Self::regexp_search_ascii(regex, input, start, sticky, steady) {

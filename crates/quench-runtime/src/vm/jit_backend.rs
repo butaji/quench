@@ -265,14 +265,6 @@ pub enum NativeCompileRejection {
 }
 
 impl NativeCompileRejection {
-    /// Whether replanning with less inlined code can address this rejection.
-    pub const fn exceeds_code_budget(self) -> bool {
-        match self {
-            Self::CodeSizeBudget => true,
-            _ => false,
-        }
-    }
-
     pub const fn reason(self) -> &'static str {
         match self {
             Self::Cranelift => "cranelift-compile-error",

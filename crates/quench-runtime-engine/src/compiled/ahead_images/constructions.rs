@@ -2,7 +2,7 @@
 //! a `new F(..)` the closed world proves constructs `F` (`AotFacts::construct_target`), where `F`'s
 //! body only stores its parameters and immediate constants into `this` (`initializer_stores`). The
 //! plan is the one the VM's construct plan of `F`'s closure makes of the same stores
-//! (`dispatch_fast::scalar_construct_plan`): its fields in store order, each a parameter as passed
+//! (the callee's `ScalarConstructPlan` the VM's construct plan makes): its fields in store order, each a parameter as passed
 //! or a constant. The code guards the callee by the image's symbol of `F`'s closure
 //! (`HeapValueRecipe::ClosureOf`) and asks the VM whether that closure's plan holds where the
 //! construction runs (`LaneHelper::ConstructPlanHolds`), so a closure whose plan the VM has not
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn an_initializer_of_parameters_and_immediates_is_kept_by_the_image() {
         let program = quench_runtime::Engine::specialize("function P(x, y) { this.x = x; this.y = y; this.z = 0; } new P(1, 2);", "plan.js").unwrap();
-        let mut symbols = SymbolTable::new(&program);
+        let mut symbols = SymbolTable::new(&program, Default::default());
         let plan = image_plan(&program, named(&program, "P"), &mut symbols).expect("a plan");
         assert!(matches!(plan.callee, PlanCallee::Image(_)));
         let fields: Vec<ScalarField> = plan.fields.iter().map(|(_, field)| *field).collect();
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn a_string_store_keeps_no_plan() {
         let program = quench_runtime::Engine::specialize("function S(x) { this.x = x; this.s = \"a\"; } new S(1);", "plan.js").unwrap();
-        let mut symbols = SymbolTable::new(&program);
+        let mut symbols = SymbolTable::new(&program, Default::default());
         assert!(image_plan(&program, named(&program, "S"), &mut symbols).is_none());
     }
 }

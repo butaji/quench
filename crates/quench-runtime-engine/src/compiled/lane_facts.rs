@@ -55,12 +55,6 @@ pub(crate) fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Op
     unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)).map(Some)
 }
 
-/// Whether a function is pure numeric, observing neither closure environment nor identity.
-pub(crate) fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
-    program.function_get(function as usize).is_some_and(|body| body.plain_activation(program))
-        && numeric_restartable(program, function)
-}
-
 /// Whether a callee bound by its definition restarts its call on a leave, as a pure numeric
 /// function does.
 pub(crate) fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
@@ -68,16 +62,6 @@ pub(crate) fn numeric_restartable(program: &ResidualProgram, function: u32) -> b
         lane_region::restartable_numeric_function(program, body, body.instructions()))
 }
 
-/// `targets`, each once, in first-seen order.
-pub(crate) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
-    let mut kept = 0;
-    for index in 0..targets.len() {
-        let target = targets[index];
-        if !targets[..kept].contains(&target) { targets[kept] = target; kept += 1; }
-    }
-    targets.truncate(kept);
-    targets
-}
 
 /// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
 pub(crate) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) -> bool {
@@ -104,7 +88,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
 /// planned from, its field proofs and its direct callees. Equal keys make equal code.
 pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
-    direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize) -> u64 {
+    direct: usize, generic: &[LaneExit], entry: Option<u32>) -> u64 {
     use std::fmt::Write;
     // The instructions, most of the key, fold as their words; the rest as its debug text,
     // written into the hash without a string between.
@@ -114,7 +98,7 @@ pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
         key.word(word);
         key.word(u64::from(imm));
     }
-    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}", unit.frames);
+    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{direct}", unit.frames);
     key.0
 }
 
@@ -203,13 +187,13 @@ pub(crate) fn measured_ir_per_bytecode(loops: &tier_policy::Loops, lowers: Lower
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).
 pub(crate) struct Census {
     pub(crate) function: u32, pub(crate) osr: bool, pub(crate) unit: usize, pub(crate) ir: usize, pub(crate) key: u64,
-    pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) budget: usize, pub(crate) closed: bool,
+    pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) closed: bool,
 }
 
 impl Census {
     pub(crate) fn report(&self, bytes: usize) -> String {
-        let Self { function, osr, unit, ir, key, generic, direct, budget, closed } = self;
-        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"key\":\"{key:016x}\",\"closed\":{closed},\"bytes\":{bytes}}}")
+        let Self { function, osr, unit, ir, key, generic, direct, closed } = self;
+        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"key\":\"{key:016x}\",\"closed\":{closed},\"bytes\":{bytes}}}")
     }
 }
 
