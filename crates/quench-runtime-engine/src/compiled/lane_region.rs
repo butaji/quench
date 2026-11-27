@@ -1318,6 +1318,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// the frame's own PC there (the PC itself for the innermost, its call's for each frame
     /// around it).
     fn is_live(&self, pc: usize, register: Register) -> bool {
+        // An inlined frame bound by its function (a closed-world call, `CalleeBinding::Function`) names
+        // no closure: a leave inside it rebuilds the activation from the closure its callee register
+        // holds (`body_inlined_activation_in_lane`), so that register lives through the frame.
+        let mut open = match self.unit.origins.get(pc).copied() { Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame), _ => None };
+        while let Some(index) = open {
+            let inlined = self.unit.frames[index];
+            if inlined.target.identity().is_none() && inlined.callee_register == register { return true; }
+            open = inlined.parent;
+        }
         let (caller, frames) = match &self.live {
             Liveness::Unit(masks) => return masks.as_deref().is_none_or(|live| live.is_live(pc, register)),
             Liveness::Frames { caller, frames } => (caller, frames),

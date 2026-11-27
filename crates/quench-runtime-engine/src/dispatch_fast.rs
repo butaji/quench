@@ -4815,6 +4815,14 @@ impl Vm {
     /// take a frame without resolving it again.
     #[inline(never)]
     pub(crate) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
+        self.resolve_call_target_in_lane(code, callee, false)
+    }
+
+    /// `resolve_script_call_target`, deriving the callee's view at once where `now`: an
+    /// activation recovery makes (`body_inlined_activation_in_lane`) for a callee whose runs
+    /// all ran inlined, so none counted toward its view (`call_derives_in_lane`).
+    #[inline(never)]
+    pub(crate) fn resolve_call_target_in_lane(&mut self, code: &ResidualProgram, callee: Value, now: bool) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env) = self.user_target_in_lane(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
@@ -4855,7 +4863,7 @@ impl Vm {
             }
             return Some(target);
         }
-        if !self.call_may_derive_in_lane(program, function) { return None; }
+        if !(if now { self.call_derives_in_lane(program, function, true) } else { self.call_may_derive_in_lane(program, function) }) { return None; }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still

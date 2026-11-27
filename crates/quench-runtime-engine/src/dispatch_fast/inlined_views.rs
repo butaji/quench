@@ -249,25 +249,20 @@ fn materialize(cx: *mut super::LaneContext, r: super::Registers, records: Ip, or
 }
 
 /// The record the general path runs for a lane exit at `ip`, a record of an inlined view: the
-/// function's own, once the run leaves the view (`leave`). `QUENCH_N7_TRACE` reports each.
+/// function's own, once the run leaves the view (`leave`).
 #[cold]
 #[inline(never)]
 pub(crate) fn leave_at_exit(cx: *mut super::LaneContext, ip: Ip) -> Ip {
-    let origin = with_inlined(ip, |view, index| (view.origins[index], index));
     // The span holds other records too.
-    if origin.is_none() { return ip; }
-    if std::env::var_os("QUENCH_N7_TRACE").is_some() {
-        // SAFETY: a record of a live view.
-        eprintln!("n7 exit {:?} handler {:p}", origin, unsafe { (*ip).handler });
-    }
+    if with_inlined(ip, |_, _| ()).is_none() { return ip; }
     // SAFETY: the running lane's context; its registers are the inlined activation's.
     let r = unsafe { (*cx).registers };
     leave(cx, r, ip).1
 }
 
 /// Makes and installs the inlined view of the function running the leaf call at `ip`, once the
-/// call's link is proved (`script_call_leaf_prove_miss`): each proved leaf site makes it anew with
-/// every site linked so far. The interpreter only (no compiled tier claims the view's PCs), and
+/// call's link is proved (`script_call_leaf_prove_miss`), with every site linked so far, once per
+/// function. The interpreter only (no compiled tier claims the view's PCs), and
 /// only from the function's own records.
 #[cold]
 pub(crate) fn note_leaf_site(cx: *mut super::LaneContext, ip: Ip) {
@@ -280,11 +275,10 @@ pub(crate) fn note_leaf_site(cx: *mut super::LaneContext, ip: Ip) {
     let end = start + original.records.len() * size_of::<quench_runtime::vm::engine_types::LaneInstruction>();
     if !(start..end).contains(&ip.addr()) || original.entry.facts.get() == 0 { return; }
     let original: *const LaneView = original;
+    // A function keeps one inlined view: the program arena holds every view it stores for the
+    // program's life, so a view made anew per proved site would hold each earlier one too.
+    if inlined_of(original).is_some() { return; }
     let Some((view, registers)) = make_inlined_view(cx, function, original) else { return };
-    if std::env::var_os("QUENCH_N7_TRACE").is_some() {
-        let frames = INLINED.with(|views| views.borrow().iter().find(|inlined| std::ptr::eq(inlined.view, view)).map(|inlined| inlined.frames.iter().map(|frame| frame.target.function).collect::<Vec<_>>()));
-        eprintln!("n7 install f{function} registers {registers} inlines {frames:?}");
-    }
     install(cx, function, original, view, registers);
 }
 
