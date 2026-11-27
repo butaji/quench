@@ -19,6 +19,7 @@
 
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
+use crate::layout::CALL_CONTEXT_BODY_SHIM;
 use crate::layout::call_record::{CalleeRecord, CallRecord, LaneStatus, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_RECOVERY_AT, CELL_ROWS_AT,
     CELL_USES_THIS_AT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, JS_STEP_ACTIVATION_COUNT,
@@ -55,8 +56,9 @@ struct BodyReturn {
     value: u64,
 }
 
-/// A lane body's entry (`BodyEntry`): (context, receiver, capture word, registers).
-type BodyEntry = unsafe extern "C" fn(usize, u64, u64, usize) -> BodyReturn;
+/// The SysV shim a lane body is entered through (`lane_body_abi::body_shim`): (context, receiver, capture word,
+/// registers, body), where `body` is the lane body it calls: (context, receiver, capture word, registers).
+type BodyShim = unsafe extern "C" fn(usize, u64, u64, usize, usize) -> BodyReturn;
 /// A b-jit body's row entry (`entry_rows`, `EntryCell::rows`): (window, context, receiver, captures)
 /// -> (word, status), in the row ABI, which saves no callee-saved register.
 type RowsEntry = unsafe extern "rust-preserve-none" fn(usize, usize, u64, u64) -> RowsReturn;
@@ -220,8 +222,8 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
                 let RowsReturn { value, status } = entry(a.top, ctx, this, captures);
                 BodyReturn { status: status as u32, value }
             } else {
-                let entry: BodyEntry = transmute(word_at(a.cell, CELL_ENTRY_AT) as usize);
-                entry(ctx, this, captures, a.top)
+                let shim: BodyShim = transmute(word_at(ctx, CALL_CONTEXT_BODY_SHIM) as usize);
+                shim(ctx, this, captures, a.top, word_at(a.cell, CELL_ENTRY_AT) as usize)
             }
         }
     }

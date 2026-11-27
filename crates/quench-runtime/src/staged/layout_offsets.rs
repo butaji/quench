@@ -313,6 +313,7 @@ pub(crate) mod words {
 /// 24 bytes). `base_rows` checks each against the runtime type.
 pub(crate) type CallContextWords = super::record_heads::CallContextHead<u64, u8, u8, u8, u32, [usize; 3]>;
 pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = core::mem::offset_of!(CallContextWords, adapter_payload);
+pub(crate) const CALL_CONTEXT_BODY_SHIM: usize = core::mem::offset_of!(CallContextWords, body_shim);
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, loop_entry);
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_record_base);
 /// The typed view records a view proof reads (`JsStepHead::typed_view_directory`, `typed_view_pages`, `buffer_relocations`).

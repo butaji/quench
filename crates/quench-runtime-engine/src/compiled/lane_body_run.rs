@@ -162,7 +162,7 @@ impl Vm {
             return unsafe { self.call_polling_body(context, descriptor) };
         }
         // SAFETY: as the caller promises.
-        unsafe { (descriptor.entry)(context, descriptor.receiver, descriptor.captures, descriptor.registers) }
+        unsafe { super::lane_body_abi::call_body_shim(context, descriptor.receiver, descriptor.captures, descriptor.registers, descriptor.entry) }
     }
 
     /// `call_body` of a body that polls by fault: through the trampoline that resumes the fault,
