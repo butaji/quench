@@ -12,9 +12,9 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
+use quench_runtime::bytecode::{Constant, FieldLookup, ImmediateLayout, Op, Register, RETURN_REGISTER, WideInstruction};
 use quench_runtime::bytecode::Function;
-use quench_runtime::compile::call_plan::CallPlan;
+use quench_runtime::compile::call_plan::{tail_site, CallPlan};
 use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
 use quench_runtime::typed_ir::BindingTime;
 use quench_runtime::value::Value;
@@ -39,6 +39,10 @@ impl CallTarget {
         match self.callee { CalleeBinding::Forwarded { through, .. } => Some(through), _ => None }
     }
 }
+
+/// The unit PC a self tail call jumps to: the root's first instruction, which the unit reaches
+/// through a jump at PC 0, so the entry is entered once and PC 1 is the loop header.
+const SELF_TAIL_HEADER: u32 = 1;
 
 /// Where a unit PC comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,6 +247,9 @@ struct Plan {
     /// Per PC, the register and identity of the forwarding native an inlined call through it
     /// guards; its instruction in `code` is then the call of the function it calls.
     through_call: Vec<Option<(Register, Value)>>,
+    /// Per root PC, the instructions a self tail call there becomes (`self_tail`); empty for an inlined
+    /// callee and for a root with no self tail call.
+    tails: Vec<Option<Vec<WideInstruction>>>,
 }
 
 struct InlinedPlan {
@@ -264,10 +271,15 @@ impl Plan {
     /// The unit PCs each instruction takes, in order.
     fn lengths(&self, root: bool) -> impl Iterator<Item = u32> + '_ {
         self.code.iter().zip(&self.calls).enumerate().map(move |(pc, (instruction, calls))| match calls.as_slice() {
-            [] if root => 1,
+            [] if root => self.tail(pc).map_or(1, |tail| tail.len() as u32),
             [] => completion_length(*instruction),
             alternatives => call_length(alternatives) + u32::from(self.keeps_call(pc, root)),
         })
+    }
+
+    /// The instructions root PC `pc` becomes, where it is a self tail call (`self_tail`).
+    fn tail(&self, pc: usize) -> Option<&[WideInstruction]> {
+        self.tails.get(pc)?.as_deref()
     }
 
     /// Whether the caller's call at `pc` keeps its own `Call` after its last alternative, which
@@ -327,7 +339,7 @@ impl Planner<'_, '_> {
         for (pc, call) in called {
             code[pc] = call;
         }
-        Plan { code, calls, blocked, through_call }
+        Plan { code, calls, blocked, through_call, tails: Vec::new() }
     }
 
     /// The call at `pc` of `function` as the call of the function it forwards to, where its
@@ -453,6 +465,56 @@ fn lowerable(code: &[WideInstruction]) -> bool {
             || (Operation::<u64, ()>::is_plain_call(*instruction) && instruction.returns_from_frame()))
 }
 
+/// The instructions the self tail call at `pc` of the root `function` (`function_id`) becomes, where it
+/// re-enters the function as a fresh activation would: each argument copied to a temporary at `temps`
+/// and then to its parameter register, each missing parameter and every other register undefined (the
+/// constant `undefined`), then a jump to `SELF_TAIL_HEADER`. None where the call is not a self tail call:
+/// a plain call of the function itself whose activation nothing observes past the call, in a body that
+/// reads neither `this` nor `arguments` and captures no environment.
+fn self_tail(function_id: u32, function: &Function, plans: &dyn Fn(u32, u32) -> Option<CallPlan>,
+    code: &[WideInstruction], pc: usize, temps: u32, undefined: u32) -> Option<Vec<WideInstruction>> {
+    let instruction = *code.get(pc)?;
+    let call = pc as u32;
+    if !Operation::<u64, ()>::is_plain_call(instruction) || !instruction.returns_from_frame()
+        || instruction.result_flags() != RETURN_REGISTER || instruction.direct_eval() || instruction.parameter_eval()
+        || !tail_site(true, function.permits_js_tail_call_at(call)) {
+        return None;
+    }
+    if function.is_async || function.is_generator || function.is_class_constructor || function.derived_constructor
+        || function.rest || function.rest_alias || function.arguments_slot.is_some() {
+        return None;
+    }
+    let plan = plans(function_id, call)?;
+    let self_arm = matches!(&*plan.arms, [arm] if arm.class.is_none() && arm.function == function_id);
+    if !self_arm || !plan.registers_only || plan.addresses_locals || plan.legacy_reflection
+        || plan.admits_direct_eval || plan.forwards_arguments || plan.keeps_arguments {
+        return None;
+    }
+    if code.iter().any(|other| other.op().captures_environment() || other.op().reads_arguments()
+        || other.direct_eval() || other.parameter_eval() || matches!(Operation::<u64, ()>::of(*other), Some(Operation::LoadThis { .. }))) {
+        return None;
+    }
+    let argc = ImmediateLayout::argument_count(instruction.imm());
+    if argc > function.params { return None; }
+    let window = ImmediateLayout::call_window_base(instruction.imm());
+    let params: Vec<Register> = (0..function.params)
+        .map(|index| function.parameter_registers.map_or_else(|| function.promoted_register(index), |base| Some(base + index)))
+        .collect::<Option<_>>()?;
+    let temp = |index: u16| Register::try_from(temps + u32::from(index)).ok();
+    let load_undefined = |register: Register| WideInstruction::new(Op::LoadConst, register, 0, 0, undefined);
+    let mut tail = Vec::with_capacity(2 * usize::from(argc) + usize::from(function.registers) + 1);
+    for index in 0..argc {
+        tail.push(super::meaning_compiled::move_record(temp(index)?, window + index));
+    }
+    for index in 0..argc {
+        tail.push(super::meaning_compiled::move_record(params[usize::from(index)], temp(index)?));
+    }
+    tail.extend(params[usize::from(argc)..].iter().map(|&param| load_undefined(param)));
+    tail.extend((0..function.registers).filter(|register| !params.contains(register)).map(|register| load_undefined(register)));
+    tail.push(super::meaning_compiled::jump_record(SELF_TAIL_HEADER));
+    Some(tail)
+}
+
 /// The unit's instructions, origins and frames as a plan lays them out.
 struct Emitter {
     unit: Unit,
@@ -474,6 +536,10 @@ impl Emitter {
     ) -> Option<()> {
         // Unit PCs of each instruction of the function, and past its last.
         let root = frame.is_none();
+        if root && plan.tails.iter().any(Option::is_some) {
+            self.unit.instructions.push(super::meaning_compiled::jump_record(SELF_TAIL_HEADER));
+            self.unit.origins.push(Origin::Caller(0));
+        }
         let mut flat = Vec::with_capacity(plan.code.len() + 1);
         let mut at = self.unit.instructions.len() as u32;
         for length in plan.lengths(root) {
@@ -537,6 +603,11 @@ impl Emitter {
                 continue;
             }
             if root {
+                if let Some(tail) = plan.tail(pc) {
+                    self.unit.instructions.extend_from_slice(tail);
+                    self.unit.origins.extend(std::iter::repeat(origin).take(tail.len()));
+                    continue;
+                }
                 // A caller instruction keeps its registers; a jump goes to its target's unit PC.
                 let retargeted = if instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget {
                     WideInstruction::new(instruction.op(), instruction.a(), instruction.b(), instruction.c(), target_of(instruction.imm())?)
@@ -661,8 +732,18 @@ pub(crate) fn with_plans<'f>(
 ) -> Option<Unit> {
     let caller_registers = function.registers;
     let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), plans, body, registers: u32::from(caller_registers), budget, max_inlined, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
-    let plan = planner.plan_weighted(function_id, function, budget);
-    let registers = u16::try_from(planner.registers).ok()?;
+    let mut plan = planner.plan_weighted(function_id, function, budget);
+    // The self tail calls of the root become unit instructions (`self_tail`); their argument temporaries sit above
+    // the planned registers, and the undefined value is the program's `undefined` constant, absent from a program that has none.
+    let undefined = program.constants.iter().position(|constant| matches!(constant, Constant::Undefined)).and_then(|index| u32::try_from(index).ok());
+    let tails: Vec<Option<Vec<WideInstruction>>> = match undefined {
+        Some(undefined) => (0..plan.code.len()).map(|pc| plan.calls[pc].is_empty().then(|| self_tail(function_id, function, plans,
+            &plan.code, pc, planner.registers, undefined)).flatten()).collect(),
+        None => Vec::new(),
+    };
+    let temporaries = if tails.iter().any(Option::is_some) { u32::from(function.params) } else { 0 };
+    plan.tails = tails;
+    let registers = u16::try_from(planner.registers + temporaries).ok()?;
     let mut emitter = Emitter {
         unit: Unit {
             instructions: Vec::with_capacity(plan.length(true) as usize),
