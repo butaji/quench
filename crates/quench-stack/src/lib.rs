@@ -2,21 +2,49 @@
 pub mod projection;
 use std::{cell::Cell, marker::PhantomData, rc::Rc};
 
-/// Native stack distance allowed for recursive runtime transitions.
-pub const STACK_BUDGET_BYTES: usize = 32 * 1024 * 1024;
-/// Space for host entry, error construction and unwinding after the guard fires.
+/// Space for host entry, error construction and unwinding after the guard fires. It is kept
+/// off the top of every stack budget, so a transition that passes the budget still has room.
 pub const STACK_HEADROOM_BYTES: usize = 2 * 1024 * 1024;
-/// Every worker derives its reservation from the runtime policy.
+/// The stack a thread quench creates for itself. Its budget is `budget_for_stack` of it.
 pub const WORKER_STACK_SIZE: usize = STACK_BUDGET_BYTES + STACK_HEADROOM_BYTES;
+/// The native stack distance a thread quench creates for itself may use for recursive runtime
+/// transitions: `budget_for_stack(WORKER_STACK_SIZE)`.
+pub const STACK_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
+/// The stack distance a thread running on a stack of `stack_bytes` may use for recursive
+/// transitions: the stack less the headroom.
+pub const fn budget_for_stack(stack_bytes: usize) -> usize {
+    stack_bytes.saturating_sub(STACK_HEADROOM_BYTES)
+}
 
 // Some parsers and traversals grow structured work without retaining Rust
 // frames. This derived transition ceiling bounds those paths as well.
 const STACK_TRANSITION_RESERVE_BYTES: usize = 4 * 1024;
-const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_RESERVE_BYTES;
-/// The share of the transitions and stack distance an optional transition may reach
-/// (`StackGuard::enter_optional`): the rest stays for the transitions execution requires.
-const OPTIONAL_TRANSITIONS: usize = MAX_RECURSIVE_TRANSITIONS / 2;
-const OPTIONAL_STACK_BYTES: usize = STACK_BUDGET_BYTES / 2;
+
+thread_local! {
+    /// The calling thread's stack distance budget (`set_thread_stack_budget`). A thread
+    /// quench creates starts with its worker stack's; the main thread's is read from its
+    /// real stack (`budget_for_stack` of that, by the process start).
+    static BUDGET_BYTES: Cell<usize> = const { Cell::new(budget_for_stack(WORKER_STACK_SIZE)) };
+}
+
+/// The calling thread's stack distance budget.
+#[inline(always)]
+fn stack_budget() -> usize {
+    BUDGET_BYTES.with(Cell::get)
+}
+
+/// The transitions the calling thread's budget admits.
+#[inline(always)]
+fn max_recursive_transitions() -> usize {
+    stack_budget() / STACK_TRANSITION_RESERVE_BYTES
+}
+
+/// Sets the calling thread's stack distance budget. Only the thread that owns its stack
+/// calls it, with the bound of that stack (`budget_for_stack`).
+pub fn set_thread_stack_budget(bytes: usize) {
+    BUDGET_BYTES.with(|budget| budget.set(bytes));
+}
 
 /// Maximum live guest function activations, including suspended callers. The
 /// host's `--stack_size` lowers the active limit below it (`GuestCallLimitGuard`).
@@ -86,7 +114,7 @@ impl StackGuard {
             }
             let origin = STACK_ORIGIN.with(Cell::get);
             let distance = current_stack_pointer.abs_diff(origin);
-            if current == MAX_RECURSIVE_TRANSITIONS || distance > STACK_BUDGET_BYTES {
+            if current == max_recursive_transitions() || distance > stack_budget() {
                 return Err(StackExhausted);
             }
             depth.set(current + 1);
@@ -103,9 +131,11 @@ impl StackGuard {
     #[inline]
     pub fn enter_optional() -> Option<Self> {
         let current_stack_pointer = current_stack_pointer();
-        let within = ACTIVE_TRANSITIONS.with(Cell::get) < OPTIONAL_TRANSITIONS
+        // The share of the transitions and stack distance an optional transition may reach: the
+        // rest stays for the transitions execution requires.
+        let within = ACTIVE_TRANSITIONS.with(Cell::get) < max_recursive_transitions() / 2
             && STACK_ORIGIN.with(Cell::get).checked_sub(current_stack_pointer)
-                .is_none_or(|distance| distance < OPTIONAL_STACK_BYTES);
+                .is_none_or(|distance| distance < stack_budget() / 2);
         within.then(Self::enter).and_then(Result::ok)
     }
 }
@@ -122,13 +152,13 @@ impl StackBudget {
     pub fn here() -> Self {
         let active = ACTIVE_TRANSITIONS.with(Cell::get);
         let origin = if active == 0 { current_stack_pointer() } else { STACK_ORIGIN.with(Cell::get) };
-        Self { remaining: MAX_RECURSIVE_TRANSITIONS.saturating_sub(active), origin }
+        Self { remaining: max_recursive_transitions().saturating_sub(active), origin }
     }
 
     /// Whether a transition `depth` levels below the entry fits.
     #[inline]
     pub fn admits(&self, depth: usize) -> bool {
-        depth < self.remaining && current_stack_pointer().abs_diff(self.origin) <= STACK_BUDGET_BYTES
+        depth < self.remaining && current_stack_pointer().abs_diff(self.origin) <= stack_budget()
     }
 
     /// Whether a tree `depth` levels deep is admitted at every level without visiting it: the
@@ -140,7 +170,7 @@ impl StackBudget {
             && current_stack_pointer()
                 .abs_diff(self.origin)
                 .saturating_add(depth.saturating_mul(STACK_TRANSITION_RESERVE_BYTES))
-                <= STACK_BUDGET_BYTES
+                <= stack_budget()
     }
 }
 
@@ -168,7 +198,8 @@ impl StackLimit {
             0 => current_stack_pointer(),
             origin => origin,
         };
-        Self { floor: origin.saturating_sub(STACK_BUDGET_BYTES), ceiling: origin.saturating_add(STACK_BUDGET_BYTES) }
+        let budget = stack_budget();
+        Self { floor: origin.saturating_sub(budget), ceiling: origin.saturating_add(budget) }
     }
 
     /// Whether the stack pointer here is within the budget: `StackGuard::enter`'s distance
@@ -238,8 +269,9 @@ impl Drop for GuestCallGuard {
     }
 }
 
+/// The address the calling frame sits at: the stack pointer, to within a frame.
 #[inline(always)]
-fn current_stack_pointer() -> usize {
+pub fn current_stack_pointer() -> usize {
     let marker = 0_u8;
     std::hint::black_box(&marker as *const u8 as usize)
 }
