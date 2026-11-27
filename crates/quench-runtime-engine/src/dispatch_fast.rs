@@ -3980,9 +3980,6 @@ script_handler! {
         if site.refused_now() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        if site.interprets() {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
         // The header rule (`enter_loop_body`): a ready body first.
         if let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site) {
             lane_attempt!(cx, r, attempt);
