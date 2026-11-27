@@ -1737,7 +1737,7 @@ impl Slot {
 /// default i32 representation, so retaining a full `registers`-sized vector
 /// at every reachable instruction wastes memory. This stores only deviations
 /// from that default; joins apply the same `Slot` lattice to every register.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct AnalysisState {
     slots: Vec<(u16, Slot)>,
 }
@@ -5188,6 +5188,109 @@ impl Plan {
     }
 }
 
+/// The plan's register-state analysis: one block per instruction, whose input is the state before
+/// it. A raise at a pc with a catch also flows into the catch's target, in the entry state
+/// `wasm_catch::raise_entry` gives. A rejection records its reason and fails the plan.
+struct PlanFlow<'a, 'b> {
+    analysis: &'a Analysis<'b>,
+    index: usize,
+    function: &'a Function,
+    instructions: &'a [WideInstruction],
+    callable: &'a quench_runtime::bitset::BitSet,
+    memory_register: Option<u16>,
+    memory_slot: &'a mut Option<u32>,
+    result: Option<quench_runtime::WasmType>,
+    entry: AnalysisState,
+    catches: Vec<Option<wasm_catch::Catch>>,
+    bound: u16,
+    /// Per pc, the entry state of its catch, set by the pc's transfer.
+    raised: Vec<Option<AnalysisState>>,
+    /// The edges of pc `p` are `edge_targets[edge_starts[p]..edge_starts[p + 1]]`: its ordinary
+    /// successors in range, then its catch target.
+    edge_starts: Vec<usize>,
+    edge_targets: Vec<usize>,
+    /// Whether a rejection or an unsupported raise stopped the analysis.
+    failed: bool,
+}
+
+impl PlanFlow<'_, '_> {
+    /// Records the rejection `reason` of this function and fails the plan.
+    fn fail(&mut self, reason: impl FnOnce() -> String) {
+        self.analysis.reject(self.index, reason);
+        self.failed = true;
+    }
+}
+
+impl quench_runtime::dataflow::Dataflow for PlanFlow<'_, '_> {
+    type State = AnalysisState;
+
+    fn blocks(&self) -> usize {
+        self.instructions.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edge_targets[self.edge_starts[block]..self.edge_starts[block + 1]]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<AnalysisState> {
+        (block == 0).then(|| self.entry.clone())
+    }
+
+    fn join(&self, into: &mut AnalysisState, incoming: &AnalysisState) -> bool {
+        into.join_from(incoming)
+    }
+
+    fn transfer(&mut self, block: usize, state: &AnalysisState) -> AnalysisState {
+        let mut out = state.clone();
+        if self.failed {
+            return out;
+        }
+        let instruction = self.instructions[block];
+        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+            .and_then(|step| step.callee(instruction))
+            && !self.callable.contains(callee)
+            && !self.analysis.experimental_root_compilation
+        {
+            self.fail(|| format!("uncompiled-callee:{callee}@{block}"));
+            return out;
+        }
+        if let Some(catch) = self.catches[block] {
+            match wasm_catch::raise_entry(catch, state, self.bound) {
+                Some(entered) => self.raised[block] = Some(entered),
+                None => {
+                    self.failed = true;
+                    return out;
+                }
+            }
+        }
+        let op = instruction.op();
+        if self
+            .analysis
+            .transfer(
+                self.function,
+                instruction,
+                &mut out,
+                self.callable,
+                (self.memory_register, &mut *self.memory_slot),
+                self.result,
+            )
+            .is_none()
+        {
+            self.fail(|| format!("unsupported-instruction:{op:?}@{block}"));
+        }
+        out
+    }
+
+    fn transfer_edge_at(&self, block: usize, index: usize, out: &AnalysisState) -> AnalysisState {
+        match &self.raised[block] {
+            Some(entered) if self.edge_starts[block] + index + 1 == self.edge_starts[block + 1] => {
+                entered.clone()
+            }
+            _ => out.clone(),
+        }
+    }
+}
+
 /// The analysis context shared by every function of a program.
 struct Analysis<'a> {
     vm: &'a Vm,
@@ -5430,57 +5533,39 @@ impl Analysis<'_> {
                 Slot::Value(Kind::of(*ty)?),
             )?;
         }
-        let mut states: Vec<Option<AnalysisState>> = vec![None; instructions.len()];
-        states[0] = Some(entry);
-        let mut work = vec![0usize];
         let (catches, bound) = wasm_catch::catch_frame(function)?;
-        while let Some(pc) = work.pop() {
-            let instruction = instructions[pc];
-            let mut state = states[pc]
-                .clone()
-                .expect("queued instructions have a state");
-            if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-                .and_then(|step| step.callee(instruction))
-                && !callable.contains(callee)
-                && !self.experimental_root_compilation
-            {
-                self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
-                return None;
-            }
-            wasm_catch::raise_edge(&mut states, &mut work, catches[pc], &state, bound)?;
-            if self
-                .transfer(
-                    function,
-                    instruction,
-                    &mut state,
-                    callable,
-                    (memory_register, memory_slot),
-                    result,
-                )
-                .is_none()
-            {
-                let op = instruction.op();
-                self.reject(index, || format!("unsupported-instruction:{op:?}@{pc}"));
-                return None;
-            }
-            let mut successor_pcs = Vec::with_capacity(2);
+        let mut edge_starts = Vec::with_capacity(instructions.len() + 1);
+        let mut edge_targets = Vec::with_capacity(instructions.len());
+        for (pc, instruction) in instructions.iter().copied().enumerate() {
+            edge_starts.push(edge_targets.len());
             quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
                 if successor < instructions.len() {
-                    successor_pcs.push(successor);
+                    edge_targets.push(successor);
                 }
             });
-            for successor in successor_pcs {
-                let changed = match &mut states[successor] {
-                    Some(existing) => existing.join_from(&state),
-                    target @ None => {
-                        *target = Some(state.clone());
-                        true
-                    }
-                };
-                if changed {
-                    work.push(successor);
-                }
-            }
+            edge_targets.extend(catches[pc].map(|catch| catch.target));
+        }
+        edge_starts.push(edge_targets.len());
+        let mut flow = PlanFlow {
+            analysis: self,
+            index,
+            function: *function,
+            instructions: &instructions,
+            callable,
+            memory_register,
+            memory_slot,
+            result,
+            entry,
+            catches,
+            bound,
+            raised: vec![None; instructions.len()],
+            edge_starts,
+            edge_targets,
+            failed: false,
+        };
+        let states = quench_runtime::dataflow::solve(&mut flow);
+        if flow.failed {
+            return None;
         }
         let operands = states
             .iter()
