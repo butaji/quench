@@ -179,13 +179,6 @@ impl IntRange {
         Self::bounds(0, ceiling as i64)
     }
 
-    /// The range an increment (or a decrement, where `decrement`) of an integer in `self` steps to, as an integer Number.
-    pub fn stepped(self, decrement: bool) -> Option<Self> {
-        let one = Self::singleton(1);
-        let step = if decrement { self.subtract(one) } else { self.add(one) };
-        step.and_then(Self::as_number)
-    }
-
     /// The ranges of `self` and `other` on an edge where `self <= other` (`self < other` when `strict`): each keeps the
     /// bounds the other allows. `None` where no pair of values reaches the edge.
     pub fn ordered_edge(self, other: Self, strict: bool) -> Option<[Self; 2]> {

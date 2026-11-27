@@ -249,13 +249,10 @@ fn value_of(
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
-    // Over the operands' cells (`typing`): an increment and a `Binary` record in the typed pass, whose operands are the
-    // record's own (none over a constant operand, a numeric one over registers), and an indexed read by its index.
+    // Over the operands' cells (`typing`): a `Binary` record in the typed pass, whose operands are the record's own (none
+    // over a constant operand, a numeric one over registers), and an indexed read by its index. An increment is defined
+    // by `typing::value` like the other Number operations.
     let before = Before { ctx, state };
-    if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::IncDec {
-        let source = state[usize::from(instruction.register_b())].cell.ty;
-        return Word::of(typing::step(source, instruction.boolean_flag() == Some(true)));
-    }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
