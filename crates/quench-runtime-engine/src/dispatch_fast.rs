@@ -3646,7 +3646,7 @@ script_handler! {
         // The site's last add from this shape under this home (`PrivateSiteHomes::define_shape`).
         if let Some(data) = vm.heap_reads().object(object)
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
-            && vm.private_element_addable(data.record()) // the record: `private_element_addable` takes the Object
+            && vm.private_element_addable(data)
         {
             vm.add_property(object, r.get(i.a), next);
             note_allocation(vm);
@@ -3683,7 +3683,7 @@ script_handler! {
         if object != home
             && let Some(data) = vm.heap_reads().object(object)
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
-            && vm.private_element_addable(data.record()) // the record: `private_element_addable` takes the Object
+            && vm.private_element_addable(data)
         {
             vm.add_property(object, Value::UNDEFINED, next);
             note_allocation(vm);

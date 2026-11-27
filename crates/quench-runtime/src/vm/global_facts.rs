@@ -227,7 +227,7 @@ impl Vm {
         let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));
         let dependency = (ty != Type::ANY && ty != Type::NEVER)
             .then_some(SlotDependency { shape: hint.receiver, slot: hint.slot, ty });
-        let record = self.heap.record_id(globals.direct_object_index()?);
+        let record = self.heap.record_id(globals.direct_object_index()?)?;
         Some(GlobalSlot { slot: hint.slot, storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
             layout: crate::heap::global_layout_fact(table)?, global: globals, record,
             realm_offset: Self::realm_globals_offset() })
@@ -321,7 +321,7 @@ impl Vm {
 
     /// The table of the values code read from the active realm's global object, if any.
     fn active_global_values(&self) -> Option<u32> {
-        self.heap.object(self.realm.globals).and_then(|o| o.record().global_values())
+        self.heap.object(self.realm.globals).and_then(|o| o.record_only().and_then(|record| record.global_values()))
     }
 
     /// A compiled Script's global declaration instantiation: its lexical names may not

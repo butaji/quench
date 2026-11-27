@@ -287,7 +287,7 @@ impl Vm {
             return None;
         }
         let target = proof.1;
-        let Some(record) = value.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record) = value.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
             return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
         };
         let mut object = self.heap.object_record_by_id(record);
@@ -362,7 +362,7 @@ impl Vm {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
-        self.heap.object(value).map(|object| object.record())
+        self.heap.object(value).and_then(|object| object.record_only())
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.

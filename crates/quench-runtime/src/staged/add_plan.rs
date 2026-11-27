@@ -138,7 +138,7 @@ mod tests {
 
     /// The row's add of `value` to `object` by `transition`.
     fn add_by(heap: &mut Heap, object: Value, transition: Transition, value: Value) -> bool {
-        let id = heap.record_id(object.direct_object_index().expect("a direct object"));
+        let Some(id) = heap.record_id(object.direct_object_index().expect("a direct object")) else { return false };
         // SAFETY: a live record of the heap; the row proves its layout.
         unsafe { concrete_add_property(heap, id, transition, value) }
     }
@@ -157,7 +157,7 @@ mod tests {
     fn read(heap: &Heap, object: Value, slot: u16) -> Option<Value> {
         let shape = shape_of(heap, object);
         // SAFETY: a live record of its exact shape, whose slot it holds.
-        unsafe { crate::staged::concrete_own_field_hit(heap.object(object).expect("an object").record(), heap.arena_values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_own_field_hit(heap.object(object).expect("an object").record_only().expect("an object"), heap.arena_values_base(), shape, slot) }
     }
 
     /// The compiled site's reading (`site_add`): the object word must name a direct object, and a chained
@@ -227,7 +227,7 @@ mod tests {
         heap.object_mut(object).expect("an object").set_extensible(false);
         assert!(!add_by(&mut heap, object, first, Value::integer(1)), "a non-extensible object takes no property");
         heap.object_mut(object).expect("an object").set_extensible(true);
-        heap.object_mut_departing(object).expect("an object").mark_as_prototype();
+        heap.object_record_mut(object).expect("an object").mark_as_prototype();
         assert!(!add_by(&mut heap, object, first, Value::integer(1)), "a prototype keeps extras and shape readers");
         assert_eq!(shape_of(&heap, object), 0);
     }

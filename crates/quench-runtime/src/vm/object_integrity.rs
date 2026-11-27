@@ -97,7 +97,7 @@ impl Vm {
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::string(atom))?;
                 // The arguments-object flag is record data.
                 if key.host_string() == "length" && vm.heap.array(target).is_some()
-                    && !vm.heap.object(target).is_some_and(|object| object.record().is_arguments_object())
+                    && !vm.heap.object(target).is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object()))
                 {
                     return Ok(Value::FALSE);
                 }

@@ -1,7 +1,7 @@
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
-use crate::staged::frame_arm::FrameArm;
+use crate::staged::frame_arm::{FrameArm, GeneralArm};
 mod loop_stack;
 mod interpreter_frame;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun};
@@ -1146,16 +1146,15 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.heap.object_mut(arguments)
+            self.heap.object_record_mut(arguments)
                 .expect("arguments object is an array")
-                .record_mut_departing()
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.heap.object_mut(arguments) {
-            object.record_mut_departing().set_arguments_object();
+        if let Some(object) = self.heap.object_record_mut(arguments) {
+            object.set_arguments_object();
         }
         let length = self.length_atom;
         self.set_property_with_attributes(
@@ -2399,8 +2398,8 @@ impl Vm {
                     );
                     continue;
                 }
-                // A back edge collects only once the allocation threshold is reached.
-                FrameArm::Jump if !self.heap.should_collect() => {
+                // A back edge collects only byte debt (`poll_byte_debt`), so it takes this path while cell debt waits.
+                FrameArm::Jump if !self.heap.byte_due() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2417,20 +2416,26 @@ impl Vm {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            match crate::staged::frame_arm::arm(ins.op()) {
+            match crate::staged::frame_arm::general(ins.op()) {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = returned_in_lane.take() => Ok(StepResult::Return(value)),
-                FrameArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                FrameArm::Call if allow_inline_calls => {
-                    match self.try_inline_reflect_apply(p, frame, ins, pc) {
+                GeneralArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                GeneralArm::Step => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                GeneralArm::Call if allow_inline_calls => {
+                    let result = match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {
                             Some(result) => result,
                             None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
                         },
-                    }
+                    };
+                    self.serviced(frame, pc, unsafe { &*executing_residual }, result)
                 }
-                _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                GeneralArm::Call | GeneralArm::Allocating => {
+                    let result = self.step(p, frame, ins, &mut pc, allow_inline_calls);
+                    // SAFETY: as for `p` at the top of the loop.
+                    self.serviced(frame, pc, unsafe { &*executing_residual }, result)
+                }
             }
             };
             // The frame a generator's activation became yields (or an in-place request's awaits)
@@ -2548,6 +2553,7 @@ impl Vm {
                     return Ok(FrameOutcome::Complete(value));
                     }
                 },
+                // Cell debt was serviced in the dispatch, after an op that may allocate (`serviced`).
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame { destination, call_guard, completion }) => {
                     // A callee of another program became active; the loop runs it until it returns.
@@ -2585,8 +2591,8 @@ impl Vm {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                    // An entry is a safepoint: else a due collection waits for a loop, every call a frame.
-                    self.maybe_collect(unsafe { &*executing_residual });
+                    // An entry is a poll: byte debt collects here; cell debt waits for the callee's first op boundary.
+                    self.poll_byte_debt(unsafe { &*executing_residual });
                 }
                 Ok(StepResult::ResumeFrames(recovered)) => {
                     pending_calls.extend(recovered.calls);
@@ -2620,8 +2626,8 @@ impl Vm {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                    // The replacement frame publishes all callee roots before this back edge.
-                    self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
+                    // The replacement frame publishes all callee roots before this poll: byte debt only.
+                    self.poll_byte_debt(current_program.as_deref().unwrap_or(entry_program));
                 }
                 Ok(StepResult::Suspend(Suspended::Await { value, destination })) => {
                     // An async call the loop pushed in place (`Vm::try_settling_call`) suspends

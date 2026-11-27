@@ -182,7 +182,7 @@ impl Vm {
             return false;
         };
         // Inline values are record data.
-        let exec = if exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.record().inline_property(exec_slot) } else { None };
+        let exec = if exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.record_only().and_then(|record| record.inline_property(exec_slot)) } else { None };
         let Some(exec) = exec.or_else(|| self.heap.property_get_ref(data, exec_slot)) else {
             return false;
         };

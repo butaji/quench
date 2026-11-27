@@ -88,7 +88,7 @@ impl AccessorCall {
             return None;
         };
         let entry = vm.field_cache_entry(cache);
-        let receiver = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(base.direct_object_index()?));
+        let receiver = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(base.direct_object_index()?)?);
         (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
             && entry.holder == NO_FIELD_HOLDER
             && entry.receiver == receiver.exact_shape())

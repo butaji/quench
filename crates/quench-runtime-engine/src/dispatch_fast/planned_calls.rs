@@ -102,7 +102,7 @@ script_handler! {
         // SAFETY: `mode` names the site of the view this record belongs to (`specialize_script_calls`).
         let site = unsafe { &*(i.mode as usize as *const PlannedSite) };
         // The receiver is an instance of one of the site's classes (the plan's closed union), so it is an object.
-        let receiver = vm.object_data(r.get(i.c));
+        let receiver = vm.heap_reads().object(r.get(i.c));
         debug_assert!(receiver.is_some(), "a planned site's receiver is an instance of its plan's classes");
         // SAFETY: as above.
         let layout = unsafe { receiver.unwrap_unchecked() }.layout_id();

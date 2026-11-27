@@ -391,7 +391,7 @@ impl Vm {
         let Some(data) = self.heap.object(object) else {
             return true;
         };
-        match self.slot_attributes(data.record(), slot) {
+        match self.slot_attributes(data, slot) {
             Some(attributes) => attributes.enumerable,
             None => self
                 .side_descriptor(object, PropertyKey::string(atom))

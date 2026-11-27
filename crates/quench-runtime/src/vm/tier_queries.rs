@@ -201,8 +201,9 @@ heap_reads! {
     fn store_watch_word() -> usize;
     /// The class space's base, which a direct object's granule is added to (`Heap::class_space_base`).
     fn class_space_base() -> usize;
-    /// The record id a direct object names (`Heap::record_id`): its stub's header, the record table's index.
-    fn record_id(object: crate::value::ObjectRef32) -> u32;
+    /// The record id a direct object names (`Heap::record_id`): its stub's header, the record table's index;
+    /// `None` for a live class cell, which has no record.
+    fn record_id(object: crate::value::ObjectRef32) -> Option<u32>;
     /// The weight allocated since the last collection (`Heap::allocated_weight`).
     fn allocated_weight() -> usize;
     /// An object held as a record (`Heap::record_object_value`).
@@ -363,9 +364,9 @@ impl Vm {
     /// The exclusive view of the object `value`, for a store (`Heap::object_mut`).
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut(value) }
-    /// The exclusive view of `value` for a record-only edit (`Heap::object_mut_departing`): a live class cell departs first.
+    /// The record of `value` for a record-only edit (`Heap::object_record_mut`): a live class cell departs first.
     #[inline(always)]
-    pub fn object_mut_departing(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut_departing(value) }
+    pub fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> { self.heap.object_record_mut(value) }
     /// The exclusive view of the object `value` for a store of `stored` (`Heap::object_store_mut`).
     #[inline(always)]
     pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> { self.heap.object_store_mut(value, stored) }

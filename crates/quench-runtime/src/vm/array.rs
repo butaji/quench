@@ -370,14 +370,14 @@ impl Vm {
     pub fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
         let data = self.heap.object(object)?;
         // record-only: side descriptors
-        if data.record().has_side_descriptors() {
+        if data.record_only().is_some_and(|record| record.has_side_descriptors()) {
             return None;
         }
         let Some(slot) = self.shape_slot(data.shape(), atom) else {
             return Some(None);
         };
         // record-only: slot_attributes takes the record
-        if self.slot_attributes(data.record(), slot)?.accessor {
+        if self.slot_attributes(data, slot)?.accessor {
             return None;
         }
         Some(Some(self.heap.property_get_ref(data, slot)?))
@@ -927,7 +927,7 @@ impl Vm {
         if self.heap.array(object).is_some()
             && !self
                 .heap.object(object)
-                .is_some_and(|object| object.record().is_arguments_object()) // record-only: arguments flag
+                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object())) // record-only: arguments flag
         {
             if self
                 .property_attributes(object, PropertyKey::string(atom))

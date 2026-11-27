@@ -22,7 +22,7 @@ impl Vm {
             return false;
         }
         // Record data: the arguments-object flag and the side descriptors.
-        let (Some(source_data), Some(target_data)) = (self.heap.object(source).map(|object| object.record()), self.heap.object(target).map(|object| object.record())) else {
+        let (Some(source_data), Some(target_data)) = (self.heap.object(source).and_then(|object| object.record_only()), self.heap.object(target).and_then(|object| object.record_only())) else {
             return false;
         };
         if !self.shape_lists_enumerable_keys(source)
@@ -172,7 +172,7 @@ impl Vm {
                     return false;
                 };
                 // The arguments-object flag is record data.
-                if !self.shape_lists_enumerable_keys(holder) || data.record().is_arguments_object() || data.is_frozen() {
+                if !self.shape_lists_enumerable_keys(holder) || data.record_only().is_some_and(|record| record.is_arguments_object()) || data.is_frozen() {
                     return false;
                 }
                 if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {

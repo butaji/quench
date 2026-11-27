@@ -50,12 +50,10 @@
 //! plain JavaScript or a class whose fields have other initializers, starts with no properties
 //! and gains them one add at a time, each along the transition its site caches. What it reaches
 //! is learned per `new.target` (`LearnedReceiver`) from the receivers already made: the storage
-//! length of the last one when the next is allocated, the most of a few per young cycle. A
-//! receiver of a constructor that reached more values than the inline slots hold (and than its
-//! constant layout gives it) is allocated over an empty young run reserved for that many
-//! (`Heap::reserve_receiver_run`); a constant layout's values are appended into it first, then
-//! its adds append in place (`Heap::record_property_append_reserved`) instead of moving its
-//! values from the inline slots to the arena and then from class to class as it grows.
+//! length of the last one when the next is allocated, the most of a few per young cycle. The
+//! receiver's class cell is sized for the larger of that count, its constant layout, and the closed
+//! world's union layout of its class (`construct_receiver_capacity`), so its adds within that
+//! capacity are in-place class edges (`Heap::class_cell_add`) and the rest depart.
 //!
 //! Invariant: only storage is learned, never a shape. The receiver keeps the template's shape and
 //! prototype (or the constant layout's shape over them), and every add still runs the full [[Set]]
@@ -67,7 +65,6 @@
 //! would have saved.
 use super::*;
 use crate::bytecode::FieldConstant;
-use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 
 /// Entries in the direct-mapped `Vm::preshaped_receivers` memo; a power of two.
@@ -87,6 +84,9 @@ pub(super) struct PreshapedReceiver {
     start: u32,
     shape: u32,
     len: u8,
+    /// The field count of the constructor's class's union layout (`AotFacts::class_union_layout`), saturated;
+    /// 0 where none is proven. Derived with the entry, so each construction reads it.
+    union: u8,
     atoms: [Atom; PRESHAPED_FIELDS],
     shapes: [u32; PRESHAPED_FIELDS],
     values: [Value; PRESHAPED_FIELDS],
@@ -99,6 +99,7 @@ impl PreshapedReceiver {
         start: u32::MAX,
         shape: u32::MAX,
         len: 0,
+        union: 0,
         atoms: [0; PRESHAPED_FIELDS],
         shapes: [u32::MAX; PRESHAPED_FIELDS],
         values: [Value::UNDEFINED; PRESHAPED_FIELDS],
@@ -127,17 +128,14 @@ const LEARNED_SAMPLES: u8 = 4;
 
 /// What the receivers of constructions with `new_target` reached (the module's slack tracking):
 /// the storage length `slots` they reach, sampled `samples` times this young cycle from the
-/// previous receiver, `last`, when the next is allocated; and the receiver template of layout
-/// `template` (inline storage, no properties, no extras) with `header`, its prototype and shape
-/// over arena storage, which a reserved receiver takes. Kept across collections, which only
-/// forget `last` and restart the sampling (`forget_learned_receiver_samples`): `new_target` and
-/// the layouts only key a hint, and any count is sound.
+/// previous receiver, `last`, when the next is allocated. The count sizes the class cell of the next
+/// receiver (`construct_receiver_capacity`). Kept across collections, which only forget `last` and
+/// restart the sampling (`forget_learned_receiver_samples`): `new_target` only keys a hint, and any
+/// count is sound.
 #[derive(Clone, Copy)]
 pub(super) struct LearnedReceiver {
     new_target: Value,
     last: Value,
-    template: u32,
-    header: InlineObjectHeader,
     slots: u8,
     samples: u8,
 }
@@ -147,8 +145,6 @@ impl LearnedReceiver {
     pub(super) const EMPTY: Self = Self {
         new_target: Value::UNDEFINED,
         last: Value::UNDEFINED,
-        template: u32::MAX,
-        header: InlineObjectHeader::EMPTY,
         slots: 0,
         samples: 0,
     };
@@ -166,7 +162,8 @@ impl Vm {
     #[inline]
     pub(super) fn alloc_construct_receiver(&mut self, object: Object, constructor: Value) -> Value {
         let start = object.shape();
-        let this = self.heap.alloc_object(object);
+        let capacity = self.construct_receiver_capacity(constructor, start);
+        let this = self.heap.alloc_object_with_capacity(object, capacity);
         self.preshape_receiver(this, start, constructor, constructor);
         self.record_class_header(constructor, this);
         this
@@ -179,7 +176,7 @@ impl Vm {
     /// class's header is recorded.
     pub fn record_class_header(&mut self, constructor: Value, this: Value) {
         let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
-        let Some((layout, prototype)) = self.object_data(this).map(|object| (object.layout_id(), object.proto())) else { return };
+        let Some((layout, prototype)) = self.heap.object(this).map(|object| (object.layout_id(), object.proto())) else { return };
         if self.programs.class_header(program, class).is_some_and(|header| header.get() == 0) {
             self.record_class_edge(program, class, layout, prototype);
         }
@@ -198,21 +195,17 @@ impl Vm {
     /// Gives `this`, a just-allocated empty receiver of template shape `start` that no code has
     /// seen, whose construction runs `constructor`'s body next, the layout that body's first
     /// defines make (the module's invariant), and the storage `new_target`'s receivers were
-    /// learned to reach (`reserve_learned_receiver`); a constructor with no layout leaves its
+    /// learned to reach (`construct_receiver_capacity`); a constructor with no layout leaves its
     /// shape as it is.
     #[inline]
     pub(super) fn preshape_receiver(&mut self, this: Value, start: u32, constructor: Value, new_target: Value) {
-        let index = PreshapedReceiver::index(constructor, start);
-        let entry = &self.preshaped_receivers[index];
-        if entry.constructor != constructor || entry.start != start {
-            self.preshaped_receivers[index] = self.derive_preshaped_receiver(constructor, start);
-        }
+        let index = self.preshaped_entry(constructor, start);
+        self.learn_receiver(this, new_target);
         let len = usize::from(self.preshaped_receivers[index].len);
-        let reserved = self.reserve_learned_receiver(this, new_target, len);
         if len == 0 {
             return;
         }
-        if !(reserved && self.append_preshaped_fields(this, index)) {
+        if !self.append_preshaped_fields(this, index) {
             // Storage sized for the whole layout at once: no inline-to-arena move or regrowth
             // as the fields arrive.
             let entry = &self.preshaped_receivers[index];
@@ -236,7 +229,7 @@ impl Vm {
     /// entry and one shape are read; anything else, an empty entry included, answers `false`.
     #[inline(always)]
     pub fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
-        let Some(record_id) = receiver.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = receiver.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
             return false;
         };
         let entry = self.field_cache_entry(site);
@@ -250,66 +243,63 @@ impl Vm {
         held
     }
 
-    /// Appends the layout of entry `index` to `this`, its receiver still empty over the run
-    /// reserved for it (`reserve_learned_receiver`), value by value along the entry's shapes,
-    /// as its defines would add them; `false` where an append finds no room, leaving the rest
-    /// to `initialize_object_properties`, which replaces whatever storage it holds.
+    /// The memo index of the entry for a construction by `constructor` from template shape `start`,
+    /// derived where it is stale (`derive_preshaped_receiver`).
+    fn preshaped_entry(&mut self, constructor: Value, start: u32) -> usize {
+        let index = PreshapedReceiver::index(constructor, start);
+        let entry = &self.preshaped_receivers[index];
+        if entry.constructor != constructor || entry.start != start {
+            let mut derived = self.derive_preshaped_receiver(constructor, start);
+            derived.union = u8::try_from(self.union_capacity(constructor)).unwrap_or(u8::MAX);
+            self.preshaped_receivers[index] = derived;
+        }
+        index
+    }
+
+    /// The fields a receiver of `constructor` from template shape `start` gets a class cell for: the largest of
+    /// its constant layout, what its learned storage reached (`LearnedReceiver::slots`, sampled from the
+    /// receivers before it), and the field count of its class's union layout (`AotFacts::class_union_layout`).
+    /// The cell's fields past the receiver's own are `Value::DELETED` slack, the absent fields.
+    fn construct_receiver_capacity(&mut self, constructor: Value, start: u32) -> usize {
+        let index = self.preshaped_entry(constructor, start);
+        let entry = self.preshaped_receivers[index];
+        let learned = self.learned_receivers[LearnedReceiver::index(constructor)];
+        let learned = if learned.new_target == constructor { usize::from(learned.slots) } else { 0 };
+        usize::from(entry.len).max(learned).max(usize::from(entry.union))
+    }
+
+    /// The field count of the closed world's union layout of `constructor`'s class, which the closed world
+    /// fixes for every instance (decision 4.2); 0 where no union layout is proven (the transition-grown cell).
+    fn union_capacity(&self, constructor: Value) -> usize {
+        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return 0 };
+        let Some(facts) = self.programs.aot_facts(program) else { return 0 };
+        facts.class_union_layout(class).map_or(0, |layout| layout.fields.len())
+    }
+
+    /// Learns from the previous receiver of `new_target`, when its sample is due (`sample_learned_receiver`).
+    fn learn_receiver(&mut self, this: Value, new_target: Value) {
+        let index = LearnedReceiver::index(new_target);
+        let entry = self.learned_receivers[index];
+        if entry.new_target != new_target || entry.samples < LEARNED_SAMPLES {
+            self.sample_learned_receiver(index, this, new_target);
+        }
+    }
+
+    /// Writes the layout of entry `index` into `this`, a class cell still holding its template shape, field
+    /// by field along the entry's shapes, as its defines would add them (`Heap::class_cell_add`). `false`
+    /// where a field does not fit the cell, or `this` is no cell: the caller initializes the storage instead.
     fn append_preshaped_fields(&mut self, this: Value, index: usize) -> bool {
-        let Some(record_id) = this.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(granule) = self.heap.live_class_cell(this) else {
             return false;
         };
-        let entry = &self.preshaped_receivers[index];
-        let heap = &mut self.heap;
-        (0..usize::from(entry.len)).all(|slot| heap.record_property_append_reserved(record_id, slot, entry.values[slot], entry.shapes[slot]))
-    }
-
-    /// Gives `this`, a just-allocated receiver of a construction with `new_target` that no code
-    /// has seen, a young run reserved for the values `new_target`'s receivers reach, where they
-    /// reach more than its inline slots hold and than the `preshaped` values its layout gives
-    /// it (`Heap::reserve_receiver_run`; the module's slack tracking); while the cycle samples,
-    /// first learns from the previous receiver. Its shape and properties stay as they are (still
-    /// none: the layout is given after); whether the run was reserved.
-    #[inline]
-    fn reserve_learned_receiver(&mut self, this: Value, new_target: Value, preshaped: usize) -> bool {
-        let index = LearnedReceiver::index(new_target);
-        let mut entry = self.learned_receivers[index];
-        if entry.new_target != new_target || entry.samples < LEARNED_SAMPLES {
-            entry = self.sample_learned_receiver(index, this, new_target);
-        }
-        let slots = usize::from(entry.slots);
-        if slots <= INLINE_PROPERTY_COUNT.max(preshaped) {
-            return false;
-        }
-        if self.heap.reserve_receiver_run(this, entry.template, entry.header, slots) {
-            return true;
-        }
-        self.reserve_learned_template(index, this, slots)
-    }
-
-    /// `reserve_learned_receiver` past its entry's template, which `this` does not have: the
-    /// first reservation for `new_target`, or one whose `prototype` changed. Derives the entry's
-    /// template and header from `this` where it is such a template, and reserves by them.
-    #[cold]
-    #[inline(never)]
-    fn reserve_learned_template(&mut self, index: usize, this: Value, slots: usize) -> bool {
-        let Some(data) = self.heap.object(this) else { return false };
-        let (layout, prototype, shape) = (data.layout_id(), data.proto(), data.shape());
-        // Inline runs and extras are record data.
-        if layout == self.learned_receivers[index].template
-            || data.record().inline_properties().is_none()
-            || data.record().has_extras()
-            || data.has_exotic_access()
-            || self.shape_is_dictionary(shape)
-            || self.shapes[shape as usize].storage_len() != 0
-        {
-            // A nursery without the room, or no template.
-            return false;
-        }
-        let header = InlineObjectHeader::of_run(prototype, shape);
-        let entry = &mut self.learned_receivers[index];
-        entry.template = layout;
-        entry.header = header;
-        self.heap.reserve_receiver_run(this, layout, header, slots)
+        let entry = self.preshaped_receivers[index];
+        let mut before = entry.start;
+        (0..usize::from(entry.len)).all(|slot| {
+            let after = entry.shapes[slot];
+            let added = self.heap.class_cell_add(granule, before, after, slot, entry.values[slot]);
+            before = after;
+            added
+        })
     }
 
     /// The entry of `new_target`, made where another held its index, after one more sample: the
@@ -338,7 +328,7 @@ impl Vm {
     fn receiver_storage_len(&self, receiver: Value) -> Option<usize> {
         let data = self.heap.object(receiver)?;
         // The property table is record data.
-        if data.record().properties().is_dictionary() {
+        if data.record_only().is_some_and(|record| record.properties().is_dictionary()) {
             return None;
         }
         let shape = data.shape();

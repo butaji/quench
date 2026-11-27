@@ -46,7 +46,7 @@ impl Vm {
             return Vec::new();
         };
         // `ordered_shape` reads the record's shape order.
-        self.ordered_shape(data.record())
+        self.ordered_shape(data.record_only()?)
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get_ref(data, *slot).is_some()
@@ -65,7 +65,7 @@ impl Vm {
             return Vec::new();
         };
         // `ordered_shape` reads the record's shape order.
-        self.ordered_shape(data.record())
+        self.ordered_shape(data.record_only()?)
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get_ref(data, *slot).is_some()
@@ -429,7 +429,8 @@ impl Vm {
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
             // Shaped values are read from the record.
-            if !self.read_shaped_values(data.record(), &slots, &mut values) {
+            let Some(record) = data.record_only() else { return false };
+            if !self.read_shaped_values(record, &slots, &mut values) {
                 return false;
             }
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
@@ -448,14 +449,14 @@ impl Vm {
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
         // The target's record is one lookup for every key of the loop.
-        let target_object = self.heap.object(target).map(|object| object.record());
+        let target_object = self.heap.object(target).and_then(|object| object.record_only());
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
             }
             let slot = *slot as usize;
             // Slot attributes are record data.
-            if self.slot_attributes(data.record(), slot).is_none_or(|attributes| attributes.accessor) {
+            if self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor) {
                 return false;
             }
             let Some(value) = self.heap.property_get_ref(data, slot) else {
@@ -588,7 +589,7 @@ impl Vm {
         let data = self.heap.object(object)?;
         let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
         // Slot values are record data.
-        self.slot_data_value(data.record(), slot)
+        self.slot_data_value(data, slot)
     }
 
     pub fn set_symbol_property(
@@ -617,7 +618,7 @@ impl Vm {
         let (shape, proto) = (data.shape(), data.proto());
         if let Some(slot) = self.property_shape_slot(shape, symbol) {
             // Slot attributes are record data.
-            let attributes = self.slot_attributes(data.record(), slot)?;
+            let attributes = self.slot_attributes(data, slot)?;
             if attributes.accessor {
                 return None;
             }
@@ -660,7 +661,7 @@ impl Vm {
         if let Some(slot) = self.property_shape_slot(data.shape(), symbol) {
             let writable = self
                 // Slot attributes are record data.
-                .slot_attributes(data.record(), slot)
+                .slot_attributes(data, slot)
                 .is_some_and(|attributes| !attributes.accessor && attributes.writable);
             if writable {
                 self.heap.property_set(object, slot, value);

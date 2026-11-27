@@ -4474,7 +4474,7 @@ unsafe fn delete_value_in_lane(cx: *mut (), base: Value, key: Value) -> Option<V
     let code = unsafe { &*(*cx).code };
     let plain = base.direct_object_index().is_some()
         && vm.heap_reads().string(key).is_some()
-        && vm.heap_reads().object(base).is_some_and(|data| !data.is_module_namespace() && !data.record().is_arguments_object()); // a record-only flag, read from the record
+        && vm.heap_reads().object(base).is_some_and(|data| !data.is_module_namespace() && !data.record_only().is_some_and(|record| record.is_arguments_object())); // a record-only flag, read from the record
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
 }
 

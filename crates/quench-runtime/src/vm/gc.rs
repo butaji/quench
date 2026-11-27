@@ -362,6 +362,29 @@ impl Vm {
         self.collect_due(program);
     }
 
+    /// The general dispatch's service after an op that may allocate (`frame_arm::GeneralArm`): where
+    /// the op continued and a collection is due, the frame's PC is published as the next instruction
+    /// and the debt is serviced: every live value is a frame root then. Allocation itself never collects;
+    /// only this, the job boundaries and a byte-debt poll do. An op that cannot allocate never comes here.
+    #[inline(always)]
+    pub(crate) fn serviced(&mut self, frame: usize, pc: usize, program: &ResidualProgram, result: Result<StepResult, JsError>) -> Result<StepResult, JsError> {
+        if matches!(result, Ok(StepResult::Continue)) && self.heap.should_collect() {
+            self.frames[frame].pc = pc;
+            self.frames[frame].pc_is_resume = false;
+            self.collect_due(program);
+        }
+        result
+    }
+
+    /// The poll form (frame entry, tail call, back edges): collects only byte debt
+    /// (`Heap::byte_due`). Cell debt is serviced after the next op that may allocate (`serviced`).
+    #[inline(always)]
+    pub(crate) fn poll_byte_debt(&mut self, program: &ResidualProgram) {
+        if self.heap.byte_due() {
+            self.collect_due(program);
+        }
+    }
+
     /// An allocation threshold passed: a collection, full when pacing says so.
     #[cold]
     #[inline(never)]
