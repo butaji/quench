@@ -21,13 +21,32 @@ impl LaneView {
     /// Counts an entry of a warming body between its attempts in place (not its first, which weighs the mode's decline):
     /// whether it did. The full path cost a warming or unpaid recursive callee ~50 Ir a call (the mode's decline, the
     /// image lookup, the body's move out and back; k02_fib under --u-jit).
+    /// The count to weigh at is found once per stretch between attempts (`weigh_at`), not per entry.
     pub(crate) fn counted_between_attempts(&self, looped: bool) -> bool {
         // SAFETY: as `lane_body`.
         let LaneBody::Unspecialized { entries, .. } = (unsafe { &mut *self.tier().tier_lane.get() }) else { return false };
+        if *entries == 0 || looped { return false; }
         let next = entries.saturating_add(1);
-        let between = *entries != 0 && !looped && !self.attempts_at(next) && !self.recurrent(next);
-        if between { *entries = next; }
-        between
+        let epoch = self.body_epoch();
+        let (found_epoch, from, at) = self.tier().weigh_at.get();
+        if found_epoch == epoch && from <= *entries && next < at {
+            *entries = next;
+            return true;
+        }
+        if self.attempts_at(next) || self.recurrent(next) { return false; }
+        *entries = next;
+        self.tier().weigh_at.set((epoch, next, self.next_weighed(next)));
+        true
+    }
+
+    /// The first entry count past `entries` at which a warming body weighs its compile: its next attempt
+    /// (`attempts_at`), or, where it may still recur, the next `RECURRENT_ENTRIES` multiple (`recurrent`).
+    fn next_weighed(&self, entries: u32) -> u32 {
+        let mut attempt = self.warmup_entries();
+        while attempt <= entries { attempt = attempt.saturating_add(attempt); if attempt == u32::MAX { break; } }
+        let history = self.tier().history.get();
+        let recurs = history.lifetimes == 0 && !history.unpaid;
+        if recurs { attempt.min((entries - entries % RECURRENT_ENTRIES).saturating_add(RECURRENT_ENTRIES)) } else { attempt }
     }
 
     /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).

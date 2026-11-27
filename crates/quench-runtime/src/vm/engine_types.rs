@@ -978,17 +978,16 @@ pub struct LaneMethod {
 
 /// The lane-body tier's per-function state (`LaneView::tier`).
 pub struct LaneTier {
-    /// The frameless body the prologue runs once the JavaScript tier declined the
-    /// function (`Vm::compile_lane_method`).
+    /// The frameless body the prologue runs once the JavaScript tier declined the function (`Vm::compile_lane_method`).
     pub tier_lane: std::cell::UnsafeCell<LaneBody>,
     /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     pub warm_since: std::cell::Cell<u32>,
-    /// Counts each specialization attempt (`LaneView::specialize_lane_body`): a loop site's refused
-    /// compile is retried once this moves (`LoopSite::refuse_warming`).
+    /// Counts specialization attempts (`specialize_lane_body`); a refused loop compile retries once it moves.
     pub body_epoch: std::cell::Cell<u32>,
-    /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through `Activation::body`.
+    /// (epoch, from, at): entries in `from..at` at that epoch skip the weighing (`counted_between_attempts`).
+    pub weigh_at: std::cell::Cell<(u32, u32, u32)>,
+    /// Every body it published, kept until the view drops: a retired body's frame leaves through `Activation::body`.
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     pub history: std::cell::Cell<LaneBodyHistory>,
@@ -5655,6 +5654,7 @@ impl Default for LaneTier {
             tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
             warm_since: std::cell::Cell::new(0),
             body_epoch: std::cell::Cell::new(0),
+            weigh_at: std::cell::Cell::new((0, 0, 0)),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             audit_epochs: Default::default(),
