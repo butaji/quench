@@ -88,6 +88,11 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
         .ok_or("no lane unit")?;
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        let targets: Vec<_> = (0..body.code.len() as u32).filter_map(|pc| facts.function_facts(function).call_target(pc).map(|target| (pc, target))).collect();
+        let frames: Vec<_> = unit.frames.iter().map(|frame| (frame.target.function, frame.call)).collect();
+        eprintln!("aot-lanes: unit of function {function}: closed targets {targets:?}, inlined frames (function, call) {frames:?}");
+    }
     Ok(unit)
 }
 
@@ -530,7 +535,9 @@ impl Vm {
         let facts = lane_compile::LaneMethodFacts {
             unit, stable: lane_region::StableFacts { roots, slots, holders, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(),
-            tiers: self.programs.tiers(), fault_poll, exits, summary: None, clif: None,
+            tiers: self.programs.tiers(), fault_poll, exits, summary: None,
+            // An image body dumps its linked code like a JIT body (`jit-dump`), for instruction-level profiles.
+            clif: super::native_dump_directory().map(|_| String::new()),
             proven_calls: images.image.calls.iter().any(|site| site.function == function),
         };
         let method = lane_compile::finish_lane_method(memory, None, None, facts);

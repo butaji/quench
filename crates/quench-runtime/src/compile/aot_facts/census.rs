@@ -75,7 +75,7 @@ impl Census {
 
     /// Whether `target(callee)` is a method read's guess rather than a proof.
     pub(super) fn guessed(&self, callee: Fact) -> bool {
-        callee.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_)))
+        callee.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_) | Origin::MemberOn { guess: true, .. }))
     }
 
     /// The closure `key` holds, when it is written once, with a closure, and no write the
@@ -112,7 +112,7 @@ impl Census {
             // callee it reaches (a builtin's property of that name, a closure made again, a store through a computed
             // key, `member_wild`), so the proof only picks the callee its direct row tries first.
             Origin::Member(atom) => self.members.get(&atom).filter(|set| set.len() == 1).and_then(|set| set.first().copied()),
-            Origin::MemberOn { class, instance, atom } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
+            Origin::MemberOn { class, instance, atom, .. } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
             _ => None,
         }
     }

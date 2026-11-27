@@ -210,6 +210,25 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         let name = |id: u32| program.with_record(id as usize, |function| function.name).and_then(|atom| program.atoms.get(atom as usize)).map_or("?", |name| name.as_ref());
         eprintln!("aot-lanes: types settled {settled}; parameters {:?}", found.parameter_types().iter().filter(|(_, types)| !types.is_empty()).map(|(id, types)| (name(*id), types)).collect::<Vec<_>>());
     }
+    if crate::trace::Channel::AotLanes.on() {
+        let named = |atom: u32| program.atoms.get(atom as usize).map_or("?", |name| name.as_ref()).to_string();
+        eprintln!("aot-lanes: classes {:?}", found.class_trace().into_iter().map(|(key, class)| (match key { value::Key::Member(atom) => named(atom), other => format!("{other:?}") }, class)).collect::<Vec<_>>());
+    }
+    // A method read off a value whose class the solve found (`value::Class`, a field holding instances of one
+    // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
+    // take it from a flow over the settled types.
+    if settled {
+        for (id, flow) in analyze_typed(&resolved, Some(&found)).iter().enumerate() {
+            let id = id as u32;
+            for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
+                if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
+                let Some(target) = census.target(call.callee) else { continue };
+                facts.call_targets.insert((id, call.pc), target);
+                if census.guessed(call.callee) { facts.guessed_calls.insert((id, call.pc)); }
+                facts.call_candidates.remove(&(id, call.pc));
+            }
+        }
+    }
     // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
     if settled { facts.field_types = found.fields.into_iter().map(|(atom, ty)| (atom, if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty })).collect(); }
     if crate::trace::Channel::AotLanes.on() {

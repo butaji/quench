@@ -1,7 +1,7 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Fact, Key, Origin, PrototypeBase};
+use super::value::{Class, Fact, Key, Origin, PrototypeBase};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -60,8 +60,8 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     };
     let mut value = value_of(ctx, instruction, typed_operation, state, &mut events);
     // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
-    if let Some(ty) = ctx.types.and_then(|types| types.call(ctx.id, pc as u32)) {
-        value = Fact::of(ty);
+    if let Some(types) = ctx.types && let Some(ty) = types.call(ctx.id, pc as u32) {
+        value = Fact::of_class(ty, types.call_class(ctx.id, pc as u32));
     }
     // A return, or an operation whose result completes the frame, writes the function's result.
     if instruction.op().is_return() {
@@ -91,7 +91,8 @@ fn is_global_load(instruction: WideInstruction) -> bool {
 /// In a typed pass a binding's load takes the join of its writes (`types::Types::binding`).
 fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
     ctx.resolved.get(&key).copied().map_or_else(
-        || Fact { ty: ctx.types.map_or(Type::ANY, |types| types.binding(key)), origin: Some(Origin::Binding(key)) },
+        || Fact { ty: ctx.types.map_or(Type::ANY, |types| types.binding(key)), origin: Some(Origin::Binding(key)),
+            class: ctx.types.map_or(Class::Many, |types| types.class(key)) },
         Fact::closure)
 }
 
@@ -118,17 +119,25 @@ fn value_of(
         if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(prototype_base) {
             return Fact::from(Origin::Prototype(prototype));
         }
+        let (ty, class) = member_type(ctx, base_fact(ctx, base, state), atom);
         return match owner.and_then(Fact::class_site) {
-            Some((class, instance)) => Fact { ty: ctx.types.map_or(Type::ANY, |types| types.field(atom)), ..Fact::member_on(class, instance, atom) },
-            None => Fact::member(atom, ctx.types.map_or(Type::ANY, |types| types.field(atom))),
+            Some((owner, instance, guess)) => Fact { ty, class, ..Fact::member_on(owner, instance, atom, guess) },
+            None => Fact::member(atom, ty, class),
         };
     }
     // A nested lookup (`base.first.second`) delivers its last field's value.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
         && let Some(crate::bytecode::FieldLookup::Site(index)) = instruction.field_lookup()
-        && let Some(atom) = ctx.scope.site_reads.get(index).copied().flatten()
+        && let Some((base, first, second)) = ctx.scope.site_paths.get(index).copied().flatten()
     {
-        return Fact::member(atom, ctx.types.map_or(Type::ANY, |types| types.field(atom)));
+        let (ty, class) = member_type(ctx, base_fact(ctx, base, state), first);
+        return match second {
+            Some(second) => {
+                let (ty, class) = member_type(ctx, Some(Fact::of_class(ty, class)), second);
+                Fact::member(second, ty, class)
+            }
+            None => Fact::member(first, ty, class),
+        };
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::UNKNOWN);
@@ -169,7 +178,7 @@ fn value_of(
             .map_or(Fact::UNKNOWN, |owner| resolved(ctx, Key::Slot { owner, slot })),
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::closure(function),
         // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
-        Some(Operation::LoadThis { .. }) if !ctx.is_root => Fact::of(ctx.types.map_or(Type::ANY, |types| types.this(ctx.id))),
+        Some(Operation::LoadThis { .. }) if !ctx.is_root => this_fact(ctx),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
         // The operations whose result is a Boolean, whatever their operands: an equality, a negation, a
         // `typeof` test or an `instanceof`.
@@ -181,12 +190,37 @@ fn value_of(
         _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex => element_value(ctx, state[usize::from(instruction.register_b())]),
         Some(Operation::ElementRead { base, .. }) => match (state[usize::from(base)].origin, ctx.types) {
             (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-                Fact::of(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined))),
+                Fact::of_class(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined)), types.class(Key::Element(atom))),
             _ => Fact::UNKNOWN,
         },
         Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
         _ => Fact::UNKNOWN,
     }
+}
+
+/// The type and class a read of field `atom` off `owner` takes (`types::Types::field`): the class the
+/// stores into that field of `owner`'s class wrote (`Key::MemberOn`), else every store of the name's
+/// (`Key::Member`); any value in the passes that find call targets.
+fn member_type(ctx: &Ctx<'_>, owner: Option<Fact>, atom: u32) -> (Type, Class) {
+    let Some(types) = ctx.types else { return (Type::ANY, Class::Many) };
+    // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its class comes with a later pass.
+    if owner.is_some_and(|owner| owner.class == Class::Never) { return (types.field(atom), Class::Never); }
+    let on = owner.and_then(Fact::class_site).and_then(|(class, instance, _)| types.class_on(class, instance, atom));
+    (types.field(atom), on.unwrap_or_else(|| types.class(Key::Member(atom))))
+}
+
+/// The fact of a field lookup's base: its register's, or the function's own `this`.
+fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Fact]) -> Option<Fact> {
+    match base.register_index() {
+        Some(register) => state.get(usize::from(register)).copied(),
+        None if base == crate::bytecode::FieldBase::THIS && !ctx.is_root => Some(this_fact(ctx)),
+        None => None,
+    }
+}
+
+/// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
+fn this_fact(ctx: &Ctx<'_>) -> Fact {
+    ctx.types.map_or(Fact::UNKNOWN, |types| Fact::of_class(types.this(ctx.id), types.this_class(ctx.id)))
 }
 
 /// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
@@ -254,7 +288,7 @@ fn number_value(scope: &Scope, state: &[Fact], number: NumberOperation) -> Fact 
 fn element_value(ctx: &Ctx<'_>, base: Fact) -> Fact {
     match (base.origin, ctx.types) {
         (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-            Fact::of(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined))),
+            Fact::of_class(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined)), types.class(Key::Element(atom))),
         _ => Fact::UNKNOWN,
     }
 }
@@ -295,16 +329,16 @@ fn writes(
 ) {
     unfollowed_writes(ctx, instruction, operation, events);
     binding_stores(ctx, pc, operation, state, events);
-    member_stores(instruction, operation, state, events);
+    member_stores(ctx, instruction, operation, state, events);
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
-fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
+fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
-        if let (Some(atom), Some((class, instance))) = (key.atom_key(), target.class_site()) {
+        if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
             events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
         }
     }
@@ -318,8 +352,15 @@ fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), (
     match operation {
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));
-            if let Some(Origin::Prototype(prototype)) = base.and_then(|base| state[usize::from(base)].origin) {
+            let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Fact::UNKNOWN };
+            if let Some(Origin::Prototype(prototype)) = owner.origin {
                 events.prototype_write = Some((prototype, atom));
+            }
+            // A store into an object of a known class (`Fact::class_site`) is that class's own field, as a class
+            // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
+            // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
+            if let Some((class, true, _)) = owner.class_site() {
+                events.writes.push((Key::MemberOn { class, instance: true, atom }, state[usize::from(value)]));
             }
         }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {

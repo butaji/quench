@@ -23,6 +23,9 @@ pub(super) struct Scope {
     /// Each nested field lookup's last field (`FieldSite`: `base.first.second`, or `base.first`): the field
     /// its read delivers, by site index; `None` for a site with a sink, which stores rather than reads.
     pub(super) site_reads: Vec<Option<u32>>,
+    /// Each nested field lookup's base and fields (`base.first.second`), by site index, which a read's
+    /// classes follow field by field (`effects::member_type`); `None` for a site with a sink.
+    pub(super) site_paths: Vec<Option<(crate::bytecode::FieldBase, u32, Option<u32>)>>,
 }
 
 impl Scope {
@@ -62,6 +65,7 @@ impl Scope {
                 }
             }).collect(),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
+            site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
         }
     }
 
