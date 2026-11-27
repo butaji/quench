@@ -149,7 +149,7 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     // cost 5x the whole run as a lane.
     // A member of a global name (`Math.sqrt`) is left out: the helper runs a native in place.
     if calls_through_helper(&code) && calls_script(&unit, &proven) {
-        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, &unit, &proven); }
+        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, &unit, &proven, (facts.closed.expect("an image unit's facts"), calls)); }
         return Err("calls through the VM's helper");
     }
     // A lane body that polls and makes a call the closed world does not prove enters its callee's body
@@ -217,7 +217,7 @@ fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::Pr
 
 /// The `QUENCH_TRACE=aot-lanes` list of `unit`'s calls `proven` does not name, each with the name its callee was read by.
 #[cfg(feature = "jit")]
-fn trace_unproven_calls(program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) {
+fn trace_unproven_calls(program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>, (facts, calls): (&AotFacts, &[aot_image::CallSite])) {
     use quench_runtime::staged::meaning::{means, Meaning};
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !(means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall)) || proven.contains_key(&pc) { continue; }
@@ -227,7 +227,10 @@ fn trace_unproven_calls(program: &ResidualProgram, function: u32, unit: &lane_un
             quench_runtime::bytecode::FieldLookup::Atom { atom, .. } => program.atoms.get(atom as usize).map(|name| name.to_string()),
             _ => None,
         });
-        eprintln!("aot-lanes: function {function} unproven call at unit pc {pc} ({:?}) callee {}", unit.origins.get(pc), name.as_deref().unwrap_or("?"));
+        let origin = match unit.origins.get(pc) { Some(Origin::Caller(record)) => Some(*record as u32), _ => None };
+        let target = origin.and_then(|record| facts.function_facts(function).call_target(record));
+        let recorded = origin.is_some_and(|record| calls.iter().any(|site| site.function == function && site.pc == record));
+        eprintln!("aot-lanes: function {function} unproven call at unit pc {pc} ({:?}) callee {} fact {target:?} record {recorded}", unit.origins.get(pc), name.as_deref().unwrap_or("?"));
     }
 }
 
