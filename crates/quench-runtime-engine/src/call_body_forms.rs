@@ -13,14 +13,20 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
         && base.register_index().is_none_or(|register| register < body.params)
 }
 
-/// The entry a target's body takes before what its call needs (a frame, an environment,
-/// kept arguments) decides further: the first form it has of those a call answers without
-/// activating it, else `CallEntry::framed(Framed::Activates)`. A class constructor's calls throw on the
-/// general path, so they take a frame; only its constructions activate frameless
-/// (`script_construct_miss`).
-pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> CallEntry {
+/// The entry a target's body takes in its call form (`frameless`, from the callee's composed signature,
+/// `frameless_call`), before what its call needs (a frame, an environment, kept arguments) decides further.
+/// The form is the signature's, never the body's: a framed call form takes `Framed::Activates`, the framed
+/// shape that runs any body, so the body's frameless answers are recognized only for a frameless form. A
+/// frameless form takes the first answer its body has of those a call answers without activating it; a body
+/// with none takes `Framed::Activates` here, and `target_entry` makes it `CallEntry::leaf` where `leaf_body`
+/// proves it a leaf; where it proves none, the call keeps a frame although the signature is frameless, since
+/// no frameless shape runs such a body. A class constructor's calls throw on the general path, so they take a
+/// frame; only its constructions activate frameless (`script_construct_miss`).
+pub(crate) fn body_entry(body: &Function, constants: &[quench_runtime::bytecode::Constant], frameless: bool) -> CallEntry {
     if body.is_class_constructor {
         CallEntry::framed(Framed::Frame)
+    } else if !frameless {
+        CallEntry::framed(Framed::Activates)
     } else if body.code.first().is_some_and(|packed| returning_kind(body.widened(*packed)) == Some(RETURNING_FIELD)) {
         CallEntry::frameless(Frameless::Reads)
     } else if element_read_body(body) {

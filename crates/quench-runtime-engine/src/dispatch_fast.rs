@@ -4949,19 +4949,23 @@ impl Vm {
             return Some(target);
         };
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
+        // The call form of the callee is the one its composed signature gives (`frameless_call`), of the
+        // facts of its own program; the body's shape is taken within it.
+        let frameless = quench_runtime::vm::engine_types::frameless_call(self.programs.aot_facts(program).as_deref(), function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
             // A class constructor's calls throw on the general path, so they take a
             // frame; only its constructions activate frameless (`script_construct_miss`).
-            let entry = body_entry(body, &code.constants);
+            let entry = body_entry(body, &code.constants, frameless);
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::framed(Framed::Activates) && !environment));
             TargetBody {
                 entry,
                 constructs,
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
-                leaf: (entry == CallEntry::framed(Framed::Activates))
+                // A leaf is a frameless entry, so only a frameless call form has one (`CallEntry::leaf`).
+                leaf: (frameless && entry == CallEntry::framed(Framed::Activates))
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
                     // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
