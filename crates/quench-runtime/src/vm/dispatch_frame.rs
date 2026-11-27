@@ -19,7 +19,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "var n = 3; while (n > 0) n--; throw n;", "native-cursor.js",
         ).unwrap();
-        let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+        let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         vm.set_execution_mode(ExecutionMode::NativeOnly);
         let error = vm.execute_native_program(&native, true).unwrap_err();

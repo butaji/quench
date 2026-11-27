@@ -117,8 +117,8 @@ pub struct Loops {
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
 pub struct LaneBody {
-    /// The executions a site's record is credited with before its statistics are read
-    /// (`site_posterior::SiteEvidence::of`): a bound a static fact supplies, no count of the run.
+    /// The executions a site's record is credited with before its statistics are read: a bound a static fact supplies,
+    /// no count of the run.
     pub site_executions: u16,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
@@ -204,27 +204,6 @@ pub fn arms_inline(plan: &crate::compile::call_plan::CallPlan, graph: &CallGraph
     plan.arms.len() <= 3 && plan.arms.iter().all(|arm| inlines(graph, program, arm.function))
 }
 
-/// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
-/// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
-/// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and
-/// `guard_exit_ns` (the leave, the interpreter's replay and the re-entry) when it does not; the
-/// in-place generic read (`field_probe`) pays `probe_read_ns` either way. Speculation wins when
-/// `p (probe - guard) > (1 - p) (exit - probe)`, so the break-even rate is
-/// `(exit - probe) / (exit - guard)`.
-pub struct Speculation {
-    pub guard_read_ns: u32,
-    pub probe_read_ns: u32,
-    pub guard_exit_ns: u32,
-    /// The standard-normal deviate of the posterior's lower 5% quantile: the Beta's quantile is
-    /// taken as mean minus this many standard deviations (conservative for a skewed Beta).
-    pub lower_quantile_z: f64,
-}
-
-/// A guarded read is a load and a compare; the probe is the VM cache's hit path; an exit costs
-/// the region entry and exit plumbing (`Priors::region_entry_ns`, 140 ns) and the replayed
-/// instructions of the leave.
-pub const SPECULATION: Speculation =
-    Speculation { guard_read_ns: 1, probe_read_ns: 6, guard_exit_ns: 200, lower_quantile_z: 1.645 };
 #[cfg(any(test, feature = "test-support"))]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
@@ -672,6 +651,16 @@ pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u3
     } else {
         PredictedTier::Ultra
     }
+}
+
+/// The compiled tier of every lane body of an AOT image: the AOT mode's u-jit, over every function (an image is built
+/// once, for every function a run may enter). Read only here: the mode decides the tier, never its callers.
+pub const AOT_LANE_TIER: Tier = Tier::Ultra;
+
+/// The predicted tier of a lane body (design decision 4.9): the AOT mode's `AOT_LANE_TIER` for an AOT program (`aot`),
+/// otherwise the argmin `predicted` (`predicted_tier`).
+pub fn body_tier(aot: bool, predicted: PredictedTier) -> PredictedTier {
+    if aot { PredictedTier::Ultra } else { predicted }
 }
 
 /// Shared-matcher IR per exec of a regexp pattern: the interpreter over the pattern's compact program
