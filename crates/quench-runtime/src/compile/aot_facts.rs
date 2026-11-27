@@ -549,10 +549,11 @@ impl<'a> FunctionFacts<'a> {
         self.facts.signatures.as_ref().map_or(Effects::ANY, |signatures| signatures.site_effects(self.function, pc))
     }
 
-    /// Whether the step at `pc` may allocate, and so may collect (`Effects::allocates` of `site_effects`). Top where the
-    /// type solve did not settle.
+    /// Whether the step at `pc` may allocate (set the collector's due flag): it allocates, or it may run guest code
+    /// (getters, setters, valueOf/toString, Proxy, host callbacks), which may allocate (`site_effects`).
     pub fn may_allocate(&self, pc: u32) -> bool {
-        self.site_effects(pc).allocates
+        let effects = self.site_effects(pc);
+        effects.may_alloc || effects.may_call_js
     }
 
     /// The call form of the call at `pc` (`staged::effects::call_form`): inlined where `inlinable`, else frameless
