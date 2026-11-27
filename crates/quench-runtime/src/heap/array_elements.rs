@@ -127,8 +127,8 @@ pub(crate) use crate::staged::encodings::NARROW_LEN;
 /// The `Header::len` flag of a double backing: every value word is the IEEE-754 bits of a
 /// Number, whole or not (3 as 3.0's bits, never the int32 tag), and a hole is
 /// `Value::DELETED`'s word, which arithmetic never produces; `Header::others` then counts
-/// holes, and the backing holds no heap reference. Reads re-canonicalize (`Value::number`),
-/// so values are unchanged. A Number stored into a double backing it alone owns stays double
+/// holes, and the backing holds no heap reference. Writes canonicalize (`double_word`), so
+/// reads take the word as it is. A Number stored into a double backing it alone owns stays double
 /// (`replace_in_place`, `push_double`); any other write makes it generic first (`make_mut`),
 /// for good (`KEEP_WIDE`). An all-int32 backing becomes double where it takes its first
 /// other Number. Dense capacities stay below this bit (`grow_to`), and no backing is both

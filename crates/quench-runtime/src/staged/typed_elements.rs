@@ -131,14 +131,19 @@ fn load_integer<S: Stage>(stage: &mut S, integer: Integer, address: S::Word) -> 
     }
 }
 
-/// The Number (an `f64` word) of the `element` at `address`.
+/// The Number (an `f64` word) of the `element` at `address`. A float element's bytes may hold any
+/// bits, so each float load is a float bit entry (`Stage::canonical_float`, decision 4.1).
 #[inline(always)]
 fn load_number<S: NumericStage>(stage: &mut S, element: Element, address: S::Word) -> S::Word {
     match element {
-        Element::Float64 => stage.load_f64(Region::Elements.mutable(), address, 0),
+        Element::Float64 => {
+            let number = stage.load_f64(Region::Elements.mutable(), address, 0);
+            stage.canonical_float(number)
+        }
         Element::Float32 => {
             let single = stage.load_f32(Region::Elements.mutable(), address, 0);
-            stage.f32_to_f64(single)
+            let wide = stage.f32_to_f64(single);
+            stage.canonical_float(wide)
         }
         Element::Integer(integer) => {
             let word = load_integer(stage, integer, address);
