@@ -65,11 +65,13 @@ pub fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S
 /// The record space whose barrier a store consults (`Stage::store_gate`): an ordinary object's, or
 /// a function record's, whose own properties are an `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`.
 /// The two spaces share one block layout, so the gate's reading is one implementation that differs
-/// only in the mark block list it starts from.
+/// only in the mark block list it starts from. `Class` is a class cell, named by its granule (the
+/// class space's granule, whose region and local cell `heap::class_space` derives).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StagedRecordSpace {
     Object,
     Function,
+    Class,
 }
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where

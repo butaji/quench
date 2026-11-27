@@ -43,8 +43,12 @@ macro_rules! for_each_record_space {
 macro_rules! record_reference_test {
     ($s:expr, $reference:expr, $method:ident, $otherwise:expr) => {
         match $reference {
-            // A direct object names its stub granule; its record is the stub header's hop.
-            Some(HeapReference::ObjectRecord(granule)) => $s.object_records.$method($s.stub_record(granule)),
+            // A live class cell is its own record, in its region; a direct object otherwise names its stub
+            // granule, and its record is the stub header's hop.
+            Some(HeapReference::ObjectRecord(granule)) => match $s.class_space.live_class(granule) {
+                Some(_) => $s.class_space.$method(granule),
+                None => $s.object_records.$method($s.stub_record(granule)),
+            },
             Some(HeapReference::ArrayRecord(id)) => $s.array_records.$method(id),
             Some(HeapReference::FunctionRecord(id)) => $s.function_records.$method(id),
             Some(HeapReference::PromiseRecord(id)) => $s.promise_records.$method(id),
@@ -88,14 +92,17 @@ macro_rules! mark_bits_literal {
 /// `record_families` and `record_families_mut`, over every record space.
 macro_rules! record_families_fns {
     (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
-        /// Every record family, in `RecordSpaceId` order.
-        fn record_families(&self) -> [&dyn RecordFamily; RECORD_FAMILIES] {
-            [$(&self.$field as &dyn RecordFamily,)*]
+        /// Every record family, in `RecordSpaceId` order, then the class cell regions (`ClassSpace::cell_families`):
+        /// a cell's family index is past `RECORD_FAMILIES`, so every per-family pass covers cells too.
+        fn record_families(&self) -> [&dyn RecordFamily; RECORD_FAMILIES + class_space::CELL_REGIONS] {
+            let [c1, c2, c3, c4, c5] = self.class_space.cell_families();
+            [$(&self.$field as &dyn RecordFamily,)* c1, c2, c3, c4, c5]
         }
 
         /// `record_families`, mutably.
-        fn record_families_mut(&mut self) -> [&mut dyn RecordFamily; RECORD_FAMILIES] {
-            [$(&mut self.$field as &mut dyn RecordFamily,)*]
+        fn record_families_mut(&mut self) -> [&mut dyn RecordFamily; RECORD_FAMILIES + class_space::CELL_REGIONS] {
+            let [c1, c2, c3, c4, c5] = self.class_space.cell_families_mut();
+            [$(&mut self.$field as &mut dyn RecordFamily,)* c1, c2, c3, c4, c5]
         }
     };
 }
@@ -158,6 +165,7 @@ macro_rules! reset_record_spaces {
         /// Replaces every record space with an empty one (`Heap::reset`).
         fn reset_record_spaces(&mut self) {
             $(self.$field = <$space>::default();)*
+            self.class_space = class_space::ClassSpace::default();
         }
     };
 }
@@ -172,6 +180,7 @@ mod store_gate;
 mod typed_view;
 pub use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
+use layouts::{class_link, class_shape};
 pub use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 
 /// The word a double backing holds for the Number `number`: its bits, NaN canonical, so a NaN
@@ -2807,7 +2816,7 @@ impl Heap {
             + self.array_records.retire_cursor()
             + self.function_records.retire_cursor()
             + self.environment_records.retire_cursor()
-            + self.class_space.retire_stub_cursor();
+            + self.class_space.retire_cursors();
         self.allocated = self.allocated.saturating_sub(unspent);
     }
 
@@ -3177,6 +3186,9 @@ impl Heap {
                     // Released in place: dropping it frees its extras.
                     RecordSweep::Dead(..) => {}
                 });
+                // After the records: a departed cell dies with its record (its stub released in `dispose`), so
+                // the cell regions sweep only the cells whose Value is dead and not released yet.
+                class_space.sweep_cells(full, age);
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
                 // after one did, its sweep shows its survivors and lists those it keeps.
                 let young_function_runs = std::mem::take(&mut self.young_function_runs);
@@ -4031,7 +4043,14 @@ impl Heap {
         R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     {
         if let Some(object_ref) = value.direct_object_index() {
-            // Marking a direct object marks its record: the stub has no mark bit of its own.
+            // A live class cell is traced by its class and fields, and marked in its own region.
+            if let Some(class) = self.class_space.live_class(object_ref.granule()) {
+                self.mark_class_cell(value, object_ref.granule(), class, ctx);
+                return;
+            }
+            // Marking a direct object marks its record: the stub has no mark bit of its own. A departed cell
+            // keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`, a no-op for a stub).
+            self.class_space.mark_cell(object_ref.granule());
             let record_id = self.record_id(object_ref);
             if !self.object_records.mark(record_id) {
                 return;
@@ -4131,6 +4150,36 @@ impl Heap {
         } else {
             self.mark_rare_value(value, ctx);
         }
+    }
+
+    /// Marks live class cell `granule` (of class `class`) once, and traces its edges. An aged cell under
+    /// counting pushes its children and counts them, as an aged object record does.
+    #[inline(never)]
+    fn mark_class_cell<R>(&mut self, value: Value, granule: u32, class: u32, ctx: &mut MarkCtx<'_, '_, R>)
+    where
+        R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+    {
+        if !self.class_space.mark_cell(granule) {
+            return;
+        }
+        #[cfg(feature = "profile-aggregate")]
+        {
+            self.gc_profile.marked += 1;
+            self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
+        }
+        if self.rc_marking && self.class_space.is_aged(granule) {
+            let first = ctx.work.len();
+            let fields = self.class_space.cell_fields(granule);
+            Self::cell_children_marking(value, class, fields, |_, _, _| false, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
+            for &child in &ctx.work[first..] {
+                self.rc_increment(child);
+            }
+            self.rc_counted += 1;
+        } else {
+            let fields = self.class_space.cell_fields(granule);
+            Self::cell_children_marking(value, class, fields, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
+        }
+        self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
     }
 
     /// Marks a value of a kind `mark_value` does not visit inline (iterators, collections,
@@ -4433,10 +4482,13 @@ impl Heap {
     /// owner-attached VM tables): `owner` is logged as if it had been written.
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
-            Some(HeapReference::ObjectRecord(granule)) => {
-                let record_id = self.stub_record(granule);
-                self.object_records.barrier(record_id, &self.properties)
-            }
+            Some(HeapReference::ObjectRecord(granule)) => match self.class_space.live_class(granule) {
+                Some(_) => self.class_space.barrier(granule, &self.properties),
+                None => {
+                    let record_id = self.stub_record(granule);
+                    self.object_records.barrier(record_id, &self.properties)
+                }
+            },
             Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id, &self.properties),
             Some(HeapReference::FunctionRecord(record_id)) => {
                 self.function_records.barrier(record_id, &self.properties)
@@ -5219,6 +5271,37 @@ impl Heap {
             }
         } else {
             properties.append_heap_references(object.properties(), work);
+        }
+    }
+
+    /// The edges of live class cell `owner` (of class `class`, with fields `fields`), pushed as an object's are
+    /// (`object_children_marking`): the class's prototype once per run of siblings, the class's shape roots,
+    /// then each heap field that `mark_leaf` does not mark. A cell is never a prototype (its first use departs
+    /// it), so the shape roots carry no prototype flag. Slack fields hold `Value::DELETED`, which is no edge.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn cell_children_marking(
+        owner: Value,
+        class: u32,
+        fields: &[Value],
+        mut mark_leaf: impl FnMut(Value, &mut Vec<Value>, &mut PushedProtos) -> bool,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        trace_kind: GcTraceKind,
+        last_proto: &mut PushedProtos,
+    ) {
+        let link = class_link(class);
+        if last_proto.first_link(link) {
+            let proto = link.prototype();
+            if proto.is_heap() && last_proto.first_push(proto) {
+                work.push(proto);
+            }
+        }
+        object_roots(trace_kind, owner, class_shape(class), false, work);
+        for &value in fields {
+            if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
+                work.push(value);
+            }
         }
     }
 

@@ -12,12 +12,15 @@
 
 #![allow(dead_code)]
 
-use super::records::{AddressRange, RecordSpace};
+use super::layouts::{class_link, class_shape};
+use super::pacing::PromotionAge;
+use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
     CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
 };
 use crate::value::Value;
+use crate::value_vec::ValueArena;
 use std::mem::{MaybeUninit, size_of};
 use std::ptr::NonNull;
 
@@ -56,6 +59,84 @@ pub(super) type Region2 = RecordSpace<ClassCell2, { region_cells(2) }>;
 pub(super) type Region3 = RecordSpace<ClassCell3, { region_cells(3) }>;
 pub(super) type Region4 = RecordSpace<ClassCell4, { region_cells(4) }>;
 pub(super) type Region5 = RecordSpace<ClassCell5, { region_cells(5) }>;
+
+/// The regions that hold class cells, `1..CAPACITY_CLASSES`. Region 0 holds the object stubs, which
+/// their records sweep and count.
+pub(super) const CELL_REGIONS: usize = CAPACITY_CLASSES - 1;
+
+/// Runs `$body` with `$space` bound to the region `$region` of `$regions` (a `ClassSpace`'s `regions`),
+/// shared or mutable.
+macro_rules! with_region {
+    ($regions:expr, $region:expr, |$space:ident| $body:expr) => {
+        match $region {
+            0 => { let $space = &$regions.0; $body }
+            1 => { let $space = &$regions.1; $body }
+            2 => { let $space = &$regions.2; $body }
+            3 => { let $space = &$regions.3; $body }
+            4 => { let $space = &$regions.4; $body }
+            5 => { let $space = &$regions.5; $body }
+            _ => unreachable!("a granule past the class space"),
+        }
+    };
+}
+
+/// `with_region!`, with the region mutable.
+macro_rules! with_region_mut {
+    ($regions:expr, $region:expr, |$space:ident| $body:expr) => {
+        match $region {
+            0 => { let $space = &mut $regions.0; $body }
+            1 => { let $space = &mut $regions.1; $body }
+            2 => { let $space = &mut $regions.2; $body }
+            3 => { let $space = &mut $regions.3; $body }
+            4 => { let $space = &mut $regions.4; $body }
+            5 => { let $space = &mut $regions.5; $body }
+            _ => unreachable!("a granule past the class space"),
+        }
+    };
+}
+
+// A cell region's records are its cells: local id `id` of region `k` is the cell at `granule(k, id)`.
+macro_rules! cell_record_values {
+    ($($name:ident: $region:literal;)*) => {$(
+        impl RecordValue for $name {
+            fn value_of<const CAPACITY: usize, const HOLE: usize>(_: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value {
+                Value::direct_object(granule($region, id))
+            }
+        }
+    )*};
+}
+
+cell_record_values! { ClassCell1: 1; ClassCell2: 2; ClassCell3: 3; ClassCell4: 4; ClassCell5: 5; }
+
+/// The cell regions' parallel mark views, one per region `1..CAPACITY_CLASSES` (`ParallelRecordMarks`).
+#[derive(Clone, Copy)]
+pub(super) struct ClassCellMarks<'space> {
+    regions: (
+        ParallelRecordMarks<'space, ClassCell1>,
+        ParallelRecordMarks<'space, ClassCell2>,
+        ParallelRecordMarks<'space, ClassCell3>,
+        ParallelRecordMarks<'space, ClassCell4>,
+        ParallelRecordMarks<'space, ClassCell5>,
+    ),
+}
+
+impl ClassCellMarks<'_> {
+    /// Marks cell `g` for a worker if it is new (`ParallelRecordMarks::mark_if_new`). A stub (region 0) has no
+    /// mark of its own, as `ClassSpace::mark_cell`: it answers false.
+    pub(super) fn mark_if_new(&self, g: u32) -> bool {
+        let (region, local) = locate(g);
+        let regions = &self.regions;
+        match region {
+            0 => false,
+            1 => regions.0.mark_if_new(local),
+            2 => regions.1.mark_if_new(local),
+            3 => regions.2.mark_if_new(local),
+            4 => regions.3.mark_if_new(local),
+            5 => regions.4.mark_if_new(local),
+            _ => unreachable!("a parallel mark of a granule past the cell regions"),
+        }
+    }
+}
 
 /// The bytes a region's granules span, and the bytes of the whole space.
 const REGION_BYTES: usize = CLASS_HEADER_BYTES << REGION_SHIFT;
@@ -222,11 +303,170 @@ impl ClassSpace {
         std::ptr::addr_of!(self.regions.0.cursor) as usize
     }
 
-    /// Frees the unallocated rest of region 0's cursor run and empties the cursor, returning how many stubs
-    /// that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps this run, so every
-    /// collection retires it with the record cursors, before occupancy or a snapshot reads region 0.
-    pub(super) fn retire_stub_cursor(&mut self) -> usize {
-        self.regions.0.retire_cursor()
+    /// Frees the unallocated rest of every region's cursor run and empties the cursors, returning how many
+    /// granules that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps region 0's run,
+    /// and a cell allocation bumps its region's, so every collection retires all of them with the record
+    /// cursors, before occupancy or a snapshot reads the space.
+    pub(super) fn retire_cursors(&mut self) -> usize {
+        let regions = &mut self.regions;
+        regions.0.retire_cursor()
+            + regions.1.retire_cursor()
+            + regions.2.retire_cursor()
+            + regions.3.retire_cursor()
+            + regions.4.retire_cursor()
+            + regions.5.retire_cursor()
+    }
+
+    /// The class of granule `g`'s cell when the cell is live; `None` where it is departed (its header
+    /// names a record) or is a stub. The space must be reserved.
+    #[inline(always)]
+    pub(super) fn live_class(&self, g: u32) -> Option<u32> {
+        debug_assert!(self.range.is_some());
+        live_class_at(self.base, g)
+    }
+
+    /// The fields of granule `g`'s cell: `region_capacity(g)` tagged values, a slack one `Value::DELETED`.
+    /// The space must be reserved.
+    #[inline(always)]
+    pub(super) fn cell_fields(&self, g: u32) -> &[Value] {
+        debug_assert!(self.range.is_some());
+        // SAFETY: `g` names a cell of this reserved space, and nothing writes the fields while `self` is borrowed.
+        unsafe { cell_fields_at(self.base, g) }
+    }
+
+    /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region
+    /// 0) has no mark of its own, so there this does nothing and its record is marked instead. A departed cell
+    /// in a cell region is marked with its Value: its granule stays live while the Value does.
+    pub(super) fn mark_cell(&mut self, g: u32) -> bool {
+        let (region, local) = locate(g);
+        if region == 0 {
+            return false;
+        }
+        with_region_mut!(self.regions, region, |space| space.mark(local))
+    }
+
+    /// Whether cell `g` is marked, live, or aged in its region (`RecordSpace::is_marked`, `is_live`, `is_aged`).
+    pub(super) fn is_marked(&self, g: u32) -> bool {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.is_marked(local))
+    }
+
+    pub(super) fn is_live(&self, g: u32) -> bool {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.is_live(local))
+    }
+
+    pub(super) fn is_aged(&self, g: u32) -> bool {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.is_aged(local))
+    }
+
+    /// Whether a store of `stored` into cell `g` needs its region's barrier log (`RecordSpace::store_logs`).
+    pub(super) fn store_logs(&self, g: u32, stored: Value) -> bool {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.store_logs(local, stored))
+    }
+
+    /// The reference-count primitives of cell `g` (`RecordSpace::rc_*`), for a cell region.
+    pub(super) fn rc_pin(&self, g: u32) {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.rc_pin(local))
+    }
+
+    pub(super) fn rc_increment(&self, g: u32) {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.rc_increment(local))
+    }
+
+    pub(super) fn rc_decrement(&self, g: u32) -> bool {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.rc_decrement(local))
+    }
+
+    pub(super) fn rc_count(&self, g: u32) -> u8 {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.rc_count(local))
+    }
+
+    #[cfg(test)]
+    pub(super) fn rc_exact_count(&self, g: u32) -> u32 {
+        let (region, local) = locate(g);
+        with_region!(self.regions, region, |space| space.rc_exact_count(local))
+    }
+
+    /// The write barrier for a write into live cell `g` (`RecordSpace::barrier`). Only cell regions hold live cells.
+    pub(super) fn barrier(&mut self, g: u32, properties: &ValueArena) {
+        let (region, local) = locate(g);
+        let regions = &mut self.regions;
+        match region {
+            1 => regions.1.barrier(local, properties),
+            2 => regions.2.barrier(local, properties),
+            3 => regions.3.barrier(local, properties),
+            4 => regions.4.barrier(local, properties),
+            5 => regions.5.barrier(local, properties),
+            _ => unreachable!("a live class cell lies in a cell region"),
+        }
+    }
+
+    /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed. Cells own no memory, so
+    /// nothing is disposed. Region 0's stubs die with their records and are not swept here.
+    pub(super) fn sweep_cells(&mut self, full: bool, age: PromotionAge) -> (usize, usize) {
+        let regions = &mut self.regions;
+        let sweeps = [
+            regions.1.sweep(full, age, false, |_| {}),
+            regions.2.sweep(full, age, false, |_| {}),
+            regions.3.sweep(full, age, false, |_| {}),
+            regions.4.sweep(full, age, false, |_| {}),
+            regions.5.sweep(full, age, false, |_| {}),
+        ];
+        sweeps.into_iter().fold((0, 0), |(live, freed), (swept_live, swept_freed)| (live + swept_live, freed + swept_freed))
+    }
+
+    /// The cell regions as record families, which `Heap::record_families` lists after the record spaces.
+    pub(super) fn cell_families(&self) -> [&dyn RecordFamily; CELL_REGIONS] {
+        [
+            &self.regions.1 as &dyn RecordFamily,
+            &self.regions.2 as &dyn RecordFamily,
+            &self.regions.3 as &dyn RecordFamily,
+            &self.regions.4 as &dyn RecordFamily,
+            &self.regions.5 as &dyn RecordFamily,
+        ]
+    }
+
+    pub(super) fn cell_families_mut(&mut self) -> [&mut dyn RecordFamily; CELL_REGIONS] {
+        let regions = &mut self.regions;
+        [
+            &mut regions.1 as &mut dyn RecordFamily,
+            &mut regions.2 as &mut dyn RecordFamily,
+            &mut regions.3 as &mut dyn RecordFamily,
+            &mut regions.4 as &mut dyn RecordFamily,
+            &mut regions.5 as &mut dyn RecordFamily,
+        ]
+    }
+
+    /// The parallel mark's views of the cell regions, taken with the record families' (`ParallelMarkView::new`).
+    pub(super) fn parallel_marks(&mut self) -> ClassCellMarks<'_> {
+        let regions = &mut self.regions;
+        ClassCellMarks {
+            regions: (
+                regions.1.parallel_marks(),
+                regions.2.parallel_marks(),
+                regions.3.parallel_marks(),
+                regions.4.parallel_marks(),
+                regions.5.parallel_marks(),
+            ),
+        }
+    }
+
+    /// Blocks made so far in every region, which `native_layout_epoch` counts: a new block can move
+    /// the mark blocks native code caches.
+    pub(super) fn block_count(&self) -> usize {
+        self.regions.0.block_count()
+            + self.regions.1.block_count()
+            + self.regions.2.block_count()
+            + self.regions.3.block_count()
+            + self.regions.4.block_count()
+            + self.regions.5.block_count()
     }
 }
 
@@ -240,6 +480,27 @@ pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
     let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
     debug_assert_eq!(header_class(header), DEPARTED_CLASS, "a stub names its record only once its object departed");
     header_record(header)
+}
+
+/// The class of granule `g`'s cell in the class space at `base`, when the cell is live. `None` where it is
+/// departed: its header then names a record (`departed_header`), and the record hop is the answer.
+#[inline(always)]
+pub(super) fn live_class_at(base: usize, g: u32) -> Option<u32> {
+    // SAFETY: a direct object `Value` names a granule of the reserved class space, whose header is a readable u64.
+    let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
+    let class = header_class(header);
+    (class != DEPARTED_CLASS).then_some(class)
+}
+
+/// The fields of granule `g`'s cell in the class space at `base`: `region_capacity(g)` values after its header.
+///
+/// # Safety
+/// `g` names a cell of the reserved space at `base`, and nothing writes its fields while the slice lives.
+#[inline(always)]
+pub(super) unsafe fn cell_fields_at<'a>(base: usize, g: u32) -> &'a [Value] {
+    let fields = (base + g as usize * CLASS_HEADER_BYTES + NATIVE_CLASS_CELL_LAYOUT.fields_offset) as *const Value;
+    // SAFETY: the caller's contract; the cell's fields are `Value`s, written whole.
+    unsafe { std::slice::from_raw_parts(fields, region_capacity(g) as usize) }
 }
 
 /// Region `k`'s first address, as the record space of its cells.
