@@ -48,14 +48,17 @@ pub(crate) static AHEAD_BUILD_ID_MARK: [u8; 32] = {
     mark
 };
 
-/// What names a program: a hash of its source text and every function's registers and opcodes
+/// What names a program: a hash of its string constants and every function's registers and opcodes (never its source
+/// text, which a core image strips when the program cannot observe it)
 /// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
 pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
     let mut hash = mix(FNV_OFFSET, &(super::LaneHelper::COUNT as u32).to_le_bytes());
-    hash = mix(hash, program.source_text().unwrap_or_default().as_bytes());
+    for constant in program.constants.iter() {
+        if let quench_runtime::bytecode::Constant::String(text) = constant { hash = mix(hash, text.as_bytes()); }
+    }
     // Each function as the image lowered it (`lowered_function`): a tier-0 record and its promoted
     // record differ in opcodes, so a program fingerprinted before and after a promotion would not match.
     for index in 0..program.function_count() {
