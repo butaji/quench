@@ -182,9 +182,20 @@ impl Lowering<'_, '_> {
         self.read_invalidation(state, exit);
     }
 
+    /// Whether the Stable facts this lowering holds can change while its code runs, so that holding them needs
+    /// an invalidation point. The online division's facts always can. An AOT image's can only where its world
+    /// is not closed: a closed world's `AotFacts::live` is false for every key, and a global key is live in
+    /// every other world, so its probe answers for the whole world. Nothing can change a settled fact, so the
+    /// hold builds no word read, no guard and no exit.
+    pub(crate) fn fact_may_change(&self) -> bool {
+        self.vm.online.is_some() || self.vm.facts.is_none_or(|facts| !facts.closed())
+    }
+
     /// The invalidation point of `hold_stable`, made here: the online division's word, or an AOT
-    /// image's, whose closed-world facts (`VmFacts::closed`) are its dependencies.
+    /// image's, whose closed-world facts (`VmFacts::facts`) are its dependencies. Nothing where
+    /// `fact_may_change` is false.
     pub(crate) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
+        if !self.fact_may_change() { return; }
         let closed = self.vm.facts.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
         let live = self.vm.online.map(|online| online.invalidation).or(closed).expect("only a division with Stable facts reads the word");
         read_invalidation_word(&mut self.builder, self.helpers, live, state, exit);
