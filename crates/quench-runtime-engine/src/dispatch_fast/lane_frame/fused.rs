@@ -45,7 +45,7 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         // The settings word of this record (the pair's head), read before `B`'s record is named.
         let mode = i.mode;
         // A proven loop step (`PROVEN_STEP` of `CMP`, `prove_loop_steps`): `A` is `i++` of a register the
-        // view's int32 kinds prove (`int_kinds`), read with no tag test, and the test's left operand is
+        // solve's int32 cells prove (`int32_at`), read with no tag test, and the test's left operand is
         // that register, whose new value this record holds. Its decrement flag is clear.
         let proven = const { FAMILY == quench_runtime::staged::FUSED_TARGET && CMP & PROVEN_STEP != 0 };
         #[allow(unused_assignments)] let mut held: u64 = 0;
@@ -116,7 +116,9 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         let i = unsafe { &*ip };
         let fields = LaneFields::<B>(i);
         if const { jumps_by_row(LaneFields::<B>::OPCODE) } {
-            let decoded = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
+            let decoded = if const { B == quench_runtime::staged::COMPARE_JUMP_ROW } {
+                compare_fields(fields)
+            } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                 Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
             } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
                 Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
@@ -264,7 +266,9 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
         macro_rules! last_link { ($ip:ident, $i:ident, $L:ident) => {{
         let fields = LaneFields::<$L>($i);
             if const { jumps_by_row(LaneFields::<$L>::OPCODE) } {
-                let decoded = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
+                let decoded = if const { $L == quench_runtime::staged::COMPARE_JUMP_ROW } {
+                    compare_fields(fields)
+                } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                     Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
                 } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
                     Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))

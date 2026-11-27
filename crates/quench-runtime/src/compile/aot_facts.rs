@@ -28,7 +28,7 @@ mod tests;
 use std::collections::BTreeMap;
 
 use crate::bytecode::ResidualProgram;
-use crate::staged::effects::{CallForm, Signature};
+use crate::staged::effects::{CallForm, Effects, Signature};
 use crate::typed_ir::Representation;
 use super::signatures::{self, Signatures};
 use census::Census;
@@ -275,6 +275,13 @@ impl<'a> FunctionFacts<'a> {
     /// retire it. Top where the type solve did not settle.
     pub fn signature(&self) -> Signature {
         self.facts.signatures.as_ref().map_or(Signature::ANY, |signatures| signatures.of(self.function))
+    }
+
+    /// The graded effects of the step at `pc` (`Signatures::site_effects`): the operation's kind row met with what the
+    /// settled facts prove of that site, so a plain read of a closed receiver is not graded as a call. The same facts
+    /// and edges as `signature`. Top where the type solve did not settle.
+    pub fn site_effects(&self, pc: u32) -> Effects {
+        self.facts.signatures.as_ref().map_or(Effects::ANY, |signatures| signatures.site_effects(self.function, pc))
     }
 
     /// The call form of the call at `pc` (`staged::effects::call_form`): inlined where `inlinable`, else frameless

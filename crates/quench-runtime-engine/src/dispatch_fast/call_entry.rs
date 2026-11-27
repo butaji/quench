@@ -38,16 +38,24 @@ impl CallEntry {
         })
     }
 
-    /// The form of a leaf entry, `NOT_LEAF` for any other.
+    /// The form of a leaf entry, `NOT_LEAF` for any other (`LEAF_FORMS`).
     #[inline(always)]
     pub(crate) fn leaf_form(self) -> LeafForm {
-        if self == Self::frameless(Frameless::Leaf) { PLAIN_LEAF }
-        else if self == Self::frameless(Frameless::CaptureLeaf) { CAPTURE_LEAF }
-        else if self == Self::frameless(Frameless::ContextLeaf) { CONTEXT_LEAF }
-        else if self == Self::frameless(Frameless::ThisLeaf) { THIS_LEAF }
-        else { NOT_LEAF }
+        LEAF_FORMS[self.table_index()]
     }
 }
+
+/// The leaf form of every entry byte (`CallEntry::leaf_form`): the four leaf shapes' forms, and `NOT_LEAF`
+/// for every other byte, framed entries among them. One lookup answers it, since the table is indexed by
+/// the whole entry byte, its form bit included.
+const LEAF_FORMS: [LeafForm; 256] = {
+    let mut forms = [NOT_LEAF; 256];
+    forms[CallEntry::frameless(Frameless::Leaf).table_index()] = PLAIN_LEAF;
+    forms[CallEntry::frameless(Frameless::CaptureLeaf).table_index()] = CAPTURE_LEAF;
+    forms[CallEntry::frameless(Frameless::ContextLeaf).table_index()] = CONTEXT_LEAF;
+    forms[CallEntry::frameless(Frameless::ThisLeaf).table_index()] = THIS_LEAF;
+    forms
+};
 
 #[quench_macros::ext(CallEntryOps2)]
 impl CallEntry {

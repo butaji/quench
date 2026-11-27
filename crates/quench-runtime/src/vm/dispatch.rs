@@ -5,7 +5,7 @@
 // attribute rejects match guards.) The runners, in `runner_of`'s priority order:
 // - `NO_STEP` (Nop; the wide prefix `Wide` is never dispatched).
 // - `REGISTER_ROW` (Move, LoadLocalPlain, StoreLocalPlain, Jump, JumpFalse, JumpTrue): `register_row_step`.
-// - A call-family record (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
+// - A call-family record (`staged::CallRecord::has_general_form`: Call, CallArray, CallSpread, CallForwardingArguments,
 //   CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk): its staged row, then the call's general form
 //   on the frame (`call_forms.rs`, `InterpreterFrame::call_row`).
 // - `SUSPENDS` (Await, Yield, YieldStar): `staged_suspend`.
@@ -875,7 +875,7 @@ impl Vm {
             },
             // A call-family record: its staged row first, then the call's general form on the running frame (`call_forms`).
             Runner::Call => {
-                let form = crate::staged::invoke::general_call_form(i.op()).expect("a call runner names its form");
+                let form = crate::staged::CallRecord::of(i).expect("a call runner names its form");
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
@@ -1071,7 +1071,7 @@ enum Runner {
     RowOnly,
     /// An arithmetic binary (`ARITHMETIC_BINARY`): its staged row, then the record's general `Binary` on a miss.
     RowThenGeneralBinary,
-    /// A call-family record (`invoke::general_call_form`): its staged row, then the call's general form on the frame.
+    /// A call-family record (`CallRecord::has_general_form`): its staged row, then the call's general form on the frame.
     Call,
     /// An owner's own step with no row first (`OWNER_ONLY`, or an owned step whose catalog marks no row): `owner_step`.
     Owner,
@@ -1097,7 +1097,7 @@ const fn runner_of(op: Op) -> Runner {
     if traits.has(crate::bytecode::Traits::REGISTER_ROW) {
         return Runner::RegisterRow;
     }
-    if crate::staged::invoke::general_call_form(op).is_some() {
+    if matches!(crate::staged::CallRecord::of_op(op), Some(record) if record.has_general_form()) {
         return Runner::Call;
     }
     if traits.has(crate::bytecode::Traits::SUSPENDS) {

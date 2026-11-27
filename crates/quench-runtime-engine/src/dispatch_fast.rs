@@ -4939,19 +4939,23 @@ impl Vm {
             return Some(target);
         };
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
+        // The call form of the callee is the one its composed signature gives (`frameless_call`), of the
+        // facts of its own program; the body's shape is taken within it.
+        let frameless = quench_runtime::vm::engine_types::frameless_call(self.programs.aot_facts(program).as_deref(), function);
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
             // A class constructor's calls throw on the general path, so they take a
             // frame; only its constructions activate frameless (`script_construct_miss`).
-            let entry = body_entry(body, &code.constants);
+            let entry = body_entry(body, &code.constants, frameless);
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::framed(Framed::Activates) && !environment));
             TargetBody {
                 entry,
                 constructs,
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
-                leaf: (entry == CallEntry::framed(Framed::Activates))
+                // A leaf is a frameless entry, so only a frameless call form has one (`CallEntry::leaf`).
+                leaf: (frameless && entry == CallEntry::framed(Framed::Activates))
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
                     // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
@@ -5183,7 +5187,7 @@ impl Vm {
         if !self.runs_lane || !self.may_run_in_lane(program, code) { return None; }
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
+            crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -5226,9 +5230,10 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let proper_tail_calls = self.host.proper_tail_calls();
+                let facts = self.programs.aot_facts(id);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
-                        proper_tail_calls, self.programs.tiers())
+                        proper_tail_calls, self.programs.tiers(), facts.as_deref())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -7948,7 +7953,10 @@ use crate::jit_routes::handler_in_lane;
 
 
 
-pub(crate) mod int_kinds; pub(crate) mod int_steps;
+pub(crate) mod int_steps;
+// Bridge until `compiled/admission.rs` (`speculation_allowed`, `retire_after_native`) and `engine_calls.rs`
+// (`note_retired`) name `int_steps` directly: the speculation latch lives there, the int32 kinds are gone.
+pub(crate) use int_steps as int_kinds;
 
 
 
@@ -8085,7 +8093,7 @@ impl Vm {
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs
             .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
-                crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
     }

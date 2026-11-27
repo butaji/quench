@@ -3,7 +3,7 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::bytecode::InstructionField;
-use crate::staged::effects::CallForm;
+use crate::staged::effects::{call_form, CallForm, Signature};
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -334,13 +334,12 @@ pub struct LaneView {
     /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
     /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
     pub name_records: Box<[u32]>,
-    /// The operator records whose proven form reads a `Kind::Speculative` register, each with that proven handler and its
-    /// checked form: what `retire_int_speculation` restores once an update overflowed one.
+    /// The operator records whose proven form reads a speculative register, each with that proven handler and its
+    /// checked form: what `retire_int_speculation` restores once an update overflowed one. Empty: the solve's int32
+    /// cells type no speculative register, so no record takes a speculative form.
     pub int_speculating: Box<[(u32, *const (), *const ())]>,
-    /// The held back edges' `IncDec` records whose counter the kinds prove, with it and whether it is speculative (`int_steps`).
-    pub proven_counters: Box<[(u32, u16, bool)]>,
-    /// The registers its records read as `Speculative` int32s (`int_steps::native_handed_doubles`).
-    pub speculative_registers: Box<[u16]>,
+    /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
+    pub proven_counters: Box<[(u32, u16)]>,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI
@@ -621,15 +620,6 @@ pub struct StringCaseFilter {
     pub buckets: Box<[Bucket]>,
     pub cases: Box<[Case]>,
 }
-
-/// A register's kind, ordered by the join: a larger kind admits more values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Kind {
-    Int32,
-    Speculative,
-    Tagged,
-}
-
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in
@@ -1224,9 +1214,9 @@ pub struct TargetBody {
     pub entry: CallEntry,
     pub constructs: bool,
     pub initializes: bool,
-    /// Whether an `Activates` body runs as a leaf (`leaf_body`), and what its records then read
-    /// of the context: only where the tier could not claim it at the first resolution, which
-    /// specialized its returns for good.
+    /// Whether an `Activates` body of a frameless call form runs as a leaf (`leaf_body`), and what its
+    /// records then read of the context: only where the tier could not claim it at the first resolution,
+    /// which specialized its returns for good. None for a framed call form, whose entries never run a leaf.
     pub leaf: Option<LeafForm>,
 }
 
@@ -4109,6 +4099,23 @@ impl CallEntry {
     pub const fn form(self) -> CallForm {
         if self.0 & Self::FRAMED == 0 { CallForm::Frameless } else { CallForm::Framed }
     }
+
+    /// The entry's byte as an index of a table of all 256 entries. The byte holds both the form bit
+    /// and the shape, so a table over it answers a framed entry without a test of the form.
+    #[inline(always)]
+    pub const fn table_index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Whether a call of `function` takes a frameless entry: the form `staged::effects::call_form` gives the
+/// function's composed signature (`FunctionFacts::signature`), of the program's facts `facts`
+/// (`ProgramStore::aot_facts`). The facts are not inlinable here, since a lane target is never spliced.
+/// A function the solve did not reach, or a program without facts, has the top signature, whose form is
+/// framed.
+pub fn frameless_call(facts: Option<&AotFacts>, function: u32) -> bool {
+    let signature = facts.map_or(Signature::ANY, |facts| facts.function_facts(function).signature());
+    call_form(signature, false) == CallForm::Frameless
 }
 
 impl Admission {

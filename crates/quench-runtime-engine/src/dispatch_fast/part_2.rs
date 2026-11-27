@@ -469,7 +469,7 @@ pub(super) fn frame_state_in_lane(
             // The same derivation as every entry's (`ahead_runner::view_in_lane`).
             let image = vm.programs.residual(program).is_some_and(|code| vm.programs.ahead_images(program, code).is_some());
             let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-                crate::ahead_runner::view_in_lane(vm, function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::view_in_lane(vm, program, function, code, constants, kind, live, sites, image)
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
