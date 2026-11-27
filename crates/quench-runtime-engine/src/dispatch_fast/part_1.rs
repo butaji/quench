@@ -1160,7 +1160,7 @@ pub(super) fn lane_private_field_slot_at(
     {
         let vm = unsafe { vm(cx) };
         if vm.private_classes.unique_name(atom)
-            && let Some(slot) = vm.private_site_homes.unique_field_slot(site, vm.object_data(object)?.shape())
+            && let Some(slot) = vm.private_site_homes.unique_field_slot(site, vm.heap_reads().object(object)?.shape())
         {
             return Some(slot);
         }

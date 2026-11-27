@@ -485,7 +485,7 @@ pub(crate) fn initialize_stores_in_lane(
         && let Some(layout) = vm.function_prototype_layout(callee)
     {
         plan.callee_layout = layout;
-        plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
+        plan.shape = vm.heap_reads().object(this).map_or(source_shape, |object| object.shape());
         // A nested field's root is read at each construction (`defaulted_construction_in_lane`).
         if plan.nested.is_some() {
             plan.kind = ConstructPlanKind::Defaulted;
