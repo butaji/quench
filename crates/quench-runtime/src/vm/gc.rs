@@ -367,7 +367,7 @@ impl Vm {
     #[inline(never)]
     fn collect_due(&mut self, program: &ResidualProgram) {
         let full = self.heap.should_full_collect();
-        self.collect_inner(program, full, Roots::Full);
+        self.collect_inner(program, full, Roots::Full, None);
     }
 
     #[cold]
@@ -446,17 +446,19 @@ impl Vm {
     }
 
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
-        self.collect_inner(program, full, Roots::Full);
+        self.collect_inner(program, full, Roots::Full, None);
     }
 
     /// A full collection of a closed world's dump (C5 D3): the realm keeps only what the closure
     /// reaches (`close`), and the realm values it frees leave their fields and tables
-    /// (`prune_closed_realm`). The program's own state stays rooted whatever the closure says.
+    /// (`prune_closed_realm`). The program's own state stays rooted whatever the closure says,
+    /// and so does the input chain the dump resumes (`resume`, C5 D1c).
     pub fn collect_for_image(
         &mut self,
         program: &ResidualProgram,
         programs: &[&ResidualProgram],
         roots: super::reachable_realm::RealmRoots<'_>,
+        resume: Option<&super::activation::FrameRecord>,
     ) -> Result<(), JsError> {
         let globals = roots.globals;
         let closure = self.close(program, programs, super::reachable_realm::RealmRoots { globals, natives: roots.natives })?;
@@ -471,7 +473,7 @@ impl Vm {
             .collect::<rustc_hash::FxHashSet<Atom>>();
         self.unlink_unreached_globals(&closure, &kept);
         let seen = closure.seen;
-        self.collect_inner(program, true, Roots::Closed(&seen));
+        self.collect_inner(program, true, Roots::Closed(&seen), resume);
         Ok(())
     }
 
@@ -500,7 +502,7 @@ impl Vm {
 
     /// A stop-the-world collection, full or minor. `policy` decides which realm roots enter
     /// (`Roots`); a minor collection only ever runs under `Roots::Full`.
-    fn collect_inner(&mut self, _program: &ProgramRecord, full: bool, policy: Roots<'_>) {
+    fn collect_inner(&mut self, _program: &ProgramRecord, full: bool, policy: Roots<'_>, resume: Option<&super::activation::FrameRecord>) {
         // A deferred lane activation's registers are no roots; its frame is.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.
@@ -896,6 +898,10 @@ impl Vm {
         let lane_start = roots.len();
         self.lane_stack.extend_roots(&self.programs, &mut roots);
         self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
+        // The input chain an image dump resumes is a root of its own: the dump owns it, not the heap.
+        if let Some(chain) = resume {
+            chain.extend_roots(&mut roots);
+        }
         let heap = &self.heap;
         let mut kept = lane_start;
         for index in lane_start..roots.len() {

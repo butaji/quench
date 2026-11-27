@@ -135,7 +135,7 @@ fn put_units(c: &mut Context<'_>, object: RootId, name: &str, units: &[u16]) -> 
 }
 
 fn now() -> f64 {
-    quench_runtime::clock::note_input("the clock");
+    quench_runtime::clock::note_input();
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |elapsed| elapsed.as_millis() as f64)

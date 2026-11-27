@@ -690,6 +690,19 @@ impl Vm {
         result
     }
 
+    /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
+    /// native's call parked on the chain's top record, kept for the build. The native does not run;
+    /// the watched run ends here (`clock::store_input_capture`). Only the input natives' own entries
+    /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
+    pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value]) -> JsError {
+        let chain = self.capture_chain_parked(0, native, this, args);
+        crate::clock::store_input_capture(chain);
+        match self.check_execution_interrupt() {
+            Err(error) => error,
+            Ok(()) => JsError("build-time input capture".into()),
+        }
+    }
+
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
     pub(super) fn call_native_dispatch(
