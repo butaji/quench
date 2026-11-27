@@ -115,9 +115,8 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{start_osr_region, RegionStart, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
 #[cfg(feature = "jit")]
-pub(crate) use osr_compile::compile_osr_region;
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
