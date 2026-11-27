@@ -751,3 +751,55 @@ fn a_fill_loop_that_stops_short_of_the_length_keeps_the_holes() {
     let f = function_named(&program, "f") as u32;
     assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the last element is never written, so a read may find a hole");
 }
+
+#[test]
+fn a_sloppy_prototype_method_keyed_on_this_called_as_a_method_keeps_the_world_closed() {
+    // `this` of `m` is the object `o.m()` passes, never the global object, so `this[k]` reads no global function.
+    let program = program("function C() {} C.prototype.m = function (k) { return this[k]; }; var o = new C(); o.m('x'); \
+        function dead() { eval('1'); }");
+    assert_eq!(world(&program), World::Closed);
+}
+
+#[test]
+fn a_sloppy_function_keyed_on_this_handed_to_a_builtin_callback_opens_the_world() {
+    // `forEach` calls `f` with an undefined `this`, which a sloppy `f` binds to the global object: `this[k]` may name the
+    // global function `g`, which holds an eval nothing calls, so only the flagged `this` opens the world.
+    let program = program("var k = 'g'; function f() { return this[k]; } [1].forEach(f); \
+        function g() { eval('1'); }");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_strict_function_keyed_on_this_handed_to_a_builtin_callback_keeps_the_world_closed() {
+    // A strict callee's `this` is the `undefined` `forEach` passes, not the global object, so `this[k]` reads no global.
+    let program = program("var k = 'g'; function f() { 'use strict'; return this[k]; } [1].forEach(f); \
+        function dead() { eval('1'); }");
+    assert_eq!(world(&program), World::Closed);
+}
+
+#[test]
+fn a_prototype_method_last_written_at_top_level_resolves_for_a_later_run_once_read() {
+    let program = program(
+        "function Foo() {} function first() { return 1; } function second() { return 2; } \
+         Foo.prototype.m = first; Foo.prototype.m = second; \
+         function run() { var method = new Foo().m; return method(); } run();",
+    );
+    let facts = analyze(&program);
+    let run = function_named(&program, "run") as u32;
+    let second = function_named(&program, "second") as u32;
+    assert!(facts.call_targets.iter().any(|(&(function, _), &target)| function == run && target == second));
+}
+
+#[test]
+fn a_prototype_method_written_again_by_a_hot_function_names_no_phase_target() {
+    let program = program(
+        "function Foo() {} function first() { return 1; } function second() { return 2; } \
+         Foo.prototype.m = first; \
+         function hot() { Foo.prototype.m = second; } \
+         for (var i = 0; i < 2; i++) hot(); \
+         function run() { var method = new Foo().m; return method(); } run();",
+    );
+    let facts = analyze(&program);
+    let run = function_named(&program, "run") as u32;
+    assert!(!facts.call_targets.keys().any(|&(function, _)| function == run));
+}

@@ -139,7 +139,7 @@ impl Proofs {
             proofs.global_source |= flow.plain_calls.iter().any(|&callee| {
                 callee.and_then(|function| flows.get(function as usize)).map_or(true, |callee| callee.reads_this)
             });
-            proofs.written.extend(flow.writes.iter().filter_map(|(key, _)| match key {
+            proofs.written.extend(flow.writes.iter().filter_map(|(_, key, _)| match key {
                 Key::Global(atom) => Some(*atom),
                 _ => None,
             }));

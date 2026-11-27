@@ -18,6 +18,14 @@ use std::collections::BTreeSet;
 pub(super) struct Escapes {
     /// The functions whose closure escapes (`escapes`).
     pub(super) functions: BTreeSet<u32>,
+    /// The escaped functions unknown code may call with no receiver (`plain`): a sloppy one's `this` is then the global
+    /// object. A closure handed to code the solve does not follow as a value (a builtin's argument or callee, a thrown or
+    /// yielded value, an element, a live global, an escaped return) may be called so. A method an object holds is called
+    /// with that object as its `this` (a builtin reads it off the object), so a named store is no plain hand.
+    pub(super) plain: BTreeSet<u32>,
+    /// The functions a `call`, `apply` or `bind` runs with its first argument as their `this` (`Handed::this_passes`), each
+    /// with that argument's cell: the `this` the function takes from that call, whether or not it is plain.
+    pub(super) passed_this: Vec<(u32, Cell)>,
     /// The element classes of the arrays the escaped positions hold: each joins the unnamed class.
     pub(super) classes: BTreeSet<ElementClass>,
     /// The cell of every value an escaped position holds (the sinks and the escaped positions' writes).
@@ -54,52 +62,162 @@ pub(super) struct Escapes {
 pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope) -> Escapes {
     let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
     let roots: BTreeSet<u32> = flows.iter().enumerate().filter(|(_, flow)| flow.returns_out).map(|(id, _)| id as u32).collect();
-    let mut sinks: Vec<Word> = Vec::new();
-    let mut read: Vec<Origin> = Vec::new();
-    for (id, flow) in flows.iter().enumerate() {
-        for call in &flow.calls {
-            // A named access the census proves runs its accessor, whose flow reads the operands as its parameters do. One it
-            // proves no accessor of hands its operands to the accessors of its name, which the solve does not follow.
-            if let Target::Accessor { atom, .. } = call.target {
-                if targets(id as u32, call, facts, census).is_empty() && census.accessors.defines(atom) {
-                    sinks.push(call.receiver);
-                    sinks.extend(call.arguments.iter().copied());
-                }
-                continue;
-            }
-            let callees = targets(id as u32, call, facts, census);
-            if resolved(call, &callees, census) || builtin_array_call(call, &callees, scope) { continue; }
-            if call.target == Target::Register {
-                match call.callee.origin {
-                    Some(origin @ (Origin::Binding(_) | Origin::Member(_) | Origin::MemberOn { .. })) => {
-                        read.push(origin);
-                        if census.wild_read(origin) { sinks.push(Word::of_cell(Cell::ANY)); }
-                    }
-                    _ => sinks.push(call.callee),
-                }
-            }
-            sinks.push(call.receiver);
-            sinks.extend(call.arguments.iter().copied());
-        }
-        sinks.extend(flow.handed.iter().copied());
-    }
-    let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).copied().collect();
-    // The closures an unresolved call's callee may be: the writes under the keys its reads may see (`reads`).
-    let reached: Vec<Word> = writes.iter().filter(|(key, _)| read.iter().any(|&origin| reads(origin, *key))).map(|&(_, word)| word).collect();
-    // Every accessor's function, which code the solve does not see may run with any receiver where an object reaches such code.
-    let accessor_words: Vec<Word> = census.accessors.functions().map(Word::closure).collect();
-    let mut escaped = BTreeSet::new();
+    let handed = Handed::of(flows, facts, census, scope);
+    let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).map(|&(_, key, word)| (key, word)).collect();
+    let round = Round {
+        handed: &handed,
+        reached: read_words(&writes, &handed.read),
+        plain_reached: read_words(&writes, &handed.plain_read),
+        writes: &writes,
+        roots: &roots,
+        // Every accessor's function, which code the solve does not see may run with any receiver where an object reaches such code.
+        accessor_words: census.accessors.functions().map(Word::closure).collect(),
+    };
+    let (mut escaped, mut plain) = (BTreeSet::new(), BTreeSet::new());
     loop {
-        let mut held = sinks.clone();
-        held.extend(reached.iter().copied());
-        let mut object_reader = sinks.iter().chain(&reached).any(|word| may_be_object(word.cell));
+        let (held, plain_held) = round.held(&escaped, census);
+        let next = marked(&held, &materialized, &escaped);
+        let next_plain = marked(&plain_held, &materialized, &plain);
+        if next == escaped && next_plain == plain {
+            let classes = held.iter().filter(|word| word.cell.elements != Elements::NEVER).map(|word| word.elements_key()).collect();
+            let passed_this = handed.this_passes.iter().flat_map(|&(receiver, this)| {
+                let mut functions = BTreeSet::new();
+                mark(&receiver.cell, &materialized, &mut functions);
+                functions.into_iter().map(move |function| (function, this.cell))
+            }).collect();
+            return Escapes { functions: escaped, plain, passed_this, classes, sinks: held.iter().map(|word| word.cell).collect() };
+        }
+        escaped = next;
+        plain = next_plain;
+    }
+}
+
+/// The values the flows hand to code the solve does not follow (`escapes`): every one of them is held (`sinks`), and the ones
+/// unknown code may call with no receiver are `plain`. `read` holds the origins an unresolved call reads its callee from, and
+/// `plain_read` those of an unresolved call that may run its callee with no receiver (a plain call, or one on the global object).
+#[derive(Default)]
+struct Handed {
+    sinks: Vec<Word>,
+    plain: Vec<Word>,
+    read: Vec<Origin>,
+    plain_read: Vec<Origin>,
+    /// Per `call`, `apply` or `bind` the solve does not resolve: the function it is called on and its first argument, the
+    /// `this` the function runs with.
+    this_passes: Vec<(Word, Word)>,
+}
+
+impl Handed {
+    fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope) -> Self {
+        let mut handed = Self::default();
+        for (id, flow) in flows.iter().enumerate() {
+            for call in &flow.calls {
+                handed.call(id as u32, call, facts, census, scope);
+            }
+            for word in &flow.handed {
+                handed.hand(*word);
+            }
+        }
+        handed
+    }
+
+    /// Hands `word` to code the solve does not follow, which may call it with no receiver.
+    fn hand(&mut self, word: Word) {
+        self.sinks.push(word);
+        self.plain.push(word);
+    }
+
+    /// Records the values one recorded call hands to code the solve does not follow. A call the solve resolves, and an array
+    /// builtin the program does not shadow (`builtin_array_call`), hands none.
+    fn call(&mut self, function: u32, call: &Call, facts: &AotFacts, census: &Census, scope: &Scope) {
+        // A named access the census proves runs its accessor, whose flow reads the operands as its parameters do. One it
+        // proves no accessor of hands its operands to the accessors of its name, which the solve does not follow.
+        if let Target::Accessor { atom, .. } = call.target {
+            if targets(function, call, facts, census).is_empty() && census.accessors.defines(atom) {
+                self.sinks.push(call.receiver);
+                self.sinks.extend(call.arguments.iter().copied());
+            }
+            return;
+        }
+        let callees = targets(function, call, facts, census);
+        if resolved(call, &callees, census) || builtin_array_call(call, &callees, scope) { return; }
+        // A plain call, or one on the global object, may run its callee with a `this` the solve does not follow.
+        let plain_form = call.plain || call.receiver.cell.global;
+        if call.target == Target::Register {
+            match call.callee.origin {
+                Some(origin @ (Origin::Binding(_) | Origin::Member(_) | Origin::MemberOn { .. })) => {
+                    self.read.push(origin);
+                    if plain_form { self.plain_read.push(origin); }
+                    if census.wild_read(origin) {
+                        let any = Word::of_cell(Cell::ANY);
+                        self.sinks.push(any);
+                        if plain_form { self.plain.push(any); }
+                    }
+                }
+                _ => self.hand(call.callee),
+            }
+        }
+        match this_argument(call, scope) {
+            // The function runs with the first argument as its `this` (`passed_this`), so it is held but not handed as a value:
+            // the argument is held, and the arguments after it are handed to the function as its arguments.
+            Some(this) => {
+                self.sinks.push(call.receiver);
+                self.this_passes.push((call.receiver, this));
+                self.sinks.push(this);
+                for argument in call.arguments.iter().skip(1) {
+                    self.hand(*argument);
+                }
+            }
+            None => {
+                self.hand(call.receiver);
+                for argument in &call.arguments {
+                    self.hand(*argument);
+                }
+            }
+        }
+    }
+}
+
+/// The `this` a call hands its callee as its first argument, where the call is `call`, `apply` or `bind` (`Scope::passes_this`):
+/// those run their receiver with that argument as its `this`. None for any other call.
+fn this_argument(call: &Call, scope: &Scope) -> Option<Word> {
+    let passes_this = method_atom(call).is_some_and(|atom| scope.passes_this(atom));
+    if passes_this { call.arguments.first().copied() } else { None }
+}
+
+/// What `escapes` holds in one round: the held values (`Round::held`), built from the flows' sinks, the closures unresolved
+/// calls may read (`reached`, `plain_reached`), the writes the program makes, the escaped returns, and the accessors' functions.
+struct Round<'a> {
+    handed: &'a Handed,
+    reached: Vec<Word>,
+    plain_reached: Vec<Word>,
+    writes: &'a [(Key, Word)],
+    roots: &'a BTreeSet<u32>,
+    accessor_words: Vec<Word>,
+}
+
+impl Round<'_> {
+    /// The values held once `escaped` is marked, and the ones unknown code may call plainly (`Escapes::plain`). A named store
+    /// is held where an object reader or new code reaches it, but is no plain hand: the method is called with its object.
+    fn held(&self, escaped: &BTreeSet<u32>, census: &Census) -> (Vec<Word>, Vec<Word>) {
+        let mut held: Vec<Word> = self.handed.sinks.iter().chain(&self.reached).copied().collect();
+        let mut plain: Vec<Word> = self.handed.plain.iter().chain(&self.plain_reached).copied().collect();
+        // An element store is a plain hand only where its array's class is one the sinks hold: unknown code reads those arrays.
+        let held_classes: BTreeSet<ElementClass> = held.iter().filter(|word| word.cell.elements != Elements::NEVER).map(|word| word.elements_key()).collect();
+        let mut object_reader = self.handed.sinks.iter().chain(&self.reached).any(|word| may_be_object(word.cell));
         let mut named = Vec::new();
-        for &(key, word) in &writes {
+        for &(key, word) in self.writes {
             match key {
-                Key::Element(_) => held.push(word),
-                Key::Global(_) if census.live(fact_key(key)) => { object_reader |= may_be_object(word.cell); held.push(word); }
+                Key::Element(class) => {
+                    held.push(word);
+                    if held_classes.contains(&class) { plain.push(word); }
+                }
+                Key::Global(_) if census.live(fact_key(key)) => { object_reader |= may_be_object(word.cell); held.push(word); plain.push(word); }
                 Key::Global(_) => {}
-                Key::Return(function) if escaped.contains(&function) || roots.contains(&function) => { object_reader |= may_be_object(word.cell); held.push(word); }
+                Key::Return(function) if escaped.contains(&function) || self.roots.contains(&function) => {
+                    object_reader |= may_be_object(word.cell);
+                    held.push(word);
+                    plain.push(word);
+                }
                 Key::Member(_) | Key::MemberOn { .. } | Key::MemberAny(_) => named.push((key, word)),
                 Key::Return(_) | Key::Slot { .. } => {}
             }
@@ -107,15 +225,23 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
         held.extend(named.into_iter()
             .filter(|(key, _)| object_reader || census.live(fact_key(*key)))
             .map(|(_, word)| word));
-        if object_reader { held.extend(accessor_words.iter().copied()); }
-        let mut next = escaped.clone();
-        for word in &held { mark(&word.cell, &materialized, &mut next); }
-        if next == escaped {
-            let classes = held.iter().filter(|word| word.cell.elements != Elements::NEVER).map(|word| word.elements_key()).collect();
-            return Escapes { functions: escaped, classes, sinks: held.iter().map(|word| word.cell).collect() };
-        }
-        escaped = next;
+        if object_reader { held.extend(self.accessor_words.iter().copied()); }
+        (held, plain)
     }
+}
+
+/// The words the writes hold under a key one of `origins` may read (`reads`): the closures an unresolved call's callee may be.
+fn read_words(writes: &[(Key, Word)], origins: &[Origin]) -> Vec<Word> {
+    writes.iter().filter(|(key, _)| origins.iter().any(|&origin| reads(origin, *key))).map(|&(_, word)| word).collect()
+}
+
+/// `start` with the functions each of `words` may hold marked (`mark`).
+fn marked(words: &[Word], materialized: &BTreeSet<u32>, start: &BTreeSet<u32>) -> BTreeSet<u32> {
+    let mut next = start.clone();
+    for word in words {
+        mark(&word.cell, materialized, &mut next);
+    }
+    next
 }
 
 /// Whether a read off `origin` may take the value `key` stores (`escapes`): the binding itself; a named property of the

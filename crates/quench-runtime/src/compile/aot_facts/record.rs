@@ -2,7 +2,7 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, settled, this_fact};
+use super::effects::{Ctx, Events, decoded, is_global_load, root_this, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
@@ -35,7 +35,7 @@ pub(super) fn indices_of(function: u32, index: Word) -> Indices {
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
     calls: Vec<Call>,
-    writes: Vec<(Key, Word)>,
+    writes: Vec<(u32, Key, Word)>,
     wild_owner: bool,
     wild_global: bool,
     computed_global: bool,
@@ -179,7 +179,7 @@ impl Record {
             let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
             let receiver = match invocation.receiver {
                 crate::staged::Receiver::Register(register) => state[usize::from(register)],
-                crate::staged::Receiver::This { path: None } if !ctx.is_root => this_fact(ctx),
+                crate::staged::Receiver::This { path: None } => if ctx.is_root { root_this(ctx) } else { this_fact(ctx) },
                 crate::staged::Receiver::This { path: Some((atom, _)) } => match ctx.types {
                     Some(_) => super::effects::this_member(ctx, atom),
                     None => Word::UNKNOWN,
@@ -203,7 +203,7 @@ impl Record {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements, global: stored.global };
-                self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
+                self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
                 if call.receiver.cell.elements != Elements::NEVER && ctx.scope.is_array_builtin(atom) {
@@ -239,7 +239,7 @@ impl Record {
     }
 
     /// Notes the writes `instruction` made and the facts it defined, from the facts after it.
-    pub(super) fn commit(&mut self, instruction: WideInstruction, state: &[Word], events: Events) {
+    pub(super) fn commit(&mut self, pc: u32, instruction: WideInstruction, state: &[Word], events: Events) {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.computed_global |= events.computed_store;
@@ -248,7 +248,7 @@ impl Record {
         self.wild_member |= events.wild_member;
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
-        self.writes.extend(events.writes);
+        self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
         self.accessors.extend(events.accessors);
         self.shapes.extend(events.shape);
         for register in instruction.written_registers() {
@@ -290,7 +290,7 @@ impl Record {
         }
     }
 
-    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>) -> FunctionFlow {
+    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>, strict: bool) -> FunctionFlow {
         // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
@@ -326,6 +326,7 @@ impl Record {
             arity,
             in_register,
             returns_out,
+            strict,
             handed: self.handed,
             closures: self.closures,
             bounds: self.bounds,
