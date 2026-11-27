@@ -407,6 +407,13 @@ impl Vm {
             .and_then(|_| self.programs.aot_facts(self.active_program))
     }
 
+    /// The call graph of `program`, where it is the running program (`ProgramStore::call_graph`): a graph of another
+    /// program names no call of it.
+    fn call_graph_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::call_graph::CallGraph>> {
+        self.programs.residual(self.active_program).filter(|running| std::ptr::eq(*running, program))
+            .and_then(|_| self.programs.call_graph(self.active_program))
+    }
+
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
     /// it inlines is admitted.
     fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
@@ -574,12 +581,12 @@ impl Vm {
         // The static benefit (`lane_facts::body_pick`) decides the pick and the level (`admission::compile_level`).
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
+        let Some(graph) = self.call_graph_of(program) else { refuse(self, Refusal::NoUnit); return Err(Unstarted::Declined) };
         // A function that calls itself back through other functions runs a call tree per entry,
-        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
-        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
-        let recursive = entry.is_none() && !cycle.is_empty();
+        // as a loop does, before any of its calls is direct (`CallGraph::in_cycle`).
+        let recursive = entry.is_none() && graph.in_cycle(function);
         if !ahead {
-            pick = Some(super::lane_facts::body_pick(tiers, program, function, targets, caller.called_by_regions()));
+            pick = Some(super::lane_facts::body_pick(tiers, program, &graph, function, caller.called_by_regions()));
             if level == super::jit_backend::CompileLevel::Optimized {
                 level = super::admission::compile_level(tiers, program, function);
             }
@@ -602,7 +609,7 @@ impl Vm {
         // A member of the cycle is called, not inlined: inlined, its call back to `function`
         // leaves the body (a direct call runs only from the body's own frame), while called it
         // is a direct call of its own body once one exists, as `function`'s self calls are.
-        let others: Vec<u32> = cycle.iter().copied().filter(|member| *member != function).collect();
+        let others: Vec<u32> = graph.cycle_of(function).iter().copied().filter(|member| *member != function).collect();
         let cycle_targets = |caller: u32, pc: u32| -> Vec<CallTarget> {
             let mut linked = targets(caller, pc);
             linked.retain(|target| !others.contains(&target.function));
