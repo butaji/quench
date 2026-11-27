@@ -783,6 +783,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
                 flags: crate::vm::RegExpFlags::validated(""),
                 legacy_constructor: owner(constructor),
                 matcher: crate::heap::RegExpMatcher::compiled(Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap())),
+                static_frequency: 0,
             }),
         });
         let root = heap.root(regexp);

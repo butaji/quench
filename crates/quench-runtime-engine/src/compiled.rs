@@ -7596,7 +7596,7 @@ impl Vm {
         self.execution_mode = mode;
         self.lane_tiers_run = None;
         #[cfg(feature = "jit")]
-        crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
+        crate::regexp_native::enable(mode != ExecutionMode::Interpreted);
         self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 

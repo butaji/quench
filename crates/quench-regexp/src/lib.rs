@@ -409,6 +409,16 @@ impl Regex {
         self.capture_names.len()
     }
 
+    /// Adds `frequency` to the pattern's static frequency, the one its compiled programs weigh when the embedder
+    /// decides whether they get native code (`backtrack::native::NativeCompiler::compiles`). Both programs take it.
+    pub fn set_static_frequency(&self, frequency: u64) {
+        let complete = self.complete();
+        complete.backtracking.set_static_frequency(frequency);
+        if let Some(bounds) = &complete.bounds {
+            bounds.set_static_frequency(frequency);
+        }
+    }
+
     pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();
         let flags_text = flag_text(flags);

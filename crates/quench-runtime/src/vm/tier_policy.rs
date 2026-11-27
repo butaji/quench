@@ -24,9 +24,6 @@ pub struct Tiers {
     pub(crate) stress: bool,
     /// Whether the tier models admit every eligible compile, whatever it would repay.
     pub admits_all: bool,
-    /// The searches a regexp program runs interpreted before it is compiled to native code
-    /// (`regexp_native`): compiling costs about what this many searches of a small program do.
-    pub regexp_native_runs: u32,
 }
 
 /// The priors the model tests pin their arithmetic to.
@@ -284,7 +281,6 @@ const FLOOR: Tiers = Tiers {
     priors: MEASURED.priors,
     stress: true,
     admits_all: true,
-    regexp_native_runs: 1,
 };
 
 impl LaneBody {
@@ -296,15 +292,6 @@ impl LaneBody {
 }
 
 impl Tiers {
-    /// The searches a regexp program runs interpreted before the stencil tier stitches it
-    /// (`regexp_native::stitch`), where the mode runs that tier below Cranelift: the Cranelift
-    /// threshold over what a stitch saves against a compile. Stitching costs about a fiftieth of
-    /// a Cranelift compile (V8-v7-shaped patterns, 2026-11-24: 175K instructions against 9.4M),
-    /// so it pays after a fiftieth of the searches; a thirty-second leaves room.
-    pub fn regexp_stitch_runs(&self) -> u32 {
-        (self.regexp_native_runs / 32).max(1)
-    }
-
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
     /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
@@ -375,7 +362,6 @@ const MEASURED: Tiers = Tiers {
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
-    regexp_native_runs: 2000,
 };
 
 /// The rows code compiled for no particular VM is compiled under (`VmFacts::STATIC`).
@@ -637,6 +623,34 @@ pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u3
     } else {
         PredictedTier::Ultra
     }
+}
+
+/// Shared-matcher IR per exec of a regexp pattern: the interpreter over the pattern's compact program
+/// (`quench_regexp::backtrack::Program`). Estimate: `regexp.md` section 1 puts 100 to 800 extra IR per find on a
+/// 290 IR body; unmeasured.
+pub const REGEXP_SHARED_IR_PER_EXEC: u64 = 400;
+/// IR per exec of a pattern's own compiled (u-jit) matcher. Estimate from `regexp.md` section 1's 290 IR body, unmeasured.
+pub const REGEXP_COMPILED_IR_PER_EXEC: u64 = 120;
+/// IR the u-jit's one-time compile spends per instruction of the pattern's compact program (as `UJIT_COMPILE_IR_PER_OP`).
+pub const REGEXP_COMPILE_IR_PER_INST: u64 = 3000;
+/// Machine-code bytes a compiled pattern emits per instruction of its compact program. Estimate: PCRE2-JIT's 982 B per
+/// pattern (`review-4-policy.md`, 4.10) times the Cranelift factor of 3 to 6, over a typical pattern's instructions; unmeasured.
+pub const REGEXP_CODE_BYTES_PER_INST: u64 = 64;
+/// IR a code byte of a compiled pattern weighs in the compile decision (`regexp_compiles`). Placeholder for the C5
+/// size weight, which has no number in this folder; the first measured pattern fixes it.
+pub const REGEXP_BYTE_WEIGHT: u64 = 8;
+
+/// Whether a regexp pattern gets its own compiled matcher (design decision 4.10): the argmin of 4.9, with code bytes
+/// priced in. The predicted IR saved is the pattern's static frequency (`CallGraph::regexp_site_frequency`, the
+/// frequencies of the functions that use it) times the exec IR the compiled matcher saves, against the compile's IR
+/// plus its code bytes times `REGEXP_BYTE_WEIGHT`. `pattern_size` is the compact program's instruction count. A pattern
+/// the decision rejects runs the shared matcher over that program. Pure: no count and no clock.
+pub fn regexp_compiles(pattern_static_frequency: u64, pattern_size: usize) -> bool {
+    let size = pattern_size as u64;
+    let saved = pattern_static_frequency.saturating_mul(REGEXP_SHARED_IR_PER_EXEC.saturating_sub(REGEXP_COMPILED_IR_PER_EXEC));
+    let code_bytes = size.saturating_mul(REGEXP_CODE_BYTES_PER_INST);
+    let cost = size.saturating_mul(REGEXP_COMPILE_IR_PER_INST).saturating_add(code_bytes.saturating_mul(REGEXP_BYTE_WEIGHT));
+    saved > cost
 }
 
 /// The runs a function makes on the general path before it derives its lane view, which costs

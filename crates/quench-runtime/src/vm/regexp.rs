@@ -2201,7 +2201,7 @@ impl Vm {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = crate::heap::RegExpMatcher::compiled(matcher);
-        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
+        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher, static_frequency: 0 });
         self.regexp_from_meta(prototype, meta)
     }
 
@@ -2782,6 +2782,8 @@ impl Vm {
                 matcher
             }
         };
+        // A shared matcher takes every literal site's frequency that attaches it (`Regex::set_static_frequency`).
+        matcher.set_static_frequency(meta.static_frequency);
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
