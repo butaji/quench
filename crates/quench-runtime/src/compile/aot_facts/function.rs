@@ -230,6 +230,25 @@ impl<'a> FunctionFacts<'a> {
         self.facts.prototype_indices_empty()
     }
 
+    /// Whether every call of this function passes an undefined receiver (`identity::this_undefined`), so its raw `this` is
+    /// `undefined` at entry. A self-tail call then drops its receiver compare. Kept apart from `Cell::global`: a sloppy
+    /// function's `this` becomes the global object only after this raw receiver.
+    pub fn this_undefined_at_entry(&self) -> bool {
+        self.facts.this_undefined.contains(&self.function)
+    }
+
+    /// Whether every value of this function's closure is one object (`AotFacts::closure_identity`). A construct, scalar or
+    /// self-tail callee compare on it drops.
+    pub fn closure_identity(&self) -> bool {
+        self.facts.closure_identity(self.function)
+    }
+
+    /// Whether a self-recursive call of this function runs in the entry's environment (`AotFacts::self_callee_env`). A
+    /// self-tail call then drops its capture compares.
+    pub fn self_callee_env(&self) -> bool {
+        self.facts.self_callee_env(self.function)
+    }
+
     /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.
     pub(crate) fn call_site(&self, pc: u32) -> Option<&'a CallSite> {
         self.facts.call_sites.get(&(self.function, pc))
