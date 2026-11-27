@@ -105,20 +105,14 @@ impl LaneView {
     /// image (`Vm::install_ahead_body`) at once, with no warm-up, no compile budget and no tier
     /// gate, since an image has no profiling phase. It is the ladder's first body: its leaves
     /// respecialize it on the JIT's route (`specialize_in_lane`). Whether it has a body.
-    /// It is priced as a quick body of `quick_ir` IR instructions: once its runs repay the optimizing compile, the
-    /// JIT respecializes it on what the run observed, its call targets above all (`LaneView::optimize_due`).
-    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, quick_ir: usize, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
+    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
-                let published = matches!(outcome, crate::compiled::LaneBodyOutcome::Published(_));
                 *body = self.body_after(outcome, quench_runtime::jit_mode::Tier::Ahead, entry, 0, recompiles, stuck, 0);
-                // Priced as a quick body only where the mode can compile the optimizing one: under `--no-jit` an image
-                // body is the last body, and a due respecialization would only retire it to the interpreter.
-                if published && mode_compiles_bodies() { self.note_compile_level(true, quick_ir); }
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }
@@ -134,7 +128,7 @@ impl LaneView {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
                 O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred, O::Base => Event::BodyBase,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
             });
         }
         match outcome {
@@ -153,8 +147,6 @@ impl LaneView {
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
             crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
-            // A b-jit body serves it better: the entry stitches that body (`Vm::base_body_work`), and the u-jit body waits.
-            crate::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             crate::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });

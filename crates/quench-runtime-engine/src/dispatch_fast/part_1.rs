@@ -1498,14 +1498,13 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
     let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
-    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_first: false, callees_compiling: false })
+    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
         // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
         if let Some(body) = code.function_get(function as usize) && unsafe { (*own.prologue.get()).handler }.is_null() { own.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow); }
         let published = own.entry_published();
-        let quick_ir = crate::compiled::ahead_images::ahead_quick_ir(vm.programs.tiers(), code, function);
-        let installed = own.install_ahead_lane_body(body_entry_row(), quick_ir, || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
+        let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
             unsafe { super::vm(cx) }.unprove_view_entries(own);
         }
@@ -1545,39 +1544,21 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
         poll => poll,
     };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+    // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
-    // A start under the lane body tier waits for callees still compiling (`body_tier_in_lane::callees_compiling`).
-    // The default mode starts each body on the tier below u-jit: its b-jit body's completions then weigh the
-    // u-jit compile over it (`LaneView::promote_base_body`), so the default is never costlier than b-jit.
-    let history = own.tier().history.get();
-    let base_first = crate::compiled::admission::starts_base_first(starting, own.starts_on_base(history), vm.programs.tiers());
-    if base_first && !history.base_first { own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: true, ..history }); }
-    let callees_compiling = starting && !base_first && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_first, callees_compiling }) {
+    let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, callees_compiling }) {
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
             let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
-            match vm.base_unit_or_outcome(code, function, parameters, own) {
-                Ok(unit) => return vm.base_body_work(unit, code, function, generic, parameters, own, &direct),
-                // A body the stencil tier refuses in default starts on the tier above it, never stays in the lane.
-                Err(_) if base_first => own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: false, promoted: true, ..own.tier().history.get() }),
-                Err(outcome) => return outcome,
-            }
+            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }
         crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
         crate::compiled::admission::LaneRoute::Lane => {}
     }
-    let started: Option<Vec<crate::compiled::LaneExit>> = match &work { crate::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
-    // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
-    // b-jit, so a function it would not beat takes the stencil body, stitched at once. A body
-    // promoted from b-jit whose u-jit compile is refused goes back to b-jit, never down to the lane.
-    let back_to_base = crate::compiled::admission::returns_to_base(matches!(outcome, crate::compiled::LaneBodyOutcome::Unpaid | crate::compiled::LaneBodyOutcome::Short | crate::compiled::LaneBodyOutcome::Declined), own.tier().history.get().promoted);
-    if let Some(generic) = &started && (matches!(outcome, crate::compiled::LaneBodyOutcome::Base) || back_to_base) {
-        let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
-        return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
-    }
     if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
         if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
     }

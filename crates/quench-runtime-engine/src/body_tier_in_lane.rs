@@ -91,8 +91,8 @@ impl LaneView {
 
     /// Whether a leave at `exit` resumed in a direct callee's own body, `ran`, which the frame ran rather than the
     /// root body (`root`) and which is still its current one: that leave takes the verdict its own runs' leaves
-    /// take (`note_lane_body_end`), so a body that leaves at every native call recompiles, or falls back to the
-    /// tier below, as one the interpreter enters would.
+    /// take (`note_lane_body_end`), so a body that leaves at every native call recompiles, or is retired to the
+    /// interpreter, as one the interpreter enters would.
     fn left_own_body(&self, root: Option<&crate::compiled::LaneMethod>, ran: Option<&crate::compiled::LaneMethod>, exit: LaneExit) -> bool {
         ran.is_some_and(|ran| !root.is_some_and(|root| std::ptr::eq(root, ran))
             && exit.at_place()
@@ -118,16 +118,6 @@ impl LaneView {
             completed.set(true);
             let completions = self.entry.note_completions(1);
             if completions % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
-            // A body compiled quick weighs the optimizing compile at each doubling of its runs, and the b-jit
-            // body the default mode started on weighs the u-jit compile the same way (`promote_base_body`).
-            if completions.is_power_of_two() && self.promote_base_body(u32::try_from(completions).unwrap_or(u32::MAX)) { return true; }
-            let quick_ir = self.tier().history.get().quick_ir;
-            if quick_ir != 0 && completions.is_power_of_two()
-                && crate::compiled::lane_facts::optimizes_quick_body(self.tiers, self, self.records.len() as u64, u32::try_from(completions).unwrap_or(u32::MAX), quick_ir as usize)
-            {
-                self.optimize_body();
-                return true;
-            }
             return false;
         }
         let exits = self.entry.note_leave();
@@ -144,20 +134,6 @@ impl LaneView {
             // run, gains nothing from its entry: its function runs in the lane again.
             let costly = runs >= u64::from(self.tiers.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(self.tiers.lane_body.retire_share);
             if !completed.get() || costly {
-                // Where the stencil tier runs too, the tier below takes it over (`LaneBodyHistory::base_fallback`):
-                // its next entry stitches the b-jit body, whose rows take any shape the u-jit body guarded.
-                let history = self.tier().history.get();
-                // The stencil body reads the places this one left at generically (`base_body::left_read_sites`).
-                let left = stuck.union(leaves_at.get());
-                if !history.base_fallback && crate::compiled::admission::stencil_below() {
-                    self.tier().history.set(LaneBodyHistory { base_fallback: true, ..history });
-                    let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup()).saturating_sub(1), recompiles: *recompiles, stuck: left };
-                    self.retire_body(body, next);
-                    return true;
-                }
-                // The stencil body that took over keeps running where it completes: retiring it would leave its
-                // function no body at all (`LaneBody::Declined`), whose every call from a compiled caller leaves it.
-                if history.base_fallback && completed.get() { return false; }
                 self.retire_body(body, LaneBody::Declined);
                 self.release_from_tier();
                 return true;
@@ -168,51 +144,6 @@ impl LaneView {
         self.retire_body(body, next);
         true
     }
-
-    /// Whether the default mode starts this function's body on b-jit (`LaneBodyHistory::base_first`): one not promoted
-    /// past it, none of whose loops holds its work (`holds_work`). Such a loop keeps its own region, which tiers up by its
-    /// measured runs; a stencil body around it never would (c_i32_indirect: 263 Ir/iter in it, 13 in the loop's u-jit region).
-    pub(crate) fn starts_on_base(&self, history: LaneBodyHistory) -> bool {
-        !history.promoted && !self.loops.iter().any(|site| holds_work(self.tiers, site))
-    }
-
-    /// Retires the b-jit body the default mode started its function on once its `completions` repay the u-jit
-    /// compile over it (`lane_facts::promotes_base_body`): its next entry compiles the u-jit body.
-    fn promote_base_body(&self, completions: u32) -> bool {
-        let history = self.tier().history.get();
-        if !history.base_first || history.base_fallback { return false; }
-        let length = self.records.len() as u64;
-        let ir = crate::compiled::lane_facts::unplanned_ir(&self.tiers.loops, length);
-        if !crate::compiled::lane_facts::promotes_base_body(self.tiers, self, length, completions, ir) { return false; }
-        self.tier().history.set(LaneBodyHistory { base_first: false, promoted: true, ..history });
-        // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
-        let body = unsafe { &mut *self.tier().tier_lane.get() };
-        let LaneBody::Specialized { recompiles, stuck, .. } = body else { return false };
-        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup()) - 1, recompiles: *recompiles, stuck: *stuck };
-        self.retire_body(body, next);
-        true
-    }
-
-    /// Retires its quick body for the optimizing compile its runs repaid, which starts at its next
-    /// entry (`LaneBodyHistory::optimize`); the quick body's direct callers keep running it.
-    fn optimize_body(&self) {
-        let history = self.tier().history.get();
-        self.tier().history.set(LaneBodyHistory { quick_ir: 0, optimize: true, ..history });
-        // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
-        let body = unsafe { &mut *self.tier().tier_lane.get() };
-        let LaneBody::Specialized { recompiles, stuck, .. } = body else { return };
-        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup()) - 1, recompiles: *recompiles, stuck: *stuck };
-        self.retire_body(body, next);
-    }
-
-    /// Notes the level of the compile it plans now: quick, of about `ir` IR instructions, or optimizing.
-    pub(crate) fn note_compile_level(&self, quick: bool, ir: usize) {
-        let history = self.tier().history.get();
-        self.tier().history.set(LaneBodyHistory { quick_ir: if quick { u32::try_from(ir.max(1)).unwrap_or(u32::MAX) } else { 0 }, ..history });
-    }
-
-    /// Whether its next compile is the optimizing one its quick body's runs repaid.
-    pub(crate) fn optimize_due(&self) -> bool { self.tier().history.get().optimize }
 
     /// Counts a leave inside this function's body that a native caller's run made, which no
     /// handler entry notes (`native_frames::advance_into_frames`): one add to the cell's word, on the leave.
@@ -226,11 +157,7 @@ impl LaneView {
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
     pub(crate) fn warmup_entries(&self) -> u32 {
         let history = self.tier().history.get();
-        // The default mode starts a body on b-jit (`specialize_in_lane`), whose stitch warms as `--b-jit`'s does, where
-        // the function has no loop: a loop tiers on its own, b-jit region first, then u-jit once its iterations repay it,
-        // and a b-jit body stitched early would run that loop at b-jit's speed in place of its u-jit region.
-        let warmup = if !history.promoted && self.loops.is_empty() && !self.tiers.admits_all && crate::compiled::admission::stencil_below() { self.tiers.lane_body.base_warmup() } else { self.tiers.lane_body.warmup() };
-        u32::from(warmup) << history.lifetimes.min(MAX_DOUBLINGS)
+        u32::from(self.tiers.lane_body.warmup()) << history.lifetimes.min(MAX_DOUBLINGS)
     }
 
     /// The bytecodes one entry runs in the interpreter inside its loops: each loop that runs in no
@@ -417,7 +344,6 @@ impl LaneView {
             unsafe { (*self.prologue.get()).handler }
         };
         use std::cell::Cell;
-        self.tier().history.set(LaneBodyHistory { optimize: false, ..self.tier().history.get() });
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
@@ -427,16 +353,6 @@ impl LaneView {
         self.entry.reset_evidence();
         LaneBody::Specialized { method, tier_prologue,
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
-    }
-}
-
-/// Whether the loop at `site` holds its function's work: its native runs' mean trip repays a region's entry on its own
-/// (`loop_model::trip_repays_entry`); before any native run, its interpreted iterations reached its region's admission.
-/// A short loop (union-find's root walks: a trip or two per call) does not, and its function takes its body.
-fn holds_work(tiers: &Tiers, site: &quench_runtime::vm::engine_types::LoopSite) -> bool {
-    match site.tier.borrow().mean_trip() {
-        Some(trip) => crate::compiled::loop_model::trip_repays_entry(tiers, site.span(), trip),
-        None => site.needed.get() > 0 && site.taken.get() >= site.needed.get(),
     }
 }
 

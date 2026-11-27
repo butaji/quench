@@ -695,12 +695,11 @@ impl LaneView {
     }
 
 
-    /// Whether its body specializes again at its next entry: it left too often, or its quick body (an ahead
-    /// image's included) repaid the optimizing compile (`optimize_due`).
+    /// Whether its body specializes again at its next entry: it left too often (an ahead image's included).
     #[inline]
     pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0 || self.optimize_due())
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
 
     /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
