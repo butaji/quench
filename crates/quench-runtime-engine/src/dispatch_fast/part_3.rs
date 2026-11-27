@@ -1426,7 +1426,7 @@ pub(super) fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
     unsafe {
-        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None, false);
+        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
     }
 }
 
@@ -1516,7 +1516,6 @@ pub(super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool, 
     kept: Option<u16>,
 ) -> (Registers, Ip) {
     // The receiver goes to its context word first, so it holds no register past the push.
-    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     callee_registers.set_this(this);
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
@@ -1584,7 +1583,6 @@ pub(super) fn enter_plain_window(
     depth: usize,
     argc: u16,
     this: Value,
-    checked: bool,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::protocol::{push_plain_at, PlainHeader};
     let stack: &mut LaneStack = &mut vm.lane_stack;
@@ -1609,8 +1607,6 @@ pub(super) fn enter_plain_window(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
-    // A call row's hand-off checked `this` where it bound it (`checked`, `call_hand_over`).
-    if !checked { note_lane_this(vm, this, || unsafe { (*target.view).this_rows }); }
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
@@ -1763,7 +1759,6 @@ pub(super) fn activate_environment_in_lane(
     debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held) <= usize::from(target.room));
     let rest = if let Some(gathered) = gathered { Some((target.params - 1, gathered.to_bits())) } else { None };
     let self_binding = if let Some(slot) = self_binding { Some((slot, target.callee.to_bits())) } else { None };
-    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.

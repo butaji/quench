@@ -163,7 +163,6 @@ pub(crate) use dependencies::{
 mod cell_access;
 mod buffer_bytes;
 mod view_holders;
-mod this_holders;
 mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
@@ -212,7 +211,6 @@ mod weak;
 pub use cell::*;
 pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub use view_holders::{subscribe_typed_views, typed_views_stable};
-pub use this_holders::{retire_this_holders, subscribe_this_trust};
 pub(crate) use view_holders::live_view_changed;
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;

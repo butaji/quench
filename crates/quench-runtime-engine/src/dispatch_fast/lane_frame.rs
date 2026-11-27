@@ -372,7 +372,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// not hold it.
     this: Value,
     /// Whether the row trusts the activation's `this` as a direct object (`trusted_this_rows`,
-    /// `dispatch_fast::note_lane_this`): the lane checked it once where it bound it, so a read through
+    /// `dispatch_fast::receiver_trusted`): the receiver fact holds, so a read through
     /// `this` takes its record with no tag test.
     trust_this: bool,
     /// The activation's local slots and their count, for a staged local operation.
@@ -4042,7 +4042,7 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
         if depth == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
     }
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this, true);
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this);
     Resumed::At(registers, base, Carried::script(cx))
 }
 
@@ -4756,8 +4756,8 @@ unsafe fn iterator_pop_in_lane(cx: *mut ()) -> bool {
 
 // `generated_row`'s body, once per shard (`generated_row_shard`).
 /// The generated rows of the `this` sites the lane trusts (`trusted_this_row`): the same body, whose frame
-/// trusts the activation's `this` as a direct object, which every lane binding of `this` checked once
-/// (`dispatch_fast::note_lane_this`). Any requicken or sibling it takes is an untrusted row's.
+/// trusts the activation's `this` as a direct object, which its receiver fact makes it (`dispatch_fast::receiver_trusted`).
+/// A requicken it takes stays trusted; a sibling row is an untrusted row's.
 pub(crate) mod trusted_this_rows {
     use super::*;
     const TRUSTS_THIS: bool = true;

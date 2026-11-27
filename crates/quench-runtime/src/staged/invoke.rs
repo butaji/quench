@@ -123,9 +123,9 @@ pub trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
-    /// Checks the `this` the call bound (`bind_this_with`) once, where the frame's tier holds the lane's
-    /// `this` trust (`Vm::this_trust`): the callee takes it as a direct object, so one that is none leaves at
-    /// `miss`, where the interpreter binds it and retires the trust. Nothing for a frame that holds none.
+    /// Checks the `this` the call bound (`bind_this_with`) once, where the frame's tier takes it as a direct
+    /// object: the callee's receiver fact decides that (`dispatch_fast::receiver_trusted`), so one that is none
+    /// leaves at `miss`, where the interpreter binds it. Nothing for a frame that takes none.
     #[inline(always)]
     fn call_this_bound(&mut self, _stage: &mut S, _this: S::Word, _miss: S::Miss) -> Option<()> {
         Some(())

@@ -2808,9 +2808,8 @@ impl Lowering<'_, '_> {
             _ => self.entry_receiver_bits(),
         };
         let accesses_fields = self.accesses_fields(instructions);
-        // Code that holds the lane's `this` trust takes the receiver as a direct object (`StableFacts::this_trust`).
-        let trusted = accesses_fields && self.vm.this_trusted && self.vm.online.is_some() && self.completion == Completion::Body;
-        self.stable.this_trust |= trusted;
+        // The receiver fact makes the receiver a direct object (`dispatch_fast::receiver_trusted`).
+        let trusted = accesses_fields && crate::dispatch_fast::receiver_trusted(self.vm.facts, self.function_id) && self.vm.online.is_some() && self.completion == Completion::Body;
         let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits, trusted) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
@@ -3581,7 +3580,8 @@ impl Lowering<'_, '_> {
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
             held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default(), rebinds: Default::default(),
-            this_trust: (self.vm.this_trusted && self.vm.online.is_some()).then_some(&mut self.stable.this_trust) };
+            // A call's bound `this` is the callee's: the lowered function's receiver fact does not decide it, so none is guarded.
+            this_trust: None };
         super::record_boxed_numbers();
         let step = quench_runtime::staged::step_apart(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.

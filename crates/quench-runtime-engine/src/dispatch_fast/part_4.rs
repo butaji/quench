@@ -303,7 +303,6 @@ pub(super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
-    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,

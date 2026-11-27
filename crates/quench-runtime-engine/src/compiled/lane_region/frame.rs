@@ -81,8 +81,8 @@ pub(crate) struct EmitFrame<'a> {
     pub(crate) proven_arguments: std::cell::Cell<bool>,
     /// Whether that call reads its closure and captures from the callee's bound words (`DirectCallee::bound`).
     pub(crate) rebinds: std::cell::Cell<bool>,
-    /// Where the code holds the lane's `this` trust (`VmFacts::this_trusted`): set once a call's bound
-    /// `this` is guarded a direct object (`CallFrame::call_this_bound`, `StableFacts::this_trust`).
+    /// Where a call's bound `this` is guarded a direct object (`CallFrame::call_this_bound`). The lowering
+    /// passes none: a callee's receiver is its own fact (`dispatch_fast::receiver_trusted`).
     pub(crate) this_trust: Option<&'a mut bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,

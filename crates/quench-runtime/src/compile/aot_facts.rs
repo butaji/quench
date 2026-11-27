@@ -35,6 +35,7 @@ use std::collections::BTreeMap;
 use crate::bytecode::ResidualProgram;
 use crate::staged::effects::{CallForm, Effects, Signature};
 use crate::typed_ir::Representation;
+use super::call_plan::{self, CallPlan};
 use super::signatures::{self, Signatures};
 use census::Census;
 use class_layout::ClassLayouts;
@@ -117,6 +118,18 @@ impl AotFacts {
     /// The composed effect signatures the solve settled (`signatures`), none where the type solve did not settle.
     pub fn signatures(&self) -> Option<&Signatures> {
         self.signatures.as_ref()
+    }
+
+    /// The call plan of every call `function` makes, by pc (`call_plan::call_plans`), over the settled facts and the
+    /// composed signatures. Inlining is not decided here: the interpreter's records never inline a callee, so every
+    /// plan is taken with `inlinable` false and its form is the call's own (`Framed` or `Frameless`). Empty where the
+    /// type solve did not settle (no signatures), so no site takes a plan from it; a site absent from the map is one
+    /// the solve did not settle.
+    pub fn call_plans(&self, program: &ResidualProgram, function: u32) -> BTreeMap<u32, CallPlan> {
+        match self.signatures.as_ref() {
+            Some(signatures) => call_plan::call_plans(program, self, signatures, function, |_| false),
+            None => BTreeMap::new(),
+        }
     }
 
     /// Whether new code (`World`) can move `key`. A tier that trusts a live key's fact subscribes to
