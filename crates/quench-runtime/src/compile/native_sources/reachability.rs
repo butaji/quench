@@ -7,13 +7,17 @@
 //!   is live exactly when its enclosing body is live. Top-level code is live.
 //! - A nested declaration is called only through a read of its binding, and a read inside a dead body never runs.
 //!   The fixpoint starts from the roots and only grows, so a body is dead only when no run can reach it.
-//! - A top-level declaration is a root where the host can reach it without a read the program makes of its
-//!   binding: every top-level declaration of a Module (its exports, which the host imports), and a Script's global
-//!   function, which the program reaches as a property of the global object. A global read by name is an
-//!   identifier reference; a global read by property (`globalThis.f`, `globalThis["f"]`, `const { f } = o`) is a
-//!   property name, so a Script's declaration is also a root when its name is one of the program's property names,
-//!   and every top-level Script declaration is a root when the program makes a computed read it cannot name
-//!   (`o[k]`), which may yield any global.
+//! - A top-level declaration of a Module is a root: the host imports it. A top-level Script declaration is a global;
+//!   it is reached by name (an identifier read, counted above) or as a property of the global object. The program
+//!   holds the global object as a value only at a site that materializes it (`global_object_live`); once it does,
+//!   every top-level Script declaration is a root, since a computed read (`g[k]`) may name any of them. A computed
+//!   read on any other object cannot reach a global, so it roots nothing.
+//! - The global object is materialized by a live site that yields it: an unresolved `globalThis`, `window`,
+//!   `self`, `global` or `frames`; a top-level `this` in a Script; or the `this` of a sloppy function that is
+//!   called without a receiver, which binds the global object. A sloppy function's `this` counts only where the
+//!   function's value is read other than as a `new` callee (a constructor built with `new` gets a fresh object);
+//!   an anonymous sloppy function may be called plainly, so its `this` always counts. Strict code (a class body,
+//!   a `"use strict"` scope, a Module) binds `this` to `undefined`, so its `this` never does.
 //! - Code that new code (`eval`, `Function`) could reach is not counted here: a live site in a reachable body
 //!   opens the world (`gate::world`), so no run of a Closed program adds code that reads the globals.
 
@@ -23,6 +27,9 @@ use oxc_semantic::{Scoping, SymbolId};
 use oxc_syntax::scope::ScopeFlags;
 use std::collections::{HashMap, HashSet};
 
+/// The unresolved names a host binds to the global object (`window`, `self`, `frames` in browsers and their kin).
+const GLOBAL_OBJECT_NAMES: [&str; 5] = ["globalThis", "window", "self", "global", "frames"];
+
 /// One function-like node: its span, the function body it encloses, and what its declaration names.
 struct Node {
     start: u32,
@@ -31,10 +38,19 @@ struct Node {
     parent: Option<usize>,
     /// A function declaration's binding; `None` for expressions, arrows and methods.
     binding: Option<SymbolId>,
-    /// The name of a top-level Script declaration (`None` elsewhere): a global the program may reach by property.
-    global_name: Option<String>,
     /// A declaration at top level (a Module's exports, or a Script's globals).
     top_declaration: bool,
+    /// An arrow takes its `this` from the enclosing function.
+    arrow: bool,
+    /// Strict code, where a plain call binds `this` to `undefined`.
+    strict: bool,
+}
+
+/// A read of a binding: the body it occurs in (`None` for top level), and whether it is a `new` callee.
+struct Read {
+    symbol: SymbolId,
+    body: Option<usize>,
+    construct: bool,
 }
 
 /// The live function bodies of one program (`of`).
@@ -48,23 +64,24 @@ struct Collect<'s> {
     nodes: Vec<Node>,
     /// The function nodes whose bodies the walk is inside, innermost last.
     open: Vec<usize>,
-    /// Each read of a binding, with the innermost function body it occurs in (`None` for top level).
-    reads: Vec<(SymbolId, Option<usize>)>,
-    /// Every property name the program reads by name (`o.f`, `o["f"]`, `const { f } = o`).
-    names: HashSet<String>,
-    /// Whether the program makes a computed read whose key it cannot name (`o[k]`).
-    dynamic_read: bool,
+    reads: Vec<Read>,
+    /// The start offsets of the identifiers that are `new` callees.
+    new_callees: HashSet<u32>,
+    /// The body of each read of an unresolved global-object name (`GLOBAL_OBJECT_NAMES`).
+    global_names: Vec<Option<usize>>,
+    /// The non-arrow body of each `this` (`None` for top level).
+    this_bodies: Vec<Option<usize>>,
 }
 
 impl Collect<'_> {
-    fn enter(&mut self, start: u32, end: u32, binding: Option<SymbolId>, global_name: Option<String>, top_declaration: bool) {
+    fn enter(&mut self, span: oxc_span::Span, binding: Option<SymbolId>, top_declaration: bool, arrow: bool, strict: bool) {
         let parent = self.open.last().copied();
-        self.nodes.push(Node { start, end, parent, binding, global_name, top_declaration });
+        self.nodes.push(Node { start: span.start, end: span.end, parent, binding, top_declaration, arrow, strict });
         self.open.push(self.nodes.len() - 1);
     }
 
-    fn property_name(&mut self, key: &PropertyKey<'_>) {
-        if let Some(name) = key.static_name() { self.names.insert(name.to_string()); }
+    fn strict(&self, scope: &std::cell::Cell<Option<oxc_syntax::scope::ScopeId>>) -> bool {
+        scope.get().is_some_and(|id| self.scoping.scope_flags(id).is_strict_mode())
     }
 }
 
@@ -73,81 +90,75 @@ impl<'a> Visit<'a> for Collect<'_> {
         let top = self.open.is_empty();
         let declaration = function.is_declaration();
         let binding = if declaration { function.id.as_ref().and_then(|id| id.symbol_id.get()) } else { None };
-        let global_name = match &function.id {
-            Some(id) if declaration && top => Some(id.name.to_string()),
-            _ => None,
-        };
-        self.enter(function.span.start, function.span.end, binding, global_name, declaration && top);
+        let strict = self.strict(&function.scope_id);
+        self.enter(function.span, binding, declaration && top, false, strict);
         walk::walk_function(self, function, flags);
         self.open.pop();
     }
 
     fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
-        self.enter(arrow.span.start, arrow.span.end, None, None, false);
+        let strict = self.strict(&arrow.scope_id);
+        self.enter(arrow.span, None, false, true, strict);
         walk::walk_arrow_function_expression(self, arrow);
         self.open.pop();
     }
 
+    fn visit_new_expression(&mut self, new: &NewExpression<'a>) {
+        if let Expression::Identifier(callee) = new.callee.get_inner_expression() {
+            self.new_callees.insert(callee.span.start);
+        }
+        walk::walk_new_expression(self, new);
+    }
+
+    fn visit_this_expression(&mut self, this: &ThisExpression) {
+        let body = self.open.iter().rev().copied().find(|&index| !self.nodes[index].arrow);
+        self.this_bodies.push(body);
+        walk::walk_this_expression(self, this);
+    }
+
     fn visit_identifier_reference(&mut self, name: &IdentifierReference<'a>) {
-        let read = name.reference_id.get().map(|id| self.scoping.get_reference(id))
-            .filter(|reference| reference.flags().is_read())
-            .and_then(|reference| reference.symbol_id());
-        if let Some(symbol) = read {
-            self.reads.push((symbol, self.open.last().copied()));
+        let reference = name.reference_id.get().map(|id| self.scoping.get_reference(id));
+        if let Some(reference) = reference.filter(|reference| reference.flags().is_read()) {
+            let body = self.open.last().copied();
+            match reference.symbol_id() {
+                Some(symbol) => {
+                    let construct = self.new_callees.contains(&name.span.start);
+                    self.reads.push(Read { symbol, body, construct });
+                }
+                None if GLOBAL_OBJECT_NAMES.contains(&name.name.as_str()) => self.global_names.push(body),
+                None => {}
+            }
         }
         walk::walk_identifier_reference(self, name);
-    }
-
-    fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
-        self.names.insert(member.property.name.to_string());
-        walk::walk_static_member_expression(self, member);
-    }
-
-    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
-        match member.expression.get_inner_expression() {
-            Expression::StringLiteral(text) => { self.names.insert(text.value.to_string()); }
-            Expression::NumericLiteral(_) => {}
-            _ => self.dynamic_read = true,
-        }
-        walk::walk_computed_member_expression(self, member);
-    }
-
-    fn visit_binding_property(&mut self, property: &BindingProperty<'a>) {
-        self.property_name(&property.key);
-        walk::walk_binding_property(self, property);
-    }
-
-    fn visit_assignment_target_property_property(&mut self, property: &AssignmentTargetPropertyProperty<'a>) {
-        self.property_name(&property.name);
-        walk::walk_assignment_target_property_property(self, property);
     }
 }
 
 impl Reachability {
     /// The live bodies of `program`, over its `scoping` (the same scopes the demands are read from).
     pub(super) fn of(program: &Program<'_>, scoping: &Scoping) -> Self {
-        let mut collect = Collect { scoping, nodes: Vec::new(), open: Vec::new(), reads: Vec::new(), names: HashSet::new(), dynamic_read: false };
+        let mut collect = Collect {
+            scoping, nodes: Vec::new(), open: Vec::new(), reads: Vec::new(), new_callees: HashSet::new(),
+            global_names: Vec::new(), this_bodies: Vec::new(),
+        };
         collect.visit_program(program);
-        let mut reads: HashMap<SymbolId, Vec<Option<usize>>> = HashMap::new();
-        for (symbol, body) in collect.reads { reads.entry(symbol).or_default().push(body); }
-        let nodes = collect.nodes;
-        // A Module's declarations are its exports and its scope; a Script's global is named by a property read
-        // of the global object (`names`), or by any computed read that may yield one (`dynamic_read`).
+        let mut by_symbol: HashMap<SymbolId, Vec<(Option<usize>, bool)>> = HashMap::new();
+        for read in &collect.reads { by_symbol.entry(read.symbol).or_default().push((read.body, read.construct)); }
         let module = program.source_type.is_module();
-        let root: Vec<bool> = nodes.iter().map(|node| {
-            node.top_declaration && (module || collect.dynamic_read || node.global_name.as_ref().is_some_and(|name| collect.names.contains(name)))
-        }).collect();
+        let nodes = collect.nodes;
         let mut live = vec![false; nodes.len()];
         loop {
+            // The global object is materialized by a live site; a live global makes every Script declaration a root.
+            // Both grow with `live`, so the loop is monotone and ends at the least fixpoint.
+            let materialized = global_object_live(module, &collect.global_names, &collect.this_bodies, &nodes, &live, &by_symbol);
             let mut changed = false;
             for index in 0..nodes.len() {
                 if live[index] { continue; }
                 let node = &nodes[index];
-                let enclosing_live = node.parent.is_none_or(|parent| live[parent]);
-                if !enclosing_live { continue; }
-                let needed = root[index] || match node.binding {
+                if !node.parent.is_none_or(|parent| live[parent]) { continue; }
+                let root = node.top_declaration && (module || materialized);
+                let needed = root || match node.binding {
                     None => true,
-                    Some(symbol) => reads.get(&symbol).is_some_and(|bodies| bodies.iter().any(|body| body.is_none_or(|body| live[body]))),
+                    Some(symbol) => by_symbol.get(&symbol).is_some_and(|reads| reads.iter().any(|(body, _)| body.is_none_or(|body| live[body]))),
                 };
                 if needed { live[index] = true; changed = true; }
             }
@@ -164,4 +175,28 @@ impl Reachability {
             .min_by_key(|(_, node)| node.end - node.start)
             .is_none_or(|(index, _)| self.live[index])
     }
+}
+
+/// Whether a live site yields the global object: an unresolved global-object name, a top-level `this` of a Script,
+/// or the `this` of a sloppy function that a plain call can reach.
+fn global_object_live(
+    module: bool,
+    global_names: &[Option<usize>],
+    this_bodies: &[Option<usize>],
+    nodes: &[Node],
+    live: &[bool],
+    by_symbol: &HashMap<SymbolId, Vec<(Option<usize>, bool)>>,
+) -> bool {
+    let live_at = |body: Option<usize>| body.is_none_or(|body| live[body]);
+    global_names.iter().any(|&body| live_at(body))
+        || this_bodies.iter().any(|&body| match body {
+            None => !module,
+            Some(index) => {
+                let node = &nodes[index];
+                live[index] && !node.strict && match node.binding {
+                    None => true,
+                    Some(symbol) => by_symbol.get(&symbol).is_some_and(|reads| reads.iter().any(|&(body, construct)| !construct && live_at(body))),
+                }
+            }
+        })
 }

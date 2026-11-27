@@ -54,10 +54,12 @@ impl World {
 /// - A site opens the world only if it runs. Code runs from the top level, and a function body
 ///   runs only if its closure is created by a live body and called. A closure expression, arrow or
 ///   method is created where it appears, so it is live with its enclosing body. A declaration is
-///   called only through a read of its binding, a property read of a Script's global, or by the
-///   host, so it is live once one of those reads sits in a live body, or it is a root: a Module's
-///   declaration, or a Script's global the program reaches by a property name it reads (or any
-///   global, when the program makes a computed read it cannot name).
+///   called only through a read of its binding, so it is live once such a read sits in a live
+///   body. Roots: a Module's top-level declarations (the host imports them), and a Script's global
+///   functions once the global object is materialized by a live site (`globalThis`, `window`,
+///   `self`, `global`, `frames`, a top-level `this`, or a sloppy function's `this` that a plain
+///   call binds). Only then can a computed read (`g[k]`) reach a global; a computed read on any
+///   other object reaches no global.
 /// - Unresolved calls: a call the solve cannot resolve may reach any escaped function
 ///   (`escapes::escapes`). An escaped closure is a closure value a live body created, so its body
 ///   is live by the rule above; it is never a dead body. So the escaped set is within the live set,

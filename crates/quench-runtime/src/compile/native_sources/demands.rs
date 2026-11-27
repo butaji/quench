@@ -321,7 +321,7 @@ mod tests {
             "Reflect.construct(Function, [s])", "Reflect.apply(f, null, [])",
             "let i = 0; i = 'constructor'; o[i]()", "let i = 0; i += 'x'; o[i]()", "var i = 0; var i = s; o[i]()",
             "let i = 0; [i] = a; o[i]()", "let i = 0; ({ i } = a); o[i]()", "let i = 0; i ||= s; o[i]()", "let i; o[i]()",
-            "function f(i) { return o[i](); }", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
+            "function f(i) { return o[i](); } f(0);", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
         ] {
             assert!(requires(source), "{source}");
         }
@@ -354,6 +354,27 @@ mod tests {
         assert!(requires("(function () { function live() { return eval('1'); } live(); })();"));
         // A Script's global function is reached by a property read of the global object.
         assert!(requires("function f() { return eval('1'); } globalThis.f();"));
+    }
+
+    #[test]
+    fn computed_reads_on_local_objects_keep_a_dead_site_dead() {
+        // Without the global object as a value, a computed read reaches no global: `f` stays dead.
+        assert!(!requires("function f() { return eval('1'); } var a = [1], o = {}, k = 'f'; a[k]; o[k]; var x = o[k + 1];"));
+        assert!(!requires("var k = 'f'; function f() { return eval('1'); } (function () { var s = {}; s[k]; })();"));
+    }
+
+    #[test]
+    fn the_global_object_as_a_value_roots_the_script_globals() {
+        // A computed read of `globalThis` may name any global function.
+        assert!(requires("function f() { return eval('1'); } var k = 'f', g = globalThis[k];"));
+        // A sloppy function called plainly binds `this` to the global object.
+        assert!(requires("function f() { return eval('1'); } (function () { return this; })();"));
+        // A dead `globalThis` read does not materialize it.
+        assert!(!requires("function f() { return eval('1'); } (function () { function dead() { return globalThis; } })();"));
+        // A constructor only built with `new` gets a fresh object as `this`, not the global object.
+        assert!(!requires("function C() { this.x = 1; } var c = new C(); function f() { return eval('1'); }"));
+        // Strict code binds `this` to undefined.
+        assert!(!requires("'use strict'; function f() { return eval('1'); } (function () { return this; })();"));
     }
 
     #[test]
