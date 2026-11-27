@@ -185,7 +185,7 @@ impl Lowering<'_, '_> {
     /// The invalidation point of `hold_stable`, made here: the online division's word, or an AOT
     /// image's, whose closed-world facts (`VmFacts::closed`) are its dependencies.
     pub(crate) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
-        let closed = self.vm.closed.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
+        let closed = self.vm.facts.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
         let live = self.vm.online.map(|online| online.invalidation).or(closed).expect("only a division with Stable facts reads the word");
         read_invalidation_word(&mut self.builder, self.helpers, live, state, exit);
     }

@@ -166,7 +166,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     let fields = fields::guessed_fields(program, (unit, function), facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
-    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), facts: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of),
         // An image runs only in a VM whose host makes no IsHTMLDDA object (`install_ahead_body`), so `== null`
         // decides by the word: an object of any record family is not nullish.
@@ -178,7 +178,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     // cost 5x the whole run as a lane.
     // A member of a global name (`Math.sqrt`) is left out: the helper runs a native in place.
     if calls_through_helper(&code) && calls_script(unit, &proven) {
-        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, unit, &proven, (facts.closed.expect("an image unit's facts"), calls)); }
+        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, unit, &proven, (facts.facts.expect("an image unit's facts"), calls)); }
         return Err("calls through the VM's helper");
     }
     // A lane body that polls and makes a call the closed world does not prove enters its callee's body
