@@ -5,6 +5,7 @@ use crate::bytecode::{Constant, ResidualProgram};
 use crate::typed_ir::{IntRange, Type};
 use crate::ValueType;
 use super::quiet::{Arguments, BUILTINS};
+use super::value::{Key, Origin};
 
 /// Names that reach the global object as a value (`globalThis`, Node's `global`, and the browser names `self` and `window`).
 const GLOBAL_OBJECT_NAMES: [&str; 4] = ["globalThis", "global", "self", "window"];
@@ -14,6 +15,10 @@ const THIS_PASSERS: [&str; 3] = ["call", "apply", "bind"];
 /// Array methods that may change an array's elements or length, so a call of one on an array changes what its
 /// elements cell names (`effects`, `flow`). Any other method is taken to leave them as they are.
 const ARRAY_MUTATORS: [&str; 9] = ["push", "pop", "shift", "unshift", "splice", "fill", "copyWithin", "reverse", "sort"];
+/// Array methods that run no callback and no code of the program: they move values into or out of the array and read no
+/// property of an element. A call of one on an array is no escape of its receiver or arguments (`escapes`, `readers`);
+/// `sort` is a mutator that calls its comparator, so it is not one.
+const ARRAY_BUILTINS: [&str; 12] = ["push", "pop", "shift", "unshift", "splice", "fill", "copyWithin", "reverse", "slice", "indexOf", "lastIndexOf", "includes"];
 /// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
 /// object, which the closed world must treat as changed (`shape::of_call`).
 const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
@@ -34,6 +39,10 @@ pub(super) struct Scope {
     pub(super) length: Option<u32>,
     /// The atoms of `ARRAY_MUTATORS` the program names.
     mutators: Vec<u32>,
+    /// The atoms of `ARRAY_BUILTINS` the program names.
+    builtins: Vec<u32>,
+    /// The atom `Array` interns to, if the program names it: `new Array(n)` and `Array(n)` construct an array.
+    array: Option<u32>,
     /// Each String constant's atom, by constant index.
     pub(super) constant_atoms: Vec<Option<u32>>,
     /// Each constant's type, by constant index (`constant_type`).
@@ -79,6 +88,14 @@ impl Scope {
                 .filter(|(_, name)| ARRAY_MUTATORS.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
+            builtins: program
+                .atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, name)| ARRAY_BUILTINS.contains(name))
+                .map(|(atom, _)| atom as u32)
+                .collect(),
+            array: program.atoms.iter().position(|name| name == "Array").map(|atom| atom as u32),
             constant_atoms: program.constants.iter().map(|constant| match constant {
                 Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
                 _ => None,
@@ -108,6 +125,16 @@ impl Scope {
     /// Whether `atom` names an array method that may change the array it is called on (`ARRAY_MUTATORS`).
     pub(super) fn is_array_mutator(&self, atom: u32) -> bool {
         self.mutators.contains(&atom)
+    }
+
+    /// Whether `atom` names an array builtin that runs no callback and no program code (`ARRAY_BUILTINS`).
+    pub(super) fn is_array_builtin(&self, atom: u32) -> bool {
+        self.builtins.contains(&atom)
+    }
+
+    /// Whether `origin` is the global `Array`, whose call allocates an array (`effects::array_constructed`).
+    pub(super) fn is_array_constructor(&self, origin: Option<Origin>) -> bool {
+        matches!(origin, Some(Origin::Binding(Key::Global(atom))) if self.array == Some(atom))
     }
 
     /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).

@@ -8,13 +8,15 @@
 //! A named read observes the fields of the classes its object may be (`FunctionFlow::field_owners`). Code the
 //! solve cannot follow is a sink: an object a sink may hold is read in any way, so each class's fields it may
 //! hold have a reader, and so does each class a stored field of such a class may hold (`close`). Sinks are the
-//! operands of an unresolved call, the values a function throws or yields, the values stored into a global or
-//! into an object of no one class, and the returns of an escaped closure (`escaped`, the solve's own rule).
+//! escaped cells of the solve (`escapes::Escapes::sinks`: the operands of an unresolved call, the values a function
+//! throws or yields, the values stored into a global or into an object of no one class, and the returns of an escaped
+//! closure), and the operands the instructions hand on, which `instruction` notes.
 //! A computed read with a key that is not a number reads its object in any way; a numeric key reads only the
 //! fields named by array indices (`index_reads`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::escapes::Escapes;
 use super::flow::{Call, FunctionFlow, Target};
 use super::scope::Scope;
 use super::value::{Key, Origin};
@@ -23,11 +25,6 @@ use crate::bytecode::{used_registers, Class, FieldLookup, Function, Op, Residual
 use crate::compile::liveness::{register_dead, RegisterMasks};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, Classes, FactKey, Type};
-use crate::ValueType;
-
-/// The methods of an array whose call reads no object it does not store: they move arguments into the array, or
-/// back out of it, and run no code and read no property of an element.
-const ELEMENT_ONLY_METHODS: [&str; 9] = ["push", "pop", "shift", "unshift", "slice", "indexOf", "lastIndexOf", "includes", "reverse"];
 
 /// The global object whose methods read none of their receiver's properties (their arguments are still sinks).
 const MATH: &str = "Math";
@@ -39,8 +36,6 @@ pub(super) struct Readers {
     index_atoms: BTreeSet<u32>,
     /// The atoms named `Math` (the receiver `Math.f()` takes no escape).
     math: BTreeSet<u32>,
-    /// The atoms of the methods `ELEMENT_ONLY_METHODS` names.
-    element_only: BTreeSet<u32>,
     /// Per named atom, the classes of the objects it is read off by name; `Never` where none holds it.
     named: BTreeMap<u32, Classes>,
     /// The atoms read by name off some object, of any class.
@@ -49,10 +44,6 @@ pub(super) struct Readers {
     index_reads: Classes,
     /// The cells code the solve cannot follow may hold: an object in one is read in any way.
     sinks: Vec<Cell>,
-    /// The cell each function returns, where its return is not the program's result.
-    returns: Vec<(u32, Cell)>,
-    /// The functions whose closure some function defines (`FunctionFlow::closures`).
-    materialized: BTreeSet<u32>,
     /// The method calls `finish` resolves per class of their receiver.
     methods: Vec<MethodCall>,
     /// The classes whose objects code the solve cannot follow may read, field by field.
@@ -91,13 +82,10 @@ impl Readers {
         Self {
             index_atoms: atoms_named(program, is_index_name),
             math: atoms_named(program, |name| name == MATH),
-            element_only: atoms_named(program, |name| ELEMENT_ONLY_METHODS.contains(&name)),
             named: BTreeMap::new(),
             named_seen: BTreeSet::new(),
             index_reads: Classes::Never,
             sinks: Vec::new(),
-            returns: Vec::new(),
-            materialized: BTreeSet::new(),
             methods: Vec::new(),
             reflective: Classes::Never,
             dead_results: BTreeSet::new(),
@@ -106,8 +94,6 @@ impl Readers {
 
     /// Notes what function `function` reads, hands on and discards, from its flow and its instructions.
     pub(super) fn scan(&mut self, program: &ResidualProgram, function: u32, flow: &FunctionFlow, facts: &AotFacts, scope: &Scope) {
-        self.sinks.extend(flow.handed.iter().map(|word| word.cell));
-        self.materialized.extend(flow.closures.iter().copied());
         let cx = Scan {
             function,
             flow,
@@ -124,17 +110,16 @@ impl Readers {
     }
 
     /// Settles what the scans left open, once the fact cells are settled (`cells`): a method call whose receiver's
-    /// classes name their own closures escapes nothing, any other escapes its operands; then the functions whose
-    /// closure escapes, and the classes a reflective read may reach.
-    pub(super) fn finish(&mut self, cells: &BTreeMap<FactKey, Cell>) {
+    /// classes name their own closures escapes nothing, any other escapes its operands; then the classes a reflective
+    /// read may reach: the sinks of this scan and the escaped cells of the solve (`escaped`).
+    pub(super) fn finish(&mut self, cells: &BTreeMap<FactKey, Cell>, escaped: &Escapes) {
         for call in std::mem::take(&mut self.methods) {
             if !resolves(&call, cells) {
                 self.sinks.push(call.receiver);
                 self.sinks.extend(call.arguments);
             }
         }
-        let escaped = self.escaped();
-        let reflective = self.sinks.iter().copied().chain(self.returned(&escaped))
+        let reflective = self.sinks.iter().copied().chain(escaped.sinks.iter().copied())
             .fold(Classes::Never, |classes, cell| classes.join(holders(cell)));
         self.reflective = reflective;
         self.close(cells);
@@ -172,7 +157,8 @@ impl Readers {
                 self.dead_results.insert((cx.function, at));
             }
         } else if instruction.op().is_return() && !cx.flow.returns_out {
-            self.returns.push((cx.function, cx.cell(at, u16::from(instruction.register_a()))));
+            // The value of a return the solve follows is its function's `Key::Return` write, which `escapes` holds where the
+            // function escapes, so it is no sink here.
         } else {
             self.operation(cx, at, instruction);
         }
@@ -262,15 +248,15 @@ impl Readers {
             Target::Known(_) => {}
             Target::Register if proven(cx, key) => {}
             Target::Register => self.open(call),
-            Target::Method(atom) => self.method(call, atom),
+            Target::Method(atom) => self.method(cx, call, atom),
         }
     }
 
     /// Notes a method call `receiver.atom(...)`: the array methods read no operand, a `Math` receiver's arguments
     /// escape alone, and any other call is resolved by `finish`.
-    fn method(&mut self, call: &Call, atom: u32) {
+    fn method(&mut self, cx: &Scan<'_>, call: &Call, atom: u32) {
         self.named(atom, call.receiver.cell.classes);
-        if self.element_only.contains(&atom) {
+        if cx.scope.is_array_builtin(atom) {
             return;
         }
         let arguments = call.arguments.iter().map(|word| word.cell);
@@ -295,26 +281,6 @@ impl Readers {
     /// Whether the call's receiver is the global `Math` object.
     fn is_math(&self, call: &Call) -> bool {
         matches!(call.receiver.origin, Some(Origin::Binding(Key::Global(atom))) if self.math.contains(&atom))
-    }
-
-    /// The functions whose closure a sink may hold, to a fixed point: an escaped function's returns are sinks as well.
-    fn escaped(&self) -> BTreeSet<u32> {
-        let mut escaped = BTreeSet::new();
-        loop {
-            let mut next = escaped.clone();
-            for cell in self.sinks.iter().copied().chain(self.returned(&escaped)) {
-                mark(cell, &self.materialized, &mut next);
-            }
-            if next == escaped {
-                return escaped;
-            }
-            escaped = next;
-        }
-    }
-
-    /// The returns of the functions in `escaped`.
-    fn returned<'a>(&'a self, escaped: &'a BTreeSet<u32>) -> impl Iterator<Item = Cell> + 'a {
-        self.returns.iter().filter(move |(function, _)| escaped.contains(function)).map(|&(_, cell)| cell)
     }
 
     /// Adds to `reflective` the classes a reflective field of a reflective class, or any reflective object's
@@ -403,20 +369,6 @@ fn is_index_name(name: &str) -> bool {
 /// The atoms of `program` whose names `keep` accepts.
 fn atoms_named(program: &ResidualProgram, keep: impl Fn(&str) -> bool) -> BTreeSet<u32> {
     program.atoms.iter().enumerate().filter_map(|(atom, name)| keep(name.as_ref()).then_some(atom as u32)).collect()
-}
-
-/// Adds to `escaped` the functions a cell may hold a closure of: the function its type names, else, where its identity
-/// is lost, every materialized closure (the solve's `mark`). The elements' type is a holder too.
-fn mark(cell: Cell, materialized: &BTreeSet<u32>, escaped: &mut BTreeSet<u32>) {
-    for ty in [cell.ty, cell.elements.ty] {
-        match ty.body_index() {
-            Some(function) => {
-                escaped.insert(function);
-            }
-            None if ty.may_be_languages(Type::language(ValueType::Function)) => escaped.extend(materialized.iter().copied()),
-            None => {}
-        }
-    }
 }
 
 #[cfg(test)]

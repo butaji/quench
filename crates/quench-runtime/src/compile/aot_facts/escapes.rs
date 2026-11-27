@@ -2,7 +2,8 @@
 //! element classes whose arrays it may read or write. `Types::of` takes both from `escapes`.
 
 use super::census::{Census, fact_key};
-use super::flow::FunctionFlow;
+use super::flow::{Call, FunctionFlow, Target};
+use super::scope::Scope;
 use super::types::targets;
 use super::value::{Key, Origin, Word};
 use super::AotFacts;
@@ -10,6 +11,18 @@ use crate::typed_ir::{Cell, Classes, ElementClass, Elements, language_bit};
 use crate::typed_ir::Type;
 use crate::ValueType;
 use std::collections::BTreeSet;
+
+/// What the closed world leaves open: the functions code the solve does not follow may call, the element classes of the
+/// arrays that code may read or write, and the cells that code may hold. `types::Types::of` takes the functions and the
+/// classes; `readers::Readers::finish` takes the cells, as the values an unseen read may reach.
+pub(super) struct Escapes {
+    /// The functions whose closure escapes (`escapes`).
+    pub(super) functions: BTreeSet<u32>,
+    /// The element classes of the arrays the escaped positions hold: each joins the unnamed class.
+    pub(super) classes: BTreeSet<ElementClass>,
+    /// The cell of every value an escaped position holds (the sinks and the escaped positions' writes).
+    pub(super) sinks: Vec<Cell>,
+}
 
 /// The functions whose closure may reach a position the solve cannot follow, so that code it does not see may call
 /// them with any `this` and arguments (`Types::of` gives an escaped function `Cell::ANY` for its `this` and every
@@ -34,18 +47,19 @@ use std::collections::BTreeSet;
 /// methods are the targets (`resolved`): a builtin of the same name, which a program's `map` does not shadow, gets
 /// the arguments as sinks.
 ///
-/// It also returns the element classes the held values' arrays are in (`Types::of` joins them to the unnamed class): an
-/// array a sink holds may be read or written by code the solve does not follow, so its class is not one the solve sees
-/// whole, and every array of the class shares the unnamed class's elements.
-pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> (BTreeSet<u32>, BTreeSet<ElementClass>) {
-    use super::flow::Target;
+/// It also returns the element classes the held values' arrays are in (`Escapes::classes`, which `Types::of` joins to the
+/// unnamed class): an array a sink holds may be read or written by code the solve does not follow, so its class is not one
+/// the solve sees whole, and every array of the class shares the unnamed class's elements. The held cells are its sinks
+/// (`Escapes::sinks`), which the readers take as the values unseen code may read.
+pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope) -> Escapes {
     let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
     let roots: BTreeSet<u32> = flows.iter().enumerate().filter(|(_, flow)| flow.returns_out).map(|(id, _)| id as u32).collect();
     let mut sinks: Vec<Word> = Vec::new();
     let mut read: Vec<Origin> = Vec::new();
     for (id, flow) in flows.iter().enumerate() {
         for call in &flow.calls {
-            if resolved(call, &targets(id as u32, call, facts, census), census) { continue; }
+            let callees = targets(id as u32, call, facts, census);
+            if resolved(call, &callees, census) || builtin_array_call(call, &callees, scope) { continue; }
             if call.target == Target::Register {
                 match call.callee.origin {
                     Some(origin @ (Origin::Binding(_) | Origin::Member(_) | Origin::MemberOn { .. })) => {
@@ -86,7 +100,7 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census)
         for word in &held { mark(&word.cell, &materialized, &mut next); }
         if next == escaped {
             let classes = held.iter().filter(|word| word.cell.elements != Elements::NEVER).map(|word| word.elements_key()).collect();
-            return (escaped, classes);
+            return Escapes { functions: escaped, classes, sinks: held.iter().map(|word| word.cell).collect() };
         }
         escaped = next;
     }
@@ -114,8 +128,7 @@ fn reads(origin: Origin, key: Key) -> bool {
 /// method runs: a builtin of the same name (`[1].map(g)` beside a program's `map`) may be the one that runs, and `g` is
 /// its argument. Only a receiver whose classes are a closed program set, each holding the targets as its own method
 /// (`Census::own_methods`), proves the program's method runs.
-fn resolved(call: &super::flow::Call, callees: &[u32], census: &Census) -> bool {
-    use super::flow::Target;
+pub(super) fn resolved(call: &Call, callees: &[u32], census: &Census) -> bool {
     if callees.is_empty() { return false; }
     match (call.target, call.callee.origin) {
         (Target::Method(atom), _) => census.own_methods(call.receiver.cell.classes, atom, callees),
@@ -124,6 +137,22 @@ fn resolved(call: &super::flow::Call, callees: &[u32], census: &Census) -> bool 
         }
         _ => !census.guessed(call.callee),
     }
+}
+
+/// The method a call names off its receiver: a method call's name, or the name a method read's origin carries.
+pub(super) fn method_atom(call: &Call) -> Option<u32> {
+    match (call.target, call.callee.origin) {
+        (Target::Method(atom), _) => Some(atom),
+        (Target::Register, Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => Some(atom),
+        _ => None,
+    }
+}
+
+/// Whether `call` is an array builtin (`Scope::is_array_builtin`) on a receiver that may be an array, with no program
+/// closure under its name (`callees` empty). It runs no code the solve does not see: its receiver is read and written
+/// through the receiver's own class, and its arguments are not escapes (a mutator stores them, `record::Record::observe`).
+fn builtin_array_call(call: &Call, callees: &[u32], scope: &Scope) -> bool {
+    callees.is_empty() && call.receiver.cell.elements != Elements::NEVER && method_atom(call).is_some_and(|atom| scope.is_array_builtin(atom))
 }
 
 /// Adds to `escaped` the functions a cell may hold a closure of: its type's identity and its elements' type's identity. A

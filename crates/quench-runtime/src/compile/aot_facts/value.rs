@@ -50,9 +50,14 @@ pub(super) enum Origin {
     Prototype(PrototypeBase),
     /// An instance of class `function` (`new`).
     Instance(u32),
-    /// The array a literal allocates at `pc` of `function` (`effects::value_of`): its own element class, which only a
-    /// store or a call joins to another (`Word::link`).
+    /// The array a literal or an array constructor allocates at `pc` of `function` (`effects::value_of`): its own element
+    /// class, which only a store or a call joins to another (`Word::link`).
     Alloc { function: u32, pc: u32 },
+    /// The argument parameter `index` of `function` holds in a register on entry (`flow::Solver::entry_facts`): its array's
+    /// class is the parameter's, which a resolved call joins to the argument's (`types::entry_links`).
+    Parameter { function: u32, index: u16 },
+    /// The `this` of function `0` (`effects::this_fact`): its array's class is the receiver's, as a parameter's is.
+    Receiver(u32),
     /// A method `atom` read on class `function`'s static object (`instance: false`) or prototype;
     /// `guess` where the class is the type solve's (`Classes::Set { proven: false }`), not a `new`'s.
     MemberOn { class: u32, instance: bool, atom: u32, guess: bool },
@@ -135,6 +140,8 @@ impl Word {
             Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => ElementClass::Field(atom),
             Some(Origin::Binding(key)) => key.elements_class(),
             Some(Origin::Alloc { function, pc }) => ElementClass::Allocation { function, pc },
+            Some(Origin::Parameter { function, index }) => ElementClass::Parameter { function, index },
+            Some(Origin::Receiver(function)) => ElementClass::Receiver(function),
             _ => ElementClass::Unnamed,
         }
     }

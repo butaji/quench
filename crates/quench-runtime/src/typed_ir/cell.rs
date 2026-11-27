@@ -234,8 +234,14 @@ pub enum ElementClass {
     /// The array the literal or array constructor at `pc` of function `function` allocates: its own class until a
     /// store or a call joins it to another.
     Allocation { function: u32, pc: u32 },
-    /// The arrays no key names: an element of an array, a value read with no origin, a call's argument or receiver,
-    /// and every array that may reach code the solve does not follow (an escaped function's, an unresolved call's).
+    /// The arrays parameter `index` of function `function` holds on entry. A resolved call joins each argument's class to
+    /// it, so the callee's stores into the parameter reach the caller's array (`types::entry_links`).
+    Parameter { function: u32, index: u16 },
+    /// The arrays `this` of function `function` holds. A resolved call joins its receiver's class to it, as a parameter's.
+    Receiver(u32),
+    /// The arrays no key names: an element of an array, a value read with no origin, an argument or receiver of a call
+    /// the solve does not resolve, and every array that may reach code the solve does not follow (an escaped function's).
+    /// The arguments of a function that reads its `arguments` object join it too (`flow::bound_parameters`).
     Unnamed,
 }
 

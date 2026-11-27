@@ -83,6 +83,9 @@ pub(super) struct FunctionFlow {
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
+    /// Per parameter, whether its argument is in a register at entry (`bound_parameters`): its array is then the
+    /// parameter's own element class, which a resolved call links to the argument's (`types::entry_links`).
+    pub(super) in_register: Box<[bool]>,
     /// Whether the function's return value leaves the closed world: the program's root (the host reads its result),
     /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
     /// `types::escapes` takes its returns as positions the solve cannot follow.
@@ -112,6 +115,8 @@ struct Solver<'a> {
     rounds: Vec<std::cell::Cell<u8>>,
     /// The element-class links the joins make of words with different origins (`Word::join_links`): the record keeps them.
     joined: std::cell::RefCell<std::collections::BTreeSet<(ElementClass, ElementClass)>>,
+    /// Per parameter, whether its argument is in a register at entry (`bound_parameters`).
+    in_register: &'a [bool],
 }
 
 /// The state a block starts with, or an edge carries: the words of the registers, and the block the state flows into,
@@ -142,7 +147,8 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
-    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default() };
+    let in_register = bound_parameters(function);
+    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register };
     let fixpoint = solve(&mut solver);
     let inputs = solver.narrow(fixpoint);
     let mut record = Record::new(ctx.registers);
@@ -156,9 +162,23 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         }
     }
     record.registers.sort();
-    let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
+    let arity = arity_of(function);
     let returns_out = ctx.is_root || function.is_generator || function.is_async;
-    record.finish(arity, returns_out)
+    record.finish(arity, returns_out, in_register)
+}
+
+/// How many parameters `function` binds from its arguments one to one (`FunctionFlow::arity`).
+fn arity_of(function: &Function) -> Option<u16> {
+    (!function.rest && !function.is_generator && !function.is_async).then_some(function.params)
+}
+
+/// Per parameter, whether its argument is in a register at entry: a parameter bound one to one that the body promotes to a
+/// register (`Function::promoted_register`). A function that reads its `arguments` object reaches every argument through
+/// it, which the solve does not follow, so none of its parameters is one (their arrays are the unnamed class).
+fn bound_parameters(function: &Function) -> Box<[bool]> {
+    let reads_arguments = (0..function.code.len()).any(|pc| function.instruction_at(pc).op().reads_arguments());
+    let one_to_one = arity_of(function).is_some() && !reads_arguments;
+    (0..function.params).map(|index| one_to_one && function.promoted_register(index).is_some()).collect()
 }
 
 /// The integer constants the function's relational jumps compare a value against (`typing::thresholds`): the ones
@@ -458,14 +478,16 @@ fn refine_cell(cell: Cell, fact: Refinement) -> Cell {
 
 impl Solver<'_> {
     /// The facts at entry: every register unknown, but a promoted parameter holds its argument, whose
-    /// type the pass before found (`Types::param`). A parameter the body keeps as a local stays unknown:
-    /// only its promoted register holds the argument at entry (`Function::promoted_register`).
+    /// type the pass before found (`Types::param`), with the parameter's element class where the argument is in
+    /// the register (`in_register`). A parameter the body keeps as a local stays unknown: only its promoted register
+    /// holds the argument at entry (`Function::promoted_register`).
     fn entry_facts(&self) -> Vec<Word> {
         let mut state = vec![Word::UNKNOWN; self.ctx.registers];
         if let Some(types) = self.ctx.types {
             for index in 0..self.function.params {
                 if let Some(register) = self.function.promoted_register(index) {
-                    state[usize::from(register)] = Word::of_cell(types.param(self.ctx.id, index));
+                    let origin = self.in_register[usize::from(index)].then_some(Origin::Parameter { function: self.ctx.id, index });
+                    state[usize::from(register)] = Word { cell: types.param(self.ctx.id, index), origin };
                 }
             }
         }

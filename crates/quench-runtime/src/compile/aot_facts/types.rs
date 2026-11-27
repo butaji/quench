@@ -17,8 +17,9 @@
 //! written, never at the read.
 
 use super::census::{Census, ElementClasses};
-use super::escapes::escapes;
+use super::escapes::{escapes, resolved};
 use super::flow::FunctionFlow;
+use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, WIDENING_ROUNDS};
@@ -70,12 +71,14 @@ pub(crate) struct Types {
 impl Types {
     /// The cells `flows` store and return, with each call typed by the callees `facts` prove or
     /// guess for it, the parameters of each function, and the bindings.
-    pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> Self {
+    pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope) -> Self {
         // The arrays an escaped function returns or an unresolved call holds may reach code the solve does not follow, so
         // their classes join the unnamed one (`escapes`); the flows' links join the rest.
-        let (escaped, escaped_classes) = escapes(flows, facts, census);
+        let open = escapes(flows, facts, census, scope);
+        let escaped = open.functions;
         let mut links: Vec<(ElementClass, ElementClass)> = flows.iter().flat_map(|flow| &flow.links).copied().collect();
-        links.extend(escaped_classes.into_iter().map(|class| (class, ElementClass::Unnamed)));
+        links.extend(open.classes.into_iter().map(|class| (class, ElementClass::Unnamed)));
+        entry_links(flows, facts, census, &escaped, &mut links);
         let mut types = Self {
             cells: BTreeMap::new(),
             calls: BTreeMap::new(),
@@ -368,6 +371,45 @@ pub(super) fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts,
         Target::Known(callee) => vec![callee],
         Target::Method(atom) => census.method_closures(atom).map(|set| set.iter().copied().collect()).unwrap_or_default(),
     }
+}
+
+/// The links a callee's entry makes (`ElementClass::Parameter`, `Receiver`): a resolved call joins each argument's class to
+/// the parameter it binds, and its receiver's class to the callee's `this`, so the callee's stores into them reach the
+/// caller's arrays. A callee an unresolved call may reach, an escaped one, and one no recorded call reaches are entered with
+/// values the solve does not see: their entry classes join the unnamed class, as the arguments of an escape do (`escapes`).
+fn entry_links(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &BTreeSet<u32>, links: &mut Vec<(ElementClass, ElementClass)>) {
+    let mut reached = BTreeSet::new();
+    let mut open = escaped.clone();
+    for (id, flow) in flows.iter().enumerate() {
+        for call in &flow.calls {
+            let callees = targets(id as u32, call, facts, census);
+            reached.extend(callees.iter().copied());
+            if !resolved(call, &callees, census) {
+                open.extend(callees);
+                continue;
+            }
+            for &callee in &callees {
+                links.extend(call.receiver.link(ElementClass::Receiver(callee)));
+                for (index, argument) in call.arguments.iter().enumerate() {
+                    links.extend(argument.link(entry_class(flows, callee, index)));
+                }
+            }
+        }
+    }
+    for (id, flow) in flows.iter().enumerate() {
+        let id = id as u32;
+        if open.contains(&id) || !reached.contains(&id) {
+            links.push((ElementClass::Receiver(id), ElementClass::Unnamed));
+            links.extend((0..flow.in_register.len()).map(|index| (ElementClass::Parameter { function: id, index: index as u16 }, ElementClass::Unnamed)));
+        }
+    }
+}
+
+/// The class argument `index` of a call to `callee` joins: the parameter's own where the callee's entry state holds the
+/// argument in a register (`FunctionFlow::in_register`), else the unnamed class, which the callee reads the argument back through.
+fn entry_class(flows: &[FunctionFlow], callee: u32, index: usize) -> ElementClass {
+    let in_register = flows.get(callee as usize).and_then(|flow| flow.in_register.get(index)).copied().unwrap_or(false);
+    if in_register { ElementClass::Parameter { function: callee, index: index as u16 } } else { ElementClass::Unnamed }
 }
 
 /// The parameter types of every function whose parameters bind its arguments one to one

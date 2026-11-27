@@ -1,4 +1,5 @@
 use super::*;
+use crate::staged::Overflow;
 
 fn span(min: i64, max: i64) -> IntRange { IntRange::bounds(min, max).unwrap() }
 
@@ -34,6 +35,41 @@ fn increment_past_int32_widens_to_an_integer_that_is_not_nan() {
     assert_eq!(step(Type::INT32, false), Type::NOT_NAN_NUMBER);
     assert_eq!(step(Type::INT32, true), Type::NOT_NAN_NUMBER);
     assert_eq!(step(range(i64::from(i32::MAX), i64::from(i32::MAX)), false), Type::NOT_NAN_NUMBER);
+}
+
+#[test]
+fn decrement_past_int32_widens_and_the_range_steps_by_one_at_each_bound() {
+    assert_eq!(step(range(i64::from(i32::MIN), i64::from(i32::MIN)), true), Type::NOT_NAN_NUMBER);
+    assert_eq!(step(range(-5, -5), true), range(-6, -6));
+    assert_eq!(step(range(-5, 5), false), range(-4, 6));
+}
+
+#[test]
+fn increment_of_a_non_number_is_a_number_or_a_bigint_and_of_an_unreached_operand_is_unreached() {
+    let number_or_bigint = Type::NUMBER.join(Type::language(ValueType::BigInt));
+    assert_eq!(step(Type::language(ValueType::String), false), number_or_bigint);
+    assert_eq!(step(Type::ANY, true), number_or_bigint);
+    assert_eq!(step(Type::NEVER, true), Type::NEVER);
+}
+
+#[test]
+fn negation_of_an_int32_minimum_widens_past_int32_by_number_range() {
+    assert_eq!(unary(NumberUnary::Negate, range(i64::from(i32::MIN), i64::from(i32::MIN))), range(1 << 31, 1 << 31));
+    assert_eq!(unary(NumberUnary::Negate, range(-5, -1)), range(1, 5));
+    assert_eq!(unary(NumberUnary::Negate, range(-3, 4)), Type::NOT_NAN_NUMBER, "a range holding zero may negate to -0");
+}
+
+#[test]
+fn the_number_and_local_slot_increments_are_the_one_rule() {
+    let number = Operation::Number(NumberOperation::IncDec { destination: 1, source: 0, decrement: false, overflow: Overflow::Exit });
+    let local = Operation::IncDecLocal { local: 1, source: 0, decrement: true };
+    let env = Registers(vec![Cell::of(range(0, 10))]);
+    assert_eq!(value(&number, &env), Some(Cell::of(range(1, 11))));
+    assert_eq!(value(&local, &env), Some(Cell::of(range(-1, 9))));
+    let unknown = Registers(vec![Cell::ANY]);
+    assert_eq!(value(&number, &unknown), Some(Cell::of(Type::NUMBER.join(Type::language(ValueType::BigInt)))));
+    let unreached = Registers(vec![Cell::of(Type::NEVER)]);
+    assert_eq!(value(&local, &unreached), Some(Cell::of(Type::NEVER)));
 }
 
 #[test]

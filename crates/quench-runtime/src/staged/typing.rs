@@ -10,6 +10,7 @@
 use super::math::FloatUnary;
 use super::{NumberOperation, Operation};
 use crate::bytecode::{Operand, OperandKind, Register};
+use crate::typed_ir::arithmetic::number_range;
 use crate::typed_ir::{Cell, Elements, IntRange, Length, Type, language_bit};
 use crate::vm::operations::{binary_operator as op, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary};
 use crate::ValueType;
@@ -46,6 +47,8 @@ pub fn value(op: &Operation<(), ()>, env: &impl Abstract) -> Option<Cell> {
             Cell::of(Type::language(ValueType::Boolean)),
         Operation::Void { .. } => Cell::of(Type::language(ValueType::Undefined)),
         Operation::ElementRead { base, key, .. } => element(env, env.register(base), operand_cell(env, key)),
+        // The local-slot increment defines the value `step` gives its source, as the Number form does.
+        Operation::IncDecLocal { source, decrement, .. } => Cell::of(step(env.register(source).ty, decrement)),
         _ => return None,
     })
 }
@@ -66,7 +69,8 @@ pub fn binary(env: &impl Abstract, left: Operand, right: Operand, operator: u32)
 }
 
 /// The cell a Number operation defines, when its operands are Numbers: an operand that is not one may run guest code or
-/// yield a string, so the operation then defines any value.
+/// yield a string, so the operation then defines any value. An increment is the exception: `step` gives the type of
+/// `++` over any operand (a Number or a BigInt), so it is defined over every operand.
 pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
     let fact = |operand: Operand| operand_cell(env, operand);
     // An operand no value reaches yet (`Type::NEVER`) is a Number among the others: what reaches it later is joined in
@@ -94,7 +98,7 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
         NumberOperation::Unary { source, operation, .. } if one(source) => Cell::of(unary(operation, ty(source))),
         NumberOperation::Math { source, operation, .. } if one(source) => Cell::of(math(operation, ty(source))),
         NumberOperation::BitwiseNot { source, .. } if one(source) => Cell::of(Type::INT32),
-        NumberOperation::IncDec { source, decrement, .. } if numeric(register(source)) => Cell::of(step(register(source).ty, decrement)),
+        NumberOperation::IncDec { source, decrement, .. } => Cell::of(step(register(source).ty, decrement)),
         NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
         _ => Cell::ANY,
     }
@@ -196,13 +200,14 @@ pub fn extreme(maximum: bool, left: Type, right: Type) -> Type {
 }
 
 /// The type of `+source` (`Plus`) or `-source` (`Negate`) over a Number of type `source`. A unary keeps a Number's NaN
-/// bit, since NaN is its own negation. Negating an integer range gives an integer range only where it excludes zero:
-/// `-0` is a Number no integer type holds.
+/// bit, since NaN is its own negation. Negating an integer range is `0 - source` (`number_range`, as the arithmetic
+/// rule computes it), which gives an integer range only where the range excludes zero: `-0` is a Number no integer
+/// type holds.
 pub fn unary(operation: NumberUnary, source: Type) -> Type {
     match (operation, source.int_range()) {
         (NumberUnary::Plus, _) => source,
         (NumberUnary::Negate, Some(range)) if !range.contains(IntRange::ZERO) =>
-            IntRange::bounds(-range.max, -range.min).map_or(Type::NOT_NAN_NUMBER, Type::int),
+            number_range(NumberArithmetic::Subtract, IntRange::ZERO, range).map_or(Type::NOT_NAN_NUMBER, Type::int),
         (NumberUnary::Negate, _) if source.may_be_nan() => Type::NUMBER,
         (NumberUnary::Negate, _) => Type::NOT_NAN_NUMBER,
     }
@@ -257,13 +262,16 @@ pub fn remainder(left: Type, right: Type) -> Type {
     }
 }
 
-/// The type `++` (or `--`, where `decrement`, and also its local-slot form, which defines the same value) defines over an
-/// operand of type `source`: the stepped range of an integer where it stays in int32 (an int32 then), else the integer
-/// beyond int32 (a NaN-free Number). A Number keeps its NaN bit, and a BigInt operand may be a BigInt.
+/// The one rule of `++` (or `--`, where `decrement`): the type it defines over an operand of type `source`, for the
+/// Number instruction (`number_cell`) and the local-slot form (`value`), which defines the same value. An integer steps
+/// by one through `number_range`, and the result is an int32 (the stepped range) only where it fits int32, else the
+/// integer beyond int32 (a NaN-free Number). A Number keeps its NaN bit, and any other operand is coerced to a Number
+/// or a BigInt.
 pub fn step(source: Type, decrement: bool) -> Type {
     if source == Type::NEVER { return Type::NEVER; }
     if let Some(range) = source.int_range() {
-        return range.stepped(decrement).filter(IntRange::fits_int32).map_or(Type::NOT_NAN_NUMBER, Type::int);
+        let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
+        return number_range(operation, range, IntRange::singleton(1)).filter(IntRange::fits_int32).map_or(Type::NOT_NAN_NUMBER, Type::int);
     }
     if source.is_subtype(Type::NUMBER) {
         if source.may_be_nan() { Type::NUMBER } else { Type::NOT_NAN_NUMBER }
