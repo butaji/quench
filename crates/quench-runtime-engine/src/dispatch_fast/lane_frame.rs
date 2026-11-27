@@ -852,10 +852,11 @@ impl RecordPlan {
     pub(crate) fn nested_formed(first: (u32, u16, Form), (layout, slot, form): (u32, u16, Form),
         base: quench_runtime::bytecode::FieldBase, records: u64) -> Self {
         use quench_runtime::staged::ic::IcOp;
-        let mut plan = Self::nested(first, (layout, slot, form), base, records);
+        let none = IcOp::GuardLayout(first.0);
         let bits = if matches!(form, Form::Packed) { quench_runtime::value_vec::INLINE_FORM } else { 0 };
-        if let Some((hops, _)) = plan.nested.as_mut() { hops[1].0 = IcOp::GuardFormed { id: layout, form: bits }; }
-        plan
+        let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardFormed { id: layout, form: bits }, slot, form)];
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
+            nested: Some((hops, base)), host: None, entry: None, own: None }
     }
 
     /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
