@@ -41,7 +41,7 @@ impl Heap {
         let shape = layouts::class_shape(class);
         let length = self.properties.shape_length(shape);
         debug_assert!(length <= region_capacity(granule) as usize, "a class cell holds its class's fields");
-        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.field(granule, slot)).collect();
+        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.field_value(granule, slot)).collect();
         let properties = self.properties.with_values(shape, &fields);
         let mut object = Object::with_property_storage(
             layouts::class_link(class).prototype(),
@@ -70,5 +70,12 @@ impl Heap {
         if value.direct_object_index().is_some_and(|object| is_cell_granule(object.granule())) {
             self.depart_class_object(value);
         }
+    }
+
+    /// The representation edge: a store of a non-number into a raw-double field of the live cell `owner`
+    /// breaks the field's Float64 fact, so the object departs (`depart_class_object`). The caller then stores
+    /// the value into the object's record. Returns the record id, as `depart_class_object` does.
+    pub(crate) fn depart_for_representation(&mut self, owner: Value) -> Option<u32> {
+        self.depart_class_object(owner)
     }
 }

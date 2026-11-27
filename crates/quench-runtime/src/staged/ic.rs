@@ -277,10 +277,9 @@ pub const HINTED_FORM: u32 = u32::MAX;
 /// shape table stops short of it (`vm::push_child`).
 pub const SYMBOLIC_SHAPE: u32 = 1 << 30;
 
-/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of the process is a
-/// tagged `Value` (`switches::float_slots` off, a per-process decision), so the read decodes
-/// nothing. The handler is chosen with the flag when its hint is installed, so the switch is
-/// read once per installation, not per read. Below every storage-form bit.
+/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of a record is a tagged
+/// `Value` (the arena writes no raw doubles, `ValueArena::float`), so the read decodes nothing.
+/// Below every storage-form bit.
 pub const TAGGED_SLOTS: u32 = 1 << 26;
 const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0);
 

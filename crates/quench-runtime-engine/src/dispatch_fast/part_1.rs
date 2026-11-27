@@ -196,7 +196,7 @@ pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
 
 /// The storage-form class of a nested hop whose layout id is `layout`: `0` a flat run, `1` packed
 /// inline values; `None` for another form, whose hop keeps `NESTED_SITE`'s `Form::Either`. Reads the
-/// hint's form through `own_form_index`, which folds `FLOAT_SLOTS` at this requicken.
+/// hint's form through `own_form_index`.
 pub(super) fn nested_hop_class(layout: u32) -> Option<usize> {
     match own_form_index(Some(layout)) {
         6 => Some(0),
@@ -312,7 +312,6 @@ pub(super) fn returning_own_row(handler: *const ()) -> bool {
 
 pub(crate) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
-        || site == CELL_FLOAT_RUN_THIS || site == CELL_FLOAT_RUN_REGISTER || site == CELL_FLOAT_EXTRAS_THIS || site == CELL_FLOAT_EXTRAS_REGISTER
         || site == CELL_EXTRAS_THIS || site == CELL_EXTRAS_REGISTER
 }
 
@@ -336,8 +335,6 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
     let index = (site.wrapping_sub(1) / 2) as usize;
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
     else if index == OWN_FORMS.len() + 7 { quench_runtime::staged::TAGGED_SLOTS }
-    else if index == OWN_FORMS.len() + 31 { 0 }
-    else if index == OWN_FORMS.len() + 32 { quench_runtime::value_vec::EXTRAS_FORM }
     else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM | quench_runtime::staged::TAGGED_SLOTS }
     else if index == STORE_FLAT { 0 }
     else if index == STORE_INLINE { quench_runtime::value_vec::INLINE_FORM }
@@ -356,31 +353,27 @@ pub(crate) const fn own_site_decodes(site: u8) -> bool {
         && form != quench_runtime::value_vec::NARROW_FORM)
 }
 
-/// The value of slot word `word` an own-field read at a decoding site took: a fixed untagged form holds raw
-/// doubles (`own_formed_handler`), decoded untested; an unfixed form tests (`decode_staged_word`).
+/// The value of slot word `word` an own-field read at a decoding site took: a fixed form decodes as a
+/// Number untested (`decode_float_word`, the identity on tagged words); an unfixed form takes the staged decode.
 #[inline(always)]
 pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
     if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
 }
 
 /// The `OWN_FORMS` index of the storage form layout id `hint` names (`0`, the hinted form, for none).
-/// A narrow run's hint names neither inline values nor extras, so those tests fold away; packed and
-/// narrow slots never hold a raw double, and the other forms skip the decode where float slots are off.
+/// A narrow run's hint names neither inline values nor extras, so those tests fold away. Record slots are
+/// all tagged words (no arena word is raw), so a flat run, extras or inline form decodes nothing.
 pub(super) fn own_form_index(hint: Option<u32>) -> usize {
     use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    let tagged = !quench_runtime::vm::switches::float_slots();
     // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
     match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
         None => 0,
         Some(hint) if hint & NARROW_FORM != 0 => 5,
-        Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
-            (0, true) => 6,
-            (0, false) => 1,
-            (EXTRAS_FORM, true) => 7,
-            (EXTRAS_FORM, false) => 2,
-            (INLINE_FORM, _) => 3,
-            (_, true) => 8,
-            (_, false) => 4,
+        Some(hint) => match hint & (INLINE_FORM | EXTRAS_FORM) {
+            0 => 6,
+            EXTRAS_FORM => 7,
+            INLINE_FORM => 3,
+            _ => 8,
         },
     }
 }

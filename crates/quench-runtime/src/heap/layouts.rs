@@ -114,10 +114,49 @@ unsafe impl Sync for Table {}
 #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
 static TABLE: Table = unsafe { std::mem::zeroed() };
 static NEXT: AtomicU32 = AtomicU32::new(1);
-static MAP: Mutex<Option<FxHashMap<u64, u32>>> = Mutex::new(None);
+/// The ids by (header word, field representations): one id per key, handed out once.
+static MAP: Mutex<Option<FxHashMap<(u64, u32), u32>>> = Mutex::new(None);
 
 const CACHE_BITS: u32 = 12;
 static CACHE: [AtomicU32; 1 << CACHE_BITS] = [const { AtomicU32::new(0) }; 1 << CACHE_BITS];
+
+/// The raw-field bits of each id (`FieldReps`), written with the id before it is handed out and never
+/// changed after. All zero is every field tagged, so an id no fact reaches reads its default unwritten.
+/// Outside the fixed table, so a process image dump does not carry it.
+static FIELD_REPS: [AtomicU32; LAYOUT_CAPACITY] = unsafe { std::mem::zeroed() };
+
+/// Which fields of a class's cells hold raw doubles: bit `i` set makes field `i` hold its f64 bits,
+/// not a tagged `Value`. The bits come from the class's (class, field) Float64 facts; a class interned
+/// without such facts (`intern_class`) is all tagged. A class cell holds at most `FIELDS` fields
+/// (`class_space::region_capacity`), so one word holds them all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FieldReps(u32);
+
+impl FieldReps {
+    /// Every field tagged: the representation of a class no fact reaches.
+    pub const TAGGED: Self = Self(0);
+    /// The most fields a class cell holds: the capacity of the largest cell region.
+    const FIELDS: u32 = 31;
+
+    /// The representations whose raw fields are the bits of `raw` (bit `i`: field `i`).
+    #[allow(dead_code)] // Built by the Float64 field facts (plan: "reps: fact query needed"); tests build it now.
+    pub const fn from_raw_bits(raw: u32) -> Self {
+        assert!(raw >> Self::FIELDS == 0, "a class cell holds at most 31 fields");
+        Self(raw)
+    }
+
+    /// Whether field `slot` holds a raw double.
+    #[inline(always)]
+    pub const fn is_raw(self, slot: usize) -> bool {
+        slot < Self::FIELDS as usize && (self.0 >> slot) & 1 != 0
+    }
+
+    /// Whether no field holds a raw double.
+    #[inline(always)]
+    pub const fn is_tagged(self) -> bool {
+        self.0 == 0
+    }
+}
 
 /// The base address of the table, entry `id` at `id * 8` past it.
 #[inline(always)]
@@ -152,16 +191,38 @@ pub fn auxiliary(id: u32) -> u32 {
 /// The layout id of the header `word`.
 #[inline(always)]
 pub(crate) fn intern(word: u64) -> u32 {
-    if word == 0 {
+    intern_with(word, FieldReps::TAGGED)
+}
+
+/// The id of the pair of header `word` and field representations `reps`.
+#[inline(always)]
+fn intern_with(word: u64, reps: FieldReps) -> u32 {
+    if word == 0 && reps.is_tagged() {
         return 0;
     }
-    let slot = (word.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (u64::BITS - CACHE_BITS)) as usize;
-    // Every id the cache holds is a written entry, so its check reads a valid word.
+    let slot = ((word ^ u64::from(reps.0)).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (u64::BITS - CACHE_BITS)) as usize;
+    // Every id the cache holds is a written entry, so its checks read valid words.
     let id = CACHE[slot].load(Ordering::Relaxed);
-    if self::word(id) == word {
+    if self::word(id) == word && raw_reps(id) == reps.0 {
         return id;
     }
-    intern_slow(word, slot)
+    intern_slow(word, reps, slot)
+}
+
+/// The raw-field bits of layout `id` (`FIELD_REPS`).
+#[inline(always)]
+fn raw_reps(id: u32) -> u32 {
+    FIELD_REPS[id as usize].load(Ordering::Relaxed)
+}
+
+/// The field representations of class `class`: every field tagged unless the class was interned from
+/// Float64 field facts (`intern_class_with_reps`). An id past the table names no class and is all tagged.
+#[inline(always)]
+pub(crate) fn class_field_reps(class: u32) -> FieldReps {
+    if class as usize >= LAYOUT_CAPACITY {
+        return FieldReps::TAGGED;
+    }
+    FieldReps(raw_reps(class))
 }
 
 /// The class word's flag bits beyond shape and link, in header-word positions: the
@@ -173,14 +234,20 @@ pub(crate) const CLASS_FLAG_MASK: u64 = (CONSTANT_FORM | EXOTIC_ACCESS | DICTION
 /// The class id of an ordinary object with prototype link `link`, exact shape `shape` and `flags`
 /// (`CLASS_FLAG_MASK` bits): the interned header word, so equal classes share one id as every
 /// header does. The capacity of a cell is its region's (`class_space::region_capacity`), not a
-/// bit of the class word, so the word has no capacity field.
+/// bit of the class word, so the word has no capacity field. Its fields are all tagged.
 pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64) -> u32 {
+    intern_class_with_reps(shape, link, flags, FieldReps::TAGGED)
+}
+
+/// `intern_class` for a class whose fields have the representations `reps`. A class is its (shape, link,
+/// flags, representations): two classes that differ only in a field's representation are two ids.
+pub(crate) fn intern_class_with_reps(shape: u32, link: ProtoLink, flags: u64, reps: FieldReps) -> u32 {
     assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
     assert!(flags & !CLASS_FLAG_MASK == 0, "class flags outside the class word");
     assert!(link.bits() & !PROTO_INDEX_BITS == 0, "prototype link outside its field");
     let meta = link.bits() | (flags >> u32::BITS) as u32;
     let auxiliary = shape | flags as u32;
-    intern(header_word(meta, auxiliary))
+    intern_with(header_word(meta, auxiliary), reps)
 }
 
 /// The shape of class `id`: the shape bits of its auxiliary word.
@@ -201,14 +268,15 @@ pub(crate) fn class_flags(id: u32) -> u64 {
 
 #[cold]
 #[inline(never)]
-fn intern_slow(word: u64, slot: usize) -> u32 {
+fn intern_slow(word: u64, reps: FieldReps, slot: usize) -> u32 {
     let mut map = MAP.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let map = map.get_or_insert_with(FxHashMap::default);
-    let id = *map.entry(word).or_insert_with(|| {
+    let id = *map.entry((word, reps.0)).or_insert_with(|| {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         assert!((id as usize) < LAYOUT_CAPACITY, "object layout table full");
         // SAFETY: a fresh id below the capacity: no reader can name it yet (`Table`).
         unsafe { *table_base().cast_mut().add(id as usize) = word };
+        FIELD_REPS[id as usize].store(reps.0, Ordering::Relaxed);
         std::sync::atomic::fence(Ordering::Release);
         id
     });
@@ -244,6 +312,21 @@ mod tests {
         assert_eq!(class_flags(id), flags);
         assert_eq!(intern_class(1234, link, flags), id, "interning is stable");
         assert_ne!(intern_class(1235, link, flags), id, "a shape is part of the class");
+    }
+
+    #[test]
+    fn field_representations_are_part_of_the_class() {
+        let link = ProtoLink::NULL;
+        let tagged = intern_class(7, link, 0);
+        let raw = intern_class_with_reps(7, link, 0, FieldReps::from_raw_bits(0b10));
+        assert_ne!(tagged, raw, "a class differing only in a field's representation is another class");
+        assert_eq!(class_field_reps(tagged), FieldReps::TAGGED);
+        assert!(class_field_reps(raw).is_raw(1));
+        assert!(!class_field_reps(raw).is_raw(0));
+        assert_eq!(class_shape(raw), 7);
+        assert_eq!(class_link(raw), link);
+        assert_eq!(intern_class_with_reps(7, link, 0, FieldReps::from_raw_bits(0b10)), raw, "interning is stable");
+        assert_eq!(class_field_reps(u32::MAX), FieldReps::TAGGED, "no class past the table is raw");
     }
 
     #[test]

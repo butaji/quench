@@ -3,7 +3,6 @@ use crate::fact_stats::{self, FactKind};
 use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use crate::typed_ir::Representation;
 use crate::typed_ir::SlotType;
-use crate::vm::switches;
 use rustc_hash::FxHashMap;
 
 mod aux_form; mod buffer; mod plan_values;
@@ -44,27 +43,20 @@ pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
     }
 }
 
-/// The `Value` of a word a staged read took from an arena run, whose owner the reader does not know
-/// (`decode_slot` of `read_type`).
+/// The `Value` of a word a staged read took from an arena run. Record slots hold tagged words: the
+/// arena writes no raw doubles (`ValueArena::float` stays off), so the word is the value. Raw doubles
+/// of class fields are read by their class's representation (`ClassSpace::field_value`).
 #[inline(always)]
 pub fn decode_staged_word(word: u64) -> Value {
-    decode_slot(read_type(), Value::from_bits(word))
+    Value::from_bits(word)
 }
 
 /// `decode_staged_word` of a read whose row runs only where slots hold raw doubles (an own read
 /// of a form not tagged, `dispatch_fast::own_formed_handler`): the Number decoding, which passes
-/// any tagged word too, without testing the switch again.
+/// any tagged word too.
 #[inline(always)]
 pub fn decode_float_word(word: u64) -> Value {
     decode_slot(SlotType::Number, Value::from_bits(word))
-}
-
-/// The type a word of a slot is decoded as where its owner is unknown to the reader (`decode_slot`):
-/// Number where slots of that type hold raw doubles (`switches::float_slots`), whose decoding is the
-/// identity on every canonical `Value`, so it reads the word of any owner; else the type of tagged words.
-#[inline(always)]
-fn read_type() -> SlotType {
-    if switches::float_slots() { SlotType::Number } else { SlotType::Tagged }
 }
 
 // The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
@@ -430,8 +422,9 @@ pub(crate) struct ValueArena {
     /// native code reads representations keeps them.
     tracking: bool,
     /// Whether a slot whose owner's type is Number holds its Number as a raw double
-    /// (`encode_slot`): tracking under `switches::float_slots`. The words of an owner that left or
-    /// entered that type wait in `widened` for the heap to recode them (`recode_owned_run`).
+    /// (`encode_slot`). Never set: record slots keep the tagged encoding, and a class cell's raw
+    /// fields are a class fact (`layouts::FieldReps`), not an arena word. The words of an owner that
+    /// left or entered that type wait in `widened` for the heap to recode them (`recode_owned_run`).
     float: bool,
     widened: Vec<u32>,
     /// Bumped whenever an owner's type or shape assignment changes: slots of two shapes encode
@@ -681,7 +674,6 @@ impl ValueArena {
     pub(crate) fn track(&mut self) {
         self.slot_readers.reset();
         self.tracking = true;
-        self.float = switches::float_slots();
         self.widened.clear();
         self.owner_types.fill(SlotType::None);
         self.owner_epoch += 1;
@@ -828,9 +820,9 @@ impl ValueArena {
         self.values[at] = encode_slot(ty, decode_slot(SlotType::Number, self.values[at]));
     }
 
-    /// `len` values of the run at `start` as values (`decode_slot`), for storage that holds them so.
+    /// `len` values of the run at `start`, for storage that holds them so (record slots are tagged words).
     fn decoded_run(&self, start: usize, len: usize) -> Vec<Value> {
-        self.values[start..start + len].iter().map(|word| decode_slot(read_type(), *word)).collect()
+        self.values[start..start + len].to_vec()
     }
 
     /// Admits the possible writes of a no-reentry raw slot capability before exposing it.
@@ -867,7 +859,7 @@ impl ValueArena {
             // SAFETY: a narrow vector's run holds its length's values.
             return Some(unsafe { self.narrow_get(vector, index) });
         }
-        Some(decode_slot(read_type(), self.values[vector.start() + index]))
+        Some(self.values[vector.start() + index])
     }
 
     /// # Safety
@@ -895,7 +887,7 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) unsafe fn get_flat_at(&self, start: usize, index: usize) -> Value {
         // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
-        decode_slot(read_type(), unsafe { *self.values.get_unchecked(start + index) })
+        unsafe { *self.values.get_unchecked(start + index) }
     }
 
     /// `get_unchecked` of a vector outside dictionary mode; `None` for a dictionary, whose

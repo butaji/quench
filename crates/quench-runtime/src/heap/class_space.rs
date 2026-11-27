@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use super::layouts::{class_link, class_shape};
+use super::layouts::{self, class_link, class_shape};
 use super::pacing::PromotionAge;
 use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
@@ -288,6 +288,21 @@ impl ClassSpace {
         unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).read() }
     }
 
+    /// Field `slot` of the live cell at `g` as a `Value`: a raw double's word is read as the Number it holds, the
+    /// class's representation of the field (`layouts::class_field_reps`); a tagged field is its word.
+    pub(super) fn field_value(&self, g: u32, slot: usize) -> Value {
+        let reps = layouts::class_field_reps(header_class(self.header(g)));
+        if reps.is_raw(slot) { Value::number(f64::from_bits(self.field(g, slot).to_bits())) } else { self.field(g, slot) }
+    }
+
+    /// Writes field `slot` of the cell at `g` as the word `bits`: a tagged `Value`'s bits, or a raw double's bits.
+    /// The caller has the class's representation of the field (`field_value`), and runs the write barrier.
+    pub(super) fn write_field_bits(&mut self, g: u32, slot: usize, bits: u64) {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` is the word `slot + 1` of the cell, inside its span (the assert), and `&mut self` is exclusive.
+        unsafe { self.cell_ptr(g).cast::<u64>().add(1 + slot).write(bits) };
+    }
+
     /// Makes fields `from..region_capacity(g)` of the cell at `g` slack: `Value::DELETED`, which the
     /// collector traces as any field and no object reads.
     pub(super) fn delete_slack(&mut self, g: u32, from: usize) {
@@ -523,6 +538,28 @@ pub(super) const fn locate(g: u32) -> (u32, u32) {
 }
 
 impl super::Heap {
+    /// Stores `value` into field `slot` of `owner` when `owner` is a live class cell, in the field's
+    /// representation (`FieldReps`): a tagged field takes the value's bits, a raw-double field takes a
+    /// Number's f64 bits. A non-number stored into a raw field departs the object first. Returns whether
+    /// the cell took the store; `false` means the caller stores into the object's record.
+    pub(crate) fn store_class_field(&mut self, owner: Value, slot: usize, value: Value) -> bool {
+        let Some(granule) = self.live_class_cell(owner) else {
+            return false;
+        };
+        let reps = layouts::class_field_reps(header_class(self.class_space.header(granule)));
+        let bits = if !reps.is_raw(slot) {
+            value.to_bits()
+        } else if let Some(number) = value.as_number() {
+            number.to_bits()
+        } else {
+            self.depart_for_representation(owner);
+            return false;
+        };
+        self.class_space.barrier(granule, &self.properties);
+        self.class_space.write_field_bits(granule, slot, bits);
+        true
+    }
+
     /// The class space's base: granule `g`'s cell is at this plus `g * CLASS_HEADER_BYTES`. Zero until the
     /// space is reserved. Read per heap (`staged::Table::ClassSpace`), never a fixed address.
     #[inline(always)]
