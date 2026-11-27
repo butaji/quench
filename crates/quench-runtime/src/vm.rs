@@ -2822,7 +2822,7 @@ impl Vm {
             let key = PropertyKey::string(atom);
             let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
                 if self
-                    .object_data(self.realm.globals)
+                    .heap_reads().object(self.realm.globals)
                     .is_some_and(|object| !object.is_extensible())
                 {
                     return Err(self.type_error(program, "cannot declare global function".into()));
@@ -2864,7 +2864,7 @@ impl Vm {
                 continue;
             }
             if self
-                .object_data(self.realm.globals)
+                .heap_reads().object(self.realm.globals)
                 .is_some_and(|object| !object.is_extensible())
             {
                 return Err(self.type_error(program, "cannot declare global var".into()));

@@ -205,7 +205,7 @@ pub(super) fn record_forwarded_fields_in_lane(
     let Some(index) = holding_construct_plan_index(vm, callee) else {
         return;
     };
-    let Some(shape) = vm.object_data(this).map(|object| object.shape()) else {
+    let Some(shape) = vm.heap_reads().object(this).map(|object| object.shape()) else {
         return;
     };
     let plan = &mut vm.lane_stack.construct_plans[index];
@@ -297,7 +297,7 @@ pub(super) fn forwarded_resolution(
     let data = |owner: Value, atom, slot: usize| {
         let key = quench_runtime::vm::PropertyKey::string(atom);
         vm.property_attributes(owner, key).is_some_and(|attributes| !attributes.accessor)
-            && vm.object_data(owner).is_some_and(|object| vm.shape_slot(object.shape(), atom) == Some(slot))
+            && vm.heap_reads().object(owner).is_some_and(|object| vm.shape_slot(object.shape(), atom) == Some(slot))
     };
     if vm.shape_slot(plan.shape, method.method.0).is_some() {
         return None;

@@ -1712,7 +1712,7 @@ pub(super) fn super_forwarded_parent_in_lane(vm: &Vm, callee: Value) -> Option<(
     // The parent first: a class whose parent is no native the lane constructs, as every
     // user class hierarchy's, declines here without decoding its constructor's body
     // (`Function::super_forwarding`, ~900 Ir), which every `new` of it would otherwise pay.
-    let parent = vm.object_data(callee)?.proto();
+    let parent = vm.heap_reads().object(callee)?.proto();
     match vm.function_record(parent) {
         // An error's stack starts past its constructors' frames, which this construction
         // would not make.

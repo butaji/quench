@@ -1091,7 +1091,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         code: &ResidualProgram, object: Value, atom: quench_runtime::bytecode::Atom) -> Option<Value> {
         let slot = Self::private_slot(cx, site, code, object, atom)?;
         let vm = unsafe { vm(cx) };
-        vm.heap_reads().property_get(vm.object_data(object)?, slot)
+        vm.heap_reads().property_get_ref(vm.heap_reads().object(object)?, slot)
     }
 
     /// The store of private field `atom` of `object` at the record address `site`, under its
@@ -4394,7 +4394,7 @@ unsafe fn delete_value_in_lane(cx: *mut (), base: Value, key: Value) -> Option<V
     let code = unsafe { &*(*cx).code };
     let plain = base.direct_object_index().is_some()
         && vm.heap_reads().string(key).is_some()
-        && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
+        && vm.heap_reads().object(base).is_some_and(|data| !data.is_module_namespace() && !data.record().is_arguments_object()); // a record-only flag, read from the record
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
 }
 
