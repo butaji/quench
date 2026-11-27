@@ -26,6 +26,18 @@ pub(crate) struct Emit<'a, 'b> {
     /// (`property_values` is `None`): `Table::PropertyValues` then reads the payload's property
     /// buffer where it is used, after any call the operation made before it.
     pub(crate) payload: Option<ir::Value>,
+    /// The facts of the words this step read from the frame (R2, facts on values): each register's
+    /// type at this point, which the frame noted when it read the word (`EmitFrame::tagged`).
+    /// A row's class test the fact decides builds no code (`Stage::fact`, `value::decided`).
+    pub(crate) facts: smallvec::SmallVec<[(ir::Value, quench_runtime::typed_ir::Type); 4]>,
+}
+
+impl Emit<'_, '_> {
+    /// Notes `fact` of `word` for the rest of this step (`facts`); a later note of the same word keeps both.
+    #[inline(always)]
+    pub(crate) fn note_fact(&mut self, word: ir::Value, fact: quench_runtime::typed_ir::Type) {
+        if fact != quench_runtime::typed_ir::Type::ANY { self.facts.push((word, fact)); }
+    }
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -380,7 +392,15 @@ impl Stage for Emit<'_, '_> {
         emit_js_guard(self.builder, cond, miss);
         Some(())
     }
-    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
+    fn known(&self, cond: ir::Value) -> Option<bool> {
+        crate::compiled::emit_machine::scalar::known_integer(self.builder, cond).map(|(bits, _)| bits != 0)
+    }
+    /// The fact this step noted of `word` (`facts`); the most precise of two notes of one word is the
+    /// later one a refinement made, and both hold, so the last is taken.
+    fn fact(&self, word: ir::Value) -> quench_runtime::typed_ir::Type {
+        let word = self.builder.func.dfg.resolve_aliases(word);
+        self.facts.iter().rev().find(|(noted, _)| *noted == word).map_or(quench_runtime::typed_ir::Type::ANY, |(_, fact)| *fact)
+    }
     fn table(&mut self, table: Table) -> ir::Value {
         match table {
             Table::PropertyValues => match (self.property_values, self.payload) {

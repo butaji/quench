@@ -299,6 +299,18 @@ pub trait Stage: crate::projection::Sealed {
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer
     /// never does for a value read from the heap.
     fn known(&self, cond: Self::Cond) -> Option<bool>;
+    /// The fact the stage holds of `word`: the type every value it may take at this point is of
+    /// (R2, facts on values). A stage that keeps none answers `Type::ANY`, so a row's test of a
+    /// value's class (`value::decided`) is built as before; the specializer's stage answers from its
+    /// facts, and a test the fact decides is a constant condition, with no code.
+    #[inline(always)]
+    fn fact(&self, word: Self::Word) -> crate::typed_ir::Type { let _ = word; crate::typed_ir::Type::ANY }
+    /// The condition that is `value` at every run: a test a fact decided (`value::decided`).
+    #[inline(always)]
+    fn cond_of(&mut self, value: bool) -> Self::Cond {
+        let zero = self.constant(0);
+        if value { self.eq_imm(zero, 0u64) } else { self.ne_imm(zero, 0u64) }
+    }
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 

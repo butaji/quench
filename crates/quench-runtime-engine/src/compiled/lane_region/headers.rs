@@ -63,18 +63,25 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             emit_js_guard(builder, object, exit);
             state.proofs.readable.remove(index);
             refine_owner(state, index, fact);
-            if let Some(slot) = state.proofs.records.get_mut(index) { *slot = Some(header.record); }
+            let bits = builder.func.dfg.resolve_aliases(bits);
+            for record in state.proofs.records.iter_mut().filter(|(word, ..)| *word == bits) { record.2 = false; }
         }
         return header;
     }
     let mut readable = false;
-    // The record the owner's value names, proved before a call that retired the header's shape
-    // (`LocalProofs::records`): the shape is read again through it, with no family test or lookup.
-    let header = if let Some(record) = entry.records[index].or(state.proofs.records.get(index).copied().flatten()) {
+    let header = if let Some(record) = entry.records[index] {
         record.header(builder, fact)
     } else {
         let bits = owner_bits(builder, registers, state, entry, owner);
-        if read && !fact.is_some_and(|fact| fact.ty.is_direct_object_family()) {
+        let bits = builder.func.dfg.resolve_aliases(bits);
+        // The record this word names, proved before (`LocalProofs::records`): by any register that holds it,
+        // and before a call that retired the header's shape. The shape is read again through it, with no
+        // family test or record lookup; a store of a read's proof still tests the family once.
+        let kept = state.proofs.records.iter().find(|(word, ..)| *word == bits).copied();
+        let header = if let Some((_, record, was_readable)) = kept.filter(|(.., was_readable)| !*was_readable || read) {
+            readable = was_readable;
+            record.header(builder, fact)
+        } else if read && !fact.is_some_and(|fact| fact.ty.is_direct_object_family()) {
             readable = true;
             let records = object_table_base(builder, entry, payload);
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
@@ -82,14 +89,16 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
         } else {
             let records = object_table(builder, entry, payload);
             ObjectHeader::prove(builder, bits, records, fact, exit)
+        };
+        if kept.is_none_or(|(.., was_readable)| was_readable && !readable) {
+            state.proofs.records.retain(|(word, ..)| *word != bits);
+            state.proofs.records.push((bits, header.record, readable));
         }
+        header
     };
     state.proofs.headers[index] = Some(header);
     state.proofs.set_readable(index, readable);
-    if !readable {
-        refine_owner(state, index, fact);
-        if let Some(slot) = state.proofs.records.get_mut(index) { *slot = Some(header.record); }
-    }
+    if !readable { refine_owner(state, index, fact); }
     header
 }
 
