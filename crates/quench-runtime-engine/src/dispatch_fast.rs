@@ -161,6 +161,32 @@ macro_rules! arithmetic_operators {
     };
 }
 
+/// The relational operators a returning constant-right `Binary` decides per operator
+/// (`returning_operator_row`, its Number relation): `$pick!(OPERATOR)` of `$operator`'s, else
+/// `None`; or with `all`, the array of every operator's `$pick!`. Their miss is the general step
+/// (`returning_operator_miss_of` names arithmetic alone).
+macro_rules! relation_operators {
+    (@with $form:ident ($($args:tt)*)) => {{
+        use quench_runtime::vm::operations::binary_operator as operator;
+        const EQUALITY: u32 = operator::Equality;
+        const INEQUALITY: u32 = operator::Inequality;
+        const STRICT_EQUALITY: u32 = operator::StrictEquality;
+        const STRICT_INEQUALITY: u32 = operator::StrictInequality;
+        const LESS_THAN: u32 = operator::LessThan;
+        const LESS_EQUAL: u32 = operator::LessEqualThan;
+        const GREATER_THAN: u32 = operator::GreaterThan;
+        const GREATER_EQUAL: u32 = operator::GreaterEqualThan;
+        $form!($($args)*; EQUALITY, INEQUALITY, STRICT_EQUALITY, STRICT_INEQUALITY, LESS_THAN, LESS_EQUAL, GREATER_THAN,
+            GREATER_EQUAL)
+    }};
+    (all $pick:ident) => {
+        relation_operators!(@with arithmetic_all ($pick))
+    };
+    ($operator:expr, $pick:ident) => {
+        relation_operators!(@with arithmetic_match ($operator, $pick))
+    };
+}
+
 macro_rules! arithmetic_match {
     ($operator:expr, $pick:ident; $($op:ident),*) => {
         match $operator {
@@ -421,7 +447,8 @@ impl LaneView {
                     (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
                         returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, $leaf) as Handler),
                 ];
-                returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
+                returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten())
+                    .chain(relation_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
         }
         let forms = match form {
@@ -5115,6 +5142,10 @@ fn polymorphic_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Valu
     if holds_holder && let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
         return Some(value);
     }
+    // The other receivers' prototype hints, held in the record's `mode` (`hold_holder_arm`).
+    if let Some(value) = vm.holder_arms_hit(i.mode, i.imm(), object) {
+        return Some(value);
+    }
     let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
     match hit {
         PolymorphicHit::Own(entry) => {
@@ -5133,11 +5164,40 @@ fn polymorphic_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Valu
                     }
                     vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK)
                 });
+            } else {
+                hold_holder_arm(vm, ip, object, value);
             }
         }
         PolymorphicHit::Hint => {}
     }
     Some(value)
+}
+
+/// Holds the prototype's answer `value` for `object`, a receiver the record's own prototype hint
+/// does not name, as one of the up to four arms of the polymorphic record at `ip` (its `mode`,
+/// sixteen bits each, a hint index plus one): an empty arm or one whose watch retired takes it;
+/// with all four live it holds none. Out of line, as `set_prototype_hint`.
+#[cold]
+#[inline(never)]
+fn hold_holder_arm(vm: &mut Vm, ip: Ip, object: Value, value: Value) {
+    if holds_loop_site(ip) {
+        return;
+    }
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let mode = i.mode;
+    let Some(k) = (0..4).find(|k| {
+        let arm = (mode >> (16 * k)) as u16;
+        arm == 0 || !vm.holder_hint_live(arm - 1)
+    }) else {
+        return;
+    };
+    let arm = (mode >> (16 * k)) as u16;
+    if let Some(index) = vm.hold_holder_hint((arm != 0).then(|| arm - 1), i.imm(), object, value, NO_CALL_LINK - 1) {
+        let mode = (mode & !(0xffff << (16 * k))) | u64::from(index + 1) << (16 * k);
+        // SAFETY: as `set_record_hint`; the polymorphic row reads `mode` only as its arms.
+        unsafe { (*ip.cast_mut()).mode = mode };
+    }
 }
 
 /// The hashed entries of the `GetField` record at `ip` (`HASHED_SITE`): the site's hashed entries
@@ -15516,7 +15576,8 @@ script_handler! {
             let vm = unsafe { vm(cx) };
             if let Some(value) = vm.primary_own_field_hit(code, object, i.c) {
                 if object.direct_object_index().is_some() {
-                    set_field_hint(ip, vm.field_cache_entry(i.c));
+                    // The row compares layout ids (`form_hint`), not the entry's exact shape.
+                    set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
                 }
                 lane_return_value!(cx, ip, value, LEAF);
             }
@@ -18036,7 +18097,9 @@ fn specialize_returning_operator(instruction: WideInstruction, constants: &[Valu
             if int32 { returning_operator_row_of!($op, NOT_LEAF, true) } else { returning_operator_row_of!($op, NOT_LEAF, false) }
         };
     }
-    let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
+    let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick)
+        .or_else(|| relation_operators!(instruction.binary_operator(), pick))
+    else {
         return;
     };
     record.handler = handler as *const ();

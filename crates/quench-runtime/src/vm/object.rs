@@ -2712,6 +2712,28 @@ impl Vm {
         })?
     }
 
+    /// `holder_hint_hit` over the up to four prototype hints `arms` names, sixteen bits each,
+    /// an index plus one (zero for none): a polymorphic read whose receivers' prototypes each hold
+    /// the name (`polymorphic_entry`). The receiver's object part is resolved once.
+    #[inline(always)]
+    pub fn holder_arms_hit(&self, arms: u64, atom: Atom, object: Value) -> Option<Value> {
+        if arms == 0 {
+            return None;
+        }
+        let receiver = self.hinted_receiver(object)?;
+        let mut rest = arms;
+        while rest != 0 {
+            let arm = rest as u16;
+            if arm != 0
+                && let Some(value) = self.holder_hint_hit_in(arm - 1, atom, receiver)
+            {
+                return Some(value);
+            }
+            rest >>= u16::BITS;
+        }
+        None
+    }
+
     /// Whether the holder hint `index` is held and its watch still published.
     #[inline(always)]
     pub fn holder_hint_live(&self, index: u16) -> bool {

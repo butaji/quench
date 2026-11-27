@@ -88,14 +88,6 @@ pub(crate) fn guard_callee<S: Stage>(stage: &mut S, held: S::Word, expected: u64
     stage.guard(same, miss)
 }
 
-/// `guard_callee` against an identity the frame reads as a word (`CallFrame::call_identity`).
-#[inline(always)]
-pub(crate) fn guard_callee_word<S: Stage>(stage: &mut S, held: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
-    let difference = stage.sub(held, expected);
-    let same = stage.eq_imm(difference, 0u32);
-    stage.guard(same, miss)
-}
-
 /// Continues where a construction's receiver was allocated: the plan answers the deleted marker
 /// where it declines (a due collection, a plan that does not hold).
 #[inline(always)]
