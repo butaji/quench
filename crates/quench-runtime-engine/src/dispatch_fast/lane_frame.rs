@@ -321,12 +321,13 @@ impl FieldStores {
 pub(crate) type CallActivation =
     unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> Resumed;
 
-/// The static form of a call row (`protocol_row` of `MISS`, `call_form`): its leaf form (`NOT_LEAF`
-/// for a plain activation), its argument count (`ANY_ARGC` where the record's immediate holds it),
-/// whether its receiver is its function's `undefined` register (`script_call_prove_miss`'s `PLAIN`), and
-/// whether it returns its callee's completion (`protocol_misses::script_call::RETURNS`).
+/// The static data a call row is monomorphized over, derived at view derivation (`call_row`, from the
+/// row's miss): its leaf form (`NOT_LEAF` for a plain activation), its argument count (`ANY_ARGC` where
+/// the record's immediate holds it), whether its receiver is its function's `undefined` register
+/// (`script_call_prove_miss`'s `PLAIN`), and whether it returns its callee's completion
+/// (`protocol_misses::script_call::RETURNS`). The call's target is checked against `leaf` by its entry.
 #[derive(Clone, Copy)]
-pub(crate) struct CallForm {
+pub(crate) struct CallRow {
     leaf: LeafForm,
     argc: u16,
     plain: bool,
@@ -346,7 +347,7 @@ pub(crate) struct LaneCall {
     /// The call record and where it is.
     record: *const LaneInstruction,
     ip: Ip,
-    form: CallForm,
+    form: CallRow,
     /// The entry `call_entry` admitted.
     target: std::cell::Cell<*const ScriptCallTarget>,
     /// The plain depth `call_room` admitted the call at (`LaneStack::plain_room`), which the plain
@@ -3850,8 +3851,8 @@ pub(crate) const fn protocol_row_declines(op: Op) -> bool {
 /// the row declines every record (`protocol_row_declines`), the record's protocol miss body itself, so the
 /// record skips the row's decode and its tail call.
 pub(crate) const fn protocol_handler<const OP: u16, const ACC: u8, const MISS: u16>() -> Handler {
-    // A plain or leaf script call's row runs its call hooks (`call_form`), whatever its decoder.
-    if protocol_row_declines(LaneFields::<OP>::OPCODE) && call_form(MISS).is_none() {
+    // A plain or leaf script call's row runs its call hooks (`call_row`), whatever its decoder.
+    if protocol_row_declines(LaneFields::<OP>::OPCODE) && call_row(MISS).is_none() {
         protocol_miss(MISS)
     } else {
         protocol_row!(OP, ACC, MISS) as Handler
@@ -3869,10 +3870,10 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
     /// until its row lands.
     pub(crate) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
         let cx: *mut LaneContext = row_context::<OP>(cx);
-        // A plain or leaf script call's row (`call_form`) decodes by the call decoder, which the
+        // A plain or leaf script call's row (`call_row`) decodes by the call decoder, which the
         // generic decode (`row_decode!`) leaves out, and steps over a frame whose call hooks make the
         // proved call (`call_frame`, `CallFrame::call_hand_over`).
-        if const { call_form(MISS).is_some() } {
+        if const { call_row(MISS).is_some() } {
             // A call row's records are JavaScript, whose view carries its context (`script_handler!`).
             debug_assert_eq!(view.memory.bytes.cast::<LaneContext>(), context_in_lane(), "a JavaScript view carries its context");
             // The call decoder reads a returning call's flag itself (`Invocation::of`).
@@ -3946,33 +3947,33 @@ pub(crate) const fn return_form(miss: u16) -> Option<u8> {
     if parameters == returning_code(RETURN_KIND, leaf) { Some(leaf) } else { None }
 }
 
-/// The static form of the call row whose miss is `miss` (`CallForm`): a plain script call of a
+/// The static form of the call row whose miss is `miss` (`CallRow`): a plain script call of a
 /// `script_call_prove_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
 /// of a `script_call_leaf_prove_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
 /// miss, whose record the lane frame does not answer.
-pub(crate) const fn call_form(miss: u16) -> Option<CallForm> {
+pub(crate) const fn call_row(miss: u16) -> Option<CallRow> {
     use super::protocol_misses::script_call as code;
     let parameters = protocol_family::parameters(miss);
     match protocol_family::of(miss) {
         protocol_family::SCRIPT_CALL if parameters & !(code::PLAIN | code::RETURNS) <= code::ARGC_ANY => {
             let argc = parameters & !(code::PLAIN | code::RETURNS);
             let argc = if argc == code::ARGC_ANY { ANY_ARGC } else { argc as u16 };
-            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0, returns: parameters & code::RETURNS != 0 })
+            Some(CallRow { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0, returns: parameters & code::RETURNS != 0 })
         }
         protocol_family::LEAF_CALL => match super::protocol_misses::leaf_call::leaf_of(parameters) {
             Some((leaf, argc)) if leaf >= PLAIN_LEAF && leaf <= THIS_LEAF && argc <= FIXED_ARGUMENT_COPIES =>
-                Some(CallForm { leaf, argc, plain: false, returns: false }),
+                Some(CallRow { leaf, argc, plain: false, returns: false }),
             _ => None,
         },
         _ => None,
     }
 }
 
-/// The hand-off of the call row whose miss is `miss` (`call_form`): its leaf form's run at its
+/// The hand-off of the call row whose miss is `miss` (`call_row`): its leaf form's run at its
 /// argument count (`leaf_call_activation`), else the plain activation at its argument count
 /// (`plain_call_activation`), each an instantiation whose count and form are constants.
 const fn call_activation(miss: u16) -> CallActivation {
-    let Some(form) = call_form(miss) else { return plain_call_activation::<ANY_ARGC> };
+    let Some(form) = call_row(miss) else { return plain_call_activation::<ANY_ARGC> };
     macro_rules! leaf {
         ($form:ident) => {
             match form.argc {
@@ -4056,13 +4057,13 @@ unsafe fn leaf_call_activation<const LEAF: u8, const ARGC: u16>(context: *mut ()
 }
 
 /// The frame a call row of `MISS` steps over (`protocol_row`): the register file and the carried view,
-/// and, for a plain or leaf script call (`call_form`), the call record its call hooks read
+/// and, for a plain or leaf script call (`call_row`), the call record its call hooks read
 /// (`LaneCall`), whose form and hand-off are constants of the instantiation.
 #[inline(always)]
 fn call_frame<const OP: u16, const ACC: u8, const MISS: u16>(cx: *mut LaneContext, r: Registers, ip: Ip,
     i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
-    if let Some(form) = const { call_form(MISS) } {
+    if let Some(form) = const { call_row(MISS) } {
         // SAFETY: the running lane's context; the addresses are taken, nothing is read.
         let vm = unsafe { vm(cx) };
         frame.call = Some(LaneCall {
@@ -4089,7 +4090,7 @@ pub(crate) fn getter_frame(cx: *mut LaneContext, r: Registers, ip: Ip, target: &
     let vm = unsafe { vm(cx) };
     let mut frame = LaneFrame::<ACC_NONE>::new(r, Carried::script(cx));
     frame.call = Some(LaneCall { context: cx.cast(), stack: &raw const *vm.lane_stack, globals: &raw const vm.realm.globals,
-        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false, returns: false }, target: std::cell::Cell::new(target),
+        record: ip, ip, form: CallRow { leaf: NOT_LEAF, argc: 0, plain: false, returns: false }, target: std::cell::Cell::new(target),
         depth: 0, activate, base });
     frame
 }

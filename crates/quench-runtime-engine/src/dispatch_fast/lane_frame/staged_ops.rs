@@ -204,7 +204,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
             return getter_entry(call, site);
         }
         // The form the proved calls make: a callee and a receiver register and a window. A returning
-        // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
+        // call is admitted by its form alone (`CallRow::returns`, which `specialize_script_calls` sets
         // where `returning_call_admitted` holds for the function); a forwarding call is never.
         let (Callee::Register(callee_register), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
@@ -237,12 +237,12 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // The callee and the entry's admission are checked here, once, at run time: the plan names the
         // callee folded (`Identity::Folded`), so the staged call reads and compares neither again.
         if target.admission != stack.admission { return quench_runtime::staged::CallEntry::Helper; }
-        // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
+        // A static count is the row's (`call_row`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
         // The target's admission is checked with its callee in the row's one guard (`call_admission`).
         if (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
-            || (leaf != NOT_LEAF && target.entry != CallEntry::leaf(leaf))
+            || (leaf != NOT_LEAF && target.entry.leaf_form() != leaf)
             || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
         {
             return quench_runtime::staged::CallEntry::Helper;
