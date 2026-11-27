@@ -2730,7 +2730,7 @@ fn stitched_entry(
 ) -> Option<Vec<u8>> {
     let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
     // The indirect call row calls the non-diagnostic reference callout.
-    if !admission::wasm_module_routes_to_stencils() {
+    if !quench_runtime::vm::tier_policy::wasm_module_routes_to_stencils() {
         return None;
     }
     // The program's image may hold the rows already (`wasm_image::linked`).
@@ -8349,7 +8349,7 @@ impl Vm {
             })
             .flatten();
         // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = admission::wasm_module_routes_to_stencils();
+        let base_only = quench_runtime::vm::tier_policy::wasm_module_routes_to_stencils();
         let isa = if base_only {
             None
         } else {

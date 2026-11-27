@@ -437,6 +437,27 @@ pub fn quick_only() -> bool {
     crate::jit_mode::quick_only()
 }
 
+/// Whether BaseJIT (stencil) bodies and regions run in this process.
+pub fn base_runs() -> bool {
+    crate::jit_mode::tiers_allowed(&[Tier::Base])
+}
+
+/// Whether a Cranelift tier (QuickJIT or UltraJIT) runs: the tiers that compile what BaseJIT does not build.
+pub fn cranelift_runs() -> bool {
+    crate::jit_mode::tiers_allowed(Tier::CRANELIFT)
+}
+
+/// Whether loop regions take the stencil tier in place of Cranelift: every region is a stencil region, and none
+/// is promoted to UltraJIT.
+pub fn loop_regions_are_stencils() -> bool {
+    crate::jit_mode::base_regions()
+}
+
+/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
+pub fn wasm_module_routes_to_stencils() -> bool {
+    crate::jit_mode::base_only()
+}
+
 /// What `policy` lets the tiers compile.
 pub const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]

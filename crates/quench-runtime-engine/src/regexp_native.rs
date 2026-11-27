@@ -34,9 +34,9 @@ pub(crate) fn enable_compiler(enabled: bool) {
 /// builds the code. The Cranelift u-jit builds it where it runs; a target with the stencil regexp
 /// rows and no Cranelift tiers stitches it from those rows.
 fn compiler() -> NativeCompiler {
-    use crate::compiled::admission::{tier_runs, Tier};
-    let stencils = tier_runs(&[Tier::Base]) && stitch::available();
-    let cranelift = tier_runs(Tier::CRANELIFT);
+    use quench_runtime::vm::tier_policy::{base_runs, cranelift_runs};
+    let stencils = base_runs() && stitch::available();
+    let cranelift = cranelift_runs();
     let start: fn(NativePlan) -> NativeBuild = if stencils && !cranelift { stitch_start } else { start };
     NativeCompiler { compiles: regexp_compiles, start }
 }

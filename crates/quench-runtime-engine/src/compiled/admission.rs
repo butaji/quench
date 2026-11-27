@@ -237,7 +237,7 @@ pub(crate) struct UnitFacts {
 /// region, its memory policy. Only `specialize` asks this.
 fn may_compile(kind: UnitKind) -> bool {
     match kind {
-        UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
+        UnitKind::Body => quench_runtime::vm::tier_policy::may_compile(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
         UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
@@ -370,37 +370,6 @@ fn bisected_out() -> bool {
 /// The tiers of the JIT mode, as the specializer names them.
 pub(crate) use quench_runtime::jit_mode::Tier;
 
-/// Whether the process's JIT mode lets `tiers` run: the specializer's one reading of the mode,
-/// which every other tier decision of the engine takes from here.
-#[inline]
-pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
-
-/// Whether the stencil tier is the only tier (`--b-jit`).
-#[inline]
-pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
-
-/// Whether loop regions take the stencil tier in place of Cranelift (`jit_mode::base_regions`).
-#[inline]
-fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
-
-/// Whether every loop region is a stencil region: no region ever leaves for Cranelift.
-#[inline]
-pub(crate) fn every_region_is_base() -> bool { stencil_regions() }
-
-/// The `base` flag a region keeps: its own pick, cleared wherever every region is a stencil one (there none is
-/// promoted or kept as a u-jit region).
-#[inline]
-pub(crate) fn default_mode_picks_base(base: bool) -> bool { base && !stencil_regions() }
-
-/// Whether the default mode promotes a b-jit region to u-jit once it has run long enough.
-#[inline]
-pub(crate) fn regions_promote_to_ultra() -> bool { !stencil_regions() }
-
-/// Whether a site BaseJIT declined compiles again as a u-jit region: never where every region is a stencil one, and
-/// only where UltraJIT runs.
-#[inline]
-pub(crate) fn declined_regions_recompile_ultra() -> bool { !stencil_regions() && tier_runs(&[Tier::Ultra]) }
-
 /// Whether any of `tiers` runs in this VM: compiled execution, a memory policy that compiles them
 /// (`tier_policy::tier_may_run`), and a JIT mode that allows one. A build whose profiles count
 /// interpreted work exactly runs none.
@@ -431,24 +400,6 @@ pub(crate) fn region_unit(vm: &Vm) -> Option<CompiledUnit> { region_unit_under(v
 /// Whether a loop region compiles in this VM (`region_unit`).
 #[inline]
 pub(crate) fn loop_regions_compile(vm: &Vm) -> bool { region_unit(vm).is_some() }
-
-/// Whether a Cranelift tier runs (QuickJIT or UltraJIT): the tiers that compile what BaseJIT does not build.
-#[inline]
-fn cranelift_runs() -> bool { tier_runs(Tier::CRANELIFT) }
-
-/// Whether inlining regions are routed to Cranelift, the only tier that compiles them (BaseJIT declines every
-/// inlining region), so they are analyzed only where a Cranelift tier runs.
-#[inline]
-pub(crate) fn inlining_regions_route_to_cranelift() -> bool { cranelift_runs() }
-
-/// Whether a region BaseJIT does not build is declined rather than left to Cranelift: where no Cranelift tier runs,
-/// nothing compiles it.
-#[inline]
-pub(crate) fn unbuilt_region_declined() -> bool { !cranelift_runs() }
-
-/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
-#[inline]
-pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
 
 /// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
 /// interpreter's own projection of the function, decided here as every compiled unit is.
