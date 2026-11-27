@@ -17611,7 +17611,8 @@ fn prove_loop_steps(decoded: &[WideInstruction], records: &mut [LaneInstruction]
 /// The comparison jumps whose operands the int32 kinds prove (`lane_frame::proven_compare_jump`): each takes its proven
 /// instance, which reads its register operands untagged. One that reads a speculative register is listed in
 /// `speculating` with its formed instance (`LaneView::retire_int_speculation`), which it takes back once an update
-/// overflows that register. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
+/// overflows that register. A register pair the kinds do not prove takes its guarded instance (`guarded_compare_jump`),
+/// which tests the tags once per execution. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
 fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
     speculating: &mut Vec<(u32, *const (), *const ())>) {
     use quench_runtime::bytecode::Operand;
@@ -17619,7 +17620,10 @@ fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], kin
     let speculative = |operand: Operand| operand.register_index().is_some_and(|register| kinds.of(register) == int_kinds::Kind::Speculative);
     for (pc, record) in records.iter_mut().enumerate() {
         let (left, right) = (Operand(record.b), Operand(record.c));
-        let Some((proven_handler, formed)) = lane_frame::proven_compare_jump(record, constants, proven) else { continue };
+        let Some((proven_handler, formed)) = lane_frame::proven_compare_jump(record, constants, proven) else {
+            if let Some(guarded) = lane_frame::guarded_compare_jump(record) { record.handler = guarded as *const (); }
+            continue
+        };
         if speculative(left) || speculative(right) {
             speculating.push((pc as u32, proven_handler as *const (), formed as *const ()));
         }
