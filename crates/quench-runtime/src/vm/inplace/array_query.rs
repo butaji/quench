@@ -16,7 +16,7 @@ impl Vm {
     /// except past the end of an array of `Array.prototype` whose chain holds no index, which reads
     /// `undefined`.
     pub fn plain_array_at(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
-        let index = args.first()?.as_int()?;
+        let index = args.first()?.numeric_key()?;
         let length = self.array_search_elements(receiver)?.len();
         let Some(position) = at_position(index, length) else {
             return self.undefined_past_end(receiver);
@@ -78,7 +78,7 @@ impl Vm {
     /// range: a new array of the elements with `value` at the relative index. An index past either
     /// end, which throws, is `None` for the general native.
     pub fn plain_array_with(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
-        let index = args.first()?.as_int()?;
+        let index = args.first()?.numeric_key()?;
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let elements = self.array_search_elements(receiver)?;
         let position = at_position(index, elements.len())?;
@@ -108,7 +108,7 @@ fn at_position(index: i32, length: usize) -> Option<usize> {
 fn last_index_start(from: Option<Value>, length: usize) -> Option<isize> {
     let (present, from) = match from {
         None => (false, 0),
-        Some(from) => (true, i64::from(from.as_int()?)),
+        Some(from) => (true, i64::from(from.numeric_key()?)),
     };
     let mut stage = crate::staged::Concrete::pure();
     Some(crate::staged::array_search::last_index_start_row(&mut stage, present, from as u64, length as u64) as i64 as isize)

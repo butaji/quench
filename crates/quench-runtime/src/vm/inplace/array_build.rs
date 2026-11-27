@@ -177,5 +177,5 @@ fn fill_bound(value: Option<Value>, default: usize, length: usize) -> Option<usi
     let Some(value) = value.filter(|value| !value.is_undefined()) else {
         return Some(default);
     };
-    Some(crate::staged::string_search::relative_bound(i64::from(value.as_int()?), length))
+    Some(crate::staged::string_search::relative_bound(i64::from(value.numeric_key()?), length))
 }

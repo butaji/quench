@@ -924,7 +924,7 @@ fn map_case(units: super::wtf16::Units<'_>, map: impl Fn(&str) -> String) -> JsS
 /// coerces, since ToNumber may run guest code.
 #[inline(always)]
 fn string_unit_index(index: Value) -> Option<i64> {
-    if let Some(index) = index.as_int() {
+    if let Some(index) = index.numeric_key() {
         return Some(i64::from(index));
     }
     let number = index.as_number()?;

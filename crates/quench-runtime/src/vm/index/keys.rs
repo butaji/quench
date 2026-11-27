@@ -19,7 +19,7 @@ impl Vm {
     }
 
     pub fn array_index_key(&self, key: Value) -> Option<u32> {
-        if let Some(index) = key.as_int() {
+        if let Some(index) = key.numeric_key() {
             return u32::try_from(index).ok();
         }
         let key = self.heap.string(key).filter(|text| may_name_index(text))?;

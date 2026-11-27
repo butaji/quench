@@ -81,7 +81,7 @@ impl Vm {
     pub fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
         // An int32 key into flat ASCII text, as `s[i]` in a scan: the byte's shared string,
         // read in place with no unit view built.
-        if let Some(index) = key.as_int()
+        if let Some(index) = key.numeric_key()
             && let Some(text) = self.heap.string(string)
             && let Some(super::wtf16::Units::Ascii(bytes)) = text.existing_units()
         {
@@ -290,7 +290,7 @@ impl Vm {
     /// the index's canonical atom (`shape_names_index`), or through exotic behaviour, where
     /// this declines.
     pub fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
-        let index = usize::try_from(key.as_int()?).ok()?;
+        let index = usize::try_from(key.numeric_key()?).ok()?;
         let mut current = base;
         loop {
             // record-only: indexed descriptors and boxed state
@@ -336,7 +336,7 @@ impl Vm {
     /// The present dense element `base[key]` for a non-negative integer key: a data property.
     #[inline(always)]
     pub fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
-        let index = usize::try_from(key.as_int()?).ok()?;
+        let index = usize::try_from(key.numeric_key()?).ok()?;
         let object = self.heap.array(base)?;
         object
             .elements()
@@ -356,7 +356,7 @@ impl Vm {
         key: Value,
         value: Value,
     ) -> bool {
-        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+        let Some(index) = key.numeric_key().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
         let Some(array) = self.heap.array_store_mut(object, value) else {
@@ -389,7 +389,7 @@ impl Vm {
         key: Value,
         value: Value,
     ) -> bool {
-        key.as_int()
+        key.numeric_key()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.append_dense_element(object, index, value))
     }
@@ -397,7 +397,7 @@ impl Vm {
     /// `object[key] = value` that fills a hole of a dense array (`fill_dense_hole`); `false`
     /// leaves the store, unobserved, to the general path.
     #[inline(always)] pub fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
-        key.as_int()
+        key.numeric_key()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.fill_dense_hole(object, index, value))
     }
@@ -438,7 +438,7 @@ impl Vm {
         key: Value,
         value: Value,
     ) -> bool {
-        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+        let Some(index) = key.numeric_key().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
         if self.heap.record_array_store_mut_unlogged(object, value).is_none() {
@@ -461,7 +461,7 @@ impl Vm {
     /// runs no guest code; anything else changes nothing. Growing the elements charges the
     /// heap, whose collection waits for a safepoint.
     pub fn try_add_record_element(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+        let Some(index) = key.numeric_key().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
         let adds = self.heap.record_array(object).is_some_and(|array| {

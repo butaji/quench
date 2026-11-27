@@ -224,6 +224,12 @@ impl Stage for StencilStage {
         crate::words::canonical(f64::from_bits(number.word()))
     }
     #[inline(always)]
+    fn box_raw_number(&mut self, number: crate::staged::Float64<u64>) -> u64 {
+        // `Value::from_f64_raw`: a double's own bits, except that a NaN is the canonical one.
+        let value = f64::from_bits(number.word());
+        if value.is_nan() { crate::layout::words::CANONICAL_NAN } else { value.to_bits() }
+    }
+    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }

@@ -67,6 +67,13 @@ impl TypedArrayKind {
         matches!(self, Self::BigInt64 | Self::BigUint64)
     }
 
+    /// Whether the elements are binary floats: their Numbers are stored as raw double words
+    /// (`Value::from_f64_raw`, decision 4.1), integral values included.
+    #[inline(always)]
+    pub(crate) const fn is_float(self) -> bool {
+        matches!(self, Self::Float16 | Self::Float32 | Self::Float64)
+    }
+
     /// For a kind of 8-, 16- or 32-bit integers, whether they are signed: a Number such a
     /// kind stores is reduced modulo its width (except Uint8Clamped's, which clamps), so an
     /// integer of another such kind converts to its low bytes. `None` for the others.

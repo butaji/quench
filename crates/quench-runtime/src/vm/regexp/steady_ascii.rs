@@ -101,7 +101,7 @@ impl Vm {
     fn steady_index_store(&self, object: &crate::heap::Object, shape: u32, flags: RegExpFlags) -> Option<(IndexStore, ExecStart)> {
         let slot = self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape)?.1 as usize;
         let last_index = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None }?;
-        let index = last_index.as_int()?;
+        let index = last_index.numeric_key()?;
         let exec = exec_start_int(flags, index);
         if exec.stateful && self.method_caches_may_name(self.runtime_atoms.last_index) {
             return None;

@@ -412,7 +412,7 @@ impl Vm {
     /// plain chain walk answers: what `get_index` returns for it before any lookup that can
     /// run guest code. `None` leaves the read to `get_index`.
     pub fn plain_keyed_get(&mut self, object: Value, key: Value) -> Option<Value> {
-        if let Some(index) = key.as_int() {
+        if let Some(index) = key.numeric_key() {
             return self.plain_index_get(object, usize::try_from(index).ok()?);
         }
         if let Some(value) = self.plain_string_keyed_get(object, key) {
@@ -452,7 +452,7 @@ impl Vm {
     /// index, on `object`'s shape, for `site_keyed_own_read`; nothing for any other key or
     /// answer.
     pub fn record_site_keyed_read(&self, site: usize, object: Value, key: Value) {
-        let property = match key.as_int() {
+        let property = match key.numeric_key() {
             Some(index) => match usize::try_from(index).ok().and_then(|index| self.lookup_array_index_atom(index)) {
                 Some(atom) => PropertyKey::string(atom),
                 None => return,
