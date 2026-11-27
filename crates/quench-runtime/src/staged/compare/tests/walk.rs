@@ -39,14 +39,14 @@ fn the_unrolled_and_looped_prototype_walks_agree() {
     for start in world.objects {
         for target in targets {
             for links in 0..6 {
-                let mut stage = Concrete::new(std::ptr::null());
+                let mut stage = Concrete::over(&world.heap);
                 let looped = stage.walk_prototypes(world.records(), world.record(start), target, links);
                 let unrolled = crate::staged::object::walk_prototypes(&mut stage, world.records(), world.record(start), target, links);
                 assert_eq!(looped, unrolled, "{start:?} {target} {links}");
             }
         }
     }
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::over(&world.heap);
     let [leaf, middle, root, other] = world.objects;
     let walk = |stage: &mut Concrete, start, prototype, links| stage.walk_prototypes(world.records(), world.record(start), World::link(prototype), links);
     assert_eq!(walk(&mut stage, leaf, middle, 0), (true, true), "the first link needs no step");

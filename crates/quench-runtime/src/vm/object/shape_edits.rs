@@ -85,15 +85,25 @@ impl Vm {
             .then_some(parent)
     }
 
+    /// A class cell's delete departs first, to a dictionary of its own (`DictionaryTrigger::ClassDeparture`,
+    /// R4-C4). A record is unchanged.
+    pub(in crate::vm) fn depart_class_cell_for_delete(&mut self, object: Value) {
+        if self.heap.live_class_cell(object).is_some() {
+            self.mark_object_dictionary(object, DictionaryTrigger::ClassDeparture);
+        }
+    }
+
     pub(in crate::vm) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else { return };
+        self.depart_class_cell_for_delete(object);
+        let Some(shape) = self.heap.object(object).map(|object| object.shape()) else { return };
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
         if let Some(parent) = self.shape_before_last_add(shape, key, slot) {
             // The object returns to the shape it had before adding `key`: transient keys added
             // and deleted in turn (an object used as a stack of entries) fork no shapes.
-            let data = self.object_data(object).expect("object survived property deletion");
+            // record-only: the arena run of the record's values
+            let data = self.heap.object(object).expect("object survived property deletion").record();
             let kept = self.shapes[parent as usize].storage_len();
             if !crate::value_vec::ValueArena::drops_last_in_place(data.properties(), kept + 1) {
                 // The shorter length names a smaller arena range, so the values move to one;

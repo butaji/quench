@@ -4,6 +4,8 @@
 //! and the debt scan counts these aliases' opcodes as derived only because it does;
 //! `alias_selectors_name_one_row` pins the public ones.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt};
 use super::wasm_access::WasmAccessOperation;
 use super::wasm_float::WasmFloatOperation;
 use super::wasm_simd::VectorOperation;

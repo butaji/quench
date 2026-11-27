@@ -299,7 +299,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let (inputs, demand, realm) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    let (inputs, demand, realm, closed) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
     report["closed_world"] = super::compiler::demand_report(&demand);
     if let Some(realm) = &realm {
         report["builtin_families"] = json!(realm.families.bits());
@@ -313,9 +313,27 @@ fn compile(options: Options) -> Result<(), String> {
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
-    // A core image's closed world: the realm and engine entries its catalog names, which its saved realm is built on.
-    let closed = realm.as_ref().map(|realm| (realm, demand.execution_table()));
-    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, closed, &mut report)?;
+    // A core entry is probed before anything is saved: one that reaches its end with no input folds
+    // to a replay image, and any other saves its realm and program at the last point it can
+    // capture (`core_rest`, which names the frames that cannot be captured).
+    if let (true, Some(tables)) = (core, closed) {
+        let reach = super::core_rest::probe(&native_entry, tables)?;
+        report["core_probe"] = match &reach {
+            super::core_rest::Reach::Folds => json!({"status": "folds"}),
+            super::core_rest::Reach::Input(input) => json!({"status": "input", "input": input, "save_point": "realm_and_program"}),
+            super::core_rest::Reach::Unfinished(diagnostic) => json!({"status": "unfinished", "diagnostic": diagnostic, "save_point": "realm_and_program"}),
+        };
+        if matches!(reach, super::core_rest::Reach::Folds) {
+            super::strict::fold_image(&output, &work.0)?;
+            report["status"] = json!("compiled");
+            report["support_variant"] = json!("strict");
+            report["execution_mode"] = json!("replay");
+            report["engine_linked"] = json!(false);
+            write_report(report_path.as_deref(), &report)?;
+            return Ok(());
+        }
+    }
+    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -355,7 +373,11 @@ fn compile(options: Options) -> Result<(), String> {
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
     report["retained_mechanisms"] = json!(audit.footprint.retained_mechanisms);
-    let dumps = super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
+    let dumps = if core {
+        super::core_rest::dump(&staged, &work.0, &mut report)
+    } else {
+        super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report)
+    };
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
@@ -364,7 +386,7 @@ fn compile(options: Options) -> Result<(), String> {
         report["payload_reduction"] = json!(payload);
     }
     if !dumps.is_empty() {
-        super::image_dump::append(&staged, &dumps)?;
+        quench_runtime::native_link::image_dump::append(&staged, &dumps)?;
     }
     report["native_dependencies"] = json!(super::image::native_dependencies(&staged)?);
     report["status"] = json!("compiled");

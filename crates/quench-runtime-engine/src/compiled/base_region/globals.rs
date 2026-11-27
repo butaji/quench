@@ -20,6 +20,7 @@
 //!
 //! A name call's receiver, `undefined`, is a second definition of the row (`Decoded::also`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

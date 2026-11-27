@@ -104,11 +104,6 @@ impl<H: Host> Runtime<H> {
     /// it never installs its host, compiles source or runs the JIT, so a binary that makes
     /// only such runtimes links none of them.
     pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
-    /// `new_restored` for an image with a closed world (`new_static_with_builtins`): the startup
-    /// snapshot it restores holds only the realm that world reaches.
-    pub fn new_restored_with_builtins(host: H, builtins: &'static crate::BuiltinTable, execution: &'static crate::ExecutionTable) -> Self {
-        Self { vm: Vm::new_restored_with_builtins(host, builtins, execution), host: std::marker::PhantomData }
-    }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
@@ -312,6 +307,26 @@ impl<H: Host> Runtime<H> {
         self.vm.forget_spare_await_state();
         self.vm.collect_now(program);
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
+    }
+
+    /// Installs the realm and binds `program`'s native code without running it: the state a
+    /// closed-world image builds once, dumps (`image_dump`) and resumes with `execute_restored`.
+    /// The realm is `program`'s, as `build_snapshot` installs it.
+    #[cfg(feature = "native-execution")]
+    pub fn install_native_at_rest(&mut self, program: &crate::NativeJsProgram) -> Result<(), JsError> {
+        program.residual().validate_unless_proven().map_err(JsError::validation)?;
+        self.vm.initialize_for_snapshot(program.residual())?;
+        self.vm.install_native_main(program)?;
+        self.vm.forget_spare_await_state();
+        self.vm.collect_now(program.residual());
+        Ok(())
+    }
+
+    /// Collects a closed world's realm down to what `program` and `roots` reach (C5 D3), after
+    /// `install_native_at_rest` and before the state is dumped. The entry is the image's whole
+    /// program: a core build has no units (`compile_closed`).
+    pub fn collect_closed_world(&mut self, program: &crate::ResidualProgram, roots: crate::RealmRoots<'_>) -> Result<(), JsError> {
+        self.vm.collect_for_image(program, &[], roots)
     }
 
     /// The running runtime as a snapshot, where nothing runs and nothing waits but host

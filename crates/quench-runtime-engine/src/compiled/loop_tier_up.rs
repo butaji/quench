@@ -1,6 +1,7 @@
 //! A loop body's tier-up request: the running body's leave at its poll and the header dispatch
 //! that takes the body a tier-up published.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use crate::dispatch_fast::LoopSite;

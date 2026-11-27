@@ -2,6 +2,7 @@
 //! (`Lowering::resolve`): a counter below a bound, scaled and added to a base, all of them
 //! invariant but the counter.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;

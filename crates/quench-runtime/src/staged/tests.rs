@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationNamesExt};
 use super::*;
 use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};
@@ -104,7 +106,7 @@ impl NumericFrame<Concrete> for ConcreteFrame<'_> {
 
 #[test]
 fn step_moves_and_defines_constants_on_the_concrete_stage() {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
     let moved = Value::number(41.0);
     frame.registers[1] = moved.to_bits();
@@ -123,7 +125,7 @@ fn step_moves_and_defines_constants_on_the_concrete_stage() {
 /// interpreter and every tier.
 #[test]
 fn staged_logical_not_is_the_javascript_truthiness_negation() {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     for (value, expected) in [
         (Value::TRUE, false), (Value::FALSE, true), (Value::number(0.0), true),
         (Value::number(-0.0), true), (Value::number(f64::NAN), true),
@@ -142,7 +144,7 @@ fn staged_logical_not_is_the_javascript_truthiness_negation() {
 /// The `typeof` name index the row defines for `value`, or `None` where it leaves for the
 /// value's cell.
 fn typeof_index_of(value: Value) -> Option<u64> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![value.to_bits(), 0], heap: None };
     match step(&mut stage, &mut frame, Operation::TypeofIndex { destination: 1, source: 0 }) {
         Step::Value(word) => {
@@ -179,7 +181,7 @@ fn staged_typeof_index_names_every_immediate_and_leaves_heap_values() {
 /// `~x` of an int32 is `-1 - x`: no overflow, every int32 stays an int32.
 #[test]
 fn staged_bitwise_not_of_an_int32_is_its_complement() {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     for value in [0, 1, -1, 7, i32::MAX, i32::MIN] {
         let mut frame = ConcreteFrame { registers: vec![Value::integer(value).to_bits(), 0], heap: None };
         let operation = Operation::Number(NumberOperation::BitwiseNot { destination: 1, source: Operand::register(0) });
@@ -253,7 +255,7 @@ fn suspensions_decode_to_rows_a_plain_frame_leaves_unresolved() {
         if let Suspension::YieldStar { iterator, state, next } = kind {
             assert_eq!((iterator, state, next), (3, 4, 5), "the delegate's iterator is `c`, its state and method the pair");
         }
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = ConcreteFrame { registers: vec![0; 6], heap: None };
         assert!(matches!(step(&mut stage, &mut frame, Operation::Suspend { kind, destination: 1, value: 2 }), Step::Unresolved), "{op:?}");
     }
@@ -261,7 +263,7 @@ fn suspensions_decode_to_rows_a_plain_frame_leaves_unresolved() {
 
 /// The edge a `JumpIf` takes on the concrete stage for `value`.
 fn jump_if_edge(value: Value, taken: bool, heap: &Heap) -> Edge {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: Some(heap) };
     match step(&mut stage, &mut frame, Operation::JumpIf { register: 0, taken }) {
         Step::Control(edge) => edge,
@@ -299,7 +301,7 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
         };
         assert_eq!(jump_if_edge(value, false, &heap), falsy_edge, "JumpFalse {value:?}");
     }
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0], heap: None };
     assert!(matches!(step(&mut stage, &mut frame, Operation::Jump), Step::Control(Edge::Target)));
 }
@@ -315,7 +317,7 @@ fn staged_truthiness_agrees_with_the_interpreter() {
     let values = [Value::TRUE, Value::FALSE, Value::NULL, Value::UNDEFINED, Value::DELETED,
         Value::integer(0), Value::integer(7), Value::integer(-1), object, text];
     for value in numbers.into_iter().chain(values) {
-        let (undecided, truthy) = super::value::tagged_truthiness(&mut Concrete::new(std::ptr::null()), value.to_bits());
+        let (undecided, truthy) = super::value::tagged_truthiness(&mut Concrete::pure(), value.to_bits());
         let interpreter = value.truthiness().filter(|_| value.direct_object_index().is_some() || !value.is_heap()
             || value.direct_array_index().is_some());
         assert_eq!((!undecided).then_some(truthy), interpreter, "{value:?}");
@@ -325,7 +327,7 @@ fn staged_truthiness_agrees_with_the_interpreter() {
 #[test]
 fn staged_require_object_coercible_rejects_only_null_and_undefined() {
     let coercible = |value: Value| {
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };
         match step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register: 0 }) {
             Step::Value(word) => { assert_eq!(word, value.to_bits()); true }
@@ -343,7 +345,7 @@ fn staged_require_object_coercible_rejects_only_null_and_undefined() {
 #[test]
 fn staged_to_numeric_copies_numbers_and_leaves_for_the_rest() {
     let convert = |value: Value| {
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::UNDEFINED.to_bits()], heap: None };
         match step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination: 1, source: 0 })) {
             Step::Value(_) => Some(Value::from_bits(frame.registers[1])),
@@ -361,7 +363,7 @@ fn staged_to_numeric_copies_numbers_and_leaves_for_the_rest() {
 
 #[test]
 fn staged_load_this_leaves_where_the_activation_holds_no_this() {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![Value::NULL.to_bits()], heap: None };
     assert!(matches!(step(&mut stage, &mut frame, Operation::LoadThis { destination: 0 }), Step::Unresolved));
     assert_eq!(frame.registers[0], Value::NULL.to_bits(), "a load that left writes nothing");
@@ -372,7 +374,7 @@ fn staged_load_this_leaves_where_the_activation_holds_no_this() {
 fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
     // The interpreter stage has no allocator of its own: an allocation is the host callout
     // boundary, so the frame declines it and the lane's Emit stage provides the semantics.
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
     for operation in [
         Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
@@ -402,7 +404,7 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::ArrayOf { elements: RegisterList::collect(2, |index| 2 - index as u16).expect("two fit") }, 2),
     ];
     let heap = Heap::new();
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     for (allocation, made) in rows {
         let operation = Operation::Allocate { destination: 0, allocation, proof: () };
         let mut bare = ConcreteFrame { registers: vec![0; 3], heap: None };
@@ -434,7 +436,7 @@ fn allocation_rows_declare_their_effects() {
 fn the_element_store_helper_is_the_host_callout_boundary() {
     // The interpreter stage has no helper table: an element-store helper is the host callout
     // boundary, so the frame declines it and the lane's Emit stage provides the call.
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
     let step = step(&mut stage, &mut frame,
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () });
@@ -445,7 +447,7 @@ fn the_element_store_helper_is_the_host_callout_boundary() {
 fn a_global_name_read_is_the_host_callout_boundary() {
     // The interpreter reads globals through its own loop; the lane's helper call is the
     // callout boundary, so the frame declines it.
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0], heap: None };
     let step = step(&mut stage, &mut frame,
         Operation::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () });
@@ -455,7 +457,7 @@ fn a_global_name_read_is_the_host_callout_boundary() {
 #[test]
 fn the_field_store_helper_is_the_host_callout_boundary() {
     // The host's cached field-store hit is a callout: the interpreter stage declines it.
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0; 2], heap: None };
     let step = step(&mut stage, &mut frame,
         Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () });
@@ -466,7 +468,7 @@ fn the_field_store_helper_is_the_host_callout_boundary() {
 fn every_host_callout_operation_has_a_concrete_reading() {
     // P5's criterion: each host/VM callout is a staged operation the interpreter stage either
     // declines (leaving it to the host) or runs (the safepoint), never an unknown opcode.
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
     let declines = [
         Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
@@ -487,7 +489,7 @@ fn every_host_callout_operation_has_a_concrete_reading() {
 #[test]
 fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
     let mut heap = Heap::new();
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let object = heap.alloc_object(Object::new(Value::NULL));
     let string = heap.alloc_string(crate::vm::wtf16::JsString::from_str("key"));
     for (value, passes) in [(object, true), (string, false), (Value::UNDEFINED, false), (Value::integer(1), false), (Value::number(0.5), false)] {

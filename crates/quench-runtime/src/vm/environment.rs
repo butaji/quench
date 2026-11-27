@@ -2260,7 +2260,7 @@ impl Vm {
         if root_declared
             && self.own_property(self.realm.globals, atom).is_none()
             && self
-                .object_data(self.realm.globals)
+                .heap.object(self.realm.globals)
                 .is_some_and(|object| !object.is_extensible())
         {
             return Ok(());

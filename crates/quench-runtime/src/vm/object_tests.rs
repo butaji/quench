@@ -179,7 +179,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     assert_eq!(vm.profile.field_primitives.count(Path::HintOwnRead), 1);
     // The child inherits exactly the own data slot the warmed entry proves.
     let holder_hint = FieldCache {
-        receiver: vm.heap.object_ref(child).unwrap().exact_shape(),
+        receiver: vm.heap.object(child).unwrap().exact_shape(),
         holder: hint.receiver,
         slot: hint.slot,
         holder_id: NO_FIELD_HOLDER_LAYOUT,
@@ -282,7 +282,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let receiver_atom = vm.intern_atom("receiver");
     let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
     vm.collect_now(&program);
-    let shape = vm.heap.object_ref(receiver).unwrap().shape();
+    let shape = vm.heap.object(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
         receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_id: NO_FIELD_HOLDER_LAYOUT,
@@ -294,7 +294,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert!(unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
         "widening declines before exposing a raw writer to an active native caller");
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
-    assert_eq!(vm.heap.property_get_ref(vm.heap.object_ref(receiver).unwrap(), slot), Some(Value::integer(1)));
+    assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
     // The next admission consumes the already-widened domain.
     let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
     for value in [Value::number(0.5), Value::number(-0.0), Value::number(f64::NAN), Value::integer(7)] {
@@ -314,7 +314,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
-    assert_eq!(vm.heap.property_get_ref(vm.heap.object_ref(receiver).unwrap(), slot), Some(child));
+    assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(child));
 }
 
 #[test]
@@ -368,8 +368,8 @@ fn object_spread_of_a_plain_source_adopts_its_shape_in_key_order() {
     let src = vm.own_property(globals, src_name).unwrap();
     let out = vm.own_property(globals, out_name).unwrap();
     let result = vm.own_property(globals, result_name).unwrap();
-    let src_shape = vm.object_data(src).unwrap().shape();
-    let out_shape = vm.object_data(out).unwrap().shape();
+    let src_shape = vm.heap.object(src).unwrap().shape();
+    let out_shape = vm.heap.object(out).unwrap().shape();
     assert_eq!(out_shape, src_shape, "the copy adopts the source's shape");
     assert_eq!(vm.to_string(&program, result).unwrap(), "b,a,c|1,x,true|b,a,c|b,c");
 }
@@ -919,7 +919,7 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
             );
             let third_atom = vm.intern_atom("third");
             let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
-            let third_shape = vm.object_data(third).unwrap().shape();
+            let third_shape = vm.heap.object(third).unwrap().shape();
             let method_atom = vm.intern_atom("method");
             let target = vm
                 .call_target(vm.own_property(third, method_atom).unwrap())
@@ -1205,7 +1205,7 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
             assert!(
                 field_cache_entries(&vm, &program, noncanonical)
                     .iter()
-                    .any(|entry| entry.receiver == vm.object_data(view).unwrap().shape()),
+                    .any(|entry| entry.receiver == vm.heap.object(view).unwrap().shape()),
                 "noncanonical typed-array names use ordinary shape storage"
             );
         }
@@ -1452,8 +1452,8 @@ fn assign_shape_adoption_yields_to_prototype_setters_read_only_keys_and_proto() 
         let target = vm.own_property(globals, target_name).unwrap();
         assert_eq!(vm.adopt_source_shape_for_set(target, src), expected, "{source_expr} after {setup:?}");
         if expected {
-            let src_shape = vm.object_data(src).unwrap().shape();
-            assert_eq!(vm.object_data(target).unwrap().shape(), src_shape);
+            let src_shape = vm.heap.object(src).unwrap().shape();
+            assert_eq!(vm.heap.object(target).unwrap().shape(), src_shape);
         } else {
             assert!(vm.own_named_keys(target).is_empty(), "a refused adoption has no effect");
         }

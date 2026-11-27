@@ -42,13 +42,14 @@ impl Vm {
     /// The shape-held string keys `object` owns, each with its slot, in own-key order
     /// (`ordered_shape`), without the engine-internal names.
     pub(super) fn own_named_slots(&self, object: Value) -> Vec<(Atom, usize)> {
-        let Some(data) = self.object_data(object) else {
+        let Some(data) = self.heap.object(object) else {
             return Vec::new();
         };
-        self.ordered_shape(data)
+        // `ordered_shape` reads the record's shape order.
+        self.ordered_shape(data.record())
             .into_iter()
             .filter(|(atom, slot)| {
-                self.heap.property_get(data, *slot).is_some()
+                self.heap.property_get_ref(data, *slot).is_some()
                     && !self.is_internal_property_name(*atom)
             })
             .collect()
@@ -60,13 +61,14 @@ impl Vm {
 
     /// The engine-internal names an object owns, hidden from every key enumeration.
     pub(super) fn internal_named_keys(&self, object: Value) -> Vec<Atom> {
-        let Some(data) = self.object_data(object) else {
+        let Some(data) = self.heap.object(object) else {
             return Vec::new();
         };
-        self.ordered_shape(data)
+        // `ordered_shape` reads the record's shape order.
+        self.ordered_shape(data.record())
             .into_iter()
             .filter(|(atom, slot)| {
-                self.heap.property_get(data, *slot).is_some()
+                self.heap.property_get_ref(data, *slot).is_some()
                     && self.is_internal_property_name(*atom)
             })
             .map(|(atom, _)| atom)
@@ -97,7 +99,7 @@ impl Vm {
         } else {
             Vec::new()
         };
-        let Some(data) = self.object_data(object) else {
+        let Some(data) = self.heap.object(object) else {
             return values;
         };
         let shape = data.shape();
@@ -381,7 +383,7 @@ impl Vm {
             // (`copy_into_fresh_empty`) rather than walking the chain for each key again: the
             // adoption proved the chain's keys plain, which holds under the cell made now.
             if let Some((target_shape, target_proto, false)) = before
-                && let Some(shape) = self.object_data(target).map(Object::shape)
+                && let Some(shape) = self.heap.object(target).map(|object| object.shape())
                 && let Some(slots) = self.shape_enumerable_slots(source)
                 && let Some(cell) = self.chain_cell_to_end(target_proto)
             {
@@ -394,7 +396,7 @@ impl Vm {
         let Some(slots) = self.shape_enumerable_slots(source) else {
             return false;
         };
-        let Some(data) = self.object_data(source) else {
+        let Some(data) = self.heap.object(source) else {
             return false;
         };
         let Some(target_data) = self.heap.object_record(target) else {
@@ -426,7 +428,8 @@ impl Vm {
         };
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
-            if !self.read_shaped_values(data, &slots, &mut values) {
+            // Shaped values are read from the record.
+            if !self.read_shaped_values(data.record(), &slots, &mut values) {
                 return false;
             }
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
@@ -445,16 +448,17 @@ impl Vm {
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
         // The target's record is one lookup for every key of the loop.
-        let target_object = self.object_data(target);
+        let target_object = self.heap.object(target).map(|object| object.record());
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
             }
             let slot = *slot as usize;
-            if self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor) {
+            // Slot attributes are record data.
+            if self.slot_attributes(data.record(), slot).is_none_or(|attributes| attributes.accessor) {
                 return false;
             }
-            let Some(value) = self.heap.property_get(data, slot) else {
+            let Some(value) = self.heap.property_get_ref(data, slot) else {
                 return false;
             };
             let key = PropertyKey::string(*atom);
@@ -503,7 +507,7 @@ impl Vm {
                 }
             }
         }
-        if memoizes && let Some(shape) = self.object_data(target).map(Object::shape) {
+        if memoizes && let Some(shape) = self.heap.object(target).map(|object| object.shape()) {
             self.plain_copy_shapes.record(target_shape, source_shape, shape);
             // The target is no prototype, so its adds changed no layout of the chain the copy
             // walked, which holds under the cell made now (each link marked a prototype first).
@@ -581,9 +585,10 @@ impl Vm {
     }
 
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
-        self.slot_data_value(data, slot)
+        // Slot values are record data.
+        self.slot_data_value(data.record(), slot)
     }
 
     pub fn set_symbol_property(
@@ -605,13 +610,14 @@ impl Vm {
         if self.proxy_parts(object).is_some() {
             return None;
         }
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         if !data.is_extensible() {
             return None;
         }
         let (shape, proto) = (data.shape(), data.proto());
         if let Some(slot) = self.property_shape_slot(shape, symbol) {
-            let attributes = self.slot_attributes(data, slot)?;
+            // Slot attributes are record data.
+            let attributes = self.slot_attributes(data.record(), slot)?;
             if attributes.accessor {
                 return None;
             }
@@ -647,13 +653,14 @@ impl Vm {
         if !self.is_host_private_symbol(key) || self.proxy_parts(object).is_some() {
             return false;
         }
-        let Some(data) = self.object_data(object) else {
+        let Some(data) = self.heap.object(object) else {
             return false;
         };
         let symbol = PropertyKey::symbol(key);
         if let Some(slot) = self.property_shape_slot(data.shape(), symbol) {
             let writable = self
-                .slot_attributes(data, slot)
+                // Slot attributes are record data.
+                .slot_attributes(data.record(), slot)
                 .is_some_and(|attributes| !attributes.accessor && attributes.writable);
             if writable {
                 self.heap.property_set(object, slot, value);
@@ -694,7 +701,7 @@ impl Vm {
     /// admitted, on an extensible receiver whose shapes are not dictionaries.
     pub fn try_site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
         use super::symbol_write_proof::SymbolWriteStep;
-        let before = self.heap.ordinary_object(object).map(Object::shape);
+        let before = self.heap.ordinary_object(object).map(|object| object.shape());
         if !self.try_plain_symbol_set(object, key, value) {
             return false;
         }
@@ -830,8 +837,8 @@ impl Vm {
                 }
             } else if self.symbol_property(receiver, key).is_none()
                 && !self
-                    .object_data(receiver)
-                    .is_some_and(Object::is_extensible)
+                    .heap.object(receiver)
+                    .is_some_and(|object| object.is_extensible())
             {
                 return Ok(false);
             }
@@ -861,7 +868,7 @@ impl Vm {
         let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
         self.complete_lazy_keys(p, target)?;
-        let symbols = match self.object_data(target) {
+        let symbols = match self.heap.object(target) {
             Some(data) => self.ordinary_own_symbol_keys(target, data.shape()),
             None => Vec::new(),
         };

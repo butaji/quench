@@ -54,7 +54,7 @@ pub fn restore<S: WasmRoots>(stage: &mut S, depth: S::Word) {
 /// Releases the `count` roots a stencil's push held: the depth goes back down by it.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub(crate) fn pop<S: WasmRoots>(stage: &mut S, count: usize) {
+pub fn pop<S: WasmRoots>(stage: &mut S, count: usize) {
     let roots = stage.native_roots();
     let depth = stage.root_depth(roots);
     let count = stage.constant(Width::I64, count as i64);

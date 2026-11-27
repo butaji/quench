@@ -128,10 +128,10 @@ impl Vm {
         self.typed_array_protos[TypedArrayKind::Uint8 as usize] = self.object();
         self.typed_array_proto = self.object();
         let (typed_array_proto, function_proto) = (self.typed_array_proto, self.function_proto);
-        self.object_data_mut(self.typed_array_protos[TypedArrayKind::Uint8 as usize])
+        self.heap.object_mut(self.typed_array_protos[TypedArrayKind::Uint8 as usize])
             .expect("Uint8Array prototype")
             .set_proto(typed_array_proto);
-        self.object_data_mut(typed_array)
+        self.heap.object_mut(typed_array)
             .expect("TypedArray constructor")
             .set_proto(function_proto);
         self.set_named(program, typed_array, "prototype", self.typed_array_proto)?;
@@ -153,7 +153,7 @@ impl Vm {
                 },
             );
         }
-        self.object_data_mut(uint8_array)
+        self.heap.object_mut(uint8_array)
             .expect("Uint8Array constructor")
             .set_proto(typed_array);
         self.set_named(program, uint8_array, "prototype", self.typed_array_protos[TypedArrayKind::Uint8 as usize])?;

@@ -36,13 +36,13 @@ pub fn store_vector<S: WasmMemoryWrite>(
 /// The access of a lane of `bytes` bytes (1, 2, 4 or 8) that a splat or widening load reads: its
 /// word zero-extended to 64 bits.
 #[inline(always)]
-pub(crate) const fn lane(bytes: usize) -> Access {
+pub const fn lane(bytes: usize) -> Access {
     Access { ty: WasmType::I64, bytes, signed: false }
 }
 
 /// The zero-extended lane of `bytes` bytes at `index + offset`: the staged `load` of `lane`.
 #[inline(always)]
-pub(crate) fn load_lane<S: WasmMemory>(
+pub fn load_lane<S: WasmMemory>(
     stage: &mut S,
     bytes: usize,
     index: S::Word,

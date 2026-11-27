@@ -292,11 +292,12 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn reserve_learned_template(&mut self, index: usize, this: Value, slots: usize) -> bool {
-        let Some(data) = self.object_data(this) else { return false };
+        let Some(data) = self.heap.object(this) else { return false };
         let (layout, prototype, shape) = (data.layout_id(), data.proto(), data.shape());
+        // Inline runs and extras are record data.
         if layout == self.learned_receivers[index].template
-            || data.inline_properties().is_none()
-            || data.has_extras()
+            || data.record().inline_properties().is_none()
+            || data.record().has_extras()
             || data.has_exotic_access()
             || self.shape_is_dictionary(shape)
             || self.shapes[shape as usize].storage_len() != 0
@@ -335,8 +336,9 @@ impl Vm {
     /// How many values `receiver`'s storage holds, outside dictionary storage; `None` for
     /// anything else (no object, as `undefined` after a collection).
     fn receiver_storage_len(&self, receiver: Value) -> Option<usize> {
-        let data = self.object_data(receiver)?;
-        if data.properties().is_dictionary() {
+        let data = self.heap.object(receiver)?;
+        // The property table is record data.
+        if data.record().properties().is_dictionary() {
             return None;
         }
         let shape = data.shape();

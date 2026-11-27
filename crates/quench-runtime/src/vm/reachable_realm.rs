@@ -6,10 +6,10 @@
 //! (`RealmRoots`), the intrinsic prototypes of every value kind its opcodes create, and what the
 //! runtime reaches on its own (the error and iteration protocols, promise and generator resumption).
 //! It follows the own properties of each reached object, and a string key is followed only when the
-//! program or its runtime can name it: a field access of the program, a name a protocol reads
-//! (`ALWAYS_NAMES`, `protocol_names`), or, once a computed key or a reflective native is reached,
-//! every key (`Closure::wild`). A reached `eval` or `Function` can name any global at run time, so
-//! it makes the global object a root.
+//! program or its runtime can name it: a field access of the program, a name an opcode's protocol
+//! reads (`protocol_names`, and the gates of `reachable_protocol`), or, once a computed key or a
+//! reflective native is reached, every key (`Closure::wild`). A reached `eval` or `Function` can name
+//! any global at run time, so it makes the global object a root.
 //!
 //! Nothing here reads the program's text: a family is reached when the closure reaches one of its
 //! realm objects, and a native is reached when the closure holds its function.
@@ -17,7 +17,10 @@
 use super::*;
 use super::builtins::RealmScope;
 use crate::bytecode::{activation_reads_this, Constant, FactTables, FieldLookup, Function, ImmediateRole, Op, ProgramKind};
-use rustc_hash::FxHashSet;
+use super::reachable_protocol::{admit_computed_key, make_wild, protocol_names, writes_field};
+use super::native_effects::native_effects;
+use crate::compile::aot_facts::{self, FunctionFacts};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -66,24 +69,35 @@ pub fn reachable_realm(programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> 
 /// The closure's state: the realm values it has reached, the values still to visit, the natives
 /// among the reached functions, and the gates that decide which keys a reached object exposes.
 #[derive(Default)]
-struct Closure {
-    seen: FxHashSet<Value>,
-    pending: Vec<Value>,
-    natives: BTreeSet<Native>,
+pub(super) struct Closure {
+    pub(super) seen: FxHashSet<Value>,
+    pub(super) pending: Vec<Value>,
+    pub(super) natives: BTreeSet<Native>,
     /// The realm atoms of the string keys the program or its runtime can read.
-    names: FxHashSet<Atom>,
+    pub(super) names: FxHashSet<Atom>,
     /// Whether every key of a reached object may be read (a computed key or a reflective native).
-    wild: bool,
+    pub(super) wild: bool,
+    /// Whether the coercion protocol is open: `valueOf` and `toString` are read on reached objects.
+    pub(super) coercion: bool,
+    /// Whether the iteration protocol is open: `next`, `return` and `throw` are read on its receivers.
+    pub(super) iteration: bool,
+    /// The gated well-known symbols whose protocol is open, so their keys are followed.
+    pub(super) symbols: FxHashSet<Value>,
+    /// The names a protocol reads on one receiver only.
+    pub(super) receiver_names: FxHashMap<Value, FxHashSet<Atom>>,
+    /// The names a store writes: only the accessors of a reached object under them are read.
+    pub(super) setters: FxHashSet<Atom>,
+    /// Whether a computed key is proven a Number, so only numeric keys are read.
+    pub(super) indexed: bool,
+    /// Whether a function value may be coerced, so `Function.prototype`'s coercion methods are read.
+    pub(super) function_coercion: bool,
 }
 
-/// The global names the runtime reaches as it runs whatever the program names: the error
-/// constructors, since any operation can throw.
-const RUNTIME_GLOBALS: &[&str] = &[
+/// The error constructors whose prototypes the runtime reaches whatever the program names, since any
+/// operation can throw.
+pub(super) const RUNTIME_GLOBALS: &[&str] = &[
     "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError", "AggregateError",
 ];
-
-/// The property names the runtime reads on any value it coerces, iterates or resumes.
-const ALWAYS_NAMES: &[&str] = &["valueOf", "toString", "prototype", "next", "return", "throw"];
 
 /// The natives a promise or an async function's reactions and capabilities run as.
 const PROMISE_RUNTIME: &[Native] = &[
@@ -114,24 +128,6 @@ const FAMILY_NAMES: &[(BuiltinFamilies, &[&str])] = &[
     (BuiltinFamilies::SHADOW_REALM, &["ShadowRealm"]),
 ];
 
-/// The names an opcode's protocol reads implicitly: the thrown value's report and a thenable check.
-fn protocol_names(op: Op) -> &'static [&'static str] {
-    match op {
-        Op::Throw => &["message", "stack", "name"],
-        Op::Await | Op::Yield | Op::YieldStar | Op::GetAsyncIterator => &["then"],
-        _ => &[],
-    }
-}
-
-/// Opcodes whose property key is computed at run time, so any key of a reached object may be read.
-fn computed_key_op(op: Op) -> bool {
-    matches!(
-        op,
-        Op::GetIndex | Op::SetIndex | Op::ToPropertyKey | Op::DefineComputedField | Op::ForInStart | Op::ForInNext
-            | Op::GetEnumerated | Op::CopyDataProperties | Op::Delete
-    )
-}
-
 /// The natives that enumerate, copy or reflect a value's keys: a reached one may read any key.
 fn reflective_native(native: Native) -> bool {
     matches!(
@@ -151,17 +147,18 @@ fn is_dynamic_source(native: &Native) -> bool {
     matches!(native, Native::Eval | Native::Function | Native::EvalScript)
 }
 
-/// Makes every string key of every reached object readable. The objects the earlier passes visited
-/// withheld keys, so they are queued again.
-fn make_wild(closure: &mut Closure) {
-    if !closure.wild {
-        closure.wild = true;
-        closure.pending.extend(closure.seen.iter().copied());
-    }
-}
-
 impl Vm {
     fn close_world(&mut self, entry: &ResidualProgram, programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<ReachableRealm, JsError> {
+        let closure = self.close(entry, programs, roots)?;
+        let eval = programs.iter().any(|program| program.kind == ProgramKind::Eval);
+        let makes_code = eval || closure.natives.iter().any(is_dynamic_source);
+        Ok(self.realm_summary(&closure, makes_code))
+    }
+
+    /// The closure of `entry`, `programs` and `roots` over this Vm's own realm (`Closure`). The
+    /// compile process runs it over the complete realm for the report (`close_world`), and a core
+    /// image runs it over its closed realm at its dump (`Vm::collect_for_image`): one definition.
+    pub(super) fn close(&mut self, entry: &ResidualProgram, programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<Closure, JsError> {
         let mut closure = Closure::default();
         self.root_runtime(entry, &mut closure)?;
         for program in programs {
@@ -182,24 +179,23 @@ impl Vm {
             self.enqueue(&mut closure, value);
         }
         self.close_reachable(entry, &mut closure)?;
-        let makes_code = eval || closure.natives.iter().any(is_dynamic_source);
-        Ok(self.realm_summary(&closure, makes_code))
+        Ok(closure)
     }
 
     /// Roots what the runtime's own code reaches whatever the program names: the error, `with` and
     /// iterator-close bindings, the prototypes every runtime-made value reaches, and the names the
     /// protocols read on them.
     fn root_runtime(&mut self, entry: &ResidualProgram, closure: &mut Closure) -> Result<(), JsError> {
-        for name in RUNTIME_GLOBALS.iter().copied().chain([
-            crate::bytecode::ITERATOR_CLOSE_BINDING, crate::bytecode::WITH_ENTER_BINDING, crate::bytecode::WITH_EXIT_BINDING,
-        ]) {
+        for name in [crate::bytecode::ITERATOR_CLOSE_BINDING, crate::bytecode::WITH_ENTER_BINDING, crate::bytecode::WITH_EXIT_BINDING] {
             self.root_global(entry, closure, name)?;
         }
-        for value in [self.object_proto, self.function_proto, self.array_proto, self.string_proto, self.iterator_proto, self.array_iterator_proto, self.string_iterator_proto] {
-            self.enqueue(closure, value);
+        // The runtime makes an error from its constructor's prototype, never by calling the
+        // constructor, so the constructor's native is not reached.
+        for name in RUNTIME_GLOBALS {
+            self.root_global_prototype(entry, closure, name)?;
         }
-        for name in ALWAYS_NAMES {
-            self.admit_name(closure, name);
+        for value in [self.object_proto, self.function_proto, self.array_proto, self.string_proto].into_iter().chain(self.iterator_receivers()) {
+            self.enqueue(closure, value);
         }
         Ok(())
     }
@@ -220,14 +216,16 @@ impl Vm {
     }
 
     /// Admits the names and roots one program's functions and opcodes make reachable.
+    /// Admits what each function of `program` reaches, with the program's operand type facts.
     fn admit_program(&mut self, program: &ResidualProgram, closure: &mut Closure) {
+        let facts = aot_facts::analyze(program);
         for index in 0..program.function_count() {
             let Some(function) = program.function_get(index) else { continue };
-            self.admit_function(program, closure, function);
+            self.admit_function(program, closure, function, &facts.function_facts(index as u32));
         }
     }
 
-    fn admit_function(&mut self, program: &ResidualProgram, closure: &mut Closure, function: &Function) {
+    fn admit_function(&mut self, program: &ResidualProgram, closure: &mut Closure, function: &Function, facts: &FunctionFacts<'_>) {
         if function.is_async {
             self.enqueue(closure, self.promise_proto);
             self.root_natives(closure, PROMISE_RUNTIME);
@@ -249,12 +247,14 @@ impl Vm {
             self.enqueue(closure, self.realm.globals);
             make_wild(closure);
         }
-        for instruction in function.instructions() {
-            let op = instruction.op();
+        for (index, instruction) in function.instructions().enumerate() {
+            let (op, pc) = (instruction.op(), index as u32);
             if op.immediate_role() == ImmediateRole::FieldLookup {
-                self.admit_field(program, closure, instruction.field_lookup());
+                self.admit_field(program, closure, instruction.field_lookup(), writes_field(op));
             }
             self.admit_op(closure, op);
+            admit_computed_key(closure, facts, pc, instruction);
+            self.open_instruction(closure, facts, pc, instruction);
         }
     }
 
@@ -267,17 +267,10 @@ impl Vm {
             Op::CreateRegExpLiteral => self.enqueue(closure, self.regexp_proto),
             Op::Yield | Op::YieldStar => self.enqueue(closure, self.generator_proto),
             Op::Await => self.enqueue(closure, self.promise_proto),
-            Op::IteratorClose | Op::IteratorCleanupPush | Op::IteratorCleanupPop => {
-                self.enqueue(closure, self.iterator_proto);
-                self.enqueue(closure, self.array_iterator_proto);
-            }
             _ => {}
         }
         for name in protocol_names(op) {
             self.admit_name(closure, name);
-        }
-        if computed_key_op(op) {
-            make_wild(closure);
         }
         match op {
             Op::Await | Op::GetAsyncIterator => self.root_natives(closure, PROMISE_RUNTIME),
@@ -287,13 +280,13 @@ impl Vm {
     }
 
     /// Admits the names of a field access: its atom, or the atoms of its site.
-    fn admit_field(&mut self, program: &ResidualProgram, closure: &mut Closure, lookup: Option<FieldLookup>) {
+    fn admit_field(&mut self, program: &ResidualProgram, closure: &mut Closure, lookup: Option<FieldLookup>, store: bool) {
         match lookup {
-            Some(FieldLookup::Atom { atom, .. }) => self.admit_atom(program, closure, atom),
+            Some(FieldLookup::Atom { atom, .. }) => self.admit_atom(program, closure, atom, store),
             Some(FieldLookup::Site(index)) => {
                 if let Some(site) = program.field_sites.get(index) {
                     for (atom, _) in [Some(site.first), site.second, site.sink].into_iter().flatten() {
-                        self.admit_atom(program, closure, atom);
+                        self.admit_atom(program, closure, atom, store);
                     }
                 }
             }
@@ -301,9 +294,15 @@ impl Vm {
         }
     }
 
-    fn admit_atom(&mut self, program: &ResidualProgram, closure: &mut Closure, atom: Atom) {
+    /// Admits a field's name: a store admits only the setters it reaches under the name.
+    fn admit_atom(&mut self, program: &ResidualProgram, closure: &mut Closure, atom: Atom, store: bool) {
         if let Some(name) = program.atom_name(atom as usize) {
-            self.admit_name(closure, name);
+            let atom = self.intern_atom(name);
+            if store {
+                closure.setters.insert(atom);
+            } else {
+                closure.names.insert(atom);
+            }
         }
     }
 
@@ -334,15 +333,34 @@ impl Vm {
         Ok(())
     }
 
+    /// Roots the `prototype` of the global constructor `name` without reaching the constructor.
+    fn root_global_prototype(&mut self, entry: &ResidualProgram, closure: &mut Closure, name: &str) -> Result<(), JsError> {
+        let Some(atom) = self.lookup_atom(name) else { return Ok(()) };
+        let globals = self.realm.globals;
+        let prototype = PropertyKey::string(self.prototype_atom);
+        for constructor in self.materialized_values(entry, globals, PropertyKey::string(atom))? {
+            if self.is_object_like(constructor) {
+                for value in self.materialized_values(entry, constructor, prototype)? {
+                    self.enqueue(closure, value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `holder`'s own values of `key`, materialized first when lazy.
+    fn materialized_values(&mut self, entry: &ResidualProgram, holder: Value, key: PropertyKey) -> Result<Vec<Value>, JsError> {
+        if self.is_pending_lazy_data_property(holder, key) {
+            self.materialize_lazy_data_property(entry, holder, key)?;
+        }
+        Ok(self.own_values(holder, key))
+    }
+
     /// Roots the global binding `name`, materializing it first when it is a lazy data property.
     fn root_global(&mut self, entry: &ResidualProgram, closure: &mut Closure, name: &str) -> Result<(), JsError> {
         let Some(atom) = self.lookup_atom(name) else { return Ok(()) };
-        let key = PropertyKey::string(atom);
         let globals = self.realm.globals;
-        if self.is_pending_lazy_data_property(globals, key) {
-            self.materialize_lazy_data_property(entry, globals, key)?;
-        }
-        for value in self.own_values(globals, key) {
+        for value in self.materialized_values(entry, globals, PropertyKey::string(atom))? {
             self.enqueue(closure, value);
         }
         Ok(())
@@ -351,16 +369,6 @@ impl Vm {
     fn enqueue(&self, closure: &mut Closure, value: Value) {
         if self.is_object_like(value) && closure.seen.insert(value) {
             closure.pending.push(value);
-        }
-    }
-
-    /// Whether the closure exposes `key` of a reached object: a string key the program or its
-    /// runtime can name, or any string key once `wild`. Symbol keys are the well-known protocol
-    /// symbols, which every object exposes.
-    fn admitted(&self, closure: &Closure, key: PropertyKey) -> bool {
-        match key {
-            PropertyKey::String(atom) => closure.wild || closure.names.contains(&atom),
-            _ => true,
         }
     }
 
@@ -374,22 +382,26 @@ impl Vm {
             if let Some(native) = native {
                 self.reach_native(closure, native);
             }
-            let Some(shape) = self.object_data(holder).map(|data| data.shape()) else { continue };
+            let Some(shape) = self.heap.object(holder).map(|data| data.shape()) else { continue };
             // Materialize the lazy members the closure exposes before the keys are read.
             for key in self.shape_keys(shape) {
-                if self.admitted(closure, key) && self.is_pending_lazy_data_property(holder, key) {
+                if self.admitted(closure, holder, key) && self.is_pending_lazy_data_property(holder, key) {
                     self.materialize_lazy_data_property(entry, holder, key)?;
                 }
             }
-            let shape = self.object_data(holder).map_or(shape, |data| data.shape());
+            let shape = self.heap.object(holder).map_or(shape, |data| data.shape());
             for key in self.shape_keys(shape) {
-                if self.admitted(closure, key) {
+                if self.admitted(closure, holder, key) {
                     for value in self.own_values(holder, key) {
+                        self.enqueue(closure, value);
+                    }
+                } else if self.setter_admitted(closure, key) {
+                    for value in self.own_accessors(holder, key) {
                         self.enqueue(closure, value);
                     }
                 }
             }
-            if let Some(proto) = self.object_data(holder).map(|data| data.proto()) {
+            if let Some(proto) = self.heap.object(holder).map(|data| data.proto()) {
                 self.enqueue(closure, proto);
             }
         }
@@ -403,6 +415,7 @@ impl Vm {
         if reflective_native(native) {
             make_wild(closure);
         }
+        self.open_native(closure, native_effects(native));
         let home = match native {
             Native::ArraySlice | Native::ArrayConcat | Native::ArrayFlat | Native::ArraySplice | Native::ArrayMap
             | Native::ArrayFilter | Native::ArrayFlatMap => self.array_proto,
@@ -414,18 +427,6 @@ impl Vm {
                 self.enqueue(closure, value);
             }
         }
-    }
-
-    /// The values of `holder`'s own property `key`: its getter and setter, or its data value.
-    fn own_values(&self, holder: Value, key: PropertyKey) -> Vec<Value> {
-        let Some(data) = self.object_data(holder) else { return Vec::new() };
-        let Some((_, slot)) = self.object_property_slot(holder, key) else { return Vec::new() };
-        let Some(attributes) = self.slot_attributes(data, slot) else { return Vec::new() };
-        let mut values: Vec<Value> = attributes.getter.into_iter().chain(attributes.setter).collect();
-        if !attributes.accessor {
-            values.extend(self.slot_data_value(data, slot));
-        }
-        values
     }
 
     /// Whether the closure reaches any of `names`' global values or any of `protos`.

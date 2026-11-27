@@ -171,7 +171,7 @@ pub(crate) fn length_of<S: Stage>(stage: &mut S, (arrays, strings): (S::Word, S:
 /// `None` for a form the row does not read, which the caller reads through the string's units.
 #[inline(always)]
 pub(crate) fn concrete_string_length(record_base: *const crate::vm::wtf16::JsString, value: Value) -> Option<Value> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     string_length(&mut stage, record_base as u64, value.to_bits(), ()).map(Value::from_bits)
 }
 
@@ -179,7 +179,7 @@ pub(crate) fn concrete_string_length(record_base: *const crate::vm::wtf16::JsStr
 /// records at `strings`.
 #[inline(always)]
 pub(crate) fn concrete_length_of(arrays: *const crate::heap::ArrayObject, strings: *const crate::vm::wtf16::JsString, value: Value) -> Option<Value> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     length_of(&mut stage, (arrays as u64, strings as u64), value.to_bits(), ()).map(Value::from_bits)
 }
 

@@ -28,6 +28,7 @@
 //!   `ranges.rs` `index_range`, `signless_range`, `zero_free` and `arithmetic_type` decode the operator and read its operands'
 //!   ranges; the rules over those ranges are `typed_ir::arithmetic`. `overflow_free` (run.rs) reads `ranges::exact`.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};

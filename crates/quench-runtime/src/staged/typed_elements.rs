@@ -369,14 +369,14 @@ pub fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -
     {
         // Native bytes need no word: the load reads the field's `kind.width()` bytes in place.
         debug_assert_eq!(field.len(), kind.width());
-        return f64::from_bits(load_number(&mut Concrete::new(std::ptr::null()), element, field.as_ptr() as u64));
+        return f64::from_bits(load_number(&mut Concrete::pure(), element, field.as_ptr() as u64));
     }
     let word = native_word(field, little_endian);
     match kind {
         TypedArrayKind::Float16 => half_to_f64(u16::from_ne_bytes([word[0], word[1]])),
         _ => {
             let element = element_of(kind).expect("a BigInt element is no Number");
-            f64::from_bits(load_number(&mut Concrete::new(std::ptr::null()), element, word.as_ptr() as u64))
+            f64::from_bits(load_number(&mut Concrete::pure(), element, word.as_ptr() as u64))
         }
     }
 }
@@ -391,7 +391,7 @@ pub(crate) fn element_integer(kind: TypedArrayKind, field: &[u8]) -> Option<i32>
         Element::Integer(integer) => {
             // Native bytes need no word: the load reads the field's `kind.width()` bytes in place.
             debug_assert_eq!(field.len(), kind.width());
-            Some(load_integer(&mut Concrete::new(std::ptr::null()), integer, field.as_ptr() as u64) as u32 as i32)
+            Some(load_integer(&mut Concrete::pure(), integer, field.as_ptr() as u64) as u32 as i32)
         }
     }
 }
@@ -406,7 +406,7 @@ pub(crate) fn element_word(kind: TypedArrayKind, number: f64) -> [u8; 8] {
         TypedArrayKind::Float16 => word[..2].copy_from_slice(&f64_to_half(number).to_ne_bytes()),
         _ => {
             let element = element_of(kind).expect("a BigInt element takes a BigInt");
-            let stored = store_number(&mut Concrete::new(std::ptr::null()), element, word.as_mut_ptr() as u64,
+            let stored = store_number(&mut Concrete::pure(), element, word.as_mut_ptr() as u64,
                 number.to_bits(), ());
             debug_assert!(stored.is_some(), "a concrete store converts every Number");
         }

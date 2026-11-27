@@ -1,6 +1,7 @@
 //! The body forms a script call target's entry names (`CallEntry`), recognized once as the
 //! target resolves (`Vm::resolve_script_call_target`): reads a call answers without an
 //! activation, and leaves whose records run without frame state.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

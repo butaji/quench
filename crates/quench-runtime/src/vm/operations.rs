@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::*;
 use super::array_modern::ArrayFromTarget;
 use crate::value::NumericPair;
@@ -807,7 +809,7 @@ impl Vm {
                 self.require_object_coercible(p, this)?;
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if self.is_object_like(this)
-                    && (proto.is_null() || self.object_data(proto).is_some())
+                    && (proto.is_null() || self.heap.object(proto).is_some())
                 {
                     self.object_set_prototype_of(p, this, proto)?;
                 }
@@ -824,7 +826,7 @@ impl Vm {
             }),
             Native::ObjectPrototypeIsPrototypeOf => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.object_data(target).is_none() {
+                if self.heap.object(target).is_none() {
                     return Ok(Value::FALSE);
                 }
                 let prototype = self.box_object(this)?;

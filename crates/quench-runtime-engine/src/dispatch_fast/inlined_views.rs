@@ -343,7 +343,7 @@ script_handler! {
     pub(crate) fn inlined_call_marker<>(cx, r, ip, i, view) {
         let receiver = r.get((i.imm() >> 16) as u16);
         if r.get(i.a).to_bits() != i.mode
-            || !quench_runtime::staged::value::is_direct_object(&mut quench_runtime::staged::Concrete::new(std::ptr::null()), receiver.to_bits())
+            || !quench_runtime::staged::value::is_direct_object(&mut quench_runtime::staged::Concrete::pure(), receiver.to_bits())
         {
             sibling!(leave_inlined as Handler, r, ip, view)
         }

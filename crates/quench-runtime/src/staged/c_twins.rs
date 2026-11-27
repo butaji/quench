@@ -10,23 +10,30 @@ pub use quench_bjit::c_twin::{CKernel, CTwin};
 use super::numeric::NumberOperation;
 use super::Operation;
 
-/// `impl TYPE, <GENERICS> as "LABEL" { Variant => twin, .. }`, its rows named `LABEL::Variant`: `twin` is `kernel(name)`,
+/// `trait NAME for TYPE, <GENERICS> as "LABEL" { Variant => twin, .. }`, its rows named `LABEL::Variant`: `twin` is `kernel(name)`,
 /// `none("reason")`, or `by(expr, rows)` for a variant whose payload decides it (`expr` over the variant's
 /// bindings, `rows` the twins it can take).
 macro_rules! row_twins {
-    (impl $type:ty $(, <$($generic:ident),*>)? as $label:literal {
+    (trait $name:ident $(<$($tgen:ident),*>)? for $type:ty $(, <$($generic:ident),*>)? as $label:literal {
         $($variant:ident $(($bound:ident))? $({ $($field:ident),* })? => $kind:ident($($what:tt)*),)*
     }) => {
-        impl $(<$($generic),*>)? $type {
+        /// The C twins of this type's rows, as an extension trait: quench-staged owns the type.
+        pub trait $name $(<$($tgen),*>)? {
             /// The C kernel this operation is measured against, or why none is.
-            pub fn c_twin(&self) -> CTwin {
+            fn c_twin(&self) -> CTwin;
+
+            /// Every row this type's operations make, by name, with its twin.
+            fn c_twin_rows() -> Vec<(&'static str, CTwin)>;
+        }
+
+        impl $(<$($generic),*>)? $name $(<$($tgen),*>)? for $type {
+            fn c_twin(&self) -> CTwin {
                 match self {
                     $(row_twins!(@pattern $variant $(($bound))? $({ $($field),* })?) => row_twins!(@twin $kind($($what)*)),)*
                 }
             }
 
-            /// Every row this type's operations make, by name, with its twin.
-            pub fn c_twin_rows() -> Vec<(&'static str, CTwin)> {
+            fn c_twin_rows() -> Vec<(&'static str, CTwin)> {
                 let mut rows = Vec::new();
                 $(rows.extend(row_twins!(@rows $label, $variant $kind($($what)*)));)*
                 rows
@@ -56,7 +63,7 @@ fn equality_twin(strict: bool) -> CTwin {
 }
 
 row_twins! {
-    impl NumberOperation as "NumberOperation" {
+    trait NumberOperationCTwinsExt for NumberOperation as "NumberOperation" {
         Arithmetic => kernel(int_add),
         Relation => kernel(cmp_int),
         RelationValue => kernel(cmp_dbl),
@@ -74,7 +81,7 @@ row_twins! {
 }
 
 row_twins! {
-    impl Operation<W, P>, <W, P> as "Operation" {
+    trait OperationCTwinsExt<W, P> for Operation<W, P>, <W, P> as "Operation" {
         Move => kernel(c_locals_rotate),
         LoadConst => none("constant load: no benchmark op isolates it"),
         LoadLocalPlain => kernel(c_locals_rotate),

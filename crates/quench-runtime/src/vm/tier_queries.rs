@@ -256,12 +256,10 @@ heap_reads! {
     fn is_map(value: Value) -> bool;
     /// The cell of a heap value (`Heap::get`).
     fn get(value: Value) -> Option<&'a Cell>;
-    /// The read view of an object (`Heap::object_ref`): the cell-answerable reads, else its record.
-    fn object_ref(value: Value) -> Option<ObjectRef<'a>>;
+    /// The read view of an object (`Heap::object`): the cell-answerable reads, else its record.
+    fn object(value: Value) -> Option<ObjectRef<'a>>;
     /// Property `slot` of the object view `object` (`Heap::property_get_ref`).
     fn property_get_ref(object: ObjectRef<'_>, slot: usize) -> Option<Value>;
-    /// An object's record (`Heap::object`).
-    fn object(value: Value) -> Option<&'a Object>;
     /// An ordinary object's record (`Heap::ordinary_object`).
     fn ordinary_object(value: Value) -> Option<&'a Object>;
     /// An object held in the record arena (`Heap::object_record`).
@@ -359,18 +357,15 @@ impl Vm {
     /// The record of the environment `value`, for a store (`Heap::environment_mut`).
     #[inline(always)]
     pub fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> { self.heap.environment_mut(value) }
-    /// The record of the object `value`, for a store (`Heap::object_mut`).
+    /// The exclusive view of the object `value`, for a store (`Heap::object_mut`).
     #[inline(always)]
-    pub fn object_mut(&mut self, value: Value) -> Option<&mut Object> { self.heap.object_mut(value) }
-    /// The exclusive view of the object `value`, for a store (`Heap::object_mut_ref`).
+    pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut(value) }
+    /// The exclusive view of `value` for a record-only edit (`Heap::object_mut_departing`): a live class cell departs first.
     #[inline(always)]
-    pub fn object_mut_ref(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut_ref(value) }
-    /// The record of the object `value`, for a store of `stored` (`Heap::object_store_mut`).
+    pub fn object_mut_departing(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut_departing(value) }
+    /// The exclusive view of the object `value` for a store of `stored` (`Heap::object_store_mut`).
     #[inline(always)]
-    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> { self.heap.object_store_mut(value, stored) }
-    /// The exclusive view of the object `value` for a store of `stored` (`Heap::object_store_mut_ref`).
-    #[inline(always)]
-    pub fn object_store_mut_ref(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> { self.heap.object_store_mut_ref(value, stored) }
+    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> { self.heap.object_store_mut(value, stored) }
     /// Charges `bytes` of payload growth to the collector's pacing (`Heap::charge_payload_growth`).
     #[inline(always)]
     pub fn charge_payload_growth(&mut self, bytes: usize) { self.heap.charge_payload_growth(bytes) }

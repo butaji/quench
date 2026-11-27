@@ -1,5 +1,6 @@
 //! Functions of `dispatch_fast` in a codegen unit of their own (B1: a staged edit recompiles only the units that inline it).
 #![allow(unused_imports)]
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
 
 /// Whether the iteration step at `pc` (`iteration_step_in_lane`) is a destructuring step as
@@ -1696,7 +1697,7 @@ pub(super) unsafe fn enter_prepared_in_lane(
 ) -> Ip {
     // The callback family's window row (`staged::call_callback::fill_callback`).
     quench_runtime::staged::call_callback::fill_callback(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+        &mut quench_runtime::staged::Concrete::pure(),
         registers.expose_provenance() as u64, args.as_ptr().expose_provenance() as u64, entry.window(),
     );
     unsafe { enter_filled_in_lane(cx, entry, registers) }
@@ -1770,7 +1771,7 @@ pub(super) unsafe fn fill_prepared_values_in_lane<const N: usize>(
 ) -> *mut Value {
     // The callback family's window row of held words (`staged::call_callback::fill_callback_words`).
     quench_runtime::staged::call_callback::fill_callback_words(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+        &mut quench_runtime::staged::Concrete::pure(),
         registers.expose_provenance() as u64, values.map(Value::to_bits), entry.window(),
     );
     registers
@@ -1805,7 +1806,7 @@ pub(super) fn install_entry_in_lane(cx: *mut LaneContext, entry: &PreparedEntry,
     // The callback family's context row (`staged::call_callback::install_callback`).
     let context = entry.context();
     quench_runtime::staged::call_callback::install_callback(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, context,
+        &mut quench_runtime::staged::Concrete::pure(), registers.expose_provenance() as u64, context,
     );
 }
 

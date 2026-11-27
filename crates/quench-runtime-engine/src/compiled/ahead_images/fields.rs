@@ -14,6 +14,7 @@
 //! class reads it as that class (`GuardAccess::ReadInt32`, `GuardAccess::ReadReference`) under the slot's
 //! dependency, the fact proven where the slot is written: its miss leaves (`NativeFieldLoad::probes_misses`),
 //! so the value it defines keeps it.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

@@ -122,11 +122,11 @@ impl FrameRecord {
             let entries = self.registers.as_mut_ptr().add(count);
             match own_slots {
                 None => crate::staged::call_environment::lay_out_entries(
-                    &mut crate::staged::Concrete::new(std::ptr::null()),
+                    &mut crate::staged::Concrete::pure(),
                     entries.expose_provenance() as u64, captured, self.locals.len() as u16,
                 ),
                 Some(slots) => crate::staged::call_environment::write_entries(
-                    &mut crate::staged::Concrete::new(std::ptr::null()),
+                    &mut crate::staged::Concrete::pure(),
                     entries.expose_provenance() as u64, self.env.to_bits(), slots.expose_provenance() as u64, captured,
                 ),
             }

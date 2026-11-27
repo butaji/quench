@@ -18,7 +18,7 @@ impl Vm {
 
     pub(super) fn install_shadow_realm_for_realm(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         global: Value,
         constructor: Value,
         object_prototype: Value,
@@ -501,7 +501,7 @@ impl Vm {
         let constructor = self.get_property(p, caller, function_atom)?;
         let prototype_atom = self.prototype_atom();
         let function_prototype = self.get_property(p, constructor, prototype_atom)?;
-        if let Some(object) = self.object_data_mut(wrapper) {
+        if let Some(mut object) = self.heap.object_mut(wrapper) {
             object.set_proto(function_prototype);
         }
         self.set_function_metadata_value(wrapper, name_atom, name)?;
