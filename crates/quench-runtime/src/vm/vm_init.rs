@@ -147,6 +147,7 @@ impl Vm {
             native_program_resolver: None,
             execution_interrupt,
             active_call_roots: vec![],
+            parked_native: None,
             active_roots: vec![],
             realm_native_proofs: super::iterators::RealmNativeProofs::new(),
             prepared_roots: vec![],

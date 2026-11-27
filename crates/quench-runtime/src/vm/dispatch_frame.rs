@@ -582,7 +582,7 @@ impl Vm {
                 ))
             }
             FrameOutcome::Suspend(suspended @ Suspended::Await { .. }, _) => {
-                Ok(FrameOutcome::Suspend(suspended, Some(frame)))
+                Ok(FrameOutcome::Suspend(suspended, Some(FrameRecord::capture(frame))))
             }
             FrameOutcome::Suspend(Suspended::Yield { .. }, _) => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -623,7 +623,7 @@ impl Vm {
         parent: Value,
         this: Value,
         context: CallContext,
-    ) -> Result<Box<Frame>, JsError> {
+    ) -> Result<Box<FrameRecord>, JsError> {
         self.unstarted_frame_with(p, id, parent, this, &[], context)
     }
 
@@ -636,11 +636,11 @@ impl Vm {
         this: Value,
         args: &[Value],
         context: CallContext,
-    ) -> Result<Box<Frame>, JsError> {
+    ) -> Result<Box<FrameRecord>, JsError> {
         self.activate_user_frame(p, id, parent, this, args, context)?;
         let mut frame = self.frames.pop().expect("the activation pushed a frame");
         frame.with_objects = self.with_stack.split_off(frame.with_base);
-        Ok(frame)
+        Ok(FrameRecord::capture(frame))
     }
 
     /// `activate_user_frame` for a function whose static layout describes its whole
@@ -1433,12 +1433,19 @@ impl Vm {
     /// stopped as `stop` says (returned where `None`), and its result is the call's value; any
     /// other frame ends its scopes and goes back to the pool, its value unchanged. True where a
     /// generator's step finished, which may have allocated.
-    pub fn retire_returned_frame(&mut self, completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
+    pub fn retire_returned_frame(&mut self, mut completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
         stop: Option<super::generator::MaterializedStop>) -> (Value, bool) {
         match completion.take_generator() {
             Some(resume) => {
                 let stop = stop.unwrap_or(super::generator::MaterializedStop::Returned);
-                (self.finish_materialized_generator_step(completed, resume, value, stop), true)
+                // The frame's scopes end as its stop says: a return leaves them, a yield keeps its
+                // `with` objects with the frame, which the record then holds (`FrameRecord::capture`).
+                match stop {
+                    super::generator::MaterializedStop::Returned => self.finish_frame_scopes(&completed),
+                    _ => completed.with_objects = self.with_stack.split_off(completed.with_base),
+                }
+                let record = FrameRecord::capture(completed);
+                (self.finish_materialized_generator_step(record, resume, value, stop), true)
             }
             None => {
                 self.finish_frame_scopes(&completed);
@@ -2625,7 +2632,7 @@ impl Vm {
                         // SAFETY: as for `p` at the top of the loop.
                         let callee_code = unsafe { &*executing_residual };
                         let continuation = self.suspend_activation(
-                            suspended,
+                            FrameRecord::capture(suspended),
                             super::activation::Completion::Await(value),
                             Some(destination),
                             promise,

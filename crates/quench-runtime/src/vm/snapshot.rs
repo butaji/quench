@@ -96,6 +96,7 @@ impl Vm {
             native_program_resolver: _,
             execution_interrupt: _,
             active_call_roots: _,
+            parked_native: _,
             active_roots: _,
             prepared_roots: _,
             step_native_proofs: _,

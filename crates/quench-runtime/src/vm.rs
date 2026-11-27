@@ -62,7 +62,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-pub use activation::{CallCompletion, CallContext, ConstructionTarget};
+pub use activation::{CallCompletion, CallContext, ConstructionTarget, FrameRecord};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -1959,10 +1959,11 @@ pub enum FrameOutcome {
         this: Value,
     },
     ParameterInitializationComplete,
-    /// A suspension, with the activation's frame when the caller retains it. The frame is boxed
-    /// so every `FrameOutcome` stays a few words: the common completions move it through each
-    /// call return.
-    Suspend(Suspended, Option<Box<Frame>>),
+    /// A suspension. Its frame is the record the suspension captured (`FrameRecord::capture`) at
+    /// the pop that retired the activation, which the caller takes; `None` where the frame is still
+    /// on the frame stack for that pop to take. The record is boxed so every `FrameOutcome` stays a
+    /// few words: the common completions move it through each call return.
+    Suspend(Suspended, Option<Box<FrameRecord>>),
 }
 
 impl FrameOutcome {
@@ -2189,6 +2190,9 @@ pub struct Vm {
     pub native_program_resolver: Option<Box<engine_types::NativeProgramResolver>>,
     pub execution_interrupt: crate::ExecutionInterrupt,
     pub active_call_roots: Vec<Value>,
+    /// The native call a chain's top frame is parked in, set at a native's edge (`Vm::park_native`)
+    /// and taken by the next `capture_chain`, which moves it into the record.
+    pub(in crate::vm) parked_native: Option<activation::frame_record::ParkedNative>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`,
     /// `call_eval_closure`), innermost last. Global var paths walk them rather than every frame.
     active_roots: Vec<usize>,
