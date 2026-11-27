@@ -57,37 +57,6 @@ use conversion::ScalarConversionOperator;
 use float::{F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator};
 use integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
 
-impl std::fmt::Display for WasmTrap {
-    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        output.write_str(match self {
-            Self::UndefinedElement => "undefined element",
-            Self::UninitializedElement => "uninitialized element",
-            Self::NullReference => "null reference",
-            Self::NullFunctionReference => "null function reference",
-            Self::NullArrayReference => "null array reference",
-            Self::NullExceptionReference => "null exception reference",
-            Self::NullDescriptorReference => "null descriptor reference",
-            Self::ArrayTooLarge => "array too large",
-            Self::NullStructReference => "null structure reference",
-            Self::NullI31Reference => "null i31 reference",
-            Self::CastFailure => "cast failure",
-            Self::DescriptorCastFailure => "descriptor cast failure",
-            Self::IndirectCallTypeMismatch => "indirect call type mismatch",
-            Self::OutOfBoundsArray => "out of bounds array access",
-            Self::OutOfBoundsTable => "out of bounds table access",
-            Self::WaitOnUnsharedMemory => "atomic wait on unshared memory",
-            Self::TooManyWaiters => "too many atomic waiters",
-            Self::UnalignedAtomic => "unaligned atomic",
-            Self::OutOfBoundsMemory => "out of bounds memory access",
-            Self::Unreachable => "unreachable",
-            Self::CallStackExhausted => "call stack exhausted",
-            Self::IntegerDivideByZero => "integer divide by zero",
-            Self::IntegerOverflow => "integer overflow",
-            Self::InvalidConversionToInteger => "invalid conversion to integer",
-        })
-    }
-}
-
 const ZERO_LOCAL_CONSTANT: u32 = 0;
 const VOID_RESULT_CONSTANT: u32 = 1;
 /// The shared call ABI carries one Value; additional results need an owned bundle.

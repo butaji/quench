@@ -24,7 +24,7 @@ macro_rules! scalar_conversions {
         selectors!(@decoded ScalarConversionOperator; $($name, $wasm;)+);
 
         impl ScalarConversionOperator {
-            pub(crate) fn source_type(self) -> WasmType {
+            pub fn source_type(self) -> WasmType {
                 match self { $(Self::$name => WasmType::$source,)+ }
             }
 
@@ -35,7 +35,7 @@ macro_rules! scalar_conversions {
             /// The conversion written out on its own: the oracle `ConcreteWasm::convert` is tested
             /// against; execution goes through `evaluate`.
             #[cfg(test)]
-            pub(crate) fn apply(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
+            pub fn apply(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
                 match (self, value) {
                     $((Self::$name, WasmValue::$source($value)) => Ok($body),)+
                     _ => unreachable!("validated Wasm scalar conversion operand"),
@@ -48,13 +48,13 @@ macro_rules! scalar_conversions {
 impl ScalarConversionOperator {
     /// The integers a trapping float-to-integer conversion may produce; `None` for every other
     /// conversion, which cannot trap.
-    pub(crate) fn truncation(self) -> Option<Truncation> {
+    pub fn truncation(self) -> Option<Truncation> {
         self.float_to_integer().filter(|&(_, saturating)| !saturating).map(|(truncation, _)| truncation)
     }
 
     /// The integers a float-to-integer conversion produces, and whether it saturates instead of
     /// trapping outside them; `None` for every other conversion.
-    pub(crate) fn float_to_integer(self) -> Option<(Truncation, bool)> {
+    pub fn float_to_integer(self) -> Option<(Truncation, bool)> {
         let (signed, saturating) = match self {
             Self::TruncateF32SignedI32
             | Self::TruncateF64SignedI32
@@ -85,7 +85,7 @@ impl ScalarConversionOperator {
     /// `apply` through the staged rules (`staged::wasm_float`).
     #[cfg(not(stencil_build))]
     #[inline(always)]
-    pub(crate) fn evaluate(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
+    pub fn evaluate(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
         let word = convert(&mut ConcreteWasm, self, value.word())?;
         Ok(WasmValue::from_bits(self.result_type(), word))
     }
