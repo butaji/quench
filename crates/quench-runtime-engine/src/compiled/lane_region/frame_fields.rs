@@ -55,8 +55,6 @@ pub(crate) struct HeldRead {
     /// Whether a store the in-place arms miss leaves instead of calling the VM's store
     /// (`Lowering::store_leaves`).
     pub(crate) leaves: bool,
-    /// Whether the store's holder is fresh (`Lowering::store_into_fresh`): its barrier log is elided (4.7 (b)).
-    pub(crate) fresh: bool,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
