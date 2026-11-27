@@ -3,7 +3,7 @@
 use super::analyze;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Cell, FactKey, Representation, Type};
 
 fn program(source: &str) -> ResidualProgram {
     Engine::specialize(source, "aot-facts.js").unwrap()
@@ -70,11 +70,12 @@ fn an_int32_register_is_proven_int32() {
 
 #[test]
 fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
-    let program = program("function T(n) { this.link = null; this.count = 0; this.next = n; }
+    // Wrapped in a function: a top-level function is a global, which the host reads by name, so it escapes (`types::escapes`).
+    let program = program("(function () { function T(n) { this.link = null; this.count = 0; this.next = n; }
         T.prototype.run = function () { this.count = this.count | 1; return this.next; };
         function S() { this.current = null; }
         S.prototype.go = function () { this.current = new T(null); while (this.current != null) { this.current = this.current.run(); } };
-        new S().go();");
+        new S().go(); })();");
     let facts = analyze(&program);
     let atom = |name: &str| program.atoms.iter().position(|atom| atom.as_ref() == name).unwrap() as u32;
     use crate::typed_ir::Type;
@@ -86,8 +87,39 @@ fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
 
 #[test]
 fn a_field_takes_the_type_of_the_argument_its_constructor_is_called_with() {
-    let program = program("function P(v) { this.v = v; } function mk() { return new P(3); } mk(); mk();");
+    // Wrapped in a function, as the test above: a top-level constructor is a global the host may read, so it escapes.
+    let program = program("(function () { function P(v) { this.v = v; } function mk() { return new P(3); } mk(); mk(); })();");
     let facts = analyze(&program);
     let v = program.atoms.iter().position(|atom| atom.as_ref() == "v").expect("the field name") as u32;
     assert!(facts.field_type(v).is_subtype(crate::typed_ir::Type::INT32));
+}
+
+/// The settled cell of parameter `index` of the function named `name`.
+fn parameter(program: &ResidualProgram, facts: &super::AotFacts, name: &str, index: u16) -> Cell {
+    let function = function_named(program, name) as u32;
+    facts.cell(FactKey::Parameter { function, index }).expect("a settled parameter")
+}
+
+#[test]
+fn a_function_only_recorded_calls_reach_keeps_its_parameter_types() {
+    let program = program("(function () { function f(a) { return a | 1; } f(2); f(3); })();");
+    let facts = analyze(&program);
+    assert!(parameter(&program, &facts, "f", 0).ty.is_subtype(Type::INT32));
+}
+
+#[test]
+fn a_function_a_native_calls_takes_any_parameter_and_this() {
+    // `cb` is reached by a recorded call and by `forEach`, whose callee the solve cannot resolve: it escapes.
+    let program = program("(function () { function cb(a) { return a | 1; } cb(2); [1].forEach(cb); })();");
+    let facts = analyze(&program);
+    assert_eq!(parameter(&program, &facts, "cb", 0).ty, Type::ANY);
+    let cb = function_named(&program, "cb") as u32;
+    assert_eq!(facts.cell(FactKey::Receiver(cb)).map(|cell| cell.ty), Some(Type::ANY));
+}
+
+#[test]
+fn a_global_function_escapes_because_the_host_reads_globals_by_name() {
+    let program = program("function f(a) { return a | 1; } f(2); f(3);");
+    let facts = analyze(&program);
+    assert_eq!(parameter(&program, &facts, "f", 0).ty, Type::ANY);
 }

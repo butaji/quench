@@ -82,6 +82,12 @@ impl Census {
         self.members.get(&atom).filter(|set| (1..=MAX_CANDIDATES).contains(&set.len()))
     }
 
+    /// Whether new code (`World`) can move `key`: a store under a live key may put any closure where the solve reads it,
+    /// so the closure stored escapes (`types::escapes`).
+    pub(super) fn live(&self, key: FactKey) -> bool {
+        self.world.live(key)
+    }
+
     /// Whether `target(callee)` is a guess rather than a proof: the value was read from a key new code can
     /// move in this world (`World::live`), or it is a method read's guess the solve or the census made. A
     /// method read of a known closure is still a proof in the closed world (`guess` only where unknown).

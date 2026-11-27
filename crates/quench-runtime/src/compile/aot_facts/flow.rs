@@ -61,6 +61,16 @@ pub(super) struct FunctionFlow {
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
+    /// Whether the function's return value leaves the closed world: the program's root (the host reads its result),
+    /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
+    /// `types::escapes` takes its returns as positions the solve cannot follow.
+    pub(super) returns_out: bool,
+    /// The values the function hands to code the solve cannot follow: each value it throws, and every register at
+    /// a `yield` or `await`, which the runtime carries to a consumer or a promise reaction (`types::escapes`).
+    pub(super) handed: Vec<Word>,
+    /// The functions whose closure the function defines in a register. Where a value's identity is lost (a function
+    /// alternative with no body), any of them may be the closure it holds (`types::escapes`).
+    pub(super) closures: Vec<u32>,
 }
 
 /// The cells a function's registers hold at every point, kept compactly: each reachable block's cells at
@@ -129,7 +139,8 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     record.registers.entries.sort_by_key(|(start, _)| *start);
     record.registers.writes.sort_by_key(|(pc, _)| *pc);
     let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
-    record.finish(arity)
+    let returns_out = ctx.is_root || function.is_generator || function.is_async;
+    record.finish(arity, returns_out)
 }
 
 /// Per PC, whether the `MakeArray` there is a literal whose `DefineArrayElement` records follow it back to back and
@@ -366,6 +377,8 @@ struct Record {
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
+    handed: Vec<Word>,
+    closures: Vec<u32>,
 }
 
 impl Record {
@@ -382,11 +395,21 @@ impl Record {
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
+            handed: Vec::new(),
+            closures: Vec::new(),
         }
     }
 
     /// Notes the reads and the calls `instruction` makes, from the facts before it.
     fn observe(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: usize, state: &[Word]) {
+        // A thrown value leaves for a handler or the host; a yield or await carries its live registers to a consumer
+        // or a promise reaction. Either hands them to code no recorded call reaches.
+        if let Some(Operation::Throw { source }) = Operation::<u64, ()>::of(instruction) {
+            self.handed.push(state[usize::from(source)]);
+        }
+        if matches!(instruction.op(), crate::bytecode::Op::Yield | crate::bytecode::Op::YieldStar | crate::bytecode::Op::Await) {
+            self.handed.extend_from_slice(state);
+        }
         for register in used_registers(instruction) {
             if !state[usize::from(register)].is_number() {
                 self.unsafe_reads[usize::from(register)] = true;
@@ -455,6 +478,8 @@ impl Record {
         for register in instruction.written_registers() {
             let index = usize::from(register);
             self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
+            // A register written with a closure of known identity materializes that closure.
+            if let Some(function) = state[index].cell.ty.body_index() { self.closures.push(function); }
         }
         // The key a defined value was read from, where its word names one (`Origin`).
         if let Some(defined) = instruction.defined_register() {
@@ -470,7 +495,7 @@ impl Record {
         }
     }
 
-    fn finish(self, arity: Option<u16>) -> FunctionFlow {
+    fn finish(self, arity: Option<u16>, returns_out: bool) -> FunctionFlow {
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -489,6 +514,9 @@ impl Record {
             registers: self.registers,
             reads: self.reads,
             arity,
+            returns_out,
+            handed: self.handed,
+            closures: self.closures,
         }
     }
 }

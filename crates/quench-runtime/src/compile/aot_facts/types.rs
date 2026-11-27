@@ -19,11 +19,11 @@
 use super::census::Census;
 use super::flow::FunctionFlow;
 use super::value::{Key, Origin, UNNAMED_ARRAYS};
-use crate::typed_ir::{Cell, Classes, Elements, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, Elements, WIDENING_ROUNDS, language_bit};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The most passes the solve takes. Each pass is one whole-program flow over the types the one before found,
 /// and the types only climb, each through a lattice of bounded height, so the solve settles; a chain of fields
@@ -71,6 +71,12 @@ impl Types {
             }
         }
         types.params = parameters(flows, facts, census);
+        // An escaped function (`escapes`) may be called by code the solve cannot follow, with any `this` and arguments:
+        // its parameters are any value, as are its `this` (below), whatever its recorded calls pass.
+        let escaped = escapes(flows, facts, census);
+        for function in &escaped {
+            if let Some(slots) = types.params.get_mut(function) { slots.iter_mut().for_each(|slot| *slot = Cell::ANY); }
+        }
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
                 let receiver = Cell { ty: receiver_type(call), ..call.receiver.cell };
@@ -83,8 +89,13 @@ impl Types {
         // A method one class holds (`Key::MemberOn`: its prototype's, or its instances' own) is called on an
         // object of that class: its `this` is an instance of the class, a guess, whatever the calls' receivers'
         // join is (`this.task.run()` reaches four classes' `run`, each with its own class's `this`).
+        // An escaped function is called with any `this` (`escapes`): the class its holder guesses does not narrow it.
         for (function, class) in holders(&types.cells) {
+            if escaped.contains(&function) { continue; }
             types.receivers.entry(function).or_insert(Cell::ANY).classes = Classes::one(class, false);
+        }
+        for function in &escaped {
+            types.receivers.insert(*function, Cell::ANY);
         }
         types
     }
@@ -279,10 +290,10 @@ fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts, census: &C
 /// (`FunctionFlow::arity`). Parameter `i` joins argument `i` of every recorded call the closed world
 /// proves or guesses may reach the function: the call's one target, its closed method set, or the
 /// construction's target. A call that passes no `i`th argument passes `undefined` there, and a function
-/// no recorded call reaches takes any value throughout. A call the analysis does not see (a callback a
-/// builtin makes, a call through a computed callee) may pass anything: the types are a guess, as the
-/// field types they feed are, which a tier holds only under the fields' slot dependencies, so such a call
-/// that stores what it was passed widens the slot and retires the code.
+/// no recorded call reaches takes any value throughout. `Types::of` takes any value for an escaped function
+/// (`escapes`), since a call the recorded calls do not show (a native's callback, an unresolved callee) may
+/// pass it anything. A call the analysis does not see may pass anything: the types are a guess, as the
+/// field types they feed are, which a tier holds only under the fields' slot dependencies.
 fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTreeMap<u32, Vec<Cell>> {
     let undefined = Cell::of(Type::language(ValueType::Undefined));
     let mut params: BTreeMap<u32, Vec<Cell>> = flows.iter().enumerate()
@@ -306,4 +317,85 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTre
         if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Cell::ANY); }
     }
     params
+}
+
+/// The functions whose closure may reach a position the solve cannot follow, so that code it does not see may call
+/// them with any `this` and arguments (`Types::of` gives an escaped function `Cell::ANY` for its `this` and every
+/// parameter). A closure escapes when a sink may hold it:
+/// - the callee, `this` or an argument of a recorded call the solve does not resolve (`resolved`): the call may run a
+///   native or an unseen function, which the recorded arguments never reach;
+/// - a value thrown, or a register live at a `yield` or `await` (`FunctionFlow::handed`): a consumer or a reaction runs it;
+/// - a store into an element (`Key::Element`), or into a global, which the host may read by name;
+/// - a return of an escaped function, of the root, or of an async or generator function (`FunctionFlow::returns_out`);
+/// - a store under a named property (`Key::Member`, `MemberOn`, `MemberAny`) that new code can move (`Census::live`), or
+///   any store while an object reaches a sink (`object_reader`): unresolved code may read any named property of it.
+/// A sink holds a closure by its cell (`mark`): the function its type names, else, where its identity is lost, every
+/// materialized closure. A value passed on to a resolved callee reaches the callee's own cells, which its sinks read.
+/// The rule is a fixpoint: an escaped function's return is a sink, which may make an object reader, which escapes
+/// the named stores. Known gap: a method read's call is resolved by the census's closed set, so a builtin receiver whose
+/// method the program also defines (the record's guard falls back to the VM) gets arguments the solve never saw.
+fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTreeSet<u32> {
+    use super::flow::Target;
+    let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
+    let roots: BTreeSet<u32> = flows.iter().enumerate().filter(|(_, flow)| flow.returns_out).map(|(id, _)| id as u32).collect();
+    let mut sinks: Vec<Cell> = Vec::new();
+    for (id, flow) in flows.iter().enumerate() {
+        for call in &flow.calls {
+            if resolved(call, &targets(id as u32, call, facts, census), census) { continue; }
+            if call.target == Target::Register { sinks.push(call.callee.cell); }
+            sinks.push(call.receiver.cell);
+            sinks.extend(call.arguments.iter().map(|argument| argument.cell));
+        }
+        sinks.extend(flow.handed.iter().map(|word| word.cell));
+    }
+    let writes: Vec<(Key, Cell)> = flows.iter().flat_map(|flow| &flow.writes).map(|&(key, word)| (key, word.cell)).collect();
+    let mut escaped = BTreeSet::new();
+    loop {
+        let mut held = sinks.clone();
+        let mut object_reader = sinks.iter().any(|cell| may_be_object(*cell));
+        let mut named = Vec::new();
+        for &(key, cell) in &writes {
+            match key {
+                Key::Element(_) => held.push(cell),
+                Key::Global(_) => { object_reader |= may_be_object(cell); held.push(cell); }
+                Key::Return(function) if escaped.contains(&function) || roots.contains(&function) => { object_reader |= may_be_object(cell); held.push(cell); }
+                Key::Member(_) | Key::MemberOn { .. } | Key::MemberAny(_) => named.push((key, cell)),
+                Key::Return(_) | Key::Slot { .. } => {}
+            }
+        }
+        held.extend(named.into_iter()
+            .filter(|(key, _)| object_reader || census.live(super::census::fact_key(*key)))
+            .map(|(_, cell)| cell));
+        let mut next = escaped.clone();
+        for cell in &held { mark(cell, &materialized, &mut next); }
+        if next == escaped { return escaped; }
+        escaped = next;
+    }
+}
+
+/// Whether a recorded call resolves: its targets are known functions (`targets` is not empty) and the callee is not a guess
+/// (`Census::guessed`: a read from a key new code can move, or a method read the census only guesses). Only a resolved call's
+/// arguments reach the callees' parameters (`parameters`), so an unresolved call's arguments escape instead (`escapes`).
+fn resolved(call: &super::flow::Call, callees: &[u32], census: &Census) -> bool {
+    !callees.is_empty() && !census.guessed(call.callee)
+}
+
+/// Adds to `escaped` the functions a cell may hold a closure of: its type's identity and its elements' type's identity. A
+/// type with a function alternative but no body (identity lost: a join of two closures, or `Type::ANY`) may hold any
+/// materialized closure, so each of them escapes.
+fn mark(cell: &Cell, materialized: &BTreeSet<u32>, escaped: &mut BTreeSet<u32>) {
+    for ty in [cell.ty, cell.elements.ty] {
+        if let Some(function) = ty.body_index() {
+            escaped.insert(function);
+        } else if ty.may_be_languages(Type::language(ValueType::Function)) {
+            escaped.extend(materialized.iter().copied());
+        }
+    }
+}
+
+/// Whether a cell may hold an object: an object, a function or an instance of a class. Code the solve does not see may read
+/// any named property of such a value, so a store under a named property escapes wherever one reaches a sink (`escapes`).
+fn may_be_object(cell: Cell) -> bool {
+    let objects = Type::languages(language_bit(ValueType::Object) | language_bit(ValueType::Function));
+    cell.ty.may_be_languages(objects) || cell.classes != Classes::Never
 }
