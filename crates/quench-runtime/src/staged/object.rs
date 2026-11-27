@@ -313,7 +313,7 @@ fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, ta
 /// The address of object record `id` in the record table at `records`. Called only by `object_record_of`,
 /// `direct_object_record`, and places that already hold a record id (not a `Value`).
 #[inline(always)]
-pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
+pub fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
     let offset = stage.mul_imm(id, OBJECT.record_size as u64);
     stage.add(records, offset)
 }
