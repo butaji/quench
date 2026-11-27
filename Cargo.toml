@@ -9,6 +9,7 @@ members = [
     "crates/quench-gate",
     "crates/quench-js-check",
     "crates/quench-lint",
+    "crates/quench-opcodes",
     "crates/quench-macros",
     "crates/quench",
     "crates/quench-node-test",

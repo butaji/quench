@@ -31,7 +31,7 @@ builtin-bodies	.	^(ArrayConcat|StringSearch)$	in-place or dense fast prefix that
 builtin-bodies	.	^ArrayValues$	name collision: array_values copies into a Vec, take_present_array_values is an iterator-list helper; neither is Array.prototype.values (Builtins triage)
 specializer-driver	vm/compiled/lane_region\.rs$	^lower_body$	u-jit lowering back end that every driver calls (lane_compile.rs, ahead_images.rs, OSR regions); the driver fold into one plan-then-specialize entry is Compile pipeline B4 (u-jit triage)
 dead-code	bytecode/(op_catalog|op_classes)\.rs$	.	catalog-generated items (Class enum, is_<class> predicates) matched only in feature builds; cfg_attr on exact features at stabilization (Front end triage)
-dead-code	src/bytecode\.rs$	.	opcodes! generated impl Op, InstructionField reached through const fns, register_root_mask used by profile and tests; cfg_attr on exact features at stabilization (Front end triage)
+dead-code	src/bytecode\.rs$	.	define_ops! generated impl Op (rows from quench-opcodes), InstructionField reached through const fns, register_root_mask used by profile and tests; cfg_attr on exact features at stabilization (Front end triage)
 duplicate-lattice	vm/wtf16\.rs$	.	string storage form (Latin-1 vs UTF-16), not a value fact (Fact store triage)
 duplicate-lattice	typed_ir/representation\.rs$	.	machine-word axis carried by typed_ir::Fact next to Type; absorbed staged Rep, exit Repr, b-jit Rep and osr Role (Fact store triage)
 duplicate-lattice	typed_ir/slot_type\.rs$	.	1-byte storage projection of Type per shape slot; round-trips from_type/ty, join unit-tested equal to Type::join (Fact store triage)

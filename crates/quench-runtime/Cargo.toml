@@ -61,6 +61,8 @@ quench-alloc = { path = "../quench-alloc" }
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
 serde_json = "1"
 quench-macros = { path = "../quench-macros" }
+# The opcode table: `bytecode.rs` expands its rows into `Op` (`with_opcode_table!`).
+quench-opcodes = { path = "../quench-opcodes" }
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = { version = "0.10", optional = true }
