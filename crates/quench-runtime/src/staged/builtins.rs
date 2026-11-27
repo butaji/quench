@@ -200,15 +200,7 @@ pub fn step_array_native_of<S: Stage>(stage: &mut S, native: ArrayNative<S::Word
 /// (`Vm::steady_is_array`: a plain object, a proxy). The b-jit's builtin row and the u-jit's lowering run this one step.
 #[inline(always)]
 pub fn is_plain_array<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let direct = super::value::is_direct_array(stage, value);
-    stage.guard(direct, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let record = super::elements::array_record(stage, record_base, value);
-    let payload = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-    let plain = super::object::plain_payload(stage, payload);
-    stage.guard(plain, miss)?;
+    super::proof::ArrayRecord::guard(stage, record_base, value, miss)?.plain_header(stage, miss)?;
     Some(stage.constant(Value::boolean(true).to_bits()))
 }
 

@@ -17,12 +17,16 @@ pub(crate) enum Views {
     Typed(TypedArrayKind),
 }
 
-impl From<ElementViews> for Views {
-    fn from(views: ElementViews) -> Self {
+impl Views {
+    /// The views of `region`'s arrays its entry found as `views`. Hole-free double backings the
+    /// region never writes are a `Float64Array`'s raw elements, which the entry record holds
+    /// (`loop_tier::loop_arrays_in_lane`): a read is a bounds test and one load.
+    pub(crate) fn of(views: ElementViews, region: &LoopRegion) -> Self {
         match views {
             ElementViews::Dense => Self::Dense,
             ElementViews::Typed(Some(kind)) if NativeKind::new(kind).is_some() => Self::Typed(kind),
-            // The rows read a double backing through its record (`elements::record_element`).
+            ElementViews::Double if region.arrays.iter().all(|array| !array.written) => Self::Typed(TypedArrayKind::Float64),
+            // A written double backing takes stores of any value: its rows read it through its record.
             ElementViews::Typed(_) | ElementViews::Double => Self::Frame,
         }
     }

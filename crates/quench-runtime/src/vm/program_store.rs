@@ -1583,7 +1583,6 @@ impl ProgramStore {
     }
 
     /// Every live program's compiled form.
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
         self.programs.iter().flatten().map(|entry| &**entry.residual)
     }
@@ -2587,7 +2586,6 @@ impl ProgramStore {
         self.js_jit_tracking_exhaustions
     }
 
-    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
         self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }

@@ -142,7 +142,7 @@ pub(crate) mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 pub(crate) mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] pub(crate) mod lane_allocations;
-use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
+use lane_allocations::{binary_in_lane, collection_lookup_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -1182,6 +1182,8 @@ lane_helper_inventory! {
     ThrowStep => base_body::throw_step,
     DefineElementStep => base_body::define_element_step,
     CallOutStep => base_body::call_out_step,
+    /// A collection lookup a call runs by its callee's identity (`lane_allocations::collection_lookup_in_lane`).
+    CollectionLookup => collection_lookup_in_lane,
 }
 
 thread_local! {
