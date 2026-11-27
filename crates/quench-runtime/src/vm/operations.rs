@@ -1076,7 +1076,6 @@ impl Vm {
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => self.console_write(p, args, CapabilityId::WriteLine),
             Native::PrintError => self.console_write(p, args, CapabilityId::WriteErr),
-            Native::Date => self.date_call(),
             Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
             Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
             Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
@@ -1084,55 +1083,6 @@ impl Vm {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
             Native::IntlListFormat => Err(self.type_error(p, "constructor requires new".into())),
-            Native::DateNow => Ok(self.date_now()),
-            Native::DateGetTime
-            | Native::DateValueOf
-            | Native::DateGetTimezoneOffset
-            | Native::DateGetFullYear
-            | Native::DateGetMonth
-            | Native::DateGetDate
-            | Native::DateGetDay
-            | Native::DateGetHours
-            | Native::DateGetMinutes
-            | Native::DateGetSeconds
-            | Native::DateGetMilliseconds
-            | Native::DateGetUTCFullYear
-            | Native::DateGetUTCMonth
-            | Native::DateGetUTCDate
-            | Native::DateGetUTCDay
-            | Native::DateGetUTCHours
-            | Native::DateGetUTCMinutes
-            | Native::DateGetUTCSeconds
-            | Native::DateGetUTCMilliseconds
-            | Native::DateGetYear
-            | Native::DateSetTime
-            | Native::DateSetFullYear
-            | Native::DateSetMonth
-            | Native::DateSetUTCMonth
-            | Native::DateSetDate
-            | Native::DateSetUTCDate
-            | Native::DateSetUTCFullYear
-            | Native::DateSetHours
-            | Native::DateSetMinutes
-            | Native::DateSetSeconds
-            | Native::DateSetMilliseconds
-            | Native::DateSetUTCHours
-            | Native::DateSetUTCMinutes
-            | Native::DateSetUTCSeconds
-            | Native::DateSetUTCMilliseconds
-            | Native::DateSetYear
-            | Native::DateToString
-            | Native::DateToDateString
-            | Native::DateToTimeString
-            | Native::DateToUTCString
-            | Native::DateToLocaleString
-            | Native::DateToLocaleDateString
-            | Native::DateToLocaleTimeString
-            | Native::DateToISOString
-            | Native::DateToJSON
-            | Native::DateToPrimitive
-            | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
-            Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpCompile => self.regexp_compile_native(p, this, args),
             Native::RegExpExec => self.regexp_builtin_exec(p, this, args),
             Native::RegExpTest => self.regexp_test(p, this, args),
@@ -2121,6 +2071,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .or_else(|| method_entry(native))
         .or_else(|| realm_entry(native))
         .or_else(|| value_entry(native))
+        .or_else(|| super::date::entry(native))
         .unwrap_or(enter_table)
 }
 
