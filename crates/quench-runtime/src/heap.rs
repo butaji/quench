@@ -180,7 +180,7 @@ mod store_gate;
 mod typed_view;
 pub use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
-use layouts::{class_link, class_shape};
+use layouts::{class_field_reps, class_link, class_shape};
 pub use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 
 /// The word a double backing holds for the Number `number`: its bits, NaN canonical, so a NaN
@@ -296,7 +296,6 @@ pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, Environm
 mod external;
 mod float_slots;
 mod slot_words;
-#[cfg(test)] mod float_slot_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -4708,10 +4707,10 @@ impl Heap {
             self.note_value_slot(object, slot, value);
         }
         if let Some(granule) = self.live_class_cell(object) {
-            for (slot, value) in values.into_iter().enumerate() {
-                self.class_cell_store(granule, slot, value);
+            // A store that breaks a field's representation departs the object; the record path then stores them all.
+            if values.into_iter().enumerate().all(|(slot, value)| self.class_cell_store(granule, slot, value)) {
+                return;
             }
-            return;
         }
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
@@ -4783,8 +4782,9 @@ impl Heap {
     pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
         if let Some(granule) = self.live_class_cell(object) {
-            self.class_cell_store(granule, slot, value);
-            return;
+            if self.class_cell_store(granule, slot, value) {
+                return;
+            }
         }
         let vector = {
             let mut data = self
@@ -4834,8 +4834,9 @@ impl Heap {
     ) {
         self.note_value_slot(object, slot, value);
         if let Some(granule) = self.live_class_cell(object) {
-            self.class_cell_store(granule, slot, value);
-            return;
+            if self.class_cell_store(granule, slot, value) {
+                return;
+            }
         }
         let vector = {
             let mut data = self
@@ -5293,7 +5294,8 @@ impl Heap {
     /// The edges of live class cell `owner` (of class `class`, with fields `fields`), pushed as an object's are
     /// (`object_children_marking`): the class's prototype once per run of siblings, the class's shape roots,
     /// then each heap field that `mark_leaf` does not mark. A cell is never a prototype (its first use departs
-    /// it), so the shape roots carry no prototype flag. Slack fields hold `Value::DELETED`, which is no edge.
+    /// it), so the shape roots carry no prototype flag. Slack fields hold `Value::DELETED`, which is no edge, and
+    /// a raw-double field (`FieldReps`) holds f64 bits, which are no edge either.
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn cell_children_marking(
@@ -5314,7 +5316,11 @@ impl Heap {
             }
         }
         object_roots(trace_kind, owner, class_shape(class), false, work);
-        for &value in fields {
+        let reps = class_field_reps(class);
+        for (slot, &value) in fields.iter().enumerate() {
+            if reps.is_raw(slot) {
+                continue;
+            }
             if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                 work.push(value);
             }

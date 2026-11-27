@@ -33,6 +33,11 @@ impl Heap {
     /// cell's id is returned unchanged. `None` for a value that is no ordinary object.
     pub(crate) fn depart_class_object(&mut self, value: Value) -> Option<u32> {
         let granule = value.direct_object_index()?.granule();
+        self.depart_class_cell(granule)
+    }
+
+    /// `depart_class_object` of the object whose identity is granule `granule`.
+    pub(crate) fn depart_class_cell(&mut self, granule: u32) -> Option<u32> {
         let header = self.class_space.header(granule);
         if header_class(header) == DEPARTED_CLASS {
             return Some(header_record(header));
@@ -41,7 +46,7 @@ impl Heap {
         let shape = layouts::class_shape(class);
         let length = self.properties.shape_length(shape);
         debug_assert!(length <= region_capacity(granule) as usize, "a class cell holds its class's fields");
-        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.field(granule, slot)).collect();
+        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.field_value(granule, slot)).collect();
         let properties = self.properties.with_values(shape, &fields);
         let mut object = Object::with_property_storage(
             layouts::class_link(class).prototype(),
@@ -85,13 +90,26 @@ impl Heap {
     }
 
     /// A store of `value` to field `slot` of live cell `granule`, in place (`Heap::property_set`): the
-    /// store gate's barrier for a heap reference, the constant mark's clear, then the field.
-    pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) {
+    /// store gate's barrier for a heap reference, the constant mark's clear, then the field in its class's
+    /// representation (`layouts::class_field_reps`: raw f64 bits for a Float64 field, the tagged word
+    /// otherwise). A non-number stored to a Float64 field breaks that fact: the object departs
+    /// (`depart_class_cell`) and the store returns `false`, so the caller stores into the record.
+    pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) -> bool {
+        let reps = layouts::class_field_reps(header_class(self.class_space.header(granule)));
+        let bits = if !reps.is_raw(slot) {
+            value.to_bits()
+        } else if let Some(number) = value.as_number() {
+            number.to_bits()
+        } else {
+            self.depart_class_cell(granule);
+            return false;
+        };
         if value.heap_index().is_some() {
             self.class_space.barrier(granule, &self.properties);
         }
         self.note_cell_write(granule);
-        self.class_space.set_field(granule, slot, value);
+        self.class_space.write_field_bits(granule, slot, bits);
+        true
     }
 
     /// The add of `value` as field `slot` along the class edge from class `before`'s shape to shape `after`,
@@ -102,7 +120,9 @@ impl Heap {
         if slot >= region_capacity(granule) as usize {
             return false;
         }
-        self.class_cell_store(granule, slot, value);
+        if !self.class_cell_store(granule, slot, value) {
+            return false;
+        }
         let class = header_class(self.class_space.header(granule));
         debug_assert_eq!(layouts::class_shape(class), before, "an add's cell holds its transition's before-shape");
         let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class));

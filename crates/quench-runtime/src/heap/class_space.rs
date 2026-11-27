@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use super::layouts::{class_link, class_shape};
+use super::layouts::{self, class_link, class_shape};
 use super::pacing::PromotionAge;
 use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
@@ -317,6 +317,21 @@ impl ClassSpace {
         debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
         // SAFETY: field `slot` is the `Value` word `slot + 1` of the cell, inside its span (the assert).
         unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).read() }
+    }
+
+    /// Field `slot` of the live cell at `g` as a `Value`: a raw double's word is read as the Number it holds, the
+    /// class's representation of the field (`layouts::class_field_reps`); a tagged field is its word.
+    pub(super) fn field_value(&self, g: u32, slot: usize) -> Value {
+        let reps = layouts::class_field_reps(header_class(self.header(g)));
+        if reps.is_raw(slot) { Value::number(f64::from_bits(self.field(g, slot).to_bits())) } else { self.field(g, slot) }
+    }
+
+    /// Writes field `slot` of the cell at `g` as the word `bits`: a tagged `Value`'s bits, or a raw double's bits.
+    /// The caller has the class's representation of the field (`field_value`), and runs the write barrier.
+    pub(super) fn write_field_bits(&mut self, g: u32, slot: usize, bits: u64) {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` is the word `slot + 1` of the cell, inside its span (the assert), and `&mut self` is exclusive.
+        unsafe { self.cell_ptr(g).cast::<u64>().add(1 + slot).write(bits) };
     }
 
     /// Makes fields `from..region_capacity(g)` of the cell at `g` slack: `Value::DELETED`, which the

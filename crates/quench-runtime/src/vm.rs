@@ -241,7 +241,7 @@ pub mod object_static;
 pub mod object_symbols;
 pub mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
-#[cfg(test)] mod float_slot_tests;
+#[cfg(test)] mod record_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
