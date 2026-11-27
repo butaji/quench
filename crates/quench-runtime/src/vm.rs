@@ -3589,11 +3589,13 @@ impl Vm {
         }
     }
 
-    /// Only native code (Cranelift's or `--b-jit`'s stencils) reads slot representations, so only a runtime that
-    /// runs lane bodies keeps them, from its shape table and what its live objects hold: from its first compile
-    /// on (each compile entry asks; the first call starts them), so a run that never compiles never pays for them.
+    /// Only native code (Cranelift's, `--b-jit`'s stencils, or an AOT image's) reads slot representations, so only a
+    /// runtime that runs native bodies keeps them, from its shape table and what its live objects hold: from its first
+    /// compile or image install on (each such entry asks; the first call starts them), so a run that never compiles
+    /// never pays for them. No mode decides it: an image's typed field reads under `--no-jit` stand on the slots'
+    /// types as a JIT body's do, and a slot nobody tracks has no type for them to stand on.
     pub fn keep_slot_representations(&mut self) {
-        if !self.heap.tracks_slot_representations() && self.programs.js_jit_lane_methods_enabled() && (crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) || crate::jit_mode::base_only()) {
+        if !self.heap.tracks_slot_representations() {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }
