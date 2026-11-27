@@ -302,6 +302,12 @@ impl AotFacts {
         self.construct_classes.values().copied().collect()
     }
 
+    /// The function body class `class` runs (`ClassIds::body`): `class` itself for a constructor's own class, the shared body
+    /// of a synthetic class. Code, frame sizes, callee bodies and function facts are keyed by this function id.
+    pub fn class_body(&self, class: u32) -> u32 {
+        self.classes.body(class)
+    }
+
     /// The facts of function `function`, for its lowering.
     pub fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
         FunctionFacts { facts: self, function }

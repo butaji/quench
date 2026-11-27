@@ -984,8 +984,9 @@ impl ProgramStore {
         })))
     }
 
-    /// The header cell of class `class` (a constructor's function id) in program `id`: the layout id its constructed
-    /// instances hold, recorded once by the first construction (`Vm::record_class_header`), 0 until then.
+    /// The header cell of class `class` (a class id, `AotFacts::constructed_classes`) in program `id`: the layout id its
+    /// constructed instances hold, recorded once by the first construction (`Vm::record_class_header`), 0 until then. A
+    /// synthetic class has no cell (`class_header_cell`), so it has no header.
     pub fn class_header(&self, id: ProgramId, class: u32) -> Option<&std::cell::Cell<u32>> {
         Self::class_header_cell(self.entry(id)?, class)
     }
