@@ -526,6 +526,9 @@ impl Vm {
     /// A stop-the-world collection, full or minor. `policy` decides which realm roots enter
     /// (`Roots`); a minor collection only ever runs under `Roots::Full`.
     fn collect_inner(&mut self, _program: &ProgramRecord, full: bool, policy: Roots<'_>, resume: Option<&super::activation::FrameRecord>) {
+        // A holder cell's departure made this collection due (`Heap::depart_class_cell`): its held
+        // field entries end here, before any later op reads them.
+        self.drop_departed_holder_entries();
         // A deferred lane activation's registers are no roots; its frame is.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.

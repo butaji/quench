@@ -2543,9 +2543,9 @@ impl Vm {
     /// shape-keyed or own entry is no held read here.
     #[inline(always)]
     fn class_held_field_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
-        // A departed holder's cell keeps its field words, so no held read answers until the VM clears
-        // the caches (`drop_departed_holder_entries`, run by the miss path first).
-        if !is_class_key(cache.receiver) || cache.holder == NO_FIELD_HOLDER || self.heap.holder_departure_pending() {
+        // A departed holder is an edge: it makes a collection due, and the collection clears the
+        // caches before any later op reads (`drop_departed_holder_entries`), so no holder test here.
+        if !is_class_key(cache.receiver) || cache.holder == NO_FIELD_HOLDER {
             return None;
         }
         if cache.receiver != self.heap.live_class_key(object)? {

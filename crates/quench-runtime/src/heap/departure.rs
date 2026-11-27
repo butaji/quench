@@ -94,8 +94,12 @@ impl Heap {
         self.class_space.delete_slack(granule, length);
         self.properties.note_class_departure(shape);
         // A holder cell's departure ends its direct field reads (the holder-cell edge, R4-D1b(d)).
+        // The edge raises the one service word (`request_collection`): the next service point (after
+        // this op, `Vm::serviced`, or a poll) collects, and every collection drains the departure
+        // first (`Vm::drop_departed_holder_entries`), so no read in execution tests it.
         if self.class_space.take_holder_cell(granule) {
             self.class_space.note_holder_departure();
+            self.request_collection();
         }
         Some(record_id)
     }
@@ -111,12 +115,6 @@ impl Heap {
     /// Whether a holder cell departed since the last call; the caller clears the field caches.
     pub(crate) fn take_holder_departure(&mut self) -> bool {
         self.class_space.take_holder_departure()
-    }
-
-    /// Whether a holder cell departed and the field caches are not yet cleared (`take_holder_departure`).
-    #[inline(always)]
-    pub(crate) fn holder_departure_pending(&self) -> bool {
-        self.class_space.holder_departure_pending()
     }
 
     /// The departure edge for a record-only view of `value` (`object_record_mut`, `object_and_arena_mut`,
