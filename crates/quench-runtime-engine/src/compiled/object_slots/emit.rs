@@ -438,7 +438,49 @@ impl FlowStage for Emit<'_, '_> {
     fn ret(&mut self, values: &[ir::Value]) { self.leave(values); }
 }
 
+/// Whether `divisor` is a power of two of at least one: a finite binary64 with a significand of one. Its quotient
+/// `x / divisor` never overflows, and its product with the truncated quotient is exact.
+fn is_power_of_two_at_least_one(divisor: f64) -> bool {
+    divisor >= 1.0 && divisor.is_finite() && divisor.to_bits() & ((1 << 52) - 1) == 0
+}
+
 impl Emit<'_, '_> {
+    /// The binary64 value of `value` when the lowering folded it to a constant: an `f64const`, or an int32 or
+    /// 64-bit integer constant converted or bit-copied into one.
+    fn known_double(&self, value: ir::Value) -> Option<f64> {
+        let dfg = &self.builder.func.dfg;
+        let value = dfg.resolve_aliases(value);
+        match dfg.insts[dfg.value_def(value).inst()?] {
+            ir::InstructionData::UnaryIeee64 { opcode: ir::Opcode::F64const, imm } => Some(f64::from_bits(imm.bits())),
+            ir::InstructionData::Unary { opcode: ir::Opcode::FcvtFromSint, arg } => {
+                crate::compiled::emit_machine::scalar::known_integer(self.builder, arg).map(|(_, signed)| signed as f64)
+            }
+            ir::InstructionData::Unary { opcode: ir::Opcode::Bitcast, arg } => {
+                crate::compiled::emit_machine::scalar::known_integer(self.builder, arg).map(|(bits, _)| f64::from_bits(bits))
+            }
+            _ => None,
+        }
+    }
+
+    /// The remainder by a constant divisor the exact sequence covers (`power_of_two_remainder`), else `None`.
+    fn constant_remainder(&mut self, left: ir::Value, right: ir::Value) -> Option<ir::Value> {
+        let divisor = self.known_double(right).filter(|&divisor| is_power_of_two_at_least_one(divisor))?;
+        Some(self.power_of_two_remainder(left, divisor))
+    }
+
+    /// `left % divisor` for a power-of-two divisor of at least one: `x - trunc(x / c) * c`, which is fmod exactly
+    /// here (the quotient cannot overflow, the product is a shift, the difference is representable), with the
+    /// dividend's sign copied on so a zero remainder of a negative dividend is `-0`.
+    fn power_of_two_remainder(&mut self, left: ir::Value, divisor: f64) -> ir::Value {
+        let dividend = if self.raw_lane(left) == Lane::F64 { left } else { self.f64_from_bits(left) };
+        let divisor = self.f64_constant(divisor);
+        let quotient = self.float_arithmetic(NumberArithmetic::Divide, dividend, divisor);
+        let whole = self.raw_unary(Unary::Truncate, quotient);
+        let product = self.float_arithmetic(NumberArithmetic::Multiply, whole, divisor);
+        let remainder = self.float_arithmetic(NumberArithmetic::Subtract, dividend, product);
+        self.raw_binary(Binary::FloatCopySign, remainder, dividend)
+    }
+
     /// `choose` whose `then` arm is out of line: the path that rarely runs (a call to the VM).
     pub(crate) fn choose_cold(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
@@ -494,6 +536,9 @@ impl NumericStage for Emit<'_, '_> {
     /// integral_remainder_operands`, the interpreter's bound and rule), its exact i64 form; else the shared leaf
     /// (`numbers::float_remainder`).
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        if let Some(value) = self.constant_remainder(left, right) {
+            return value;
+        }
         let (dividend, divisor, integral) = quench_runtime::staged::number_machine::integral_remainder_operands(self, left, right);
         self.choose_arms(integral,
             |stage| quench_runtime::staged::number_machine::integral_remainder_value(stage, (dividend, divisor), left),
@@ -501,7 +546,10 @@ impl NumericStage for Emit<'_, '_> {
     }
     fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.
-        let value = numbers::float_remainder(self, left, right);
+        let value = match self.constant_remainder(left, right) {
+            Some(value) => value,
+            None => numbers::float_remainder(self, left, right),
+        };
         (value, self.i32_constant(0))
     }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
