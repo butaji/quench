@@ -135,7 +135,7 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
 ) -> Result<(LaneImage, Vec<aot_image::CallSite>), &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
     // The calls the closed world proves that the unit keeps as calls take records of the lane's own (`lane_call_sites`).
-    let own = lane_call_sites(program, &unit, function, facts, calls);
+    let own = lane_call_sites(&unit, function, facts, calls);
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
     let proven = proven_calls(program, &unit, function, &sites, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
@@ -167,14 +167,13 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
 /// the image's loader keeps (`AotImage::calls`), unbound until the VM's call of the site binds it (`rebind_ahead_call`),
 /// from which the lane's direct call reads its callee's words (`ProvenCall`). A call the unit inlines takes none.
 #[cfg(feature = "jit")]
-fn lane_call_sites(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: &AotFacts, calls: &[aot_image::CallSite]) -> Vec<aot_image::CallSite> {
+fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, calls: &[aot_image::CallSite]) -> Vec<aot_image::CallSite> {
     use quench_runtime::staged::meaning::{means, Meaning};
     let facts = facts.function_facts(function);
     let mut sites: Vec<aot_image::CallSite> = Vec::new();
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !(means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall)) || !super::base_region::callees::chains(*instruction) { continue; }
         let Some(Origin::Caller(record)) = unit.origins.get(pc).copied() else { continue };
-        let Ok(record) = u32::try_from(record) else { continue };
         let Some(callee) = facts.call_target(record) else { continue };
         let named = |site: &aot_image::CallSite| site.function == function && site.pc == record;
         if calls.iter().any(named) || sites.iter().any(named) { continue; }
