@@ -25,41 +25,53 @@ pub(crate) fn guessed_fields(program: &ResidualProgram, unit: &lane_unit::Unit, 
     let owners = field_owners(program, facts);
     let inherited = prototype_owners(facts, &owners);
     if owners.is_empty() && inherited.is_empty() { return Vec::new(); }
-    let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().filter_map(|instruction| {
-            let (atom, site, store) = accessed(*instruction)?;
-            let loads = match (owners.get(&atom), inherited.get(&atom)) {
-                (Some(owners), _) => owners.iter()
-                    .flat_map(|&owner| if store { stored_classes(program, owner.0, atom) } else { vec![GuardAccess::Read] }.into_iter().map(move |access| (owner, access)))
-                    .map(|(owner, access)| guessed_load(program, owner, access, symbols)).collect::<Option<Vec<_>>>()?,
-                (None, Some(holders)) if !store => holders.iter().map(|&(function, slot, len)| guessed_holder_load(program, (function, slot, len), atom, symbols))
-                    .collect::<Option<Vec<_>>>()?,
-                _ => return None,
+    let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().flat_map(|instruction| accessed(program, *instruction)).filter_map(|(atom, site, store)| {
+            // A name both constructions store and prototypes hold (a task's `queue` field, the
+            // scheduler's `queue` method) guesses both: a read of either receiver finds its arm.
+            let own = owners.get(&atom).map(|owners| owners.iter()
+                .flat_map(|&owner| if store { stored_classes(program, owner.0, atom) } else { vec![GuardAccess::Read] }.into_iter().map(move |access| (owner, access)))
+                .map(|(owner, access)| guessed_load(program, owner, access, &mut *symbols)).collect::<Option<Vec<_>>>());
+            let held = inherited.get(&atom).filter(|_| !store).map(|holders| holders.iter()
+                .map(|&(function, slot, len)| guessed_holder_load(program, (function, slot, len), atom, &mut *symbols)).collect::<Option<Vec<_>>>());
+            let loads: Vec<NativeFieldLoad> = match (own, held) {
+                (None, None) => return None,
+                (own, held) => own.unwrap_or(Some(Vec::new()))?.into_iter().chain(held.unwrap_or(Some(Vec::new()))?).collect(),
             };
+            if loads.len() > GUESSED_SHAPES { return None; }
             if loads.is_empty() { return None; }
             Some((usize::from(site), loads))
         }).collect();
     if quench_runtime::trace::Channel::AotLanes.on() {
-        let unguessed: Vec<_> = unit.instructions.iter().filter_map(|instruction| accessed(*instruction))
+        let unguessed: Vec<_> = unit.instructions.iter().flat_map(|instruction| accessed(program, *instruction))
             .filter(|(atom, _, _)| !owners.contains_key(atom) && !inherited.contains_key(atom)).filter_map(|(atom, _, _)| program.atoms.get(atom as usize)).collect();
         eprintln!("aot-lanes: guesses {} field reads ({} own names, {} prototype names), not {unguessed:?}", sites.len(), owners.len(), inherited.len());
     }
     lane_region::flat_table(sites)
 }
 
-/// The name, field-cache site and kind (a store) of a named field access: a read by name, or a
-/// named store (`Operation::is_field_store`).
-fn accessed(instruction: WideInstruction) -> Option<(u32, u16, bool)> {
+/// The name, field-cache site and kind (a store) of each named field access of `instruction`: a
+/// read by name; each read of a nested site (`FieldLookup::Site`: `this.currentTcb.link`), the
+/// first and the second, and the store into the current `this` it sinks to; or a named store
+/// (`Operation::is_field_store`).
+fn accessed(program: &ResidualProgram, instruction: WideInstruction) -> Vec<(u32, u16, bool)> {
     use quench_runtime::staged::Operation;
     if Operation::<u64, ()>::is_field_read(instruction) {
-        let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup() else { return None };
-        return Some((atom, cache_site, false));
+        return match instruction.field_lookup() {
+            Some(FieldLookup::Atom { atom, cache_site, .. }) => vec![(atom, cache_site, false)],
+            Some(FieldLookup::Site(index)) => program.field_sites.get(index).map(|site| {
+                let reads = [Some(site.first), site.second].into_iter().flatten().map(|(atom, cache)| (atom, cache, false));
+                let sink = site.sink.filter(|_| instruction.writes_current_this()).map(|(atom, cache)| (atom, cache, true));
+                reads.chain(sink).collect()
+            }).unwrap_or_default(),
+            None => Vec::new(),
+        };
     }
-    Operation::<u64, ()>::is_field_store(instruction).then(|| (instruction.atom_index(), instruction.cache_site_index(), true))
+    if Operation::<u64, ()>::is_field_store(instruction) { vec![(instruction.atom_index(), instruction.cache_site_index(), true)] } else { Vec::new() }
 }
 
 /// The most constructed functions a read guesses its receiver is made by: a family of shapes behind
 /// one guard each (`object_slots::field_load_groups`).
-const GUESSED_SHAPES: usize = 4;
+const GUESSED_SHAPES: usize = 8;
 
 /// By field name, the constructed functions that store a field of that name into `this`, each with
 /// the field's slot in the shape its construction makes; a name more than `GUESSED_SHAPES` such
@@ -76,10 +88,10 @@ fn field_owners(program: &ResidualProgram, facts: &AotFacts) -> BTreeMap<u32, Ve
     owners
 }
 
-/// By method name, the constructed functions whose `prototype` the program gives that name and no
-/// construction stores it into `this` (`AotFacts::prototype_fields`), each with the slot the name
-/// takes in the prototype after its `constructor` and the prototype's field count; a name more
-/// than `GUESSED_SHAPES` prototypes take is guessed by none.
+/// By method name, the constructed functions whose `prototype` the program gives that name
+/// (`AotFacts::prototype_fields`), each with the slot the name takes in the prototype after its
+/// `constructor` and the prototype's field count; a name more than `GUESSED_SHAPES` prototypes and
+/// constructions take together is guessed by none.
 fn prototype_owners(facts: &AotFacts, owners: &BTreeMap<u32, Vec<(u32, u16)>>) -> BTreeMap<u32, Vec<(u32, u16, usize)>> {
     let mut holders: BTreeMap<u32, Vec<(u32, u16, usize)>> = BTreeMap::new();
     for function in facts.constructed_functions() {
@@ -89,7 +101,7 @@ fn prototype_owners(facts: &AotFacts, owners: &BTreeMap<u32, Vec<(u32, u16)>>) -
             holders.entry(atom).or_default().push((function, slot, fields.len() + 1));
         }
     }
-    holders.retain(|atom, holders| holders.len() <= GUESSED_SHAPES && !owners.contains_key(atom));
+    holders.retain(|atom, holders| holders.len() + owners.get(atom).map_or(0, Vec::len) <= GUESSED_SHAPES);
     holders
 }
 

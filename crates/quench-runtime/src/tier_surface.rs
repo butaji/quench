@@ -30,7 +30,7 @@ pub use crate::heap::{
 /// that fire them.
 pub use crate::heap::{
     global_value_fact, hold_prototype_values, note_global_write, retire_array_storage_proofs,
-    subscribe_global_layout, subscribe_global_value, subscribe_prototype_values, subscribe_typed_views, typed_views_stable, ArrayStorageProofs, GlobalCell,
+    subscribe_global_layout, subscribe_global_value, subscribe_prototype_values, subscribe_typed_views, typed_views_stable, subscribe_this_trust, retire_this_holders, ArrayStorageProofs, GlobalCell,
     GlobalFact, GlobalLayoutFact, INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache,
     LaneProofScope, PropertyStoreLayout,
 };

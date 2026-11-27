@@ -190,6 +190,8 @@ pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
     }
     // The frame's window takes the context words its call would have written (`enter_window_in_lane`).
     let window = Registers(window_at as *mut Value);
+    // SAFETY: the program store keeps the view alive with its program.
+    crate::dispatch_fast::note_lane_this(vm, Value::from_bits(this), || unsafe { (*callee.target.view).this_rows });
     window.set_this(Value::from_bits(this));
     window.set_env(callee.target.env);
     window.set_capture(callee.target.capture);

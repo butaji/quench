@@ -60,6 +60,7 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         tiers,
         memory_register: None,
         activation: ActivationShape::of(function),
+        this_rows: true,
         target_body: std::cell::OnceCell::new(),
         _string_case_filters: Box::new([]),
         environment_window: None,

@@ -323,6 +323,10 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
     #[inline(always)]
     fn call_hand_over(&mut self, _stage: &mut Concrete, this: u64, _room: quench_runtime::staged::Room<u64>) -> Option<LaneControl> {
         let call = self.call.as_ref()?;
+        // The activation's `this`, checked once where the call bound it: a bound direct object folds
+        // with the binding's own test (`bind_this_with`), so only a strict callee's receiver tests here.
+        // SAFETY: the running lane's context; the entry `call_entry` admitted.
+        unsafe { note_lane_this(vm(call.context.cast()), Value::from_bits(this), || (*(*call.target.get()).view).this_rows) };
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before
         // admitted and bound.

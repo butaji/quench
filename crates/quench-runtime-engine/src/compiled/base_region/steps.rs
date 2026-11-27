@@ -354,7 +354,9 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain, builtin: layout.builtin(shape.call_pc) };
     let CallChain { mut parts, records: record, choice } = call_plan::plan_call(&plan)?;
     // An image's direct rows name the site's record (`name_records`).
-    if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, crate::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
+    if helpers == LaneHelpers::Ahead && let Some(callee) = layout.callees(shape.call_pc).first() {
+        name_records(&mut parts, &record, crate::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc, callee: callee.function });
+    }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     if choice != Choice::Direct && quench_runtime::fallback::on() {
         quench_runtime::fallback::note_at_focus(quench_runtime::fallback::Fallback::HelperCall,

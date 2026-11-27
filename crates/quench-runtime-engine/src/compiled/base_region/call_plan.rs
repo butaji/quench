@@ -489,6 +489,9 @@ pub(crate) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
         return Ok(chain);
     }
     let choices: Vec<(Choice, &DirectFacts)> = plan.direct.iter().map(|facts| (choose(&plan.shape, Some(facts)), facts)).collect();
+    if quench_runtime::trace::Channel::AotLanes.on() && !plan.direct.is_empty() && !choices.iter().any(|(choice, _)| *choice == Choice::Direct) {
+        eprintln!("aot-lanes: call at {} declines its direct row: {:?} (form {:?}, method {})", plan.shape.call_pc, choices.first().map(|(choice, _)| *choice), plan.shape.form, plan.shape.method.is_some());
+    }
     let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
         .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
     let arguments = argument_places(plan);

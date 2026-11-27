@@ -183,7 +183,11 @@ impl Callees {
         facts: &quench_runtime::compile::aot_facts::AotFacts) -> Self {
         let facts = facts.function_facts(function);
         let proven = code.iter().enumerate().map(|(pc, instruction)| {
-            let callee = facts.call_target(pc as u32).filter(|_| chains(*instruction))?;
+            let target = facts.call_target(pc as u32);
+            if target.is_some() && !chains(*instruction) && quench_runtime::trace::Channel::AotLanes.on() {
+                eprintln!("aot-lanes: function {function} call at {pc} has a target but no chain: {:?}", instruction.op());
+            }
+            let callee = target.filter(|_| chains(*instruction))?;
             program.function_get(callee as usize).map(|body| proven_facts(callee, body))
         }).collect();
         Self { proven, ..Self::default() }

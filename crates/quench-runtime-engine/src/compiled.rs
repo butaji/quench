@@ -956,7 +956,9 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
-fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
+/// `trusted`: the code holds the lane's `this` trust (`VmFacts::this_trusted`), so `this` is a direct
+/// object the binding checked once, and only the tables are tested.
+fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
     use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
     let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
@@ -976,12 +978,14 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     stage.builder.def_var(receiver.shape, none);
     stage.builder.def_var(receiver.inline, outside);
     stage.builder.def_var(receiver.object, null);
-    let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
     let record_id = stage.raw_unary(Unary::Narrow(Lane::I32), this);
     let in_range = stage.raw_compare_imm(Relation::UnsignedLess, record_id, layout.record_capacity as i64);
     let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
     let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
-    let ok = stage.raw_binary(Binary::And, object, in_range);
+    let ok = if trusted { in_range } else {
+        let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
+        stage.raw_binary(Binary::And, object, in_range)
+    };
     let ok = stage.raw_binary(Binary::And, ok, has_records);
     let ok = stage.raw_binary(Binary::And, ok, has_properties);
     stage.branch_if(ok, (found, &[]), (done, &[]));
@@ -1527,6 +1531,9 @@ pub(crate) struct VmFacts<'a> {
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
+    /// Whether the lane trusts every activation's `this` as a direct object (`Vm::this_trust`): code that
+    /// holds the trust (`StableFacts::this_trust`) takes its receiver as one, and retires with the trust.
+    pub(crate) this_trusted: bool,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1542,7 +1549,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false, this_trusted: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1550,7 +1557,8 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false,
+            this_trusted: self.this_trust.get() == 1 }
     }
 }
 
@@ -3864,6 +3872,8 @@ impl Vm {
         let frame = frame_in_lane();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        // SAFETY: as above.
+        let admits_frames = unsafe { (*frame).admits_frames };
         let moved_from = self.cache_epochs.field_entries;
         // Reentrant entries lend the same TLS context. Preserve the outer
         // recovery landing and its binding before the inner entry overwrites them.
@@ -3886,6 +3896,7 @@ impl Vm {
             // binds none of them again (`BodyRunContext::bind_run`); the per-entry words go back.
             let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
+            (*frame).admits_frames = admits_frames;
             if self.cache_epochs.field_entries != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
@@ -3912,6 +3923,20 @@ impl Vm {
     /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
     /// helper ends with it, so a row after one reads current bases and checks none.
+    /// Binds the running body's direct-call stack words again (`stack_entry_in_lane`) after a helper's call that
+    /// completed: the call's frames pushed and popped through the general loop (`LaneStack::frames_changed`), which
+    /// zeroed the plain depth limit, and without a new binding every later direct call of the run would refuse to
+    /// the helper row too. Only for a run whose body names direct calls (`admits_frames`), whether or not it entered
+    /// as a leaf: the helper's call materialized the leaf (`materialize_running_leaf_in_lane`).
+    pub(crate) fn rearm_direct_calls(&mut self) {
+        let lane = frame_in_lane();
+        // SAFETY: as below.
+        if !unsafe { (*lane).admits_frames } || self.lane_stack.plain_depth_limit.get() != 0 { return; }
+        let entry = self.stack_entry_in_lane(SHADOW_FRAMES);
+        // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
+        unsafe { entry.bind(&mut (*lane).dispatch) };
+    }
+
     pub(crate) fn refresh_body_bases(&mut self) {
         let lane = frame_in_lane();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
@@ -4045,6 +4070,9 @@ struct BodyRunContext {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
+    /// Whether the running body's entry admitted direct-call frames (`bind_body_entry`): a helper's completed call
+    /// binds them again for it (`Vm::rearm_direct_calls`). A nested entry keeps its caller's (`run_nested_lane_method`).
+    admits_frames: bool,
 }
 
 impl BodyRunContext {
@@ -4088,6 +4116,7 @@ impl BodyRunContext {
             context,
             dispatch: JsStepDispatch::idle(),
             scratch: Vec::new(),
+            admits_frames: false,
         }
     }
 }

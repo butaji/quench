@@ -405,7 +405,7 @@ impl LaneView {
     }
 
     /// The body a just published method makes of this view.
-    pub(crate) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+    pub(crate) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, tier: quench_runtime::jit_mode::Tier, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
         // A body whose entry would not pay for itself serves native callers only
         // (`body_call_helper`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.
@@ -423,7 +423,7 @@ impl LaneView {
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
             self.tier().pinned.borrow_mut().push(body);
-            quench_runtime::vm::tier_machine::publish(&self.entry, TierState::Compiling, &method);
+            quench_runtime::vm::tier_machine::publish(&self.entry, TierState::Compiling, tier, &method);
         }
         self.entry.reset_evidence();
         LaneBody::Specialized { method, tier_prologue,

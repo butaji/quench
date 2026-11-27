@@ -183,7 +183,9 @@ script_handler! {
         }
         // SAFETY: as above; the frame's registers are the lane's after the step.
         let r = unsafe { (*cx).registers };
-        r.set_this(vm.current_this(frame).unwrap_or(Value::DELETED));
+        let this = vm.current_this(frame).unwrap_or(Value::DELETED);
+        crate::dispatch_fast::note_lane_this(vm, this, || true);
+        r.set_this(this);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }

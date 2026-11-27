@@ -50,9 +50,10 @@ pub(crate) enum Symbol {
     Atom(u32),
     /// The base body of `function` entered at record `pc` (a lane leave's continuation).
     BasePc { function: u32, pc: u32 },
-    /// The record (`CallRecord`) the direct call of record `pc` of `function` reads, a call the closed
-    /// world proves (`AotFacts::call_target`): data the linker places and binds (`AotImage::calls`).
-    CallRecord { function: u32, pc: u32 },
+    /// The record (`CallRecord`) the direct call of record `pc` of `function` to `callee` reads, a call the closed
+    /// world proves (`AotFacts::call_targets`): data the linker places and binds (`AotImage::calls`). A call of a
+    /// closed set has one per function of the set.
+    CallRecord { function: u32, pc: u32, callee: u32 },
     /// The narrow decode's upper-word table (`NarrowLayout::upper_words`): a process address, which a
     /// base body's field and element reads take as a hole. The object carries its own copy.
     NarrowUpperWords,
@@ -101,7 +102,7 @@ pub(crate) struct SymbolTable {
     heap_values: Interned<HeapValueRecipe>,
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
-    calls: Interned<(u32, u32)>,
+    calls: Interned<(u32, u32, u32)>,
 }
 
 /// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
@@ -111,7 +112,7 @@ pub(crate) struct Finished {
     pub(crate) heap_values: Vec<HeapValueRecipe>,
     pub(crate) atoms: Vec<Box<str>>,
     pub(crate) labels: Vec<(u32, u32)>,
-    pub(crate) calls: Vec<(u32, u32)>,
+    pub(crate) calls: Vec<(u32, u32, u32)>,
 }
 
 impl SymbolTable {
@@ -128,7 +129,7 @@ impl SymbolTable {
     pub(crate) fn intern(&mut self, symbol: Symbol) -> (u32, u32) {
         match symbol {
             Symbol::BasePc { function, pc } => (BASE_PC_NAMESPACE, self.labels.key((function, pc))),
-            Symbol::CallRecord { function, pc } => (CALL_RECORD_NAMESPACE, self.calls.key((function, pc))),
+            Symbol::CallRecord { function, pc, callee } => (CALL_RECORD_NAMESPACE, self.calls.key((function, pc, callee))),
             other => (other.namespace(), other.key()),
         }
     }
@@ -161,7 +162,7 @@ impl SymbolTable {
     pub(crate) fn decode(image: &AotImage, namespace: u32, key: u32) -> Option<Symbol> {
         match namespace {
             BASE_PC_NAMESPACE => image.labels.get(key as usize).map(|&(function, pc)| Symbol::BasePc { function, pc }),
-            CALL_RECORD_NAMESPACE => image.calls.get(key as usize).map(|call| Symbol::CallRecord { function: call.function, pc: call.pc }),
+            CALL_RECORD_NAMESPACE => image.calls.get(key as usize).map(|call| Symbol::CallRecord { function: call.function, pc: call.pc, callee: call.callee }),
             NARROW_WORDS_NAMESPACE => (key == 0).then_some(Symbol::NarrowUpperWords),
             ATTENTION_NAMESPACE => (key == 0).then_some(Symbol::Attention),
             _ => KEYED.iter().find(|(kind, _)| *kind == namespace).map(|(_, make)| make(key)),
@@ -334,6 +335,11 @@ impl GuardAccess {
             Self::StoreReference => Some(Type::DIRECT_OBJECT_FAMILY.join(Type::language(quench_runtime::ValueType::Null))),
         }
     }
+}
+
+/// The shape recipe guard key `key` guards a slot of (`guard_key`).
+pub(crate) fn guard_recipe(key: u32) -> u32 {
+    key >> GUARD_SLOT_BITS
 }
 
 /// The key of the guard of `access` of `slot` of shape recipe `recipe`: the recipe above the

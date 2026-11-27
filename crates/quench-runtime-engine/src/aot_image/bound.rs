@@ -54,7 +54,7 @@ impl BoundCalls {
     }
 
     fn with_records(image: &AotImage, records: Records) -> Self {
-        let mut sites: Vec<((u32, u32), usize)> = image.calls.iter().enumerate().map(|(key, call)| ((call.function, call.pc), key)).collect();
+        let mut sites: Vec<((u32, u32, u32), usize)> = image.calls.iter().enumerate().map(|(key, call)| ((call.function, call.pc, call.callee), key)).collect();
         sites.sort_unstable();
         let descriptors = image.calls.iter().map(|_| RefCell::default()).collect();
         Self { records, sites: sites.into(), held: Rc::new(Held { callees: RefCell::default(), descriptors }), rooted: Cell::new(false) }
@@ -67,8 +67,8 @@ impl BoundCalls {
         }
     }
 
-    /// The key of the record of the call at `pc` of `function`, if the image proves that call.
-    pub(crate) fn key(&self, site: (u32, u32)) -> Option<usize> {
+    /// The key of the record of the call at `pc` of `function` to function `callee`, if the image proves that call.
+    pub(crate) fn key(&self, site: (u32, u32, u32)) -> Option<usize> {
         self.sites.binary_search_by_key(&site, |(at, _)| *at).ok().map(|index| self.sites[index].1)
     }
 
@@ -76,6 +76,24 @@ impl BoundCalls {
     pub(crate) fn names(&self, key: usize, callee: quench_runtime::Value) -> bool {
         // SAFETY: the record is read on this thread, between runs of the code that reads it.
         self.records().get(key).is_some_and(|record| unsafe { (*record.get()).callee } == callee.to_bits())
+    }
+
+    /// Takes the current validity of record `key`'s callee cell where the record holds an older one: a cell's
+    /// validity moves when its function's body changes (an image body installs at the first entry, after the
+    /// loader bound the record), and a record that still names the callee but not its validity sends every call
+    /// to the VM's. Whether it was stale.
+    pub(crate) fn refresh(&self, key: usize) -> bool {
+        let Some(record) = self.records().get(key).map(UnsafeCell::get) else { return false };
+        // SAFETY: as `bind`: the record is the image's, read by no code while the VM works on it; a bound record's
+        // cell is its callee's live entry cell.
+        unsafe {
+            if (*record).cell == 0 { return false; }
+            let validity = ((*record).cell as usize + quench_runtime::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
+            let now = validity.read();
+            if (*record).expected == now { return false; }
+            (*record).expected = now;
+        }
+        true
     }
 
     /// Binds record `key` to `direct`, the callee its site resolved: the record's run-time words become
