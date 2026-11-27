@@ -128,7 +128,7 @@ impl IntRange {
 }
 
 /// The transfer rules of integer ranges per operator, pure over `IntRange` (the stencil build includes this file, so
-/// it names nothing outside the lattice). The solve's operator dispatch (`compile::aot_facts::numeric`) picks one.
+/// it names nothing outside the lattice). The solve's operator dispatch (`staged::typing`) picks one.
 impl IntRange {
     /// The integer a Number operation over integer operands defines where a word holds it: the binary64 Number of the
     /// result (`rounded`), within `WORD`. Beyond `WORD` the result has no integer range.
