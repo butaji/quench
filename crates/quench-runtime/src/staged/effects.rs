@@ -51,9 +51,15 @@ impl Effects {
 
     pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
-    /// An operation that may run guest code or collect: it reads and writes every region.
-    pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    /// An operation that may run guest code or collect: it reads and writes every region. The top of every grade.
+    pub(crate) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
+
+    /// A row that touches every region and runs nothing: no guest code, throw, collection or allocation. The settled
+    /// facts grade a site with it where they prove it cannot leave and allocates nothing (`signatures::facts_grade`).
+    /// Met with a kind row (`meet`) it clears those flags and keeps the kind's regions.
+    pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: false,
+        may_collect: false, may_call_js: false, may_throw: false };
 
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
@@ -63,17 +69,20 @@ impl Effects {
             may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
     }
 
-    /// Whether a step with this row can leave the activation on its own, by its row alone: it may throw,
-    /// run guest code or collect. The facts decide a step's leave before this row rule is used
-    /// (`signatures::step_leave`); a step the facts leave open has its leave flags cleared.
-    pub(crate) const fn can_leave(self) -> bool {
-        self.may_throw || self.may_call_js || self.may_collect
+    /// The meet of a kind row with a grade: a region is read or written only if both allow it, and a flag holds
+    /// only if both do. A grade can clear what its kind row may do and never adds an effect, so a site's effects
+    /// are its operation's kind row met with what the settled facts prove of the site: the one place a grade is computed.
+    pub(crate) const fn meet(self, other: Self) -> Self {
+        Self { reads: RegionSet(self.reads.0 & other.reads.0), writes: RegionSet(self.writes.0 & other.writes.0),
+            may_alloc: self.may_alloc && other.may_alloc, may_collect: self.may_collect && other.may_collect,
+            may_call_js: self.may_call_js && other.may_call_js, may_throw: self.may_throw && other.may_throw }
     }
 
-    /// The row with its leave flags cleared: the effects a step keeps once the facts decide it cannot leave.
-    /// Reads, writes and allocation stay, since the step still touches what it touches.
-    pub(crate) const fn without_leaves(self) -> Self {
-        Self { may_collect: false, may_call_js: false, may_throw: false, ..self }
+    /// Whether a step with this row can leave the activation: it may throw, run guest code or collect. A site's
+    /// leave is this flag of its graded row (`signatures::site_grade`), so a fact that proves a site cannot leave
+    /// clears those flags there, and the row's leave is never decided twice.
+    pub(crate) const fn can_leave(self) -> bool {
+        self.may_throw || self.may_call_js || self.may_collect
     }
 }
 
@@ -98,8 +107,8 @@ impl Leaves {
     }
 }
 
-/// How a step that can leave (`can_leave`, decided by the settled facts or, where no fact decides it,
-/// by its row) leaves, given whether an earlier step of the same function wrote or allocated. Before any
+/// How a step that can leave (`can_leave` of its graded row) leaves, given whether an earlier step of the
+/// same function wrote or allocated. Before any
 /// write or allocation nothing the call did is visible, so the call restarts from its entry; after one,
 /// the frame must be rebuilt. Every tier reads this one rule.
 const fn leave_of(can_leave: bool, written_before: bool) -> Leaves {
@@ -110,12 +119,11 @@ const fn leave_of(can_leave: bool, written_before: bool) -> Leaves {
     }
 }
 
-/// One step of a function's code as the fold sees it: an operation's own effect row with whether the
-/// settled facts let it leave (`signatures::step_leave`), or a call, which stands for the signature
-/// joined over the callees it may reach.
+/// One step of a function's code as the fold sees it: an operation's graded effect row (`signatures::site_grade`),
+/// whose leave is its `can_leave`, or a call, which stands for the signature joined over the callees it may reach.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
-    Row { effects: Effects, can_leave: bool },
+    Row { effects: Effects },
     Call(Signature),
 }
 
@@ -147,7 +155,7 @@ impl Signature {
         let mut written = false;
         for step in steps {
             let (leaves, effects) = match step {
-                Step::Row { effects, can_leave } => (leave_of(can_leave, written), effects),
+                Step::Row { effects } => (leave_of(effects.can_leave(), written), effects),
                 Step::Call(callee) => {
                     let leaves = match callee.leaves {
                         Leaves::Never => Leaves::Never,
@@ -269,7 +277,10 @@ impl<W, P> Operation<W, P> {
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
             Self::LoadLocalChecked { .. } => Effects::reads(Region::Frame),
             Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. } => Effects::writes(Region::Frame),
-            Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
+            Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Return { .. } => Effects::NONE,
+            // A Number operation's miss (an operand that is not a Number: `valueOf`, `ToNumeric`) runs guest code and
+            // throws; a site whose operands the facts prove are Numbers grades it to none (`signatures::facts_grade`).
+            Self::Number(_) => Effects { may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
