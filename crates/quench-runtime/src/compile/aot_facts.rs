@@ -1,10 +1,13 @@
-//! Closed-world facts for AOT: what holds of the program alone when no `eval`, `Function` or
-//! dynamic import can add code (`SourceDemands`). Each fact is a dependency in the one
-//! dependency system (`code_dependencies`), never a per-use check, and is read by every tier
-//! that lowers the program (lane bodies, BaseJIT bodies), so no layer re-derives it.
+//! Facts for AOT: what holds of the program, solved the same way in every world (`gate::World`).
+//! A fact is a guess held under an edge where new code can move its key: a `Function`, `eval` or
+//! dynamic import may add code that changes it (`AotFacts::live`). Each fact is a dependency in the
+//! one dependency system (`code_dependencies`), never a per-use check, and is read by every tier
+//! that lowers the program (lane bodies, BaseJIT bodies), so no layer re-derives it. A key that is
+//! not live is settled for good: its readers keep no subscription.
 //!
 //! - Call targets: a call whose callee register holds a closure, or a binding written exactly
-//!   once with one (`census`), names that function (direct call, inlinable).
+//!   once with one (`census`), names that function (direct call, inlinable). A live binding's or
+//!   member's target is a guess the call's record guards.
 //! - Number representations: registers that hold only Numbers at every read and write, as
 //!   `Int32` or `Float64` (`flow`), so lane bodies keep them unboxed.
 //!
@@ -31,14 +34,16 @@ use flow::FunctionFlow;
 use scope::Scope;
 pub use gate::World;
 
-/// The facts of one program.
-#[derive(Default)]
+/// The facts of one program, solved in `world`.
 pub struct AotFacts {
+    /// The world the facts were solved in: which keys new code can move (`live`).
+    world: World,
     /// `(function, pc)` of a plain call → the function it always calls, or, for a method read
     /// (`guessed_calls`), the one closure every store of its name writes.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
-    /// The `call_targets` that are a method read's guess, not a proof: the receiver may hold another
-    /// value of that name (a builtin's, a closure made again, a store through a computed key). Only a
+    /// The `call_targets` that are guesses, not proofs: a method read (the receiver may hold another
+    /// value of that name: a builtin's, a closure made again, a store through a computed key), or a
+    /// target read from a live key (`World::live`: new code may store another closure there). Only a
     /// row that guards the callee it reaches takes one (`FunctionFacts::call_target`); one that drops
     /// the guard takes the proven ones only (`FunctionFacts::proven_call_target`).
     pub(crate) guessed_calls: std::collections::BTreeSet<(u32, u32)>,
@@ -65,15 +70,34 @@ pub struct AotFacts {
 }
 
 impl AotFacts {
+    /// No fact yet, solved in `world`: the solve fills the maps.
+    fn unsolved(world: World) -> Self {
+        Self {
+            world,
+            call_targets: BTreeMap::new(),
+            guessed_calls: std::collections::BTreeSet::new(),
+            call_candidates: BTreeMap::new(),
+            construct_targets: BTreeMap::new(),
+            numbers: BTreeMap::new(),
+            prototype_fields: BTreeMap::new(),
+            field_types: BTreeMap::new(),
+            cells: BTreeMap::new(),
+            access_classes: BTreeMap::new(),
+        }
+    }
+
+    /// Whether new code (`World`) can move `key`. A tier that trusts a live key's fact subscribes to
+    /// the key (its `code_dependencies` cell readers), and an edge retires those readers. A key that is
+    /// not live needs no subscription and no recovery: a closed unit has no exits.
+    pub fn live(&self, key: crate::typed_ir::FactKey) -> bool {
+        self.world.live(key)
+    }
+
     /// The names stored into `function`'s `prototype`, each once, in the order the program's code
     /// first stores them (`AotFacts::prototype_fields`): a guess of its prototype's layout after
     /// `constructor`, which a loader checks against the object it finds (`aot_image::symbols`).
     pub fn prototype_fields(&self, function: u32) -> &[u32] {
         self.prototype_fields.get(&function).map_or(&[], |fields| fields.as_slice())
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.call_targets.is_empty() && self.call_candidates.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
     }
 
     /// The type of the values every store of field `atom` writes (`types`): a guess of what its
@@ -120,8 +144,8 @@ pub struct FunctionFacts<'a> {
 }
 
 impl<'a> FunctionFacts<'a> {
-    /// The function the plain call at `pc` calls: proven, or a method read's guess (`AotFacts::guessed_calls`).
-    /// A row taking it guards the callee it reaches.
+    /// The function the plain call at `pc` calls: proven, or a guess (`AotFacts::guessed_calls`: a method
+    /// read's, or one read from a live key). A row taking it guards the callee it reaches.
     pub fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
     }
@@ -134,7 +158,8 @@ impl<'a> FunctionFacts<'a> {
         }
     }
 
-    /// The function the plain call at `pc` always calls, proven: a row may drop its callee guard for it.
+    /// The function the plain call at `pc` always calls, proven (not a guess under `guessed_calls`): a row may
+    /// drop its callee guard for it.
     pub fn proven_call_target(&self, pc: u32) -> Option<u32> {
         self.call_target(pc).filter(|_| !self.facts.guessed_calls.contains(&(self.function, pc)))
     }
@@ -167,7 +192,7 @@ impl<'a> FunctionFacts<'a> {
     }
 }
 
-/// The facts of `program`, or none where the program can add code at run time.
+/// The facts of `program`, solved in the world its source proves (`world`).
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
     analyze_as(program, world(program))
 }
@@ -179,18 +204,9 @@ pub fn world(program: &ResidualProgram) -> World {
     gate::world(program)
 }
 
-/// The facts of `program` in `world`: none where it is open.
+/// The facts of `program`, solved the same way in every world: `world` only marks the keys new code
+/// can move (`AotFacts::live`), whose facts the census keeps as guesses (`Census::guessed`).
 pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
-    if world == World::Open {
-        return AotFacts::default();
-    }
-    // Code added as global code (`World::Locals`) may write any global or named member, so no
-    // binding of either names one closure (`Census::open_to_global_code`).
-    let census_of = |flows: &[FunctionFlow]| {
-        let mut census = Census::of(flows);
-        if world == World::Locals { census.open_to_global_code(); }
-        census
-    };
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, types: Option<&types::Types>| -> Vec<FunctionFlow> {
         (0..program.function_count())
@@ -203,10 +219,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // that closure, so a class object or prototype reached through a binding keeps its identity
     // and its methods prove per class, not per property name.
     let first = analyze(&std::collections::BTreeMap::new());
-    let resolved = census_of(&first).singles();
+    let resolved = Census::of(&first, world).singles();
     let flows = analyze(&resolved);
-    let census = census_of(&flows);
-    let mut facts = AotFacts::default();
+    let census = Census::of(&flows, world);
+    let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
         for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register) {

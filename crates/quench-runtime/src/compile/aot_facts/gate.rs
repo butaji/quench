@@ -4,23 +4,25 @@
 use crate::bytecode::{ProgramKind, ResidualProgram};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::{Engine, SourceKind};
+use crate::typed_ir::FactKey;
 
 /// The global name a dynamic `import()` calls (`compile::ast::expression`), a host hook that loads code.
 const DYNAMIC_IMPORT: &str = "\0quench:dynamic-import";
 
-/// How closed a program is: what code added at run time can change.
+/// How closed a program is: what code added at run time can change. Every world solves the same
+/// facts; the world only says which keys new code can move (`World::live`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum World {
     /// Code may be added that reaches its scopes (a direct `eval`, a dynamic import, source the
-    /// gate cannot read): no fact holds.
+    /// gate cannot read): every key is live, slots and parameters included.
     Open,
     /// Code may be added, but only as global code (`Function`, an indirect `eval`, a reflective
     /// `o[k]` that may reach either; `SourceDemands::function`, `reflective`): it can write
-    /// globals and any object's properties, never a function's own bindings or registers. Facts
-    /// of those hold; facts of globals and named members do not.
+    /// globals and any object's properties, never a function's own bindings or registers. Globals,
+    /// named members and elements are live; slots, returns and parameters are not.
     Locals,
-    /// No code can be added (`SourceDemands::requires_dynamic_source` is false): every fact holds.
+    /// No code can be added (`SourceDemands::requires_dynamic_source` is false): no key is live.
     Closed,
 }
 
@@ -28,6 +30,16 @@ impl World {
     /// The world a byte (`World as u8`, an image file's) names; `None` for any other byte.
     pub fn from_byte(byte: u8) -> Option<Self> {
         [Self::Open, Self::Locals, Self::Closed].into_iter().find(|world| *world as u8 == byte)
+    }
+
+    /// Whether code added in this world can move `key`: what a fact under `key` guesses. Only a
+    /// live key's fact is a guess held under an edge, so only a live key's readers subscribe.
+    pub fn live(self, key: FactKey) -> bool {
+        match self {
+            Self::Closed => false,
+            Self::Open => true,
+            Self::Locals => matches!(key, FactKey::Global(_) | FactKey::Field { .. } | FactKey::AnyField(_) | FactKey::Elements(_)),
+        }
     }
 }
 
