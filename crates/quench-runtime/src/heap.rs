@@ -5865,7 +5865,7 @@ fn join_object_slot_values(object: &Object, properties: &mut ValueArena) {
 #[inline(always)]
 unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
     // SAFETY: the caller proves the exact slot exists; the arena holds the object's run.
-    unsafe { crate::staged::concrete_own_read(object, crate::staged::Concrete::over_arena(properties), slot) }
+    unsafe { crate::staged::concrete_own_read(object, crate::staged::concrete_over_arena(properties), slot) }
 }
 
 /// Whether a store that `widened` its slot's owner is left to the caller: a native-preserving

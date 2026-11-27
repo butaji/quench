@@ -138,7 +138,7 @@ impl<'a> InterpreterFrame<'a> {
         allow_inline_calls: bool, instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
         let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
         // SAFETY: `vm` is the running VM, live for the row (`Self::over`).
-        let step = crate::staged::step(&mut Concrete::over_vm(unsafe { &*vm }), &mut interpreted, operation);
+        let step = crate::staged::step(&mut crate::staged::concrete_over_vm(unsafe { &*vm }), &mut interpreted, operation);
         if let Some(error) = interpreted.raised.take() {
             return RowRun::Stop(Err(error));
         }
