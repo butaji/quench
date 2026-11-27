@@ -68,9 +68,9 @@ pub(in super::super) fn this_fact(ctx: &Ctx<'_>) -> Word {
     ctx.types.map_or(Word::UNKNOWN, |types| Word { cell: types.this(ctx.id), origin: Some(Origin::Receiver(ctx.id)) })
 }
 
-/// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
-pub(super) fn prototype_base(base: Word) -> Option<PrototypeBase> {
-    if let Some(function) = base.cell.ty.body_index() { return Some(PrototypeBase::Closure(function)); }
+/// What a register of fact `base` names whose `prototype` a read takes: a closure (its class, `ClassIds::of_word`), or a binding.
+pub(super) fn prototype_base(classes: &super::super::class_ids::ClassIds, base: Word) -> Option<PrototypeBase> {
+    if let Some(class) = classes.of_word(base) { return Some(PrototypeBase::Closure(class)); }
     match base.origin? {
         Origin::Binding(key) => Some(PrototypeBase::Binding(key)),
         _ => None,

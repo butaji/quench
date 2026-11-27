@@ -40,8 +40,10 @@ pub(super) fn of_program(program: &ResidualProgram, flows: &[FunctionFlow], cens
     let proofs = Proofs::of(flows);
     let mut layouts = ClassLayouts::default();
     for &class in classes {
-        let flow = &flows[class as usize];
-        let body = program.with_record(class as usize, |function| body_fields(function, flow, class, &proofs, &census.accessors));
+        // A class's constructor body is its function's (`ClassIds::body`), which a synthetic class shares with its siblings.
+        let body = census.classes.body(class);
+        let flow = &flows[body as usize];
+        let body = program.with_record(body as usize, |function| body_fields(function, flow, class, &proofs, &census.accessors));
         if let Some(fields) = body.filter(|fields| !shapes().any(|shape| reshapes_instance(shape, class, fields, &census.accessors))) {
             layouts.instances.insert(class, fields.into_boxed_slice());
         }
@@ -298,7 +300,7 @@ pub(super) fn unions_of(program: &ResidualProgram, flows: &[FunctionFlow], censu
     if !facts.closed() {
         return BTreeMap::new();
     }
-    facts.constructed_functions().into_iter()
+    facts.constructed_classes().into_iter()
         .filter_map(|class| union_of(program, flows, census, facts, readers, class).map(|union| (class, union)))
         .collect()
 }
@@ -313,7 +315,7 @@ pub(super) fn unions_of(program: &ResidualProgram, flows: &[FunctionFlow], censu
 /// class's instances (`FieldDefault::Prototype`), which is a guess the holder watch checks; a name `Object.prototype` defines
 /// has no such holder, so it has no union.
 fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, facts: &AotFacts, readers: &Readers, class: u32) -> Option<UnionLayout> {
-    if census.member_wild() || readers.reflects_class(class) || program.with_record(class as usize, binds_this) {
+    if census.member_wild() || readers.reflects_class(class) || program.with_record(census.classes.body(class) as usize, binds_this) {
         return None;
     }
     let mut fields: Vec<u32> = facts.class_layout(class).map_or_else(Vec::new, <[u32]>::to_vec);
