@@ -1360,7 +1360,6 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
     // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
@@ -1398,11 +1397,10 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = crate::compiled::admission::diagnosing(vm);
-    let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let work = match work {
         // A looping caller's trips pay for the body as its own iterations do (`looped`).
         crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: seen, called, caller, .. } =>
-            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller, arrays: &arrays },
+            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller },
         poll => poll,
     };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();

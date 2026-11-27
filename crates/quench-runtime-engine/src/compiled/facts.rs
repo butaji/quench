@@ -58,9 +58,8 @@ pub(crate) struct Facts {
     /// Join of the entry's backedge inputs, without the unknown external input.
     backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
     contracts: Vec<Contract>,
-    /// The element reads observed to hold Numbers (sorted PCs): each defines a Number the
-    /// lowering proves at the read.
-    observed: Vec<ObservedRead>,
+    /// The typed element reads (sorted PCs), each defining the element type its typed array's kind proves.
+    typed_reads: Vec<TypedRead>,
     /// The length relations at each row, parallel to its types (empty where the run tracks none).
     length_of: Vec<Option<Register>>,
     below: Vec<Option<Register>>,
@@ -89,7 +88,7 @@ impl Facts {
     /// A run over `blocks` PCs of `registers` registers.
     fn new(blocks: usize, registers: usize, seeds: run::Seeds<'_>) -> Self {
         Self { offsets: vec![None; blocks], registers, reached: quench_runtime::dataflow::BitSet::with_capacity(blocks),
-            contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), ..Self::default() }
+            contracts: seeds.contracts.to_vec(), typed_reads: seeds.typed_reads.to_vec(), ..Self::default() }
     }
 
     /// Room for `rows` rows of types, and of length relations where the run tracks them.
@@ -123,11 +122,6 @@ impl Facts {
         Some(&self.types[start..start + self.registers])
     }
 
-    /// What the entry observed of the instruction at `pc`.
-    fn observed_at(&self, pc: usize) -> Option<Type> {
-        Observed(&self.observed).at(pc)
-    }
-
     /// Select a guarded block input contract. Every native edge must conform
     /// before the lowering consumes this row; this is not a source inference.
     pub(crate) fn require(&mut self, pc: usize, register: Register, required: Type) {
@@ -155,7 +149,7 @@ impl Facts {
         while replay.next < pc.min(instructions.len()) {
             let at = replay.next;
             let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(&replay.rows[replay.rows.len() - registers..]);
-            if matches!(transfer_observed(&mut types, instructions[at], constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
+            if matches!(transfer_instruction(&mut types, instructions[at], constants, written, native_calls, typed_read(&self.typed_reads, at)), Flow::Leaves) {
                 replay.leaves = Some(at);
                 return Type::ANY;
             }
@@ -183,7 +177,7 @@ impl Facts {
             types.extend_from_slice(entry);
             for (pc, instruction) in instructions.iter().copied().enumerate().skip(start) {
                 if pc != start && leaders.contains(pc) { break; }
-                let flow = transfer_observed(&mut types, instruction, constants, written, native_calls, self.observed_at(pc));
+                let flow = transfer_instruction(&mut types, instruction, constants, written, native_calls, typed_read(&self.typed_reads, pc));
                 for register in written(instruction) {
                     visit(pc, register, types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
                 }
@@ -451,45 +445,22 @@ pub(crate) fn proves_numbers(instruction: WideInstruction, registers: usize, con
         .map(|register| register as Register).collect()
 }
 
-/// An element read the entry observed to hold Numbers or int32s: its unit PC and the type its
-/// result is proved to have, where it leaves for any other element.
-#[derive(Clone, Copy)]
-pub(crate) struct ObservedRead {
-    pub(crate) pc: usize,
-    pub(crate) ty: Type,
-    /// The typed array kind the interpreter's element record at `pc` was switched to (`requicken_typed`):
-    /// the access proves its view for that kind alone (`Observed::kind_at`). A write's entry types nothing (`Type::ANY`).
-    pub(crate) kind: Option<quench_runtime::tier_surface::TypedArrayKind>,
+/// A typed element read (its PC) and the element type its typed array's kind proves it yields (`Seeds::typed_reads`).
+pub(crate) type TypedRead = (usize, Type);
+
+/// The element type the typed read at `pc` yields, of `reads` (sorted by PC).
+pub(crate) fn typed_read(reads: &[TypedRead], pc: usize) -> Option<Type> {
+    reads.binary_search_by_key(&pc, |(at, _)| *at).ok().map(|at| reads[at].1)
 }
 
-/// The element reads an entry observed to yield Numbers or int32s (sorted by PC).
-#[derive(Clone, Copy)]
-pub(crate) struct Observed<'a>(pub(crate) &'a [ObservedRead]);
-
-impl Observed<'_> {
-    pub(crate) const NONE: Observed<'static> = Observed(&[]);
-
-    /// The type the element read at `pc` was observed to yield.
-    pub(crate) fn at(&self, pc: usize) -> Option<Type> {
-        self.0.binary_search_by_key(&pc, |read| read.pc).ok().map(|at| self.0[at].ty).filter(|ty| *ty != Type::ANY)
-    }
-
-    /// The typed array kind the element access at `pc` was observed to take (`ObservedRead::kind`).
-    pub(crate) fn kind_at(&self, pc: usize) -> Option<quench_runtime::tier_surface::TypedArrayKind> {
-        self.0.binary_search_by_key(&pc, |read| read.pc).ok().and_then(|at| self.0[at].kind)
-    }
-}
-
-/// `transfer`, where an element read observed to hold Numbers or int32s (`Facts::observed`)
-/// defines that type.
-fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool, observed: Option<Type>) -> Flow {
+/// `transfer`, where a typed element read (`typed`) defines the element type its kind proves.
+fn transfer_instruction(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
+    written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool, typed: Option<Type>) -> Flow {
     // The instruction decodes once: its unary and general transfers both read this operation.
     let operation = Operation::<u64, ()>::of(instruction);
     let flow = unary_transfer(types, instruction, operation.as_ref())
         .unwrap_or_else(|| transfer(types, instruction, operation.as_ref(), constants, written, native_calls));
-    // `observed` names only the reads the observation typed (element reads, `length` reads).
-    if let Some(ty) = observed {
+    if let Some(ty) = typed {
         for register in written(instruction) { set(types, register, ty); }
     }
     flow
@@ -502,8 +473,8 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 pub(crate) fn inductive_int32(initial: &mut [Type], candidates: quench_runtime::dataflow::BitSet,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
-    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises, observed)
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise]) -> Option<Facts> {
+    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises)
 }
 
 /// `inductive_int32` for the header contract `required`: an int32, or a Number (an
@@ -512,13 +483,13 @@ pub(crate) fn inductive_int32(initial: &mut [Type], candidates: quench_runtime::
 pub(crate) fn inductive(initial: &mut [Type], mut candidates: quench_runtime::dataflow::BitSet, required: Type,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise]) -> Option<Facts> {
     // Each unsuccessful iteration removes at least one candidate. Compile
     // work is bounded by candidate count, without a semantic iteration cap.
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = required; }
-        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::observing(observed));
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::typed());
         let mut rejected: quench_runtime::dataflow::BitSet = quench_runtime::dataflow::BitSet::with_capacity(initial.len());
         for register in candidates.iter() {
             if !facts.backedge().get(register).is_some_and(|ty| ty.is_subtype(required)) { rejected.insert(register); }
@@ -543,10 +514,10 @@ pub(crate) fn inductive(initial: &mut [Type], mut candidates: quench_runtime::da
 pub(crate) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
     instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Writes, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
-    native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
+    native_calls: bool, raises: &[Raise]) -> Option<Facts> {
     while !candidates.is_empty() {
         let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
-        let seeds = Seeds { contracts: &contracts, ..Seeds::observing(observed) };
+        let seeds = Seeds { contracts: &contracts, ..Seeds::typed() };
         let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, raises, seeds);
         let mut rejected = vec![false; candidates.len()];
         let span = candidates.iter().map(|(_, body)| body);
