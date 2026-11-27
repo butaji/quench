@@ -26,6 +26,14 @@ use crate::compile::liveness::{register_dead, RegisterMasks};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, Classes, FactKey, Type};
 
+/// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`).
+const PROTOCOL_NAMES: [&str; 33] = [
+    "toString", "valueOf", "toLocaleString", "toJSON", "then", "constructor", "length", "next", "done", "value", "return",
+    "throw", "lastIndex", "source", "flags", "global", "ignoreCase", "multiline", "sticky", "unicode", "unicodeSets", "dotAll",
+    "hasIndices", "exec", "join", "message", "name", "cause", "index", "input", "groups", "get", "set",
+];
+
+
 /// The global object whose methods read none of their receiver's properties (their arguments are still sinks).
 const MATH: &str = "Math";
 
@@ -131,6 +139,19 @@ impl Readers {
     pub(super) fn accessor_names(&mut self, names: &BTreeSet<u32>) {
         for &atom in names {
             self.named(atom, Classes::Many);
+        }
+    }
+
+    /// Notes that each protocol name the program names (`PROTOCOL_NAMES`) is read off any class: a builtin reads it with no
+    /// read instruction the flows record (a conversion's `toString`/`valueOf`, `await`'s `then`, `JSON.stringify`'s `toJSON`,
+    /// the iterator protocol, a species `constructor`, a regexp's `lastIndex`, an error's `message`), so a store of it is
+    /// observed. Called before `finish`.
+    pub(super) fn protocol_names(&mut self, program: &ResidualProgram) {
+        for (atom, name) in program.atoms.iter().enumerate() {
+            let name: &str = name.as_ref();
+            if PROTOCOL_NAMES.contains(&name) {
+                self.named(atom as u32, Classes::Many);
+            }
         }
     }
 

@@ -322,10 +322,11 @@ fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, 
     let on_prototype = instance_stores(program, flows, census, class, &mut fields)?;
     // A field no reachable read observes takes no slot (4.13 dead payload): its stores are skipped
     // (`field_has_reader`), so the layout is the observed fields alone.
+    // An `Object.prototype` name is checked before the dead fields are dropped, so a dropped one still gives no union.
+    if fields.iter().any(|&atom| text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name))) { return None; }
     fields.retain(|&atom| facts.field_has_reader(FactKey::Field { class, instance: true, atom }));
     let mut entries = Vec::with_capacity(fields.len());
     for atom in fields {
-        if text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name)) { return None; }
         let default = if on_prototype.contains(&atom) || census.accessors.defines(atom) { FieldDefault::Prototype(class) } else { FieldDefault::Absent };
         let cell = facts.cell(FactKey::Field { class, instance: true, atom }).unwrap_or(Cell::ANY);
         entries.push((atom, UnionField { cell, default }));
