@@ -42,6 +42,9 @@ mod tests;
 
 use std::collections::BTreeMap;
 
+/// The linear forms an index range's ends are made of (`FunctionFacts::index_ceiling`), for the lane to read their bases.
+pub use crate::staged::effects::{Affine, Base};
+
 use crate::bytecode::ResidualProgram;
 use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
