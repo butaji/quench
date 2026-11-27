@@ -136,3 +136,35 @@ fn a_method_installed_on_the_prototype_is_its_prototype_layout() {
     let p = function_named(&program, "P") as u32;
     assert_eq!(facts.prototype_layout(p), Some(&[atom_named(&program, "run")][..]));
 }
+
+#[test]
+fn a_call_before_a_constructors_last_store_has_no_layout() {
+    let program = program("function f() { return 1; } function P(x) { this.a = x; f(); this.b = 2; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), None, "a callee may store a name on the instance before the constructor's next store");
+}
+
+#[test]
+fn stores_before_a_call_keep_a_constructors_layout() {
+    let program = program("function f() { return 1; } function P(x) { this.a = x; this.b = 2; f(); } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), Some(&[atom_named(&program, "a"), atom_named(&program, "b")][..]));
+}
+
+#[test]
+fn storing_this_into_a_global_before_a_last_store_has_no_layout() {
+    let program = program("var keep; function P(x) { this.a = x; keep = this; this.b = 2; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), None, "a store of this into a global lets other code reach the instance");
+}
+
+#[test]
+fn a_derived_constructor_has_no_instance_layout() {
+    let program = program("class B { constructor(x) { this.x = x; } } class D extends B { constructor(x) { super(x); } } function make() { return new D(1); } make();");
+    let facts = analyze(&program);
+    let d = function_named(&program, "D") as u32;
+    assert_eq!(facts.class_layout(d), None, "super() runs the parent's stores on the instance");
+}

@@ -1,7 +1,8 @@
 //! The shape changes the closed world sees: each store, define or delete of a named property, and each
-//! call that hands an object to code the closed world does not follow, with the object's classes
-//! (`Owner`) and what changes (`Change`). Only the class layouts (`class_layout`) read them: the facts
-//! of the other analyses never name a shape, so a layout is one reading of the events, not a second record.
+//! builtin that re-shapes the objects it is given, with the object's classes (`Owner`) and what changes
+//! (`Change`). Only the class layouts (`class_layout`) read them: the facts of the other analyses never
+//! name a shape, so a layout is one reading of the events, not a second record. Code that may run with
+//! an object (a call, a getter, a setter) is not a shape: `effects::runs_guest_code` marks those points.
 
 use super::effects::{Ctx, this_fact};
 use super::flow::{Call, Target};
@@ -39,8 +40,6 @@ pub(super) enum Change {
     /// A property whose key the analysis cannot name is stored or deleted, or a builtin that adds
     /// properties is given the object.
     Any,
-    /// The object is handed to a call: code the closed world may run with it, and may store to it.
-    Escape,
 }
 
 /// One change to an object's properties, made at instruction `pc`.
@@ -73,19 +72,14 @@ pub(super) fn of_instruction(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruct
     }
 }
 
-/// The shapes the call `call` at `pc` makes: the object it hands its callee (`Escape`), and, for a builtin
-/// that adds properties to the objects it is given (`Scope::adds_properties`), an `Any` change of them.
-pub(super) fn of_call(ctx: &Ctx<'_>, pc: u32, call: &Call) -> Vec<Shape> {
+/// The shape the call `call` at `pc` makes: for a builtin that adds properties to the objects it is given
+/// (`Scope::adds_properties`), an `Any` change of its arguments. Code a call runs is not a shape (`runs_guest_code`).
+pub(super) fn of_call(ctx: &Ctx<'_>, pc: u32, call: &Call) -> Option<Shape> {
+    if !callee_name(call).is_some_and(|atom| ctx.scope.adds_properties(atom)) {
+        return None;
+    }
     let arguments = call.arguments.iter().fold(Classes::Never, |classes, argument| classes.join(argument.cell.classes));
-    let handed = if call.construct { arguments } else { arguments.join(call.receiver.cell.classes) };
-    let mut shapes = Vec::new();
-    if handed != Classes::Never {
-        shapes.push(Shape { pc, owner: Owner::Object(handed), change: Change::Escape });
-    }
-    if callee_name(call).is_some_and(|atom| ctx.scope.adds_properties(atom)) {
-        shapes.push(Shape { pc, owner: Owner::Object(arguments), change: Change::Any });
-    }
-    shapes
+    Some(Shape { pc, owner: Owner::Object(arguments), change: Change::Any })
 }
 
 /// The owner a store through register `base` (`None`: the function's `this`) writes to: a prototype object

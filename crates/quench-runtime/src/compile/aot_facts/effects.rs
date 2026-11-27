@@ -42,10 +42,44 @@ pub(super) struct Events {
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) wild_member: bool,
-    /// The named property a store writes into a function's `prototype` (`Origin::Prototype`).
-    pub(super) prototype_write: Option<(PrototypeBase, u32)>,
     /// The change the instruction makes to a named property or a key the analysis cannot name (`shape`).
     pub(super) shape: Option<super::shape::Shape>,
+}
+
+/// Whether the instruction at a point may run guest code with the objects it touches: a call or construction, a getter,
+/// setter or proxy trap, a conversion that runs `valueOf`. It is the operation's effect row (`Effects::may_call_js`),
+/// met with what the facts before it (`state`) prove: a Number or binary operation over Numbers runs none, and a
+/// captured or environment binding's read runs none. A store through `this` is not counted: it is the constructor's
+/// own store, whose setter `class_layout` does not model. Whatever does not decode runs guest code.
+pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> bool {
+    if crate::staged::Invocation::of(instruction, ctx.decode).is_some() {
+        return true;
+    }
+    let operation = Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or_else(|| decoded(instruction));
+    match operation {
+        None => true,
+        Some(Operation::SetField { base: None, .. }) => false,
+        Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
+        Some(Operation::Number(number)) => !numbers_over_numbers(ctx.scope, state, number),
+        Some(Operation::Binary { left, right, .. }) => !(is_number(ctx.scope, state, left) && is_number(ctx.scope, state, right)),
+        Some(operation) => operation.effects().may_call_js,
+    }
+}
+
+/// Whether the operands of a Number operation are Numbers on the facts before it, so its miss runs no guest code.
+fn numbers_over_numbers(scope: &Scope, state: &[Word], number: NumberOperation) -> bool {
+    match number {
+        NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
+        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => is_number(scope, state, left) && is_number(scope, state, right),
+        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => is_number(scope, state, source),
+        NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => state[usize::from(source)].is_number(),
+        _ => false,
+    }
+}
+
+/// Whether operand `operand` is a Number on the facts before it.
+fn is_number(scope: &Scope, state: &[Word], operand: Operand) -> bool {
+    operand_fact(scope, state, operand).is_number()
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -419,9 +453,6 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
             let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
             if ctx.scope.length == Some(atom) {
                 events.writes.push(length_change(owner.elements_key()));
-            }
-            if let Some(Origin::Prototype(prototype)) = owner.origin {
-                events.prototype_write = Some((prototype, atom));
             }
             // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data

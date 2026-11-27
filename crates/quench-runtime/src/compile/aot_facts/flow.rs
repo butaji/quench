@@ -2,11 +2,11 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Ctx, Events, operand_fact, step};
+use super::effects::{Ctx, Events, operand_fact, runs_guest_code, step};
 use super::numeric;
 use super::scope::Scope;
 use super::shape::{self, Shape};
-use super::value::{Word, Key, Origin, PrototypeBase};
+use super::value::{Word, Key, Origin};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
 use crate::staged::{Comparison, Operation};
@@ -49,8 +49,6 @@ pub(super) struct FunctionFlow {
     pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
-    /// The named properties stored into a function's `prototype`, in code order.
-    pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
@@ -61,6 +59,8 @@ pub(super) struct FunctionFlow {
     pub(super) reads: std::collections::BTreeSet<Key>,
     /// The changes its instructions and calls make to named properties, in PC order (`shape`).
     pub(super) shapes: Vec<Shape>,
+    /// The PCs, in order, of the instructions that may run guest code with the objects they touch (`effects::runs_guest_code`).
+    pub(super) guest_runs: Vec<u32>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -360,7 +360,6 @@ struct Record {
     wild_owner: bool,
     wild_global: bool,
     wild_member: bool,
-    prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Word>>,
     /// Per register, whether a read saw a value that is not a Number.
@@ -369,6 +368,7 @@ struct Record {
     registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
     shapes: Vec<Shape>,
+    guest_runs: Vec<u32>,
 }
 
 impl Record {
@@ -379,13 +379,13 @@ impl Record {
             wild_owner: false,
             wild_global: false,
             wild_member: false,
-            prototype_writes: Vec::new(),
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
             shapes: Vec::new(),
+            guest_runs: Vec::new(),
         }
     }
 
@@ -401,6 +401,9 @@ impl Record {
             && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
         {
             self.reads.insert(Key::Element(atom));
+        }
+        if runs_guest_code(ctx, instruction, state) {
+            self.guest_runs.push(pc as u32);
         }
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
             let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
@@ -458,7 +461,6 @@ impl Record {
         self.wild_member |= events.wild_member;
         self.writes.extend(events.writes);
         self.shapes.extend(events.shape);
-        self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
             let index = usize::from(register);
             self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
@@ -477,7 +479,10 @@ impl Record {
         }
     }
 
-    fn finish(self, arity: Option<u16>) -> FunctionFlow {
+    fn finish(mut self, arity: Option<u16>) -> FunctionFlow {
+        // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
+        self.shapes.sort_by_key(|shape| shape.pc);
+        self.guest_runs.sort_unstable();
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -491,11 +496,11 @@ impl Record {
             global_wild: self.wild_global,
             member_wild: self.wild_member,
             numbers,
-            prototype_writes: self.prototype_writes,
             field_owners: self.field_owners,
             registers: self.registers,
             reads: self.reads,
             shapes: self.shapes,
+            guest_runs: self.guest_runs,
             arity,
         }
     }

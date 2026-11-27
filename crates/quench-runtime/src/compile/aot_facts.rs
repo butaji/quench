@@ -62,8 +62,6 @@ pub struct AotFacts {
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
     /// Function id → register → the Number representation it always holds.
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
-    /// Per function, the names its `prototype` is given, in code order (`prototype_fields`).
-    pub(crate) prototype_fields: BTreeMap<u32, Vec<u32>>,
     /// Per field name, the type of the values every store of it writes, into an object of any class: the
     /// join of the name's `FactKey::Field` and `FactKey::AnyField` cells, which a tier keeps only under the
     /// slot's dependency.
@@ -87,7 +85,8 @@ pub struct AotFacts {
     /// above (`signatures::solve`); none where the type solve did not settle, so no signature is taken from it.
     pub(crate) signatures: Option<Signatures>,
     /// The closed-world layouts of the program's classes (`class_layout`): each instance layout and prototype layout
-    /// the solve proved, read by `AotFacts::class_layout` and `AotFacts::prototype_layout`.
+    /// the solve proved, read by `AotFacts::class_layout` and `AotFacts::prototype_layout`. The only home of the names
+    /// a class's `prototype` takes.
     pub(crate) layouts: ClassLayouts,
 }
 
@@ -101,7 +100,6 @@ impl AotFacts {
             call_candidates: BTreeMap::new(),
             construct_targets: BTreeMap::new(),
             numbers: BTreeMap::new(),
-            prototype_fields: BTreeMap::new(),
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
             access_classes: BTreeMap::new(),
@@ -129,13 +127,6 @@ impl AotFacts {
     /// trusts these facts reads no invalidation word and keeps no exit for them.
     pub fn closed(&self) -> bool {
         self.world == World::Closed
-    }
-
-    /// The names stored into `function`'s `prototype`, each once, in the order the program's code
-    /// first stores them (`AotFacts::prototype_fields`): a guess of its prototype's layout after
-    /// `constructor`, which a loader checks against the object it finds (`aot_image::symbols`).
-    pub fn prototype_fields(&self, function: u32) -> &[u32] {
-        self.prototype_fields.get(&function).map_or(&[], |fields| fields.as_slice())
     }
 
     /// The type of the values every store of field `atom` writes (`types`): a guess of what its
@@ -172,7 +163,8 @@ impl AotFacts {
     }
 
     /// The names class `class`'s prototype takes, in the order the program's code first installs them, proven where no
-    /// object of unknown class receives another name (`class_layout`); None otherwise.
+    /// object of unknown class receives another name (`class_layout`); None otherwise. A loader's guess of the prototype's
+    /// layout reads it too (`aot_image::symbols`).
     pub fn prototype_layout(&self, class: u32) -> Option<&[u32]> {
         self.layouts.prototypes.get(&class).map(|fields| &**fields)
     }
@@ -374,11 +366,6 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
                 facts.call_targets.insert((id, call.pc), target);
                 if guessed { facts.guessed_calls.insert((id, call.pc)); }
             }
-        }
-        for &(base, atom) in &flow.prototype_writes {
-            let Some(owner) = census.prototype_owner(base) else { continue };
-            let fields = facts.prototype_fields.entry(owner).or_default();
-            if !fields.contains(&atom) { fields.push(atom); }
         }
         if flow.numbers.iter().any(Option::is_some) {
             facts.numbers.insert(id, flow.numbers.clone());
