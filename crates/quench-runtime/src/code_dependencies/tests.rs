@@ -122,3 +122,70 @@ fn fuses_pop_on_their_slot_write_and_are_proved_again_after_a_layout_change() {
     fuses.forget(4);
     assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), None, "a dead holder's record is reused");
 }
+
+/// The cell readers' tests use two keys of one function's slots and one of a global.
+fn cell_keys() -> [crate::typed_ir::FactKey; 3] {
+    use crate::typed_ir::FactKey;
+    [FactKey::Return(1), FactKey::Global(2), FactKey::Slot { owner: 1, slot: 0 }]
+}
+
+#[test]
+fn a_cell_key_lists_each_reader_once_and_weakly() {
+    let [key, other, _] = cell_keys();
+    let mut readers = CellReaders::default();
+    let first: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    assert!(readers.subscribe(key, &first));
+    assert!(readers.subscribe(key, &first));
+    assert_eq!(readers.readers.len(), 1, "the same code listed under one key is listed once");
+    assert_eq!(Rc::strong_count(&first), 1, "the table holds the code weakly");
+    assert!(readers.subscribe(other, &first));
+    assert_eq!(readers.readers.len(), 2, "one code under two keys is listed under each");
+    assert!(!readers.is_empty());
+}
+
+#[test]
+fn widening_a_cell_takes_only_its_readers_for_retirement() {
+    let [key, other, _] = cell_keys();
+    let mut readers = CellReaders::default();
+    let widened: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    let kept: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    assert!(readers.subscribe(key, &widened));
+    assert!(readers.subscribe(other, &kept));
+    // What `Dependencies::widen_cell` does: take the key's readers, then retire them.
+    let taken = readers.take(key);
+    assert_eq!(taken.len(), 1);
+    assert!(widened.is_published(), "taking unlinks the readers but does not retire them");
+    taken.into_iter().for_each(|code| code.retire());
+    assert!(!widened.is_published());
+    assert!(kept.is_published(), "a widening leaves the readers of other keys standing");
+    assert!(readers.take(key).is_empty(), "a widened key has no readers left");
+    assert_eq!(readers.take(other).len(), 1);
+}
+
+#[test]
+fn widening_every_cell_takes_every_reader_and_recycles_nodes() {
+    let [key, other, _] = cell_keys();
+    let mut readers = CellReaders::default();
+    let first: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    let second: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    assert!(readers.subscribe(key, &first));
+    assert!(readers.subscribe(other, &second));
+    let taken = readers.take_all();
+    assert_eq!(taken.len(), 2);
+    assert!(readers.is_empty());
+    taken.into_iter().for_each(|code| code.retire());
+    assert!(!first.is_published() && !second.is_published());
+    let third: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    assert!(readers.subscribe(key, &third));
+    assert_eq!(readers.readers.len(), 2, "a widened table reuses its nodes");
+}
+
+#[test]
+fn dropping_a_cell_table_retires_its_readers() {
+    let [key, ..] = cell_keys();
+    let mut readers = CellReaders::default();
+    let reader: Rc<dyn DependentCode> = Rc::new(Code(Cell::new(true)));
+    assert!(readers.subscribe(key, &reader));
+    drop(readers);
+    assert!(!reader.is_published(), "a table gone with its heap retires what trusted its cells");
+}
