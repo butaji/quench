@@ -382,6 +382,22 @@ impl<'a> FunctionFacts<'a> {
         self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map(|fact| fact.length())
     }
 
+    /// Whether `===` between the registers `left` and `right` just before `pc` is a pointer compare: both hold interned
+    /// atoms (`staged::typing::both_interned`).
+    pub fn interned_compare(&self, pc: u32, left: u16, right: u16) -> bool {
+        match (self.cell_at(pc, left), self.cell_at(pc, right)) {
+            (Some(left), Some(right)) => crate::staged::typing::both_interned(left.ty, right.ty),
+            _ => false,
+        }
+    }
+
+    /// Whether `===` between the string registers `left` and `right` just before `pc` is decided by their facts
+    /// (`staged::typing::string_equality`): `Some(outcome)`, or `None` where the facts leave it open.
+    pub fn string_equal(&self, pc: u32, left: u16, right: u16) -> Option<bool> {
+        let (left, right) = (self.cell_at(pc, left)?, self.cell_at(pc, right)?);
+        crate::staged::typing::string_equality(left.ty, right.ty)
+    }
+
     /// The source of the value register `register` holds just before the instruction at `pc` (`RegisterCells::source_at`),
     /// where the solve settled: a binding it was loaded from or a property it was read off, else `Computed`. Computed also
     /// where no path reaches `pc` or the solve did not settle, the answer that assumes nothing about the value's origin.
