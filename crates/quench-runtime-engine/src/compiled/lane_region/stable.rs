@@ -373,8 +373,12 @@ impl Lowering<'_, '_> {
         let inside = header..=end;
         // A branch table's entries are among its successors, so an edge it makes is seen here too.
         let entered_within = self.unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            !inside.contains(&pc) && successors(pc, *instruction).into_iter()
-                .any(|target| (target > header && target <= end) || (target == header && pc > end)));
+            !inside.contains(&pc) && {
+                let mut enters_within_block = false;
+                quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target|
+                    enters_within_block |= (target > header && target <= end) || (target == header && pc > end));
+                enters_within_block
+            });
         !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 

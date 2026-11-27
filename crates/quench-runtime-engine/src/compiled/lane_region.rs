@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
 pub(crate) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
 use quench_runtime::dataflow::BitSet;
+pub(crate) use quench_runtime::bytecode::instruction_leaders as leaders;
 use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/known_branches.rs"]
@@ -147,13 +148,13 @@ fn loop_carries(instructions: &[WideInstruction], leaders: &BitSet, start: usize
         if target > pc { entry.0 += 1 } else { entry.1 = Some(entry.1.map_or(pc, |last: usize| last.max(pc))) }
     };
     for (pc, instruction) in instructions.iter().enumerate() {
-        for target in successors(pc, *instruction) { add(pc, target); }
+        quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| add(pc, target));
     }
     // A latch whose loop's header is a test repeats it (`edges::rotated_bodies`): its edges are the test's, from the latch.
     for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
         let Some(&test) = instructions.get(header) else { continue };
         if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump) { continue; }
-        for target in successors(header, test) { add(latch, target); }
+        quench_runtime::bytecode::for_each_instruction_successor(header, test, |target| add(latch, target));
     }
     edges.into_iter().filter_map(|(pc, (forward, last))| Some((pc, (forward, last?)))).collect()
 }
@@ -1404,25 +1405,6 @@ struct PendingUnit {
     negated: bool,
 }
 
-/// The PCs that begin basic blocks: the entry, every jump target and every instruction
-/// after a jump.
-pub(crate) fn leaders(instructions: &[WideInstruction]) -> BitSet {
-    let mut leaders = BitSet::with_capacity(instructions.len());
-    if !instructions.is_empty() { leaders.insert(0); }
-    for (pc, instruction) in instructions.iter().enumerate() {
-        let layout = instruction.op().control_flow_layout();
-        if layout == ControlFlowLayout::BranchTable || layout.jumps() {
-            // Every successor of a branch (a branch table's `Jump` rows included) starts a block,
-            // and so does the instruction after a jump.
-            let jump = layout.jumps().then_some(pc + 1);
-            for target in successors(pc, *instruction).into_iter().chain(jump).filter(|t| *t < instructions.len()) {
-                leaders.insert(target);
-            }
-        }
-    }
-    leaders
-}
-
 /// The register whose value `register` copies at the comparison at `pc`: following the moves and
 /// nops back to `header` within one block, so copies share the comparison's SSA value.
 fn move_root(instructions: &[WideInstruction], leaders: &BitSet, (header, pc): (usize, usize), mut register: Register) -> Register {
@@ -1660,13 +1642,6 @@ struct LoopField {
     store_ranges: smallvec::SmallVec<[Option<IntRange>; INLINE_FIELD_BINDINGS]>,
 }
 
-/// The successors of `instruction` at `pc`: a branch table's entries, else its fall-through and jump target.
-fn successors(pc: usize, instruction: WideInstruction) -> smallvec::SmallVec<[usize; 2]> {
-    let mut targets = smallvec::SmallVec::new();
-    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| targets.push(target));
-    targets
-}
-
 /// Forward must-alias analysis through inline argument copies and branch joins.
 /// Only a single backedge is admitted, so every incoming state is complete when
 /// visited. Unknown writes decline promotion; no runtime alias cache is needed.
@@ -1675,8 +1650,11 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
     let mut fields: Vec<LoopField> = Vec::new();
     for &(header, back) in loops {
         if loops.iter().any(|&(other, end)| (other, end) != (header, back) && other <= back && header <= end)
-            || (header..=back).any(|pc| successors(pc, unit.instructions[pc]).into_iter()
-                .any(|target| target <= pc && (pc, target) != (back, header)))
+            || (header..=back).any(|pc| {
+                let mut back_edge = false;
+                quench_runtime::bytecode::for_each_instruction_successor(pc, unit.instructions[pc], |target| back_edge |= target <= pc && (pc, target) != (back, header));
+                back_edge
+            })
             || unit.markers.iter().zip(&unit.frames).any(|(marker, frame)|
                 (header..=back).contains(marker) && frame.alternative.is_some()) { continue; }
         let mut written: BitSet = BitSet::with_capacity(usize::from(unit.registers));
@@ -1721,7 +1699,9 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
             let copied = (matches!(super::decoded(instruction), Some(quench_runtime::staged::Operation::Move { .. }))).then(|| aliases[usize::from(instruction.register_b())]).flatten();
             for register in writes(instruction) { aliases[usize::from(register)] = None; }
             if matches!(super::decoded(instruction), Some(quench_runtime::staged::Operation::Move { .. })) { aliases[usize::from(instruction.result_register())] = copied; }
-            let mut targets = successors(pc, instruction).into_iter().filter(|target| *target > pc && *target <= back).peekable();
+            let mut forward_targets = smallvec::SmallVec::<[usize; 2]>::new();
+            quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| if target > pc && target <= back { forward_targets.push(target) });
+            let mut targets = forward_targets.into_iter().peekable();
             while let Some(target) = targets.next() {
                 // Linear control transfers ownership of its flat state; only a
                 // branch needs a second copy for the second successor.

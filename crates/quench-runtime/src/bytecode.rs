@@ -96,7 +96,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
         || (local_name_requires_environment(name) && declared_in_environment())
 }
 #[allow(unused_imports)]
-pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, jump_edge, may_repeat, reachable_from};
+pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, instruction_leaders, jump_edge, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
 pub use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};

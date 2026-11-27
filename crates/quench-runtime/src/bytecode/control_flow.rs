@@ -72,6 +72,30 @@ pub fn for_each_instruction_successor(
     }
 }
 
+/// The PCs that begin basic blocks of `instructions`: the entry, every jump and branch-table
+/// target, and the instruction after a jump. Exception handler edges are not counted.
+pub fn instruction_leaders(instructions: &[WideInstruction]) -> crate::dataflow::BitSet {
+    let len = instructions.len();
+    let mut leaders = crate::dataflow::BitSet::with_capacity(len);
+    if len > 0 {
+        leaders.insert(0);
+    }
+    for (pc, &instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if layout == ControlFlowLayout::BranchTable || layout.jumps() {
+            for_each_instruction_successor(pc, instruction, |target| {
+                if target < len {
+                    leaders.insert(target);
+                }
+            });
+            if layout.jumps() && pc + 1 < len {
+                leaders.insert(pc + 1);
+            }
+        }
+    }
+    leaders
+}
+
 /// The PCs of `instructions` control reaches from `starts` by ordinary successors.
 pub fn reachable_from(instructions: &[WideInstruction], starts: impl IntoIterator<Item = usize>) -> crate::bitset::BitSet {
     let mut reached = crate::bitset::BitSet::new(instructions.len());

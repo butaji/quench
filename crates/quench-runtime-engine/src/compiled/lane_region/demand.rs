@@ -265,9 +265,9 @@ pub(crate) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
     for (index, (_, end)) in blocks.iter().enumerate() {
         let last = unit.instructions[end - 1];
-        for successor in successors(end - 1, last).into_iter() {
+        quench_runtime::bytecode::for_each_instruction_successor(end - 1, last, |successor| {
             if let Some(&target) = block_of.get(successor) && target != usize::MAX { predecessors[target].push(index); }
-        }
+        });
     }
     let mut solver = DemandSolve { program, unit, masks, blocks, predecessors, demands };
     solve(&mut solver);
@@ -287,7 +287,8 @@ impl Lowering<'_, '_> {
             demand = demand.union(reads(self.unit, at, instruction, uses.contains(register), register,
                 (&|pc, register| self.is_live(pc, register), &after)));
             if defs.contains(register) { return demand; }
-            let next = successors(at, instruction);
+            let mut next = smallvec::SmallVec::<[usize; 2]>::new();
+            quench_runtime::bytecode::for_each_instruction_successor(at, instruction, |target| next.push(target));
             if next.as_slice() != [at + 1] {
                 return next.into_iter().filter_map(|target| self.demands.row(target))
                     .fold(demand, |demand, row| demand.union(row[register]));
