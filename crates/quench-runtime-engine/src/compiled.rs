@@ -422,11 +422,11 @@ fn emit_js_guard(
     builder.seal_block(passed);
 }
 
-/// The array record reservation's base in the dispatch payload: fixed until the arrays change.
-fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
+/// The array record reservation's base in the dispatch payload, read at `record` (`regions::record_base`): fixed for the
+/// run where the unit's arrays stay put.
+fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value, record: quench_runtime::staged::Access) -> ir::Value {
     use quench_runtime::staged::machine::Lane;
-    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
+    stage.raw_load(Lane::I64, regions::flags(record), payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -437,12 +437,13 @@ pub(crate) fn emit_array_length_read(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     base: ir::Value,
+    access: regions::ArrayAccess,
     fallback: ir::Block,
 ) -> ir::Value {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
-    let length = quench_runtime::staged::elements::array_length(&mut stage, record_base, base, fallback)
+    let record_base = emit_array_record_base(&mut stage, payload, access.record);
+    let length = quench_runtime::staged::elements::array_length_as(&mut stage, record_base, base, fallback, access.backing.length)
         .expect("the emit stage continues past its guards");
     stage.raw_unary(Unary::Narrow(Lane::I32), length)
 }
@@ -484,13 +485,13 @@ pub(crate) fn emit_dense_array_view(
     payload: ir::Value,
     base: ir::Value,
     writable: bool,
-    backing: quench_runtime::staged::elements::BackingAccess,
+    access: regions::ArrayAccess,
     fallback: ir::Block,
 ) -> DenseArrayView {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
-    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, backing)
+    let record_base = emit_array_record_base(&mut stage, payload, access.record);
+    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, access.backing)
         .expect("the emit stage continues past its guards");
     let quench_runtime::staged::elements::Backing { values, length, .. } = backing;
     if writable {
@@ -507,10 +508,11 @@ pub(crate) fn emit_dense_array_view(
 /// writability stay what the view proved, so only the backing is read again. The helper may
 /// also have given the array extras (a sparse store's facts), which then hold the backing:
 /// `staged::elements::array_header` reads it from either place.
-pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    at: quench_runtime::staged::Access) -> (ir::Value, ir::Value) {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, at);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
     let quench_runtime::staged::elements::Backing { values, length, .. } = quench_runtime::staged::elements::record_backing(&mut stage, record);
     // A helper may have changed the backing's storage form in place (narrow or double kind,
@@ -527,18 +529,19 @@ pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
 /// holds them; `writable` also proves in-place replacement. Any other base or backing leaves
 /// through `fallback`, with nothing read.
 pub(crate) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
-    writable: bool, fallback: ir::Block) -> (ir::Value, ir::Value) {
+    writable: bool, record: quench_runtime::staged::Access, fallback: ir::Block) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, record);
     quench_runtime::staged::elements::double_view(&mut stage, record_base, base, writable, fallback)
         .expect("the emit stage continues past its guards")
 }
 
 /// `emit_dense_array_reload` of a double view (`emit_double_array_view`): the backing read again,
 /// empty once it is no longer double (`staged::elements::reloaded_double_view`).
-pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    at: quench_runtime::staged::Access) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, at);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
     quench_runtime::staged::elements::reloaded_double_view(&mut stage, record)
 }
@@ -575,7 +578,7 @@ pub(crate) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default() };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
     if view.uncounted {
         quench_runtime::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -978,7 +981,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     builder.def_var(receiver.properties, properties);
     let (found, done) = (builder.create_block(), builder.create_block());
     // The payload is the stage's, so the record hop's class base reads the dispatch head (`Table::ClassSpace`).
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default() };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default(), fresh: false };
     let none = stage.raw_const(Lane::I32, i64::from(quench_runtime::vm::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
     let outside = stage.raw_const(Lane::I8, 0);
@@ -2013,6 +2016,7 @@ impl CallContext {
                 import_callout_counts: std::ptr::null(),
                 import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
+                body_shim: lane_body_abi::body_shim(),
             },
             interrupt_owner: std::ptr::null(),
             instance: std::ptr::null(),
@@ -2076,6 +2080,7 @@ impl CallContext {
                 import_callout_counts: std::ptr::null(),
                 import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
+                body_shim: lane_body_abi::body_shim(),
             },
             interrupt_owner: interrupt,
             instance: std::ptr::null(),
@@ -2127,6 +2132,7 @@ impl CallContext {
                 import_callout_counts: self.import_callout_counts,
                 import_callout_count: self.import_callout_count,
                 adapter_payload: std::ptr::null_mut(),
+                body_shim: self.body_shim,
             },
             interrupt_owner: self.interrupt_owner,
             instance: self.instance,
@@ -2727,7 +2733,7 @@ fn stitched_entry(
 ) -> Option<Vec<u8>> {
     let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
     // The indirect call row calls the non-diagnostic reference callout.
-    if !admission::wasm_module_routes_to_stencils() {
+    if !quench_runtime::vm::tier_policy::wasm_module_routes_to_stencils() {
         return None;
     }
     // The program's image may hold the rows already (`wasm_image::linked`).
@@ -4170,7 +4176,7 @@ impl JsStepDispatch {
                 typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-                stub_cursor: 0, object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
+                empty_object_cursor: 0, empty_object_class: 0, empty_object_proto: 0,
                 array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
                 ascii_unit_strings: 0,
                 armed_array_proofs: quench_runtime::tier_surface::armed_proofs_address(),
@@ -4233,12 +4239,11 @@ impl JsStepDispatch {
     #[cold]
     #[inline(never)]
     fn reread_object_bases(&mut self, vm: &Vm) {
-        // The empty object's template is dropped with the bases: the next empty allocation's helper
-        // makes an object again, which captures the template anew (`capture_empty_object`).
+        // The empty object's captured class is dropped with the bases: the next empty allocation's helper
+        // makes an object again, which captures the class anew (`capture_empty_object`).
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
-        (self.empty_object_layout, self.empty_object_payload) = (0, 0);
-        self.stub_cursor = vm.heap_reads().native_stub_cursor();
-        self.object_cursor = vm.heap_reads().native_object_cursor();
+        self.empty_object_class = 0;
+        self.empty_object_cursor = vm.heap_reads().native_cell_cursor(1);
         // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
@@ -4266,18 +4271,18 @@ impl JsStepDispatch {
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
 
-    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype,
-    /// as the template an inline empty allocation copies: its two record words and the prototype
-    /// they were made for. The words depend on the prototype only (`Object::new`). Nothing is
-    /// captured where allocation is profiled per record, which the inline path would skip.
+    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype, as the
+    /// class an inline empty allocation claims its cell with: the class cell's header word (the class names
+    /// the shape and prototype link, which depend on the prototype only) and the prototype it was made for.
+    /// Nothing is captured where the object is not a live class cell, or where allocation is profiled per
+    /// record, which the inline path would skip.
     fn capture_empty_object(&mut self, vm: &Vm, object: Value) {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object_record(object) else { return };
-        let (payload, layout) = record.stored_words();
+        let Some(class) = vm.heap_reads().live_class_header(object) else { return };
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
-        (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
+        self.empty_object_class = class;
     }
 
     /// Records `array`, the zero-length array `Vm::hole_array(0)` just made for the current realm's
@@ -5701,13 +5706,13 @@ impl MemoryArguments {
     }
 }
 
-/// The calling convention of compiled Wasm bodies and of the calls between them. `Tail` makes a
-/// flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows
-/// only between functions of one convention that supports tail calls). The entry trampoline
-/// (`build_entry`) keeps the default convention and calls its body with this one; the callouts
-/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting),
-/// `Tail` saves the SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
-const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
+/// The calling convention of compiled bodies, Wasm and lane JavaScript alike, and of the calls between them. `Tail`
+/// makes a flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows only between
+/// functions of one convention that supports tail calls). The entry trampoline (`build_entry`) and the lane body
+/// shim (`lane_body_abi::body_shim`) keep the default convention and call their body with this one; the callouts
+/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting), `Tail` saves the
+/// SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
+pub(crate) const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
 
 /// The internal signature of a compiled function: the context, the memory
 /// arguments, then the Wasm parameters.
@@ -7597,7 +7602,7 @@ impl Vm {
         self.execution_mode = mode;
         self.lane_tiers_run = None;
         #[cfg(feature = "jit")]
-        crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
+        crate::regexp_native::enable(mode != ExecutionMode::Interpreted);
         self.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
@@ -7652,13 +7657,13 @@ impl Vm {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether any compiled tier may run (`admission::vm_may_run` of every tier), decided once per execution
+    /// Whether any compiled tier may run (`tier_policy::tiers_run` of every tier), decided once per execution
     /// mode and memory policy rather than at every lane entry.
     #[inline]
     pub(crate) fn tiers_run_in_lanes(&mut self) -> bool {
         match self.lane_tiers_run {
             Some(run) => run,
-            None => *self.lane_tiers_run.insert(admission::vm_may_run(self, admission::Tier::ANY)),
+            None => *self.lane_tiers_run.insert(quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::ANY)),
         }
     }
 
@@ -7678,8 +7683,8 @@ impl Vm {
         }
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
-            cranelift_allowed: admission::vm_may_run(self, admission::Tier::CRANELIFT),
-            base_lane_allowed: admission::lane_bodies_enrolled(self) && admission::vm_may_run(self, &[admission::Tier::Base]),
+            cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
+            base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),
             wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
         }
@@ -7690,8 +7695,10 @@ impl Vm {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
+        // The claim is at the function's entry, so its pick is the entry's (not a loop's); an interpreted pick claims nothing.
         let lane_claims = admission::lane_bodies_enrolled(self)
-            && program.function_get(function as usize).is_some_and(|body| body_may_amortize_in_lane(self.programs.tiers(), body));
+            && quench_runtime::vm::tier_policy::lane_body_tier(self.lane_pick(program, function, false)).is_some_and(|tier|
+                program.function_get(function as usize).is_some_and(|body| body_may_amortize(self.programs.tiers(), body, tier)));
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
@@ -7898,7 +7905,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: admission::vm_may_run(self, admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -8033,7 +8040,7 @@ impl Vm {
         arguments: &[Value],
     ) -> Option<Value> {
         if returns
-            || !admission::vm_may_run(self, admission::Tier::ANY)
+            || !quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::ANY)
             || program_id != self.active_program
             || program.kind == quench_runtime::bytecode::ProgramKind::Wasm
         {
@@ -8345,7 +8352,7 @@ impl Vm {
             })
             .flatten();
         // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = admission::wasm_module_routes_to_stencils();
+        let base_only = quench_runtime::vm::tier_policy::wasm_module_routes_to_stencils();
         let isa = if base_only {
             None
         } else {
@@ -8419,7 +8426,7 @@ impl Vm {
             let build = build_order.into_iter().map(|index| {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
-                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
+                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
                 let built = WasmSpecializer {
                     index,
                     plans: &plans,
@@ -8457,7 +8464,7 @@ impl Vm {
                             return None;
                         }
                         let full_plan = full_plans[index].as_ref()?;
-                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
+                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
                         let residual = WasmSpecializer {
                             index,
                             plans: &plans,
@@ -9062,6 +9069,7 @@ impl Vm {
                     import_callout_counts: std::ptr::null(),
                     import_callout_count: 0,
                     adapter_payload: std::ptr::null_mut(),
+                    body_shim: lane_body_abi::body_shim(),
                 },
                 interrupt_owner: std::ptr::null(),
                 instance: std::ptr::null(),
@@ -9312,14 +9320,9 @@ impl Vm {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
+/// Whether a lane body of `body` in `tier` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::bytecode::Function) -> bool {
-    body_may_amortize(tiers, body, tier_policy::body_tier_in_lane())
-}
-
-/// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
 pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: crate::compiled::admission::Tier) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
         || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))
@@ -9372,7 +9375,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default() };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
         let encoded = quench_runtime::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();

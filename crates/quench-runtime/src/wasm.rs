@@ -713,11 +713,11 @@ impl Engine {
                 globals: globals.len(),
             },
             &signature_pool,
-            inline::leaf_budget(mode, || {
+            inline::leaf_budget(crate::vm::tier_policy::wasm_module_inlines_leaves(mode, || {
                 (0..sources.count())
                     .map(|index| sources.operators(index).map_or(0, |operators| operators.into_iter().count()))
                     .sum()
-            }),
+            })),
         )?;
         let bindings = ModuleBindings { name, globals, memories, data, tables, elements, tags };
         for position in 0..sources.count() {

@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn binary_functions_read_a_missing_argument_as_nan() {
-        let pow = MathCall::Binary(crate::staged::math::power);
+        let pow = MathCall::Binary(crate::staged::power::power);
         assert_eq!(call(pow, &[Value::integer(2), Value::integer(3)]), Some(Value::integer(8)));
         assert!(call(pow, &[Value::integer(2)]).is_some_and(|value| value.as_number().is_some_and(f64::is_nan)));
         assert_eq!(call(pow, &[Value::UNDEFINED, Value::integer(1)]), None);

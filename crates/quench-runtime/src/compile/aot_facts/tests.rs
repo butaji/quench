@@ -1,8 +1,10 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::{analyze, AotFacts};
+use super::{analyze, world, AotFacts, FieldDefault};
+use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
+use crate::staged::effects::{Affine, Indices};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
 use crate::heap::TypedArrayKind;
@@ -696,4 +698,207 @@ fn a_getter_read_through_a_subclass_instance_takes_the_superclass_getters_return
     let facts = analyze(&program);
     let f = function_named(&program, "f") as u32;
     assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the read of x on a C instance is P's getter");
+}
+
+#[test]
+fn an_unread_global_this_and_an_eval_in_a_dead_function_keep_the_world_closed() {
+    // The global object is held but never read by a computed or named key, and the eval sits in a function nothing calls:
+    // no reached code opens the closed world, so its solve verifies.
+    let program = program("var g = this; function dead() { eval('1'); } function f(a) { return a | 1; } f(2);");
+    assert_eq!(world(&program), World::Closed);
+}
+
+#[test]
+fn a_computed_read_of_a_global_this_reaches_the_global_functions_so_the_world_is_open() {
+    // `g[k]` may name any global, including `f`, and calls what it reads: the closed world cannot see that call.
+    let program = program("function f() { return 1; } var k = 'f'; var g = this; g[k]();");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_named_read_of_the_global_object_may_call_a_global_function_so_the_world_is_open() {
+    // `g.f` reads a global function off the global object by name, and the call through it is not a closed call.
+    let program = program("function f() { return 1; } var g = this; f(); g.f();");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_reached_eval_keeps_the_world_open() {
+    // The eval runs at the top level, so new code is reached and the closed world's assumption fails.
+    let program = program("function f(a) { return a | 1; } f(2); eval('1');");
+    assert_eq!(world(&program), World::Open);
+}
+
+fn union_names(union: &super::UnionLayout) -> Vec<u32> {
+    union.fields.iter().map(|(atom, _)| *atom).collect()
+}
+
+#[test]
+fn a_union_lists_the_constructors_fields_then_the_fields_stored_later() {
+    let program = program("function P(x) { this.x = x; } var p = new P(1); p.extra = 3;");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    let union = facts.class_union_layout(p).expect("a closed program has a union for P");
+    assert_eq!(union_names(&union), vec![atom_named(&program, "x"), atom_named(&program, "extra")]);
+    assert!(union.fields.iter().all(|(_, field)| field.default == FieldDefault::Absent), "no prototype names x or extra");
+}
+
+#[test]
+fn a_name_stored_on_the_prototype_is_an_absent_fields_default() {
+    let program = program("function P() { this.x = 1; } P.prototype.x = 0; var p = new P();");
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    let union = facts.class_union_layout(p).expect("a closed program has a union for P");
+    assert_eq!(union.fields.iter().map(|(_, field)| field.default).collect::<Vec<_>>(), vec![FieldDefault::Prototype(p)]);
+}
+
+#[test]
+fn a_for_in_over_an_instance_has_no_union() {
+    let program = program("function P() { this.x = 1; } var p = new P(); for (var k in p) {}");
+    let facts = analyze(&program);
+    assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none(), "for-in enumerates the instance");
+}
+
+#[test]
+fn a_computed_name_store_on_an_instance_has_no_union() {
+    let program = program("(function (k) { function P() { this.x = 1; } var p = new P(); p[k] = 2; })('y');");
+    let facts = analyze(&program);
+    assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none(), "a computed key may name any field");
+}
+
+#[test]
+fn an_open_world_has_no_union() {
+    let program = program("function P() { this.x = 1; } var p = new P(); eval('1');");
+    let facts = analyze(&program);
+    assert!(facts.class_union_layout(function_named(&program, "P") as u32).is_none());
+}
+
+#[test]
+fn a_read_of_a_filled_array_below_its_length_takes_no_undefined() {
+    let program = program("function f(n, k) { var a = new Array(n); for (var i = 0; i < n; i++) a[i] = 0; if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the fill loop writes every element of the array");
+}
+
+#[test]
+fn a_read_of_an_unfilled_array_below_its_length_keeps_undefined() {
+    let program = program("function f(n, k) { var a = new Array(n); if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "no element of the array is written, so a read may find a hole");
+}
+
+#[test]
+fn a_fill_loop_that_stops_short_of_the_length_keeps_the_holes() {
+    let program = program("function f(n, k) { var a = new Array(n); for (var i = 0; i < n - 1; i++) a[i] = 0; if (k < a.length) return a[k]; return 0; } f(3, 1);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the last element is never written, so a read may find a hole");
+}
+
+#[test]
+fn a_loop_bounded_by_the_field_the_array_was_allocated_with_is_below_its_length() {
+    let program = program("function C() { this.t = 3; } C.prototype.f = function f() { var a = new Array(this.t); for (var i = 0; i < this.t; i++) { a[i] = 0; } return a[1]; } new C().f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`this.t` loaded again is the length `new Array(this.t)` made, at {pc}");
+    }
+}
+
+#[test]
+fn a_store_to_the_field_between_the_allocation_and_the_loop_retires_the_bound() {
+    let program = program("function C() { this.t = 3; } C.prototype.f = function f() { var a = new Array(this.t); this.t = 5; for (var i = 0; i < this.t; i++) { a[i] = 0; } return 0; } new C().f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "the store to `this.t` kills the load the allocation read, so the store at {pc} is not proven");
+    }
+}
+
+#[test]
+fn a_sloppy_prototype_method_keyed_on_this_called_as_a_method_keeps_the_world_closed() {
+    // `this` of `m` is the object `o.m()` passes, never the global object, so `this[k]` reads no global function.
+    let program = program("function C() {} C.prototype.m = function (k) { return this[k]; }; var o = new C(); o.m('x'); \
+        function dead() { eval('1'); }");
+    assert_eq!(world(&program), World::Closed);
+}
+
+#[test]
+fn a_sloppy_function_keyed_on_this_handed_to_a_builtin_callback_opens_the_world() {
+    // `forEach` calls `f` with an undefined `this`, which a sloppy `f` binds to the global object: `this[k]` may name the
+    // global function `g`, which holds an eval nothing calls, so only the flagged `this` opens the world.
+    let program = program("var k = 'g'; function f() { return this[k]; } [1].forEach(f); \
+        function g() { eval('1'); }");
+    assert_eq!(world(&program), World::Open);
+}
+
+#[test]
+fn a_strict_function_keyed_on_this_handed_to_a_builtin_callback_keeps_the_world_closed() {
+    // A strict callee's `this` is the `undefined` `forEach` passes, not the global object, so `this[k]` reads no global.
+    let program = program("var k = 'g'; function f() { 'use strict'; return this[k]; } [1].forEach(f); \
+        function dead() { eval('1'); }");
+    assert_eq!(world(&program), World::Closed);
+}
+
+#[test]
+fn a_prototype_method_last_written_at_top_level_resolves_for_a_later_run_once_read() {
+    let program = program(
+        "function Foo() {} function first() { return 1; } function second() { return 2; } \
+         Foo.prototype.m = first; Foo.prototype.m = second; \
+         function run() { var method = new Foo().m; return method(); } run();",
+    );
+    let facts = analyze(&program);
+    let run = function_named(&program, "run") as u32;
+    let second = function_named(&program, "second") as u32;
+    assert!(facts.call_targets.iter().any(|(&(function, _), &target)| function == run && target == second));
+}
+
+#[test]
+fn a_prototype_method_written_again_by_a_hot_function_names_no_phase_target() {
+    let program = program(
+        "function Foo() {} function first() { return 1; } function second() { return 2; } \
+         Foo.prototype.m = first; \
+         function hot() { Foo.prototype.m = second; } \
+         for (var i = 0; i < 2; i++) hot(); \
+         function run() { var method = new Foo().m; return method(); } run();",
+    );
+    let facts = analyze(&program);
+    let run = function_named(&program, "run") as u32;
+    assert!(!facts.call_targets.keys().any(|&(function, _)| function == run));
+}
+
+/// The pcs of the element stores (`ElementWrite`) of function `id`.
+fn element_stores(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u32> {
+    program.with_record(id, |function| {
+        (0..function.code.len()).filter(|&pc| matches!(Operation::<u64, ()>::of(function.instruction_at(pc)), Some(Operation::ElementWrite { .. })))
+            .map(|pc| pc as u32).collect()
+    })
+}
+
+#[test]
+fn a_store_through_an_index_counted_up_while_a_count_counts_down_covers_the_count_from_the_index() {
+    let program = program("function f(i, x, w, j, c, n) { while (--n >= 0) { var v = x * 2 + w[j] + c; c = Math.floor(v / 67108864); w[j++] = v & 0x3ffffff; } return c; } f(0, 3, [0, 0, 0, 0], 0, 0, 4);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let stores = element_stores(&program, f);
+    assert_eq!(stores.len(), 1, "the loop stores into one array");
+    let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
+    assert_eq!(store.indices, Indices::Span { start: Affine::parameter(3), len: Affine::parameter(5) }, "the store covers `j .. j + n`");
+}
+
+#[test]
+fn a_store_whose_index_steps_by_two_covers_the_whole_array() {
+    let program = program("function f(i, x, w, j, c, n) { while (--n >= 0) { w[j] = x; j += 2; } return c; } f(0, 3, [0, 0, 0, 0], 0, 0, 4);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let stores = element_stores(&program, f);
+    assert_eq!(stores.len(), 1, "the loop stores into one array");
+    let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
+    assert_eq!(store.indices, Indices::Whole, "a step of two leaves no span of the count");
 }

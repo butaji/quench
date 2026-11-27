@@ -24,9 +24,10 @@ fn an_entry_leave_round_trips_and_resumes_at_the_first_record() {
 /// the first record.
 #[test]
 fn a_stub_entry_is_its_own_exit_kind_and_resumes_at_the_first_record() {
-    use super::{entry_cell::EntryCell, BodyEntry, LaneExit};
+    use super::{BodyEntry, LaneExit};
     use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
-    let stub: BodyEntry = unsafe { std::mem::transmute::<usize, BodyEntry>(EntryCell::stub()) };
+    // The stub takes the lane body convention, whose arguments and results this test's C-convention call passes alike.
+    let stub: BodyEntry = unsafe { std::mem::transmute::<usize, BodyEntry>(crate::compiled::lane_body_abi::entry_stub()) };
     // SAFETY: the stub reads none of its arguments.
     let returned = unsafe { stub(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
     assert_eq!(returned.status, LANE_BODY_NOT_ENTERED);

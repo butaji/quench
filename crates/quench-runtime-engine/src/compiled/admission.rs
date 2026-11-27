@@ -5,12 +5,10 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
-use super::tier_model::Pick;
-use super::tier_policy::Tiers;
+use quench_runtime::vm::tier_policy::{lane_body_tier, PredictedTier};
 use quench_runtime::bytecode::{Function, ResidualProgram};
 use crate::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::dispatch_fast::LaneView;
-use quench_runtime::vm::jit_backend::CompileLevel;
 use quench_runtime::vm::Vm;
 
 /// Why a compile or a callee's admission is refused. Each variant is one refusal site, counted
@@ -18,7 +16,7 @@ use quench_runtime::vm::Vm;
 /// this enum through `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
-    /// The static benefit declines the compile (`tier_model::Pick::Interpreter`, `PlanNotAmortized`).
+    /// The predicted tier is the interpreter (`PredictedTier::Interpreter`, `PlanNotAmortized`).
     NotAmortized,
     /// The callee may not run inline (`CalleeUse::Inlined`) or frameless (`CalleeUse::Frameless`).
     CalleeNotEligible,
@@ -183,7 +181,7 @@ pub(crate) enum UnitKind {
     /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
     /// root-only compile names its root.
     WasmModule,
-    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the pick the static benefit
+    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the tier predicted
     /// makes, the looped iterations' payment. Its unit is the proof every later lane gate needs.
     LanePlan,
     /// A lane body's entry gate during planning (phase B, inside the plan): the plan's unit, the amortization
@@ -209,7 +207,7 @@ pub(crate) struct UnitFacts {
     pub(crate) called_by_bodies: bool,
     /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
     pub(crate) indexes_typed: bool,
-    /// The Cranelift function tiers run in this VM (`vm_may_run`), for `UnitKind::Entry`.
+    /// The Cranelift function tiers run in this VM (`tier_policy::tiers_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
     /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
     pub(crate) wasm_first_entry: bool,
@@ -219,8 +217,6 @@ pub(crate) struct UnitFacts {
     pub(crate) root_ok: bool,
     /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
     pub(crate) compiles_left: bool,
-    /// Lane phase A: the pick the static benefit makes (`lane_facts::body_pick`).
-    pub(crate) pick: Option<Pick>,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
     /// Lane phase A: the looped iterations pay for the body at its planned size (`loop_model::body_taken`).
@@ -241,7 +237,7 @@ pub(crate) struct UnitFacts {
 /// region, its memory policy. Only `specialize` asks this.
 fn may_compile(kind: UnitKind) -> bool {
     match kind {
-        UnitKind::Body => quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::CRANELIFT) || quench_runtime::jit_mode::base_only(),
+        UnitKind::Body => quench_runtime::vm::tier_policy::may_compile(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
         UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
@@ -336,13 +332,9 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program && facts.root_ok,
-        // Phase A: the compile bound, then the pick, then the looped iterations.
+        // Phase A: the compile bound, then the looped iterations (the pick decided the tier before this gate).
         UnitKind::LanePlan => {
             if !facts.compiles_left { return Decision::Declined; }
-            match facts.pick {
-                Some(Pick::Interpreter) if !facts.called_by_regions => { record(Refusal::NotAmortized); return Decision::Unpaid; }
-                _ => {}
-            }
             facts.looped_taken
         }
         // Phase B, during planning: the entry gate.
@@ -376,48 +368,7 @@ fn bisected_out() -> bool {
 }
 
 /// The tiers of the JIT mode, as the specializer names them.
-pub(crate) use quench_runtime::jit_mode::Tier;
-
-/// Whether the process's JIT mode lets `tiers` run: the specializer's one reading of the mode,
-/// which every other tier decision of the engine takes from here.
-#[inline]
-pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
-
-/// Whether the stencil tier is the only tier (`--b-jit`).
-#[inline]
-pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
-
-/// Whether loop regions take the stencil tier in place of Cranelift (`jit_mode::base_regions`).
-#[inline]
-fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
-
-/// Whether every loop region is a stencil region: no region ever leaves for Cranelift.
-#[inline]
-pub(crate) fn every_region_is_base() -> bool { stencil_regions() }
-
-/// The `base` flag a region keeps: its own pick, cleared wherever every region is a stencil one (there none is
-/// promoted or kept as a u-jit region).
-#[inline]
-pub(crate) fn default_mode_picks_base(base: bool) -> bool { base && !stencil_regions() }
-
-/// Whether the default mode promotes a b-jit region to u-jit once it has run long enough.
-#[inline]
-pub(crate) fn regions_promote_to_ultra() -> bool { !stencil_regions() }
-
-/// Whether a site BaseJIT declined compiles again as a u-jit region: never where every region is a stencil one, and
-/// only where UltraJIT runs.
-#[inline]
-pub(crate) fn declined_regions_recompile_ultra() -> bool { !stencil_regions() && tier_runs(&[Tier::Ultra]) }
-
-/// Whether any of `tiers` runs in this VM: compiled execution, a memory policy that compiles them
-/// (`tier_policy::tier_may_run`), and a JIT mode that allows one. A build whose profiles count
-/// interpreted work exactly runs none.
-#[inline]
-pub(crate) fn vm_may_run(vm: &Vm, tiers: &[Tier]) -> bool {
-    !cfg!(quench_profiled)
-        && vm.execution_mode == quench_runtime::ExecutionMode::Compiled
-        && quench_runtime::vm::tier_policy::tier_may_run(vm.memory_policy(), tiers)
-}
+pub(crate) use quench_runtime::vm::tier_policy::Tier;
 
 /// Whether the lane-body tier is enrolled in this VM (`ProgramStore::js_jit_lane_methods_enabled`).
 #[inline]
@@ -430,7 +381,7 @@ pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabl
 
 /// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
 pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {
-    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default(), fresh: false }).compiled()
 }
 
 /// The unit of a loop region this VM may compile (`region_unit_under` of its memory policy).
@@ -440,24 +391,6 @@ pub(crate) fn region_unit(vm: &Vm) -> Option<CompiledUnit> { region_unit_under(v
 #[inline]
 pub(crate) fn loop_regions_compile(vm: &Vm) -> bool { region_unit(vm).is_some() }
 
-/// Whether a Cranelift tier runs (QuickJIT or UltraJIT): the tiers that compile what BaseJIT does not build.
-#[inline]
-fn cranelift_runs() -> bool { tier_runs(Tier::CRANELIFT) }
-
-/// Whether inlining regions are routed to Cranelift, the only tier that compiles them (BaseJIT declines every
-/// inlining region), so they are analyzed only where a Cranelift tier runs.
-#[inline]
-pub(crate) fn inlining_regions_route_to_cranelift() -> bool { cranelift_runs() }
-
-/// Whether a region BaseJIT does not build is declined rather than left to Cranelift: where no Cranelift tier runs,
-/// nothing compiles it.
-#[inline]
-pub(crate) fn unbuilt_region_declined() -> bool { !cranelift_runs() }
-
-/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
-#[inline]
-pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
-
 /// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
 /// interpreter's own projection of the function, decided here as every compiled unit is.
 #[derive(Clone, Copy)]
@@ -466,7 +399,7 @@ pub(crate) struct RecordPlan {
     pub(crate) loop_sites: bool,
 }
 
-/// The record plan of a function whose tiers may run (`tiers_run`: `vm_may_run`, any tier).
+/// The record plan of a function whose tiers may run (`tier_policy::tiers_run`, any tier).
 pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
     RecordPlan { loop_sites: tiers_run }
 }
@@ -476,7 +409,9 @@ pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
 pub(crate) enum LaneRoute {
     /// The program's loaded AOT image serves it (`install_ahead_lane_body`): no warm-up, no runtime tier.
     Ahead,
-    /// The stencil tier stitches it at once (`--b-jit`).
+    /// Its predicted tier is the interpreter: no body is compiled.
+    Interpreted,
+    /// The stencil tier stitches it at once (its predicted tier is b-jit).
     Base,
     /// It waits for callees that still compile, to call their bodies by their entries.
     Deferred,
@@ -485,21 +420,27 @@ pub(crate) enum LaneRoute {
 }
 
 /// The facts `route_for_lane` reads.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct LaneRouteFacts {
     /// The function's program has a loaded AOT image.
     pub(crate) ahead_image: bool,
+    /// The function's predicted tier (`lane_facts::body_pick`).
+    pub(crate) pick: PredictedTier,
     /// A start whose direct callees still compile (`body_tier_in_lane::callees_compiling`).
     pub(crate) callees_compiling: bool,
 }
 
-/// The route of a function's lane body, a pure function of its facts: an image body is served by the image; under
-/// `--b-jit` the stencil tier stitches it; otherwise the lane body tier plans it, after its callees still compiling.
+/// The route of a function's lane body, a pure function of its facts: an image body is served by the image; otherwise
+/// its predicted tier, through the policy (`lane_body_tier`), picks the stencil route, the lane tier after its callees
+/// still compiling, or none.
 pub(crate) fn route_for_lane(facts: LaneRouteFacts) -> LaneRoute {
-    if facts.ahead_image { LaneRoute::Ahead }
-    else if stencil_only() { LaneRoute::Base }
-    else if facts.callees_compiling { LaneRoute::Deferred }
-    else { LaneRoute::Lane }
+    if facts.ahead_image { return LaneRoute::Ahead; }
+    match lane_body_tier(facts.pick) {
+        None => LaneRoute::Interpreted,
+        Some(Tier::Base) => LaneRoute::Base,
+        Some(_) if facts.callees_compiling => LaneRoute::Deferred,
+        Some(_) => LaneRoute::Lane,
+    }
 }
 
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called
@@ -527,13 +468,6 @@ pub(crate) fn admit_callee(program: &ResidualProgram, callee: &Function, how: Ca
         record(Refusal::CalleeNotEligible);
         Err(Refusal::CalleeNotEligible)
     }
-}
-
-/// The compile level of `function`'s u-jit body: `Quick` where its static residue takes the cheaper compile
-/// (`tier_model::compiles_quick`), else `Optimized`.
-pub(crate) fn compile_level(tiers: &Tiers, program: &ResidualProgram, function: u32) -> CompileLevel {
-    let residue = program.function_get(function as usize).map_or(0, super::lane_facts::static_residue);
-    if super::tier_model::compiles_quick(tiers.admits_all, residue) { CompileLevel::Quick } else { CompileLevel::Optimized }
 }
 
 impl From<super::osr_loop::RegionRejection> for Refusal {

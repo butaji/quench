@@ -26,7 +26,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
     let facts = vm.programs.aot_facts(program);
     let planned = vm.programs.planned_call_sites(program, function, crate::dispatch_fast::planned_calls::planned_arm_admits);
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
-        crate::compiled::admission::record_plan(crate::compiled::admission::vm_may_run(vm, crate::compiled::admission::Tier::ANY)),
+        crate::compiled::admission::record_plan(quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
         vm.programs.reports_on_drop(), vm.programs.tiers(), facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
     if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
@@ -71,7 +71,7 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         prologue: std::cell::UnsafeCell::new(Records::blank()),
         tier_direct: std::cell::Cell::new(None),
         tier: std::cell::OnceCell::new(),
-        entry: crate::compiled::entry_cell::EntryCell::new(),
+        entry: crate::compiled::entry_cell::EntryCell::new(crate::compiled::lane_body_abi::entry_stub()),
         accumulator_registers: vec![crate::dispatch_fast::NO_ACCUMULATOR; count].into_boxed_slice(),
         plain_backward_jump_sites: 0,
         osr_rejections: None,

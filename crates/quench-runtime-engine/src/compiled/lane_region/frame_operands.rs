@@ -51,6 +51,40 @@ pub(crate) fn operand_long(builder: &mut FunctionBuilder<'_>, registers: &mut Re
     Some(emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
 }
 
+/// `register` held as the 64-bit integer word of the integer type `target` (its Int64 view): an
+/// int32 sign-extended, or a Number's exact integer. An int32 keeps its own type, which the caller
+/// checks against the target. A Number held here has the solver's integer range within EXACT (the
+/// only type `Representation::Int64` takes, `Representation::accepts`), so its word is an int-tagged
+/// or exact double integer, and that range lies within `target`'s, which joins this edge's type. The
+/// word converts without a guard, and its fact is defined here.
+pub(crate) fn register_long_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, register: Register, target: Type, otherwise: ir::Block) -> ir::Value {
+    let index = usize::from(register);
+    let fact = state.values[index].value;
+    let (ty, word) = match fact.representation {
+        Representation::Int64 => {
+            let variable = register_long(builder, registers, index);
+            return builder.use_var(variable);
+        }
+        Representation::Int32 => {
+            let variable = register_int(builder, registers, index);
+            let int = builder.use_var(variable);
+            (fact.ty, emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
+        }
+        Representation::Float64 | Representation::Tagged => {
+            fact.ty.int_range().filter(|range| range.fits_exact_double())
+                .expect("a Number held as an Int64 has the solver's integer range within EXACT");
+            let number = register_number_value(builder, registers, state, register, otherwise);
+            let (integer, _exact) = quench_runtime::staged::value::exact_long(&mut emit(builder), number.word());
+            (target, integer)
+        }
+    };
+    let variable = register_long(builder, registers, index);
+    builder.def_var(variable, word);
+    state.values[index] = RegisterFact { tagged: state.values[index].tagged, ..RegisterFact::definition(ty, Representation::Int64) };
+    word
+}
+
 /// An operand's binary64 value, statically where it is a constant Number.
 pub(crate) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, constants: &[quench_runtime::bytecode::Constant], operand: quench_runtime::bytecode::Operand,
@@ -80,6 +114,10 @@ pub(crate) fn operand_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mu
         OperandKind::Field | OperandKind::Local => return None,
     };
     if integral { return operand_int(builder, registers, state, constants, operand, exit); }
+    // A register held as its 64-bit integer word: ToInt32 of an integer is the word's low 32 bits, exact.
+    if let Some(word) = operand.register_index().and_then(|register| held_long(builder, registers, state, register)) {
+        return Some(Int32::by_fact(emit(builder).raw_unary(Unary::Narrow(Lane::I32), word), IntFact::int32_home()));
+    }
     // A register only its tag types is its int where the tag says so, else its Number's
     // ToInt32; neither path proves a fact the other does not.
     let tagged = operand.register_index()

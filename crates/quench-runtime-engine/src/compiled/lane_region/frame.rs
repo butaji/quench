@@ -8,7 +8,7 @@ use crate::compiled::regions;
 #[path = "frame_call_out.rs"] pub(crate) mod call_out;
 #[path = "frame_truthiness.rs"] pub(crate) mod truthiness;
 #[path = "frame_operands.rs"] pub(crate) mod operands;
-pub(crate) use operands::{held_long, number_word, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
+pub(crate) use operands::{held_long, number_word, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_long_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The lane's register file.
@@ -240,7 +240,7 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn heap_records(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> {
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let at = if self.arrays_fixed { quench_runtime::staged::Region::RecordBases.readonly() } else { quench_runtime::staged::Region::RecordBases.mutable() };
+        let at = regions::record_base(self.arrays_fixed);
         let arrays = quench_runtime::staged::Stage::load_u64(stage, at, self.payload,
             std::mem::offset_of!(super::super::JsStepDispatch, head.array_record_base) as i32);
         let objects = super::super::emit_js_payload_word(stage.builder, self.payload,
@@ -396,6 +396,8 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     mut fact: RegisterFact) {
     let index = usize::from(register);
     written.insert(index);
+    // The definition names another value: a kept receiver aliasing the register lets go of it.
+    super::virtual_objects::aliases::release_alias(&mut state.virtuals, register);
     let variable = match fact.value.representation {
         Representation::Tagged => registers.tagged[index],
         Representation::Int32 => register_int(builder, registers, index),

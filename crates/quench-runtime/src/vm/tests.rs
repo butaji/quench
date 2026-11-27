@@ -395,6 +395,41 @@ fn default_osr_proves_the_whole_inlined_guest_call_depth() {
 }
 
 #[test]
+fn a_strict_tail_call_reuses_its_frame_while_a_plain_call_still_pushes() {
+    // The guest-call budget counts activations, so a tail chain far deeper than it completes only if each
+    // tail call replaces its caller's activation, and the same depth of plain calls exhausts it.
+    const TEST_GUEST_LIMIT: usize = 64;
+    const DEPTH: u32 = 10_000;
+    let source = format!(r#"(function(){{
+        'use strict';
+        function down(n){{ return n === 0 ? 'done' : down(n - 1); }}
+        function plain(n){{ return n === 0 ? 0 : 1 + plain(n - 1); }}
+        let tail = 'none';
+        let nested = 'none';
+        tail = down({DEPTH});
+        try {{ plain({DEPTH}); }} catch (e) {{ nested = e.name; }}
+        globalThis.tail = tail;
+        globalThis.nested = nested;
+    }})();"#);
+    let program = Engine::specialize(&source, "tail-frame-reuse.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let _limit = crate::stack::GuestCallLimitGuard::enter(TEST_GUEST_LIMIT);
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let tail = vm.intern_atom("tail");
+        let nested = vm.intern_atom("nested");
+        let tail = vm.own_property(global, tail).and_then(|value| vm.heap.string(value)).unwrap().to_string();
+        let nested = vm.own_property(global, nested).and_then(|value| vm.heap.string(value)).unwrap().to_string();
+        answers.push((tail, nested));
+    }
+    assert_eq!(answers[0], answers[1]);
+    assert_eq!(answers[1], ("done".into(), "RangeError".into()));
+}
+
+#[test]
 fn fresh_execution_does_not_reuse_a_capture_walk_from_the_previous_heap() {
     let program = Engine::specialize("", "capture-heap-lifetime.js").unwrap();
     let mut vm = Vm::new(TestHost::default());

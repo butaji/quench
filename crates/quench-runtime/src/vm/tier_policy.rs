@@ -6,8 +6,8 @@
 //! never a controller.
 
 use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
-use crate::compile::call_graph::CallGraph;
-use crate::jit_mode::Tier;
+use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
+pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
 
@@ -24,9 +24,6 @@ pub struct Tiers {
     pub(crate) stress: bool,
     /// Whether the tier models admit every eligible compile, whatever it would repay.
     pub admits_all: bool,
-    /// The searches a regexp program runs interpreted before it is compiled to native code
-    /// (`regexp_native`): compiling costs about what this many searches of a small program do.
-    pub regexp_native_runs: u32,
 }
 
 /// The priors the model tests pin their arithmetic to.
@@ -247,12 +244,10 @@ impl TierRows {
     /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
     pub(crate) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
 
-    /// The rows a VM made now holds: `PROCESS`, or the floor rows under `QUENCH_DEV=floor-rows`,
-    /// admitting every compile where a test forced it.
+    /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
     pub(crate) fn made() -> &'static Tiers {
         #[cfg(any(test, feature = "test-support"))]
         if FORCED_ADMISSION.get() { return &ADMITTING; }
-        if crate::trace::Dev::FloorRows.on() { return &FLOOR; }
         Self::PROCESS.table()
     }
 
@@ -284,7 +279,6 @@ const FLOOR: Tiers = Tiers {
     priors: MEASURED.priors,
     stress: true,
     admits_all: true,
-    regexp_native_runs: 1,
 };
 
 impl LaneBody {
@@ -296,15 +290,6 @@ impl LaneBody {
 }
 
 impl Tiers {
-    /// The searches a regexp program runs interpreted before the stencil tier stitches it
-    /// (`regexp_native::stitch`), where the mode runs that tier below Cranelift: the Cranelift
-    /// threshold over what a stitch saves against a compile. Stitching costs about a fiftieth of
-    /// a Cranelift compile (V8-v7-shaped patterns, 2026-11-24: 175K instructions against 9.4M),
-    /// so it pays after a fiftieth of the searches; a thirty-second leaves room.
-    pub fn regexp_stitch_runs(&self) -> u32 {
-        (self.regexp_native_runs / 32).max(1)
-    }
-
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
     /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
@@ -329,16 +314,20 @@ impl Priors {
     }
 }
 
-/// The tier that compiles and publishes lane bodies in this process's mode: `--b-jit`'s stencil
-/// bodies, `--q-jit`'s Quick lowering, or the Ultra lowering of every mode with it.
-pub fn body_tier_in_lane() -> Tier {
-    if crate::jit_mode::base_only() {
-        Tier::Base
-    } else if crate::jit_mode::quick_only() {
-        Tier::Quick
-    } else {
-        Tier::Ultra
+/// The tier a lane body of a function with predicted tier `pick` runs in, or `None` where the interpreter runs it
+/// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, where it
+/// allows no other: `--b-jit` runs Base alone, `--q-jit` Quick alone, `--u-jit` Ultra alone, and a mode that
+/// leaves Base out (aarch64's default) runs Ultra for a Base pick.
+pub fn lane_body_tier(pick: PredictedTier) -> Option<Tier> {
+    let wanted = match pick {
+        PredictedTier::Interpreter => return None,
+        PredictedTier::Base => Tier::Base,
+        PredictedTier::Ultra => Tier::Ultra,
+    };
+    if crate::jit_mode::tiers_allowed(&[wanted]) {
+        return Some(wanted);
     }
+    [Tier::Ultra, Tier::Base, Tier::Quick].into_iter().find(|tier| crate::jit_mode::tiers_allowed(&[*tier]))
 }
 
 /// The base a share in percent is a share of.
@@ -371,7 +360,6 @@ const MEASURED: Tiers = Tiers {
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
-    regexp_native_runs: 2000,
 };
 
 /// The rows code compiled for no particular VM is compiled under (`VmFacts::STATIC`).
@@ -428,6 +416,36 @@ pub fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
 }
 
+/// Whether any of `tiers` runs in a VM in execution `mode` under `policy`: compiled execution, a
+/// memory policy that compiles them (`tier_may_run`), and a JIT mode that allows one. A build whose
+/// profiles count interpreted work exactly runs none. The one question every VM-level tier check asks.
+#[inline]
+pub fn tiers_run(mode: crate::ExecutionMode, policy: crate::MemoryPolicy, tiers: &[Tier]) -> bool {
+    !cfg!(quench_profiled) && mode == crate::ExecutionMode::Compiled && tier_may_run(policy, tiers)
+}
+
+/// Operators up to which a Wasm module lowered for compiled code inlines its leaves as the
+/// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
+/// stack check, an interrupt check and a status test, and a copy lets Cranelift optimize the
+/// leaf with its caller's values. Wasm compiles eagerly, so every copy is compiled whether it
+/// runs or not; past this size the copies' compile time outweighs them on a module's first
+/// runs, and larger modules keep every call.
+pub const WASM_COMPILED_INLINING_MAX_OPERATORS: usize = 32_768;
+
+/// Whether a Wasm module lowered for `mode` inlines its leaf calls (`wasm::inline::leaf_budget`).
+/// The interpreter inlines them; compiled code inlines them up to `WASM_COMPILED_INLINING_MAX_OPERATORS`
+/// operators; native-only execution keeps every call for the native backend to resolve.
+pub fn wasm_module_inlines_leaves(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> bool {
+    match mode {
+        crate::ExecutionMode::Interpreted => true,
+        #[cfg(test)]
+        crate::ExecutionMode::Compiled if crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => false,
+        crate::ExecutionMode::Compiled => module_operators() <= WASM_COMPILED_INLINING_MAX_OPERATORS,
+        #[cfg(feature = "native-execution")]
+        crate::ExecutionMode::NativeOnly => false,
+    }
+}
+
 /// Whether a compile may start at all: some compiling tier is allowed.
 pub fn may_compile() -> bool {
     crate::jit_mode::tiers_allowed(Tier::ANY)
@@ -445,6 +463,27 @@ pub fn may_publish(tier: Tier) -> bool {
 /// published lane body is a QuickJIT body.
 pub fn quick_only() -> bool {
     crate::jit_mode::quick_only()
+}
+
+/// Whether BaseJIT (stencil) bodies and regions run in this process.
+pub fn base_runs() -> bool {
+    crate::jit_mode::tiers_allowed(&[Tier::Base])
+}
+
+/// Whether a Cranelift tier (QuickJIT or UltraJIT) runs: the tiers that compile what BaseJIT does not build.
+pub fn cranelift_runs() -> bool {
+    crate::jit_mode::tiers_allowed(Tier::CRANELIFT)
+}
+
+/// Whether loop regions take the stencil tier in place of Cranelift: every region is a stencil region, and none
+/// is promoted to UltraJIT.
+pub fn loop_regions_are_stencils() -> bool {
+    crate::jit_mode::base_only()
+}
+
+/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
+pub fn wasm_module_routes_to_stencils() -> bool {
+    crate::jit_mode::base_only()
 }
 
 /// What `policy` lets the tiers compile.
@@ -559,7 +598,7 @@ fn accessor_shaped(body: &Function) -> bool {
     shaped && touches_this
 }
 
-// Lane bodies: history, recurrence and loop views (body_tier_in_lane, dispatch_frame, program_store)
+// Lane bodies: history, recurrence and loop views (lane_body_tier, dispatch_frame, program_store)
 /// The backward jumps a JavaScript activation takes in the general path before its function's
 /// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
 /// costs some hundreds of instructions per instruction of the function; a module body that
@@ -580,16 +619,88 @@ pub(crate) const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
 /// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
 pub(crate) const NATIVE_CREDIT_RUNS: u64 = 64;
 
-/// The static residue (`lane_facts::static_residue`) past which a function compiles at its first entry, though no loop
-/// or call cycle of the program reaches it. Conservative and untuned: a body this size repays its compile on its own.
-pub const BODY_STATIC_RESIDUE: u64 = 96;
+/// The tier a function runs in under default mode (design decision 4.9): the interpreter, or a compiled body. `Tier`
+/// names the compiled tiers only, so the interpreter is this enum's own variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PredictedTier {
+    Interpreter,
+    Base,
+    Ultra,
+}
 
-/// The residue one call instruction weighs (`lane_facts::static_residue`); every other instruction weighs one.
-pub const CALL_RESIDUE: u64 = 4;
+/// IR instructions the interpreter spends per bytecode of one run of a function.
+pub const INTERPRETER_IR_PER_OP: u64 = 40;
+/// IR instructions a b-jit (stencil) body spends per bytecode of one run.
+pub const BJIT_IR_PER_OP: u64 = 12;
+/// IR instructions a u-jit body spends per bytecode of one run.
+pub const UJIT_IR_PER_OP: u64 = 4;
+/// IR instructions the b-jit's one-time compile of a body spends per bytecode of the body.
+pub const BJIT_COMPILE_IR_PER_OP: u64 = 60;
+/// IR instructions the u-jit's one-time compile of a body spends per bytecode of the body.
+pub const UJIT_COMPILE_IR_PER_OP: u64 = 3000;
+/// IR instructions an interpreted call of a function spends on its frame, per call.
+pub const ENTRY_IR_INTERPRETER: u64 = 40;
+/// IR instructions a b-jit body's entry spends per call: the stencil crossing and its lane frame.
+pub const ENTRY_IR_BJIT: u64 = 150;
+/// IR instructions a u-jit body's entry spends per call: its entry record and its prologue.
+pub const ENTRY_IR_UJIT: u64 = 300;
 
-/// The static residue from which a lane body compiles at the quick level (`CompileLevel::Quick`): a body this large
-/// costs more to compile optimized than its code saves, so it takes the cheaper compile. Conservative and untuned.
-pub const QUICK_RESIDUE: u64 = 512;
+// The tier order is locked: each compiled tier runs a bytecode for less IR than the one before it, and compiles for more.
+const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
+const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
+
+/// The tier a function runs in: the argmin over the three tiers of its predicted IR. A run of the function costs its
+/// work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in) times its static
+/// frequency (`CallGraph::frequency`) times the tier's cost per bytecode; a compiled tier adds its one-time compile
+/// over the bytecodes; each call of the function pays its tier's entry (`ENTRY_IR_*`). `called_by_loop` is a loop
+/// region's call of the function, one loop more. Ties go to the tier that compiles less: the interpreter, then the
+/// b-jit. Pure: no count and no clock.
+pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32, called_by_loop: bool) -> PredictedTier {
+    let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
+    let frequency = graph.frequency(function).saturating_mul(if called_by_loop { LOOP_WEIGHT } else { 1 });
+    let work = graph.loop_work(function);
+    let run = |per_op: u64| frequency.saturating_mul(work).saturating_mul(per_op);
+    let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
+    let entry = |per_call: u64| frequency.saturating_mul(per_call);
+    let interpreter = run(INTERPRETER_IR_PER_OP).saturating_add(entry(ENTRY_IR_INTERPRETER));
+    let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_BJIT));
+    let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_UJIT));
+    if interpreter <= base && interpreter <= ultra {
+        PredictedTier::Interpreter
+    } else if base <= ultra {
+        PredictedTier::Base
+    } else {
+        PredictedTier::Ultra
+    }
+}
+
+/// Shared-matcher IR per exec of a regexp pattern: the interpreter over the pattern's compact program
+/// (`quench_regexp::backtrack::Program`). Estimate: `regexp.md` section 1 puts 100 to 800 extra IR per find on a
+/// 290 IR body; unmeasured.
+pub const REGEXP_SHARED_IR_PER_EXEC: u64 = 400;
+/// IR per exec of a pattern's own compiled (u-jit) matcher. Estimate from `regexp.md` section 1's 290 IR body, unmeasured.
+pub const REGEXP_COMPILED_IR_PER_EXEC: u64 = 120;
+/// IR the u-jit's one-time compile spends per instruction of the pattern's compact program (as `UJIT_COMPILE_IR_PER_OP`).
+pub const REGEXP_COMPILE_IR_PER_INST: u64 = 3000;
+/// Machine-code bytes a compiled pattern emits per instruction of its compact program. Estimate: PCRE2-JIT's 982 B per
+/// pattern (`review-4-policy.md`, 4.10) times the Cranelift factor of 3 to 6, over a typical pattern's instructions; unmeasured.
+pub const REGEXP_CODE_BYTES_PER_INST: u64 = 64;
+/// IR a code byte of a compiled pattern weighs in the compile decision (`regexp_compiles`). Placeholder for the C5
+/// size weight, which has no number in this folder; the first measured pattern fixes it.
+pub const REGEXP_BYTE_WEIGHT: u64 = 8;
+
+/// Whether a regexp pattern gets its own compiled matcher (design decision 4.10): the argmin of 4.9, with code bytes
+/// priced in. The predicted IR saved is the pattern's static frequency (`CallGraph::regexp_site_frequency`, the
+/// frequencies of the functions that use it) times the exec IR the compiled matcher saves, against the compile's IR
+/// plus its code bytes times `REGEXP_BYTE_WEIGHT`. `pattern_size` is the compact program's instruction count. A pattern
+/// the decision rejects runs the shared matcher over that program. Pure: no count and no clock.
+pub fn regexp_compiles(pattern_static_frequency: u64, pattern_size: usize) -> bool {
+    let size = pattern_size as u64;
+    let saved = pattern_static_frequency.saturating_mul(REGEXP_SHARED_IR_PER_EXEC.saturating_sub(REGEXP_COMPILED_IR_PER_EXEC));
+    let code_bytes = size.saturating_mul(REGEXP_CODE_BYTES_PER_INST);
+    let cost = size.saturating_mul(REGEXP_COMPILE_IR_PER_INST).saturating_add(code_bytes.saturating_mul(REGEXP_BYTE_WEIGHT));
+    saved > cost
+}
 
 /// The runs a function makes on the general path before it derives its lane view, which costs
 /// about a thousand instructions per bytecode instruction, so a function that runs fewer times

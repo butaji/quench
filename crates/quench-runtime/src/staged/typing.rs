@@ -46,7 +46,7 @@ pub fn value(op: &Operation<(), ()>, env: &impl Abstract) -> Option<Cell> {
         Operation::Equality { .. } | Operation::LogicalNot { .. } | Operation::TypeofTest { .. } | Operation::InstanceOf { .. } =>
             Cell::of(Type::language(ValueType::Boolean)),
         Operation::Void { .. } => Cell::of(Type::language(ValueType::Undefined)),
-        Operation::ElementRead { base, key, .. } => element(env, env.register(base), operand_cell(env, key)),
+        Operation::ElementRead { base, key, .. } => element(env, env.register(base), operand_cell(env, key), false),
         // The local-slot increment defines the value `step` gives its source, as the Number form does.
         Operation::IncDecLocal { source, decrement, .. } => Cell::of(step(env.register(source).ty, decrement)),
         _ => return None,
@@ -83,6 +83,7 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
     let operands: Vec<Cell> = match number {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
         | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => vec![fact(left), fact(right)],
+        NumberOperation::Power { base, exponent, .. } => vec![fact(base), fact(exponent)],
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => vec![fact(source)],
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![register(source)],
         _ => Vec::new(),
@@ -95,6 +96,7 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
         NumberOperation::Extreme { left, right, maximum, .. } if both(left, right) => Cell::of(extreme(maximum, ty(left), ty(right))),
         NumberOperation::Bitwise { left, right, operation, .. } if both(left, right) => Cell::of(bitwise(operation, ty(left), ty(right))),
         NumberOperation::Imul { left, right, .. } if both(left, right) => Cell::of(Type::INT32),
+        NumberOperation::Power { base, exponent, .. } if both(base, exponent) => Cell::of(Type::NUMBER),
         NumberOperation::Unary { source, operation, .. } if one(source) => Cell::of(unary(operation, ty(source))),
         NumberOperation::Math { source, operation, .. } if one(source) => Cell::of(math(operation, ty(source))),
         NumberOperation::BitwiseNot { source, .. } if one(source) => Cell::of(Type::INT32),
@@ -106,11 +108,12 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
 
 /// The cell of an indexed read of `base` at `index`: the elements `base` names (`Elements::element`), joined with those no
 /// field names (`Abstract::unnamed_elements`). A read takes `undefined` where the array has holes or the index is not
-/// within a fixed length (`within_length`). Any value where the types are not solved yet.
-pub fn element(env: &impl Abstract, base: Cell, index: Cell) -> Cell {
+/// within a fixed length (`within_length`), unless `in_bounds`: the solve proved the index within the array's length
+/// (`length_settle`). Any value where the types are not solved yet.
+pub fn element(env: &impl Abstract, base: Cell, index: Cell, in_bounds: bool) -> Cell {
     let Some(unnamed) = env.unnamed_elements() else { return Cell::ANY };
     let elements = base.elements.join(unnamed);
-    elements.element(within_length(elements.length, index.ty))
+    elements.element(in_bounds || within_length(elements.length, index.ty))
 }
 
 /// Whether an index of type `index` stays within an array of length `length`: a fixed length, and an integer range inside
@@ -215,11 +218,14 @@ pub fn unary(operation: NumberUnary, source: Type) -> Type {
 /// The type of the Math function `operation` over a Number of type `source`. Every function returns NaN for a NaN
 /// argument, so a source that may be NaN gives `NUMBER`. `Math.sqrt` of a negative is NaN, and a Number of unknown sign
 /// may be negative (no float range is kept), so `Math.sqrt` is NaN-free only over an integer range with no negative
-/// bound. Every other function of a NaN-free source (rounding, absolute value, sign, `fround`) is NaN-free.
+/// bound. `Math.floor`, `Math.ceil`, `Math.round` and `Math.trunc` of an integer range are that range: an integer is its
+/// own rounding (`-0` is no integer type, so the zero that rounds to it is not one either). Every other function of a
+/// NaN-free source (absolute value, sign, `fround`) is NaN-free.
 pub fn math(operation: FloatUnary, source: Type) -> Type {
     if source.may_be_nan() { return Type::NUMBER; }
-    match operation {
-        FloatUnary::Sqrt if !source.int_range().is_some_and(|range| range.min >= 0) => Type::NUMBER,
+    match (operation, source.int_range()) {
+        (FloatUnary::Floor | FloatUnary::Ceil | FloatUnary::Round | FloatUnary::Trunc, Some(range)) => Type::int(range),
+        (FloatUnary::Sqrt, range) if !range.is_some_and(|range| range.min >= 0) => Type::NUMBER,
         _ => Type::NOT_NAN_NUMBER,
     }
 }

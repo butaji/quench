@@ -7,7 +7,7 @@ use super::super::value::Word;
 use crate::bytecode::WideInstruction;
 use crate::staged::{Comparison, Operation};
 use crate::staged::typing;
-use crate::typed_ir::{Cell, Classes, Elements, Type, language_bit};
+use crate::typed_ir::{Cell, Classes, Elements, Sites, Type, language_bit};
 use crate::ValueType;
 
 /// What a conditional jump's test proves about the value it tests, on one of its edges.
@@ -119,6 +119,6 @@ fn may_be_legacy_nullish(ty: Type) -> bool {
 fn refine_cell(cell: Cell, fact: Refinement) -> Cell {
     match fact {
         Refinement::NotNullish => Cell { ty: cell.ty.not_nullish(), ..cell },
-        Refinement::Nullish => Cell { ty: cell.ty.nullish_part(), classes: Classes::Never, elements: Elements::NEVER },
+        Refinement::Nullish => Cell { ty: cell.ty.nullish_part(), classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false },
     }
 }

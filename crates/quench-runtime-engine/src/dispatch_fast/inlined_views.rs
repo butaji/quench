@@ -114,7 +114,7 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     let plans = crate::compiled::lane_region::bindings::CallPlans::new(code, aot.as_deref(), graph.as_deref());
     let targets = |caller: u32, pc: u32| -> Vec<crate::compiled::CallTarget> {
         if caller != function { return Vec::new(); }
-        plans.targets(caller, pc).into_iter().filter(|target| leaf_callee(code, target.function)).take(1).collect()
+        plans.targets(caller, pc).into_iter().filter(|target| leaf_callee(code, target.function)).collect()
     };
     let unit = crate::compiled::lane_unit::unit(code, graph.as_deref(), function, body, &targets, &|caller, pc| plans.at(caller, pc),
         &|callee| code.function_get(callee as usize))?;
@@ -169,7 +169,9 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
 /// `a`, the call's window in `b`, the callee's first register in `c`; the values passed, the
 /// callee's registers and the receiver register in the immediate; the callee's identity in `mode`.
 /// A call whose values do not land in its callee's first registers in order, or that passes
-/// through `Function.prototype.call`, always leaves at its marker.
+/// through `Function.prototype.call`, always leaves at its marker. A callee bound by its function
+/// (`CalleeBinding::Function`, the planned target of a call plan's arm) is admitted by that function
+/// (`inlined_function_call_marker`); an identity-bound one by its identity (`inlined_call_marker`).
 fn mark_call(record: &mut quench_runtime::vm::engine_types::LaneInstruction, frame: &InlinedCall, code: &quench_runtime::ResidualProgram) {
     let leave = || leave_inlined as Handler as *const ();
     let Some(callee) = code.function_get(frame.target.function as usize) else { return record.handler = leave() };
@@ -177,17 +179,21 @@ fn mark_call(record: &mut quench_runtime::vm::engine_types::LaneInstruction, fra
     let in_order = frame.passed_registers(callee).enumerate()
         .all(|(k, (home, value))| usize::from(home) == usize::from(frame.base) + k && usize::from(value) == usize::from(frame.window) + k)
         && frame.passed_registers(callee).count() == passed;
-    let identity = frame.target.identity();
-    match identity {
+    // The marker's handler and its admission word: the callee's identity, or the function a closure must be of.
+    let bound = match frame.target.callee {
+        quench_runtime::vm::engine_types::CalleeBinding::Function => Some((inlined_function_call_marker as Handler as *const (), u64::from(frame.target.function))),
+        _ => frame.target.identity().map(|identity| (inlined_call_marker as Handler as *const (), identity.to_bits())),
+    };
+    match bound {
         // Registers past the callee's entry fill are written before any read (`entry_fill`).
-        Some(identity) if in_order && frame.registers <= u16::from(u8::MAX) => {
+        Some((handler, mode)) if in_order && frame.registers <= u16::from(u8::MAX) => {
             let fill = code.entry_fill(callee).clamp(passed as u16, frame.registers);
-            record.handler = inlined_call_marker as Handler as *const ();
+            record.handler = handler;
             record.a = frame.callee_register;
             record.b = frame.window;
             record.c = frame.base;
             record.operand.imm = passed as u32 | u32::from(fill) << 8 | u32::from(frame.receiver) << 16;
-            record.mode = identity.to_bits();
+            record.mode = mode;
         }
         _ => record.handler = leave(),
     }
@@ -336,11 +342,22 @@ fn install(cx: *mut super::LaneContext, function: u32, original: *const LaneView
     }
 }
 
+/// Moves the values an inlined call passes to its callee's first registers, and makes its other registers up to the
+/// entry fill `undefined` (the marker `i` of `mark_call`).
+fn enter_inlined_callee(i: &quench_runtime::vm::engine_types::LaneInstruction, r: super::Registers) {
+    let (passed, fill) = ((i.imm() & 0xff) as u16, ((i.imm() >> 8) & 0xff) as u16);
+    for k in 0..passed {
+        r.set(i.c + k, r.get(i.b + k));
+    }
+    for k in passed..fill {
+        r.set(i.c + k, Value::UNDEFINED);
+    }
+}
+
 script_handler! {
-    /// The call marker of an inlined frame (`mark_call`): where the callee register holds the frame's
-    /// callee and the receiver binds itself (a direct object), the values passed move to the callee's
-    /// first registers, its other registers live at entry start `undefined`, and the callee's records
-    /// run next.
+    /// The call marker of an inlined frame whose callee is bound by its identity (`mark_call`): where the callee register
+    /// holds the frame's callee and the receiver binds itself (a direct object), the values passed move to the callee's
+    /// first registers, its other registers live at entry start `undefined`, and the callee's records run next.
     /// Any other call leaves at the call (`leave_inlined`), before any of its effects.
     pub(crate) fn inlined_call_marker<>(cx, r, ip, i, view) {
         let receiver = r.get((i.imm() >> 16) as u16);
@@ -349,13 +366,26 @@ script_handler! {
         {
             sibling!(leave_inlined as Handler, r, ip, view)
         }
-        let (passed, fill) = ((i.imm() & 0xff) as u16, ((i.imm() >> 8) & 0xff) as u16);
-        for k in 0..passed {
-            r.set(i.c + k, r.get(i.b + k));
+        enter_inlined_callee(i, r);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// The call marker of an inlined frame whose callee is bound by its function (`mark_call`): where the callee register
+    /// holds a closure of that function (`function_matches_in_lane`, the rule a compiled call admits by) and the receiver
+    /// binds itself, the callee's values move in and its records run next, as `inlined_call_marker`. Any other call
+    /// leaves at the call (`leave_inlined`).
+    pub(crate) fn inlined_function_call_marker<>(cx, r, ip, i, view) {
+        let receiver = r.get((i.imm() >> 16) as u16);
+        // SAFETY: the running lane's context; its VM and program outlive the run.
+        let matches = unsafe { crate::compiled::function_binding::function_matches_in_lane(super::vm(cx), (*cx).program, r.get(i.a), i.mode) };
+        if !matches
+            || !quench_runtime::staged::value::is_direct_object(&mut quench_runtime::staged::Concrete::pure(), receiver.to_bits())
+        {
+            sibling!(leave_inlined as Handler, r, ip, view)
         }
-        for k in passed..fill {
-            r.set(i.c + k, Value::UNDEFINED);
-        }
+        enter_inlined_callee(i, r);
         next!(cx, r, following(ip), view)
     }
 }

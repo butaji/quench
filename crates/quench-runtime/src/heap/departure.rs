@@ -29,6 +29,14 @@ impl Heap {
         (header_class(self.class_space.header(granule)) != DEPARTED_CLASS).then_some(granule)
     }
 
+    /// The header word of `value`'s class cell when it is a live class cell (`live_class_cell`): the class id, which an
+    /// inline empty object claim takes as its header (`JsStepDispatch::empty_object_class`).
+    #[inline(always)]
+    pub(crate) fn live_class_header(&self, value: Value) -> Option<u64> {
+        let granule = self.live_class_cell(value)?;
+        Some(self.class_space.header(granule))
+    }
+
     /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
     /// storage and not under a constant mark: its class id OR'd with `CLASS_KEY`. A class id names the
     /// shape and the prototype link (`layouts::intern_class`), so the key fixes the cell's own slots and

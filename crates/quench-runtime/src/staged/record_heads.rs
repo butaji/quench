@@ -158,4 +158,7 @@ pub struct CallContextHead<E, C, T, D, P, R> {
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
     pub adapter_payload: *mut (),
+    /// The SysV shim every native caller enters a lane body through (`lane_body_abi::body_shim`), which
+    /// takes the body to call as its fifth argument; zero where the host has no native code.
+    pub body_shim: usize,
 }

@@ -2,7 +2,7 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, settled, this_fact};
+use super::effects::{Ctx, Events, decoded, is_global_load, root_this, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
@@ -21,24 +21,29 @@ pub(crate) struct ElementStore {
     pub(crate) indices: Indices,
 }
 
-/// The indices an element store through `index` touches in `function`. A Number that is parameter `p` on entry
+/// The indices an element store through `index` at `pc` touches in `function`. A Number that is parameter `p` on entry
 /// (`Origin::Parameter`, which a write to the register retires, and a join with any other origin drops) is the one
-/// index `p`: `Span { start: p, len: 1 }`. Any other index may be any index: `Whole`.
-pub(super) fn indices_of(function: u32, index: Word) -> Indices {
+/// index `p`: `Span { start: p, len: 1 }`. A store the previous round proved covers the parameters `start .. start + len`
+/// (`Feedback::spans`) is that span. Any other index may be any index: `Whole`.
+pub(super) fn indices_of(ctx: &Ctx<'_>, pc: u32, index: Word) -> Indices {
     match index.origin {
-        Some(Origin::Parameter { function: owner, index: parameter }) if owner == function && index.is_number() =>
+        Some(Origin::Parameter { function: owner, index: parameter }) if owner == ctx.id && index.is_number() =>
             Indices::Span { start: Affine::parameter(parameter), len: Affine::constant(1) },
-        _ => Indices::Whole,
+        _ => match ctx.spans.get(&(ctx.id, pc)) {
+            Some(&(start, len)) => Indices::Span { start: Affine::parameter(start), len: Affine::parameter(len) },
+            None => Indices::Whole,
+        },
     }
 }
 
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
     calls: Vec<Call>,
-    writes: Vec<(Key, Word)>,
+    writes: Vec<(u32, Key, Word)>,
     wild_owner: bool,
     wild_global: bool,
     computed_global: bool,
+    global_keyed: bool,
     global_source: bool,
     plain_calls: Vec<Option<u32>>,
     reads_this: bool,
@@ -67,6 +72,42 @@ pub(super) struct Record {
     element_stores: std::collections::BTreeMap<u32, ElementStore>,
     accessors: Vec<Accessor>,
     parents: Vec<(u32, u32)>,
+    /// Per allocation PC of an object literal of a fixed shape, its keys and the values they hold at the allocation (its `Cell::sites`).
+    literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
+    /// The shape of the function's copy scan (`CopyScan`), from which `copies` decides whether it is a copy helper.
+    scan: CopyScan,
+}
+
+/// What the function does with the for-in loops, element reads and writes, and returns it reaches (`observe`), the facts
+/// `Record::copies` matches the copy helper shape against. A parameter is named by its index, where its register still holds it.
+#[derive(Default)]
+struct CopyScan {
+    /// Per for-in loop started (`ForInStart`), the parameter its source register holds, if any.
+    for_in_sources: Vec<Option<u16>>,
+    /// The key register each for-in step defines (`ForInNext`).
+    for_in_keys: Vec<crate::bytecode::Register>,
+    /// Per element read (`GetIndex`): its result register, the parameter its base holds, and its key register.
+    element_reads: Vec<(crate::bytecode::Register, Option<u16>, crate::bytecode::Register)>,
+    /// Per element store (`ElementWrite`): the parameter its base holds, its key register and its value register.
+    element_writes: Vec<(Option<u16>, crate::bytecode::Register, crate::bytecode::Register)>,
+    /// Every store or delete whose key the analysis cannot name (`ElementWrite`, `IndexWrite`, `IndexSetHelper`, `Delete`).
+    stores: u32,
+    /// Per return, the parameter its value holds, if any.
+    returns: Vec<Option<u16>>,
+}
+
+impl CopyScan {
+    /// The copy helper shape: a body whose only store is one element store, through the key a for-in over parameter `source`
+    /// defines, of the element that loop reads from `source`, into parameter `dst`, and which returns `dst`. Returns `(dst, source)`.
+    fn copies(&self) -> Option<(u16, u16)> {
+        let [source] = self.for_in_sources.as_slice() else { return None };
+        let [key] = self.for_in_keys.as_slice() else { return None };
+        let [(dst, store_key, store_value)] = self.element_writes.as_slice() else { return None };
+        let [returned] = self.returns.as_slice() else { return None };
+        let (source, dst) = ((*source)?, (*dst)?);
+        let read = self.element_reads.iter().any(|&(result, base, index)| result == *store_value && base == Some(source) && index == *key);
+        (self.stores == 1 && dst != source && *store_key == *key && read && *returned == Some(dst)).then_some((dst, source))
+    }
 }
 
 impl Record {
@@ -77,6 +118,7 @@ impl Record {
             wild_owner: false,
             wild_global: false,
             computed_global: false,
+            global_keyed: false,
             global_source: false,
             plain_calls: Vec::new(),
             reads_this: false,
@@ -99,6 +141,8 @@ impl Record {
             element_stores: std::collections::BTreeMap::new(),
             accessors: Vec::new(),
             parents: Vec::new(),
+            literals: std::collections::BTreeMap::new(),
+            scan: CopyScan::default(),
         }
     }
 
@@ -125,7 +169,7 @@ impl Record {
         // An element store writes the elements of its array's class, at the indices its index register holds.
         if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
-            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx.id, index) });
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index) });
         }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
@@ -153,6 +197,8 @@ impl Record {
                 self.captures.insert((owner, slot));
             }
         }
+        self.note_literal(ctx, instruction, pc as u32, state);
+        self.note_copy_scan(ctx, instruction, state);
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
         }
@@ -177,7 +223,7 @@ impl Record {
             let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
             let receiver = match invocation.receiver {
                 crate::staged::Receiver::Register(register) => state[usize::from(register)],
-                crate::staged::Receiver::This { path: None } if !ctx.is_root => this_fact(ctx),
+                crate::staged::Receiver::This { path: None } => if ctx.is_root { root_this(ctx) } else { this_fact(ctx) },
                 crate::staged::Receiver::This { path: Some((atom, _)) } => match ctx.types {
                     Some(_) => super::effects::this_member(ctx, atom),
                     None => Word::UNKNOWN,
@@ -187,17 +233,21 @@ impl Record {
                     Some(class) if construct => Word::instance(class),
                     _ => Word::of(Type::DIRECT_OBJECT_FAMILY),
                 },
-                _ => Word::UNKNOWN,
+                // A call with no receiver passes `undefined`: a sloppy callee's `this` is the global object, which `Call::plain`
+                // makes of the callee's `this` (`types::Types::receivers`). The receiver of any other form may be the global object.
+                crate::staged::Receiver::Undefined => Word::UNKNOWN,
+                _ => Word::of_cell(Cell::ANY.maybe_global()),
             };
-            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            let plain = matches!(invocation.receiver, crate::staged::Receiver::Undefined);
+            let call = Call { pc: pc as u32, callee, target, construct, receiver, plain, arguments };
             let method = method_atom(&call);
             // An array mutator (`push`, `splice`, ...) makes the arrays its receiver names hold its arguments, and an unknown
             // length (`Scope::is_array_mutator`).
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements };
-                self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global };
+                self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
                 if call.receiver.cell.elements != Elements::NEVER && ctx.scope.is_array_builtin(atom) {
@@ -233,15 +283,16 @@ impl Record {
     }
 
     /// Notes the writes `instruction` made and the facts it defined, from the facts after it.
-    pub(super) fn commit(&mut self, instruction: WideInstruction, state: &[Word], events: Events) {
+    pub(super) fn commit(&mut self, pc: u32, instruction: WideInstruction, state: &[Word], events: Events) {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.computed_global |= events.computed_store;
+        self.global_keyed |= events.global_keyed;
         self.global_source |= events.global_source;
         self.wild_member |= events.wild_member;
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
-        self.writes.extend(events.writes);
+        self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
         self.accessors.extend(events.accessors);
         self.shapes.extend(events.shape);
         for register in instruction.written_registers() {
@@ -264,6 +315,50 @@ impl Record {
         }
     }
 
+    /// Notes the keys and values of an object literal of a fixed shape the instruction allocates (its `Cell::sites`): the keys are the
+    /// site's, the values the registers of the literal's window (or its two registers), as the allocation holds them.
+    fn note_literal(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32, state: &[Word]) {
+        let Some((_, allocation)) = crate::staged::Allocation::decode(instruction, &[]) else { return };
+        let (site, values): (u32, Vec<Word>) = match allocation {
+            crate::staged::Allocation::ObjectLiteral { site, window } =>
+                (site, (0..window.count).map(|offset| state[usize::from(window.base + offset)]).collect()),
+            crate::staged::Allocation::ObjectPair { site, first, second } => (site, vec![state[usize::from(first)], state[usize::from(second)]]),
+            _ => return,
+        };
+        let Some(keys) = ctx.scope.object_sites.get(site as usize) else { return };
+        if keys.len() == values.len() {
+            self.literals.insert(pc, keys.iter().copied().zip(values).collect());
+        }
+    }
+
+    /// Notes the for-in loops, element reads and writes, and returns the instruction makes, for `CopyScan::copies`.
+    fn note_copy_scan(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) {
+        // The parameter a register holds on entry, if this function's own parameter it still is.
+        let parameter = |register: crate::bytecode::Register| match state[usize::from(register)].origin {
+            Some(Origin::Parameter { function, index }) if function == ctx.id => Some(index),
+            _ => None,
+        };
+        if instruction.op() == crate::bytecode::Op::ForInStart {
+            self.scan.for_in_sources.push(parameter(instruction.register_b()));
+        }
+        if instruction.op() == crate::bytecode::Op::GetIndex {
+            if let Some(result) = instruction.defined_register() {
+                self.scan.element_reads.push((result, parameter(instruction.register_b()), instruction.register_c()));
+            }
+        }
+        match decoded(instruction) {
+            Some(crate::staged::Operation::ForInNext { destination, .. }) => self.scan.for_in_keys.push(destination),
+            Some(crate::staged::Operation::ElementWrite { base, key, value, .. }) => {
+                self.scan.stores += 1;
+                self.scan.element_writes.push((parameter(base), key, value));
+            }
+            Some(crate::staged::Operation::IndexWrite { .. } | crate::staged::Operation::IndexSetHelper { .. } | crate::staged::Operation::Delete { .. }) =>
+                self.scan.stores += 1,
+            Some(crate::staged::Operation::Return { source }) => self.scan.returns.push(parameter(source)),
+            _ => {}
+        }
+    }
+
     /// Notes the proofs `instruction` at `pc` may hold that it runs no guest code: a global name read (`Declared`, and
     /// `Intrinsic` for a builtin the table names) unless it is an invocation, and a read of field off `this` (`OwnField`).
     fn note_quiet(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32) {
@@ -283,7 +378,7 @@ impl Record {
         }
     }
 
-    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>) -> FunctionFlow {
+    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>, strict: bool) -> FunctionFlow {
         // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
@@ -300,6 +395,7 @@ impl Record {
             wild_owner: self.wild_owner,
             global_wild: self.wild_global,
             computed_global: self.computed_global,
+            global_keyed: self.global_keyed,
             global_source: self.global_source,
             plain_calls: self.plain_calls,
             reads_this: self.reads_this,
@@ -318,6 +414,7 @@ impl Record {
             arity,
             in_register,
             returns_out,
+            strict,
             handed: self.handed,
             closures: self.closures,
             bounds: self.bounds,
@@ -325,6 +422,8 @@ impl Record {
             element_stores: self.element_stores,
             accessors: self.accessors,
             parents: self.parents,
+            copies: self.scan.copies(),
+            literals: self.literals,
         }
     }
 }

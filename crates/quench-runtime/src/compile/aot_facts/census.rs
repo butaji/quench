@@ -4,6 +4,7 @@
 use super::accessors::Accessors;
 use super::flow::FunctionFlow;
 use super::gate::World;
+use super::phase::Fold;
 use super::value::{Word, Key, Origin, PrototypeBase};
 use crate::typed_ir::{Classes, ElementClass, FactKey};
 use std::collections::{BTreeMap, BTreeSet};
@@ -94,6 +95,9 @@ pub(super) struct Census {
     members: BTreeMap<u32, BTreeSet<u32>>,
     /// Per class and property (static or prototype), the one closure every store of it writes.
     members_on: BTreeMap<(u32, bool, u32), Option<u32>>,
+    /// Per holder key a phase fact covers (`phase::folds`): the closure the key holds after its last write, for the reads that
+    /// run after that write (`target_from`).
+    pub(super) phases: BTreeMap<(u32, bool, u32), Fold>,
     /// The accessors the program defines and what may shadow them (`accessors::Accessors`).
     pub(super) accessors: Accessors,
 }
@@ -101,14 +105,14 @@ pub(super) struct Census {
 impl Census {
     pub(super) fn of(flows: &[FunctionFlow], world: World) -> Self {
         let mut writes: BTreeMap<Key, (u32, Word)> = BTreeMap::new();
-        for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
+        for &(_, key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let entry = writes.entry(key).or_insert((0, fact));
             entry.0 += 1;
             entry.1 = fact;
         }
         let mut members: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
         let mut members_on: BTreeMap<(u32, bool, u32), Option<u32>> = BTreeMap::new();
-        for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
+        for &(_, key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let stored = fact.cell.ty.body_index();
             match key {
                 // A method read's guess is the one closure stored under its name: a store of anything else (an
@@ -130,6 +134,7 @@ impl Census {
             writes,
             global_wild: flows.iter().any(|flow| flow.global_wild || flow.computed_global),
             wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
+            phases: BTreeMap::new(),
             accessors: Accessors::default(),
         };
         census.accessors = Accessors::of(flows, &census);
@@ -142,6 +147,16 @@ impl Census {
         self.members.get(&atom).filter(|set| (1..=MAX_CANDIDATES).contains(&set.len()))
     }
 
+    /// Whether the callee `callee` is a guess the world can break: the value was read from a key new code can move (`World::live`).
+    pub(super) fn live_callee(&self, callee: Word) -> bool {
+        match callee.origin {
+            Some(Origin::Binding(key)) => self.world.live(fact_key(key)),
+            Some(Origin::Member(atom)) => self.world.live(FactKey::AnyField(atom)),
+            Some(Origin::MemberOn { class, instance, atom, .. }) => self.world.live(FactKey::Field { class, instance, atom }),
+            _ => false,
+        }
+    }
+
     /// Whether new code (`World`) can move `key`: a store under a live key may put any closure where the solve reads it,
     /// so the closure stored escapes (`types::escapes`).
     pub(super) fn live(&self, key: FactKey) -> bool {
@@ -152,14 +167,8 @@ impl Census {
     /// move in this world (`World::live`), or it is a method read's guess the solve or the census made. A
     /// method read of a known closure is still a proof in the closed world (`guess` only where unknown).
     pub(super) fn guessed(&self, callee: Word) -> bool {
-        let live = match callee.origin {
-            Some(Origin::Binding(key)) => self.world.live(fact_key(key)),
-            Some(Origin::Member(atom)) => self.world.live(FactKey::AnyField(atom)),
-            Some(Origin::MemberOn { class, instance, atom, .. }) => self.world.live(FactKey::Field { class, instance, atom }),
-            _ => false,
-        };
         let method_guess = callee.cell.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_) | Origin::MemberOn { guess: true, .. }));
-        live || method_guess
+        self.live_callee(callee) || method_guess
     }
 
     /// Whether a write the analysis cannot follow may reach `key`: a global written by code it cannot name
@@ -172,6 +181,12 @@ impl Census {
             Key::Member(_) => self.member_wild,
             Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => false,
         }
+    }
+
+    /// Whether a named property is written through a computed key the analysis cannot name (`member_wild`): such a store may
+    /// write any object's property, instances' included.
+    pub(super) fn member_wild(&self) -> bool {
+        self.member_wild
     }
 
     /// Whether a write the analysis cannot follow may reach the value a read off `origin` takes (`wild`).
@@ -232,6 +247,14 @@ impl Census {
         if callee.cell.ty.body_index().is_some() { return None; }
         let Some(Origin::Member(atom)) = callee.origin else { return None };
         self.members.get(&atom).filter(|set| (2..=MAX_CANDIDATES).contains(&set.len()))
+    }
+
+    /// The function a call's callee names when it is read by a call at `pc` of `function`: `target`, or else, for a method read
+    /// of a holder key with a phase fact (`phases`), the closure the key holds where that read runs after its last write.
+    pub(super) fn target_from(&self, callee: Word, function: u32, pc: u32) -> Option<u32> {
+        if let Some(target) = self.target(callee) { return Some(target); }
+        let Some(Origin::MemberOn { class, instance, atom, .. }) = callee.origin else { return None };
+        self.phases.get(&(class, instance, atom)).filter(|fold| fold.read_sees(function, pc)).map(|fold| fold.closure)
     }
 
     /// The function whose `prototype` a `prototype` read off `base` takes.

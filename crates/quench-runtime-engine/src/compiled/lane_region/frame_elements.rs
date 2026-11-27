@@ -13,7 +13,7 @@ use quench_runtime::bytecode::{Operand, OperandKind};
 use quench_runtime::staged::element_rows::ElementView;
 use quench_runtime::staged::elements::DenseView;
 use quench_runtime::staged::typed_elements::TypedView;
-use quench_runtime::staged::{ElementFrame, Region, Stage};
+use quench_runtime::staged::{ElementFrame, Stage};
 use quench_runtime::staged::barrier::MarkList;
 use crate::compiled::emit_js_guard;
 
@@ -33,13 +33,17 @@ pub(crate) enum Held {
 /// `Heap::array_store_unlogged` (a heap value needs the record unmarked, an immediate only while old
 /// records keep counts; only those test the base a direct array). A store that logs leaves at `miss`: the
 /// general store logs it, which clears the mark, so the next store of the loop passes here.
+/// A store into a fresh array (`Emit::fresh`) logs nothing, so only its observation gate is asked (4.7 (b)).
 pub(crate) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
     miss: ir::Block) -> Option<()> {
+    let watch = (std::mem::offset_of!(JsStepDispatch, head.store_watch), quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS);
+    if stage.fresh {
+        return quench_runtime::staged::barrier::store_untracked(stage, payload, watch.0, miss);
+    }
     let list = MarkList {
         blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
         count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
     };
-    let watch = (std::mem::offset_of!(JsStepDispatch, head.store_watch), quench_runtime::staged::layout_offsets::STORE_WATCH_COUNTS);
     quench_runtime::staged::barrier::counted_store_unlogged(stage, payload, watch, list, base, value, miss)
 }
 
@@ -82,7 +86,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn array_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
-        let at = if self.arrays_fixed { Region::RecordBases.readonly() } else { Region::RecordBases.mutable() };
+        let at = crate::compiled::regions::record_base(self.arrays_fixed);
         Some(stage.load_u64(at, self.payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32))
     }
 

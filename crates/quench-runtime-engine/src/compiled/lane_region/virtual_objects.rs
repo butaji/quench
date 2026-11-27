@@ -14,12 +14,20 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::{PlanCallee, ScalarConstructPlan, ScalarField};
+use quench_runtime::bytecode::ARRAY_LITERAL_WINDOW;
+use quench_runtime::staged::Allocation;
+
+#[path = "virtual_objects/arrays.rs"]
+mod arrays;
+#[path = "virtual_objects/aliases.rs"]
+pub(crate) mod aliases;
 
 /// A receiver kept as its field values.
 #[derive(Clone, PartialEq)]
 pub(crate) struct VirtualObject {
-    /// The register the construction defined.
-    pub(crate) register: Register,
+    /// The registers holding the receiver: the one its construction defined, and each copy of it
+    /// (`aliases::virtual_copy`), until a definition of one releases it (`aliases::release_alias`).
+    aliases: smallvec::SmallVec<[Register; 2]>,
     /// The plan's callee, which the allocation at a leave constructs again.
     callee: PlanCallee,
     /// Per field in slot order: its name, and the variable holding its tagged value (an
@@ -27,6 +35,16 @@ pub(crate) struct VirtualObject {
     fields: smallvec::SmallVec<[(Atom, Option<Variable>, Value, Type); 4]>,
     /// The arguments as passed, which the allocation passes the plan again.
     arguments: smallvec::SmallVec<[Variable; 4]>,
+}
+
+/// An array literal kept as its element values (`virtual_array_construct`): its register, and per
+/// element in index order the variable holding its tagged bits and the type the value had. Its length
+/// is the literal's, since nothing kept grows.
+#[derive(Clone, PartialEq)]
+pub(crate) struct VirtualArray {
+    /// The register the literal defined.
+    pub(crate) register: Register,
+    elements: smallvec::SmallVec<[(Variable, Type); ARRAY_LITERAL_WINDOW]>,
 }
 
 /// The most arguments a kept construction passes.
@@ -42,10 +60,11 @@ pub(crate) struct JoinedVirtuals {
     mismatch: bool,
 }
 
-/// Whether `live` carries the same receivers as `template`: each register, callee, argument
+/// Whether `live` carries the same receivers as `template`: each aliases, callee, argument
 /// count, and per field the name, constant, type and whether it is an argument's.
 fn same_receivers(template: &[VirtualObject], live: &[VirtualObject]) -> bool {
-    template.len() == live.len() && template.iter().zip(live).all(|(kept, other)| kept.register == other.register
+    template.len() == live.len() && template.iter().zip(live).all(|(kept, other)| kept.aliases.len() == other.aliases.len()
+        && kept.aliases.iter().all(|register| other.aliases.contains(register))
         && kept.callee == other.callee && kept.arguments.len() == other.arguments.len()
         && kept.fields.len() == other.fields.len()
         && kept.fields.iter().zip(&other.fields).all(|(field, theirs)| field.0 == theirs.0 && field.1.is_some() == theirs.1.is_some()
@@ -167,10 +186,10 @@ impl Lowering<'_, '_> {
         let result = instruction.result_register();
         // Nothing reads this word as the object: every reader takes the kept values or
         // allocates first. A Number's bits, so a frame slot written from it holds no reference.
+        // The definition releases the register from any receiver it aliased (`register_define`).
         let placeholder = self.raw_const(Lane::I64, 0);
         self.define(state, result, placeholder, RegisterFact::definition(Type::ANY, Representation::Tagged));
-        state.virtuals.retain(|kept| kept.register != result);
-        state.virtuals.push(VirtualObject { register: result, callee: plan.callee, fields, arguments });
+        state.virtuals.push(VirtualObject { aliases: smallvec::smallvec![result], callee: plan.callee, fields, arguments });
         true
     }
 
@@ -178,7 +197,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn virtual_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
         let base = self.field_base(pc, instruction)?.register_index()?;
-        let kept = state.virtuals.iter().find(|kept| kept.register == base)?;
+        let kept = state.virtuals.iter().find(|kept| kept.aliases.contains(&base))?;
         let (parts, sink) = self.field_chain(instruction)?;
         let [(atom, _)] = parts[..] else { return None };
         if sink.is_some() { return None; }
@@ -188,17 +207,9 @@ impl Lowering<'_, '_> {
             None => self.raw_const(Lane::I64, constant.to_bits() as i64),
         };
         let result = instruction.result_register();
+        // A read into the receiver's own register, as `p = p.y`, releases that alias (`register_define`).
         self.define(state, result, value, RegisterFact::definition(ty, Representation::Tagged));
-        // A read into the receiver's own register, as `p = p.y`, ends the receiver there.
-        state.virtuals.retain(|kept| kept.register != result);
         Some(true)
-    }
-
-    /// Drops each kept receiver whose register the instruction, which reads none of them as an
-    /// object, writes: the register names another value from there on.
-    pub(crate) fn drop_overwritten_virtuals(&self, state: &mut State, instruction: WideInstruction) {
-        let (_, definitions) = quench_runtime::compile::liveness::transfer(instruction, self.program, &self.program.field_sites, &self.program.superinstructions);
-        state.virtuals.retain(|kept| !definitions.contains(usize::from(kept.register)));
     }
 
     /// Whether the instruction at `pc` leaves every kept receiver kept: it reads none of them
@@ -206,16 +217,22 @@ impl Lowering<'_, '_> {
     /// block with one live.
     pub(crate) fn keeps_virtuals(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
         let (uses, _) = quench_runtime::compile::liveness::transfer(instruction, self.program, &self.program.field_sites, &self.program.superinstructions);
-        let virtual_use = state.virtuals.iter().any(|kept| uses.contains(usize::from(kept.register)));
+        let virtual_use = state.virtuals.iter().any(|kept| kept.aliases.iter().any(|register| uses.contains(usize::from(*register))));
         let ends_block = self.blocks.get(pc + 1).is_some_and(Option::is_some)
             || !matches!(instruction.op().control_flow_layout(), quench_runtime::bytecode::ControlFlowLayout::Fallthrough)
             || instruction.returns_from_frame();
-        if ends_block && state.virtuals.iter().any(|kept| self.is_live(pc + 1, kept.register)) && !self.edges_carry(pc, instruction) { return false; }
+        // A kept array's access is lowered before this test (`virtual_array_access`); any other
+        // instruction that reads it, and any block end it is live past, allocates it first: arrays
+        // never reach a join.
+        if state.virtual_arrays.iter().any(|kept| uses.contains(usize::from(kept.register))) { return false; }
+        if ends_block && state.virtual_arrays.iter().any(|kept| self.is_live(pc + 1, kept.register)) { return false; }
+        if ends_block && state.virtuals.iter().any(|kept| self.live_at(pc + 1, kept)) && !self.edges_carry(pc, instruction) { return false; }
         if virtual_use {
             return crate::compiled::meaning_compiled::is_get_field(instruction) && self.field_base(pc, instruction)
                 .and_then(|base| base.register_index())
-                .is_some_and(|base| state.virtuals.iter().any(|kept| kept.register == base && self.virtual_reads(instruction, kept)));
+                .is_some_and(|base| state.virtuals.iter().any(|kept| kept.aliases.contains(&base) && self.virtual_reads(instruction, kept)));
         }
+        if self.inlined_call_passes(state, pc, instruction) { return true; }
         // A jump whose every edge enters a forward-only join carries the receivers into it (`carry_kept`).
         if ends_block && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Jump) && self.edges_carry(pc, instruction) {
             return true;
@@ -252,6 +269,7 @@ impl Lowering<'_, '_> {
     /// after this edge carries those live there (`carry_virtuals`); any other leader takes none, so a
     /// live one declines the region. The state keeps none after.
     pub(crate) fn carry_kept(&mut self, state: &mut State, pc: usize) {
+        self.decline_arrays(state, pc);
         if self.sealable.contains(pc) && self.at < pc {
             if !self.carry_virtuals(state, pc) { self.valid = false; declined("a kept receiver reaches a join unevenly", pc); }
         } else {
@@ -262,8 +280,16 @@ impl Lowering<'_, '_> {
 
     /// A kept receiver live at `pc`, reaching an edge that no join carries, declines the region.
     pub(crate) fn decline_kept(&mut self, state: &mut State, pc: usize) {
-        if state.virtuals.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; declined("a kept receiver reaches an edge", pc); }
+        if state.virtuals.iter().any(|kept| self.live_at(pc, kept)) { self.valid = false; declined("a kept receiver reaches an edge", pc); }
+        self.decline_arrays(state, pc);
         state.virtuals.clear();
+    }
+
+    /// A kept array live at the leader `pc` declines the region: every block end materializes the arrays
+    /// it leaves live (`keeps_virtuals`), so none reaches a leader. The state keeps none after.
+    fn decline_arrays(&mut self, state: &mut State, pc: usize) {
+        if state.virtual_arrays.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; declined("a kept array reaches an edge", pc); }
+        state.virtual_arrays.clear();
     }
 
     /// An arrival at the forward-only join `pc` carries the kept receivers live there: the first arrival
@@ -271,7 +297,7 @@ impl Lowering<'_, '_> {
     /// An arrival carrying other receivers than the first marks the join mismatched (`join_virtuals`),
     /// and one carrying receivers then declines; false where it must decline.
     fn carry_virtuals(&mut self, state: &State, pc: usize) -> bool {
-        let live: Vec<VirtualObject> = state.virtuals.iter().filter(|kept| self.is_live(pc, kept.register)).cloned().collect();
+        let live: Vec<VirtualObject> = state.virtuals.iter().filter_map(|kept| self.live_part(pc, kept)).collect();
         let mut joined = self.joined_virtuals.remove(&pc).unwrap_or_default();
         joined.arrivals += 1;
         if joined.arrivals == 1 {
@@ -309,7 +335,7 @@ impl Lowering<'_, '_> {
                 };
                 fields.push((*atom, variable, *constant, *ty));
             }
-            objects.push(VirtualObject { register: kept.register, callee: kept.callee, fields, arguments });
+            objects.push(VirtualObject { aliases: kept.aliases.clone(), callee: kept.callee, fields, arguments });
         }
         Some(objects)
     }
@@ -326,9 +352,10 @@ impl Lowering<'_, '_> {
             return;
         }
         for kept in joined.objects {
-            let index = usize::from(kept.register);
-            state.values[index] = RegisterFact::definition(Type::ANY, Representation::Tagged);
-            state.proofs.homed.remove(index);
+            for register in kept.aliases.iter().map(|register| usize::from(*register)) {
+                state.values[register] = RegisterFact::definition(Type::ANY, Representation::Tagged);
+                state.proofs.homed.remove(register);
+            }
             state.virtuals.push(kept);
         }
     }
@@ -337,8 +364,9 @@ impl Lowering<'_, '_> {
     /// its register, and drops the rest: what the instruction at `pc`, or the interpreter
     /// resuming there, reads as the object.
     pub(crate) fn materialize_virtuals(&mut self, state: &mut State, pc: usize) {
+        self.materialize_arrays(state, pc);
         for kept in std::mem::take(&mut state.virtuals) {
-            if !self.is_live(pc, kept.register) { continue; }
+            let Some(kept) = self.live_part(pc, &kept) else { continue };
             let count = kept.arguments.len();
             let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
                 (count.max(1) * size_of::<Value>()) as u32, align_of::<Value>().trailing_zeros() as u8));
@@ -356,13 +384,20 @@ impl Lowering<'_, '_> {
             // than resume with a register that names no object.
             let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
             self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
-            state.proofs.layouts.clear();
-            state.proofs.global = None;
-            self.reload_property_arena_if_entered();
-            // The allocation may make a collection due: a later construction tests again.
-            self.unready_constructions();
-            // The register's tagged view and fact alone: a leave's state holds no other proofs.
-            let index = usize::from(kept.register);
+            self.bind_allocated(state, &kept.aliases, this);
+        }
+    }
+
+    /// Binds the object `this` an allocation made to each of `registers`, which hold nothing else: the allocation
+    /// may have made a collection due, so a later construction tests again, and a leave's state holds no other
+    /// proofs than the registers' tagged views and facts.
+    fn bind_allocated(&mut self, state: &mut State, registers: &[Register], this: ir::Value) {
+        state.proofs.layouts.clear();
+        state.proofs.global = None;
+        self.reload_property_arena_if_entered();
+        self.unready_constructions();
+        for register in registers {
+            let index = usize::from(*register);
             self.written.insert(index);
             self.builder.def_var(self.registers.tagged[index], this);
             let mut fact = RegisterFact::definition(Type::ANY, Representation::Tagged);
@@ -408,8 +443,8 @@ impl Lowering<'_, '_> {
         if self.virtual_construct_plan(pc, instruction).is_some() { return true; }
         if crate::compiled::meaning_compiled::is_get_field(instruction) {
             return self.field_base(pc, instruction).and_then(|base| base.register_index())
-                .is_some_and(|base| state.virtuals.iter().any(|kept| kept.register == base
-                    && self.is_live(pc, kept.register) && self.virtual_reads(instruction, kept)));
+                .is_some_and(|base| state.virtuals.iter().any(|kept| kept.aliases.contains(&base)
+                    && self.is_live(pc, base) && self.virtual_reads(instruction, kept)));
         }
         use quench_runtime::staged::meaning::{means, Meaning};
         if [Meaning::Move, Meaning::LoadConst, Meaning::Nop, Meaning::Jump].into_iter().any(|meaning| means(instruction, meaning)) { return true; }

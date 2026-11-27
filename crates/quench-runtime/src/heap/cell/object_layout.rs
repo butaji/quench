@@ -8,8 +8,8 @@ use super::*;
 
 impl Object {
     /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
-    /// object's pair depends only on its prototype, so generated allocation copies it
-    /// (`JsStepDispatch::empty_object_layout`).
+    /// array's pair depends only on its prototype, so generated allocation copies it
+    /// (`JsStepDispatch::empty_array_layout`).
     pub fn stored_words(&self) -> (u64, u32) {
         (self.head.payload, self.head.layout)
     }

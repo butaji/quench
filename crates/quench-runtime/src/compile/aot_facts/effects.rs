@@ -6,15 +6,16 @@ mod fields;
 mod strings;
 
 pub(super) use self::fields::{base_fact, field_owner, this_fact, this_member};
-use self::fields::{member_stores, member_type, named_word, prototype_base};
+use self::fields::{base_fact, member_stores, member_type, named_word, prototype_base};
 use self::strings::{string_call, string_length};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
-use crate::bytecode::{Operand, Register, Traits, WideInstruction};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Site, Sites, View};
+use crate::bytecode::{FieldBase, FieldLookup, Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::typing::{self, Abstract};
-use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation};
+use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation, Protocol};
+use oxc_syntax::operator::BinaryOperator;
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -41,6 +42,15 @@ pub(super) struct Ctx<'a> {
     /// The names some accessor definition defines (`accessors::names_of`): a store of one may run its setter, so it is a
     /// guest run (`runs_guest_code`), and no class's field takes the stored value (`fields::member_stores`).
     pub(super) accessors: &'a std::collections::BTreeSet<u32>,
+    /// The allocations the previous round proved filled (`length_settle::Feedback`), by (function, pc): an `new Array(n)` there
+    /// holds no hole.
+    pub(super) filled: &'a std::collections::BTreeSet<(u32, u32)>,
+    /// The element stores the previous round proved write no hole, by (function, pc) (`length_settle::Feedback`).
+    pub(super) hole_free_stores: &'a std::collections::BTreeSet<(u32, u32)>,
+    /// The element reads the previous round proved in bounds, by (function, pc) (`length_settle::Feedback`).
+    pub(super) in_bounds_reads: &'a std::collections::BTreeSet<(u32, u32)>,
+    /// The element stores the previous round proved cover a span of parameters, by (function, pc): (start, len) (`length_settle::Feedback`).
+    pub(super) spans: &'a std::collections::BTreeMap<(u32, u32), (u16, u16)>,
 }
 
 /// What an instruction does beyond its registers: the bindings it writes, and whether it makes
@@ -54,6 +64,8 @@ pub(super) struct Events {
     pub(super) global_source: bool,
     /// Whether a store through a non-Number key may write a name of the global object (`writes_global_name`).
     pub(super) computed_store: bool,
+    /// Whether the instruction keys an access into a value that may be the global object (`keyed_global`).
+    pub(super) global_keyed: bool,
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) wild_member: bool,
@@ -112,7 +124,8 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
 fn numbers_over_numbers(ctx: &Ctx<'_>, state: &[Word], number: NumberOperation) -> bool {
     match number {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
-        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => is_number(ctx, state, left) && is_number(ctx, state, right),
+        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } | NumberOperation::Power { base: left, exponent: right, .. }
+            => is_number(ctx, state, left) && is_number(ctx, state, right),
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => is_number(ctx, state, source),
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => state[usize::from(source)].is_number(),
         _ => false,
@@ -170,7 +183,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
-            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None, holes: false });
     }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -183,6 +196,17 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
 pub(super) fn is_global_load(instruction: WideInstruction) -> bool {
     let traits = instruction.op().traits();
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
+}
+
+/// The fact of the root's `this`: the global object in a Script (sloppy top-level code), `undefined` in a Module, whose
+/// code is strict.
+pub(super) fn root_this(ctx: &Ctx<'_>) -> Word {
+    let cell = if ctx.scope.root_this_is_global() {
+        Cell::of(Type::language(crate::ValueType::Object)).maybe_global()
+    } else {
+        Cell::of(Type::language(crate::ValueType::Undefined))
+    };
+    Word::of_cell(cell)
 }
 
 /// The fact of a load from `key`: the closure the census proved there, else the binding.
@@ -245,7 +269,12 @@ fn value_of(
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
-        if let Some(class) = callee.cell.ty.body_index() { return Word::instance(class); }
+        if let Some(class) = callee.cell.ty.body_index() {
+            // The instance, or the global object a constructor returns in its place (`Types::returns_global`).
+            let mut word = Word::instance(class);
+            word.cell.global = ctx.types.is_some_and(|types| types.returns_global(class));
+            return word;
+        }
         // `new` defines an object whatever it constructs: a constructor's non-object return is replaced by the
         // object it allocated.
         if ctx.types.is_some() { return Word::of(Type::language(crate::ValueType::Object)); }
@@ -254,21 +283,26 @@ fn value_of(
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
         events.global_source |= ctx.scope.is_global_object(atom);
-        return resolved(ctx, Key::Global(atom));
+        let mut word = resolved(ctx, Key::Global(atom));
+        // A global-object name (`globalThis`, `window`, ...) reads the global object itself.
+        if ctx.scope.is_global_object(atom) { word.cell = word.cell.maybe_global(); }
+        return word;
     }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
     if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
         return Word::closure(function);
     }
     // An array of `length` elements: its length is fixed by its literal, and its element type is what the
-    // definitions that follow join in (`step`). A literal that leaves an index undefined holds a hole, which reads `undefined`.
+    // definitions that follow join in (`step`). A literal that leaves an index out holds a hole, which reads `undefined`.
     // The array is its own element class, named by its allocation site (`Origin::Alloc`).
     if ctx.types.is_some() && let Some((_, Allocation::Array { length, .. })) = Allocation::decode(instruction, &[]) {
-        let hole = if ctx.whole_literals.get(pc).copied().unwrap_or(false) { Type::NEVER } else { Type::language(crate::ValueType::Undefined) };
+        let holes = !ctx.whole_literals.get(pc).copied().unwrap_or(false);
         let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
-            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
+            elements: Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain, holes },
+            sites: Sites::Many,
+            global: false,
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -276,6 +310,12 @@ fn value_of(
     // over a constant operand, a numeric one over registers), and an indexed read by its index. An increment is defined
     // by `typing::value` like the other Number operations.
     let before = Before { ctx, state };
+    // An object literal of a fixed shape is its allocation site's (`Cell::sites`): its keys and values are the site's table
+    // (`Record::note_literal`), which a copy of it reads (`copies`).
+    if matches!(operation, Some(Operation::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. }, .. })) {
+        let cell = operation.as_ref().and_then(|operation| typing::value(operation, &before)).unwrap_or(Cell::ANY);
+        return Word::of_cell(Cell { sites: Sites::one(Site { function: ctx.id, pc: pc as u32 }), ..cell });
+    }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
@@ -291,7 +331,7 @@ fn value_of(
             return named_word(ctx, Some(owner), cell, atom);
         }
         let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
-        return Word::of_cell(typing::element(&before, base, index));
+        return Word::of_cell(element_read(ctx, pc, &before, base, index));
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
@@ -307,30 +347,45 @@ fn value_of(
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Word::closure(function),
         // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
         Some(Operation::LoadThis { .. }) if !ctx.is_root => this_fact(ctx),
+        Some(Operation::LoadThis { .. }) => root_this(ctx),
         // `+x` of a Number is `x` itself, origin included: the cell `typing::number_cell` defines for it.
         Some(Operation::Number(NumberOperation::ToNumeric { source, .. })) if typing::reached_number(state[usize::from(source)].cell) =>
             state[usize::from(source)],
+        // An element read of the operation row, as the indexed `GetIndex` reads its element (`element_read`), so the previous
+        // round's in-bounds proof reaches it too.
+        Some(Operation::ElementRead { base, key, .. }) =>
+            Word::of_cell(element_read(ctx, pc, &before, settled(ctx, state[usize::from(base)]), typing::operand_cell(&before, key))),
         _ => operation.as_ref().and_then(|operation| typing::value(operation, &before)).map_or(Word::UNKNOWN, Word::of_cell),
     }
 }
 
+/// The cell of an indexed read of `base` at `index` by the instruction at `pc` (`typing::element`): `undefined` where the array
+/// may hold a hole or the index is not within its length, unless the previous round proved the read in bounds
+/// (`in_bounds_reads`), which settles the index within the length.
+fn element_read(ctx: &Ctx<'_>, pc: usize, before: &Before<'_, '_>, base: Cell, index: Cell) -> Cell {
+    typing::element(before, base, index, ctx.in_bounds_reads.contains(&(ctx.id, pc as u32)))
+}
+
 /// The array `new Array(...)` or `Array(...)` allocates at `pc`, named by its allocation site as a literal is (`Origin::Alloc`).
-/// Its holes are `undefined` where its one argument is a Number (the length), and any value where the arguments are the
-/// elements (`Array(x)` holds `x`); no argument leaves it empty. Its length is unknown, as the length is not a constant here.
+/// Its holes are `undefined` where its one argument is a Number (the length), unless the previous round proved it filled
+/// (`filled`), and any value where the arguments are the elements (`Array(x)` holds `x`); no argument leaves it empty. Its
+/// length is unknown, as the length is not a constant here.
 fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
     let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
     let crate::staged::Callee::Register(register) = invocation.callee else { return None };
     if !ctx.scope.is_array_constructor(state[usize::from(register)].origin) { return None; }
     let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
-    let holes = match arguments.as_slice() {
-        [] => Type::NEVER,
-        [length] if length.is_number() => Type::language(crate::ValueType::Undefined),
-        _ => Type::ANY,
+    let (stored, holes) = match arguments.as_slice() {
+        [] => (Type::NEVER, false),
+        [length] if length.is_number() => (Type::NEVER, !ctx.filled.contains(&(ctx.id, pc as u32))),
+        _ => (Type::ANY, false),
     };
     let cell = Cell {
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
-        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
+        elements: Elements { ty: stored, classes: Classes::Never, length: Length::Any, view: View::Plain, holes },
+        sites: Sites::Many,
+        global: false,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -350,7 +405,10 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
             classes: Classes::Never,
             length: Length::Any,
             view: View::One(kind),
+            holes: false,
         },
+        sites: Sites::Many,
+        global: false,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -381,6 +439,46 @@ fn writes(
     unfollowed_writes(ctx, instruction, operation, events);
     binding_stores(ctx, pc, operation, state, events);
     member_stores(ctx, pc, instruction, operation, state, events);
+    events.global_keyed |= keyed_global(ctx, instruction, operation, state);
+}
+
+/// Whether the instruction reaches into a value that may be the global object, where the closed world's call graph cannot
+/// follow: a computed read, write or delete of it, a for-in or an `in` test over it (the key may name any global), and a
+/// named read or store of it (the property may be a global function, read back and called). `gate::verify` rejects the
+/// closed world when a reached instruction does one of these.
+fn keyed_global(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word]) -> bool {
+    let flagged = |register: Register| state[usize::from(register)].cell.global;
+    if instruction.op() == crate::bytecode::Op::GetIndex {
+        return flagged(instruction.register_b());
+    }
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
+        return match instruction.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) => named_base_global(ctx, base, state),
+            Some(FieldLookup::Site(index)) => ctx.scope.site_paths.get(index).copied().flatten().is_none_or(|(base, ..)| named_base_global(ctx, base, state)),
+            None => false,
+        };
+    }
+    match operation {
+        Some(Operation::ElementRead { base, .. } | Operation::ElementWrite { base, .. } | Operation::Delete { base, .. } | Operation::EnumeratedGet { base, .. }) => flagged(base),
+        Some(Operation::SetField { base, .. } | Operation::StoreField { base, .. }) => named_base_global(ctx, base.map_or(FieldBase::THIS, FieldBase::register), state),
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::IndexGetHost { .. }) => true,
+        Some(Operation::Protocol { step: Protocol::ForInStart, operands, .. }) => operands.into_iter().flatten().any(flagged),
+        Some(Operation::CompareJump { comparison: Comparison::Operator(operator), right, .. }) =>
+            operator == BinaryOperator::In as u32 && right.register_index().is_some_and(flagged),
+        _ => instruction.op() == crate::bytecode::Op::Binary
+            && instruction.binary_operator() == BinaryOperator::In as u32
+            && instruction.operand_c().register_index().is_some_and(flagged),
+    }
+}
+
+/// Whether the object a named access reads or stores through `base` may be the global object: its fact (`base_fact`) may
+/// be. The root's `this` has no fact (`base_fact`): it is the global object of a Script, and `undefined` in a Module; any
+/// other base with no fact may be the global object.
+fn named_base_global(ctx: &Ctx<'_>, base: FieldBase, state: &[Word]) -> bool {
+    match base_fact(ctx, base, state) {
+        Some(word) => word.cell.global,
+        None => base != FieldBase::THIS || ctx.scope.root_this_is_global(),
+    }
 }
 
 /// Marks the writes the analysis cannot follow: name operations other than plain loads and
@@ -397,7 +495,7 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         events.wild_owner = true;
     }
     match operation {
-        Some(Operation::LoadThis { .. }) if ctx.is_root => {
+        Some(Operation::LoadThis { .. }) if ctx.is_root && ctx.scope.root_this_is_global() => {
             events.wild_global = true;
             events.global_source = true;
         }

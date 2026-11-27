@@ -59,6 +59,10 @@ pub(crate) enum Reach {
     Counted { bound: Register, low: i64, base: Option<Term>, scale: Option<Term> },
     /// Every index in `0..=ceiling`, whatever the loop does (a mask or a range of the index).
     Ranged { ceiling: i64 },
+    /// `start + by * j` for the step's count `j` over the loop's trips left: `bound - counter` of them, where `counter`
+    /// steps once per trip at the latch. `j` is `1..=trips` where the access reads the register after its step, and
+    /// `0..trips` where it reads a copy made before it (`plan::Step`).
+    Stepped { counter: Register, bound: Register, start: Register, by: i64, copied: bool },
 }
 
 /// An access whose indices the entry of the loop at `header` proves within the access's array.
@@ -156,6 +160,7 @@ impl Lowering<'_, '_> {
                 let ceiling = self.raw_const(Lane::I64, ceiling);
                 self.raw_compare(Relation::UnsignedLess, ceiling, length)
             }
+            Reach::Stepped { counter, bound, start, by, copied } => self.stepped_within(state, length, [counter, bound, start], (by, copied), exit),
             Reach::Counted { bound, low, base, scale } => {
                 let bound = self.entry_register(state, bound, exit);
                 let low = self.raw_const(Lane::I64, low);
@@ -174,6 +179,24 @@ impl Lowering<'_, '_> {
             }
         };
         emit_js_guard(&mut self.builder, proved, exit);
+    }
+
+    /// The test of a stepped reach (`Reach::Stepped`): the register's two ends over the trips left, `bound - counter`,
+    /// which the progression lies between, are both within `length`; a loop with no trip left passes.
+    fn stepped_within(&mut self, state: &mut State, length: ir::Value, [counter, bound, start]: [Register; 3], (by, copied): (i64, bool),
+        exit: ir::Block) -> ir::Value {
+        let (start, counter, bound) = (self.entry_register(state, start, exit), self.entry_register(state, counter, exit), self.entry_register(state, bound, exit));
+        let trips = self.raw_binary(Binary::Sub, bound, counter);
+        let (first, last) = if copied { (self.raw_const(Lane::I64, 0), self.raw_binary_imm(Binary::Add, trips, -1)) } else { (self.raw_const(Lane::I64, 1), trips) };
+        let step = self.raw_const(Lane::I64, by);
+        let ends = [first, last].map(|count| {
+            let scaled = self.raw_binary(Binary::Mul, count, step);
+            self.raw_binary(Binary::Add, start, scaled)
+        });
+        let inside = ends.map(|index| self.raw_compare(Relation::UnsignedLess, index, length));
+        let within = self.raw_binary(Binary::And, inside[0], inside[1]);
+        let empty = self.raw_compare(Relation::SignedLessEqual, bound, counter);
+        self.raw_binary(Binary::Or, empty, within)
     }
 
     /// `base + counter * scale` and `counter * scale`, in words.

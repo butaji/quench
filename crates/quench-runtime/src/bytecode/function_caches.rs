@@ -21,6 +21,9 @@ pub struct FunctionCaches {
     /// The proven-argument masks of b-jit compiles by their seeds (declared and pinned Number registers, pinned int32
     /// registers), at most `PROVEN_ARGS_SEEDS` of them (`base_region::call_args::ProvenArgs`).
     pub proven_args: std::cell::RefCell<Vec<ProvenArgsEntry>>,
+    /// The call PCs that may replace this activation (`Function::permits_js_tail_call_at`), one bit per PC of
+    /// `code`: the decision is static per site, so a call reads its bit instead of scanning the handlers.
+    pub(crate) tail_sites: std::cell::OnceCell<Box<[u64]>>,
 }
 
 /// One seeding of `FunctionCaches::proven_args`: its Number registers, its int32 registers, the masks per PC.

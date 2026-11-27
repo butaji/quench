@@ -319,9 +319,9 @@ macro_rules! catalog {
     STAGED_LOOSE_NE: uses(Unread, Src, Src, Never) twin: kernel(eq_undef_null),
     STAGED_STRICT_EQ: uses(Unread, Src, Src, Never) twin: kernel(eq_int),
     STAGED_STRICT_NE: uses(Unread, Src, Src, Never) twin: kernel(eq_int),
-    /// An empty object (`EMPTY_OBJECT_ROW`) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its kind's record cursor
-    /// and template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent run, a missing
-    /// template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
+    /// An empty object (`EMPTY_OBJECT_ROW`, a region 1 class cell) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its
+    /// kind's cursor and captured template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent
+    /// run, a missing template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
     EMPTY_OBJECT_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_obj_add),
     EMPTY_ARRAY_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_array_push_grow),
     ]

@@ -347,15 +347,9 @@ impl ClassSpace {
         }
     }
 
-    /// The address of region 0's allocation cursor (`RecordCursor`): its `next` is the granule an inline
-    /// empty object allocation takes, and its `limit` the run's end, as the object record cursor's are.
-    pub(super) fn stub_cursor_address(&self) -> usize {
-        std::ptr::addr_of!(self.regions.0.cursor) as usize
-    }
-
     /// Frees the unallocated rest of every region's cursor run and empties the cursors, returning how many
-    /// granules that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps region 0's run,
-    /// and a cell allocation bumps its region's, so every collection retires all of them with the record
+    /// granules that was (`RecordSpace::retire_cursor`). An inline empty object allocation and every other cell
+    /// allocation bump their region's run, so every collection retires all of them with the record
     /// cursors, before occupancy or a snapshot reads the space.
     pub(super) fn retire_cursors(&mut self) -> usize {
         let regions = &mut self.regions;
@@ -605,14 +599,9 @@ impl super::Heap {
     #[inline(always)]
     pub fn class_space_base(&self) -> usize { self.class_space.base }
 
-    /// The region 0 stub cursor (`ClassSpace::stub_cursor_address`), which an inline empty object allocation
-    /// bumps (`JsStepHead::stub_cursor`). It is a field of this heap, which stays where it is while the VM
-    /// runs; a native entry rereads it with the other record bases.
-    #[inline(always)]
-    pub fn native_stub_cursor(&self) -> usize { self.class_space.stub_cursor_address() }
-
     /// The allocation cursor of cell region `region` (1 to 5), which a class cell claim bumps
-    /// (`staged::bump::claim_class_cell`), read as `native_stub_cursor` is.
+    /// (`staged::bump::claim_class_cell`). It is a field of this heap, which stays where it is while the VM
+    /// runs; a native entry rereads it with the other record bases.
     #[inline(always)]
     pub fn native_cell_cursor(&self, region: u32) -> usize { self.class_space.cell_cursor_address(region) }
 }

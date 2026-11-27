@@ -74,6 +74,22 @@ fn specialize_interrupt_owner(function: &mut ir::Function, call: ir::Inst, polls
 /// bounded by the solver times its body (`Lowering::trip_bound`).
 const POLL_FREE_WORK: u64 = 65_536;
 
+/// The machine stack a checked entry keeps free beyond its budget (`check_native_stack`): the frames of any bounded
+/// callee subtree whose entry is not checked, which `stack_check_free` admits only when they fit within it.
+pub(crate) const STACK_CHECK_MARGIN: usize = 64 * 1024;
+
+/// An upper bound on the native frame bytes one bytecode instruction lowers to. Not measured; it turns
+/// `STACK_CHECK_MARGIN` into an instruction budget for a subtree.
+const STACK_FRAME_BYTES_PER_INSTRUCTION: u64 = 64;
+
+/// Whether the entry of `function` needs no stack check of its own: the functions it calls form a finite acyclic set of
+/// named bodies (`CallGraph::stack_subtree_instructions`) whose frames fit in `STACK_CHECK_MARGIN`, which the caller's
+/// checked entry keeps free. Recursion, an unnamed call, or a larger subtree keeps the check. No graph keeps it.
+pub(crate) fn stack_check_free(graph: Option<&quench_runtime::compile::call_graph::CallGraph>, function: u32) -> bool {
+    graph.and_then(|graph| graph.stack_subtree_instructions(function))
+        .is_some_and(|instructions| instructions.saturating_mul(STACK_FRAME_BYTES_PER_INSTRUCTION) <= STACK_CHECK_MARGIN as u64)
+}
+
 /// Whether `instruction` makes no call and no allocation: a jump, a move, a local slot, or a Number operation.
 fn call_and_allocation_free(instruction: WideInstruction) -> bool {
     use quench_runtime::staged::meaning::{means, Meaning};

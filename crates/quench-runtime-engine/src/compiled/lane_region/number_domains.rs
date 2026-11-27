@@ -100,6 +100,9 @@ mod tests {
         let other = Type::language(quench_runtime::ValueType::BigInt);
         assert_eq!(target_representation(Type::INT32.join(other)), Representation::Tagged);
         assert_eq!(target_representation(Type::NUMBER.join(Type::ANY)), Representation::Tagged);
+        let wide = Type::int(quench_runtime::typed_ir::IntRange { min: 0, max: i64::from(u32::MAX) });
+        assert_eq!(target_representation(wide), Representation::Int64);
+        assert_eq!(target_representation(Type::int(quench_runtime::typed_ir::IntRange::WORD)), Representation::Float64);
     }
 }
 

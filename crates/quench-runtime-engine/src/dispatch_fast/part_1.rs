@@ -1327,7 +1327,8 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
     let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
-    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, callees_compiling: false })
+    let pick = vm.lane_pick(code, function, own.called_by_regions());
+    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, pick, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
         // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
@@ -1344,7 +1345,7 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     let jit = crate::jit_routes::jit().map(|routes| routes.lane);
     let specialize = |work: crate::compiled::LaneBodyWork| jit.map_or(crate::compiled::LaneBodyOutcome::Declined, |jit| jit(cx, own, function, parameters, looped, work));
     let published = own.entry_published();
-    let warming = own.specialize_lane_body(body_entry_row(), specialize);
+    let warming = own.specialize_lane_body(body_entry_row(), quench_runtime::vm::tier_policy::lane_body_tier(pick), specialize);
     // Every cell body is published here (`tier_machine::publish` from `specialized`): the
     // proved calls of the view, which skip the cell body, lose their proof.
     if !published && own.entry_published() {
@@ -1370,8 +1371,11 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
     let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, callees_compiling }) {
-        // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
+    let pick = vm.lane_pick(code, function, own.called_by_regions());
+    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, pick, callees_compiling }) {
+        // The interpreter's pick compiles nothing: the interpreter runs the function.
+        crate::compiled::admission::LaneRoute::Interpreted => return crate::compiled::LaneBodyOutcome::Unpaid,
+        // A stencil pick stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
             let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
             let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };

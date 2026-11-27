@@ -25,7 +25,7 @@ use super::quiet::{Proofs, StringBuiltins};
 use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, View, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, Sites, View, WIDENING_ROUNDS};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -87,6 +87,8 @@ impl Types {
         // their classes join the unnamed one (`escapes`); the flows' links join the rest.
         let open = escapes(flows, facts, census, scope);
         let escaped = open.functions;
+        let plain = open.plain;
+        let passed_this = open.passed_this;
         let mut links: Vec<(ElementClass, ElementClass)> = flows.iter().flat_map(|flow| &flow.links).copied().collect();
         links.extend(open.classes.into_iter().map(|class| (class, ElementClass::Unnamed)));
         entry_links(flows, facts, census, &escaped, &mut links);
@@ -106,7 +108,7 @@ impl Types {
             strings: scope.string_builtins(&Proofs::of(flows)),
         };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
-        for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
+        for &(_, key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let joined = types.cells.entry(key).or_insert(Cell::NEVER);
             *joined = joined.join(fact.cell);
             if let Some(stored) = fact.cell.ty.int_range().filter(|range| range.min == range.max) {
@@ -127,8 +129,10 @@ impl Types {
         }
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
-                let receiver = Cell { ty: receiver_type(call), ..call.receiver.cell };
                 for target in targets(id as u32, call, facts, census) {
+                    // A plain call binds a sloppy callee's `this` to the global object; a strict callee's `this` is `undefined`.
+                    let plain_call = call.plain && sloppy(flows, target);
+                    let receiver = Cell { ty: receiver_type(call), global: call.receiver.cell.global || plain_call, ..call.receiver.cell };
                     let joined = types.receivers.entry(target).or_insert(Cell::NEVER);
                     *joined = joined.join(receiver);
                 }
@@ -143,7 +147,22 @@ impl Types {
             types.receivers.entry(function).or_insert(Cell::ANY).classes = Classes::one(class, false);
         }
         for function in &escaped {
-            types.receivers.insert(*function, Cell::ANY);
+            let joined = types.receivers.entry(*function).or_insert(Cell::NEVER);
+            *joined = joined.join(Cell::ANY);
+        }
+        // A `call`, `apply` or `bind` runs its function with its first argument as the `this` (`escapes::Escapes::passed_this`):
+        // the argument joins the function's `this`, and the global object where it may be `undefined` or `null` and the function
+        // is sloppy (a sloppy function binds those to the global object).
+        for (function, this) in passed_this {
+            let nullish = [ValueType::Undefined, ValueType::Null].into_iter().any(|ty| this.ty.may_be_languages(Type::language(ty)));
+            let global = this.global || (nullish && sloppy(flows, function));
+            let joined = types.receivers.entry(function).or_insert(Cell::NEVER);
+            *joined = joined.join(Cell { global, ..this });
+        }
+        // Unknown code may call a function it was handed with no receiver (`escapes::Escapes::plain`): a sloppy one's `this`
+        // is then the global object.
+        for function in plain.iter().filter(|&&function| sloppy(flows, function)) {
+            if let Some(receiver) = types.receivers.get_mut(function) { receiver.global = true; }
         }
         types
     }
@@ -323,6 +342,15 @@ impl Types {
 
     /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no
     /// recorded call reaches it.
+    /// Whether a constructor's returns may be the global object (`Key::Return`): a `new` of it then yields the global
+    /// object, not only the instance. A constructor no write of returns holds nothing to return.
+    pub(super) fn returns_global(&self, function: u32) -> bool {
+        self.cells.get(&Key::Return(function)).is_some_and(|cell| cell.global)
+    }
+
+    /// The cell of `this` in `function`: the join of the receivers its calls pass, the global object among them where a plain
+    /// call or unknown code may bind a sloppy function's `this` to it (`escapes::Escapes::plain`). Any value where no recorded
+    /// call reaches it: a method a runtime conversion calls is called with its object, not the global object.
     pub(super) fn this(&self, function: u32) -> Cell {
         self.receivers.get(&function).copied().unwrap_or(Cell::ANY).guessed()
     }
@@ -371,7 +399,13 @@ fn call_results(
 
 /// The cell of an element class's elements: their type and classes, and the length they leave (`Elements`).
 fn elements_cell(elements: Elements) -> Cell {
-    Cell { ty: elements.ty, classes: elements.classes, elements }
+    Cell { ty: elements.ty, classes: elements.classes, elements, sites: Sites::of_type(elements.ty), global: false }
+}
+
+/// Whether `function` is sloppy code: a plain call may bind its `this` to the global object (`Function::strict` is unset). A
+/// function with no flow is taken as sloppy.
+fn sloppy(flows: &[FunctionFlow], function: u32) -> bool {
+    flows.get(function as usize).is_none_or(|flow| !flow.strict)
 }
 
 /// The functions one class alone holds as a method or an own field (`Key::MemberOn`), with that class.

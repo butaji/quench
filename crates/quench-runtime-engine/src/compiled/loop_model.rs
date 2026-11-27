@@ -10,7 +10,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::tier_model::{compile_wall_permille, future_count, interpreted_ns, net_gain_ns};
+use super::tier_model::{future_count, interpreted_ns, net_gain_ns};
 use super::tier_policy::{Loops, Priors, Tiers, PER_MILLE};
 
 /// What one iteration of a loop `span` bytecodes long saves, in ns, over the interpreter.
@@ -44,7 +44,7 @@ fn required_taken(priors: &Priors, loops: &Loops, span: u64, compile_ns_per_ir: 
 /// pays, at the compile cost of the priors; under `tier-stress` the warm-up alone.
 pub(crate) fn admission_taken(tiers: &Tiers, span: u64) -> u32 {
     if tiers.admits_all { return tiers.loops.warmup_taken; }
-    required_taken(&tiers.priors, &tiers.loops, span, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
+    required_taken(&tiers.priors, &tiers.loops, span, tiers.priors.compile_ns_per_ir, tiers.priors.compile_wall_permille)
 }
 
 /// What `iterations` over `entries` of the loop's native code (runs and declined entries) save
@@ -87,7 +87,7 @@ fn body_required_taken(priors: &Priors, saved: u64, outlay: u64) -> u64 {
 /// inlines the loop's calls, so an iteration does the work of its instructions
 /// (`ir_per_bytecode` each), and of the loop's span at least.
 fn body_work(loops: &Loops, span: u64, ir: usize) -> u64 {
-    span.max(ir as u64 / super::lane_facts::measured_ir_per_bytecode(loops, super::lane_facts::Lowers::Body))
+    span.max(ir as u64 / loops.ir_per_bytecode)
 }
 
 /// `body_required_taken` at the costs of `tiers`; under `tier-stress` none.
@@ -99,7 +99,7 @@ pub(crate) fn body_taken(tiers: &Tiers, span: u64, ir: usize, unplanned: bool) -
     // b-jit region where the default mode runs one, the interpreter otherwise (TOD-2194).
     let outlay = priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, priors.compile_ns_per_ir, PER_MILLE);
     let work = body_work(&tiers.loops, span, ir);
-    let below = if crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) { base_saved_per_iteration(priors, work) } else { 0 };
+    let below = if quench_runtime::vm::tier_policy::base_runs() { base_saved_per_iteration(priors, work) } else { 0 };
     body_required_taken(priors, saved_per_iteration(priors, work).saturating_sub(below), outlay)
 }
 
@@ -120,15 +120,15 @@ pub(crate) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, tak
 }
 
 /// Whether a loop `span` bytecodes long whose regions took `native` iterations compiles to a b-jit
-/// region (stencils) rather than a u-jit one: under `--b-jit` (or `QUENCH_DEV=bjit`) always, under
+/// region (stencils) rather than a u-jit one: under `--b-jit` always, under
 /// `--u-jit`/`--q-jit` never. In the default mode the b-jit region is the loop's first tier, by
 /// construction, so the default never costs more than b-jit: the loop takes u-jit only once its
 /// native iterations reach the point where the u-jit compile is repaid over the stencil region
 /// (`promotion_taken`), counted in compiled code, not guessed from the interpreter's jumps.
 pub(crate) fn base_region(tiers: &Tiers, span: u64, native: u64) -> bool {
-    use crate::compiled::admission::{every_region_is_base, tier_runs as tiers_allowed, Tier};
-    if every_region_is_base() { return true; }
-    if !tiers_allowed(&[Tier::Base]) || tiers.admits_all { return false; }
+    use quench_runtime::vm::tier_policy::{base_runs, loop_regions_are_stencils};
+    if loop_regions_are_stencils() { return true; }
+    if !base_runs() || tiers.admits_all { return false; }
     promotion_taken(tiers, span).is_none_or(|at| native < at)
 }
 
@@ -139,8 +139,8 @@ pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
     let gain = saved_per_iteration(priors, span).checked_sub(base_saved_per_iteration(priors, span)).filter(|gain| *gain > 0)?;
     // The b-jit region already runs, so the u-jit compile is all extra work, charged whole whichever thread runs it
     // (TOD-2194: savings over the remaining runs against the whole compile), not at the second core's wall share.
-    // Its IR is the region compiles' measured ratio over the span (`lane_facts::measured_ir_per_bytecode`).
-    let outlay = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
+    // Its IR is `Loops::ir_per_bytecode` over the span.
+    let outlay = span.saturating_mul(tiers.loops.ir_per_bytecode).saturating_mul(priors.compile_ns_per_ir);
     Some((outlay / gain + 1).saturating_mul(priors.remaining_divisor))
 }
 
@@ -151,14 +151,14 @@ pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
 pub(crate) fn ultra_region_taken(tiers: &Tiers, span: u64) -> u64 {
     if tiers.admits_all { return 0; }
     let priors = &tiers.priors;
-    let compile = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
+    let compile = span.saturating_mul(tiers.loops.ir_per_bytecode).saturating_mul(priors.compile_ns_per_ir);
     body_required_taken(priors, saved_per_iteration(priors, span), entry_ns(priors).saturating_add(compile))
 }
 
 /// Whether a loop running a b-jit region in the default mode moves to a u-jit region after
 /// `taken` iterations in all: where `base_region` no longer picks b-jit for it.
 pub(crate) fn promotes(tiers: &Tiers, span: u64, taken: u64) -> bool {
-    crate::compiled::admission::regions_promote_to_ultra() && !base_region(tiers, span, taken)
+    !quench_runtime::vm::tier_policy::loop_regions_are_stencils() && !base_region(tiers, span, taken)
 }
 
 #[cfg(test)]

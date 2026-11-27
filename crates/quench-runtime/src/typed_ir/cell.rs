@@ -10,7 +10,10 @@
 //!   union of at most `MAX_CLASSES`, so a polymorphic call site (`this.task.run()`) is a switch on the
 //!   class word;
 //! - `elements`: what an array the value holds keeps in its elements (`Elements`): their type and
-//!   classes, and a fixed length where no edge can change it.
+//!   classes, and a fixed length where no edge can change it;
+//! - `sites`: the object-literal allocation sites the object may come from (`Sites`), which a copy
+//!   (`Object.assign`, an extend helper) reads the keys and values of. Kept apart from `classes`: a literal
+//!   is no constructed class's instance, so its site is not a class id.
 //!
 //! Representation is derived from the cell (`Cell::representation`), never stored. A store and a read
 //! form a Galois connection: a slot's cell is the join of every stored cell (α), and a read takes the
@@ -25,6 +28,30 @@ use crate::ValueType;
 
 /// The most classes a closed union holds before it is `Classes::Many`: richards' four task classes.
 pub const MAX_CLASSES: usize = 4;
+
+/// The most literal sites a closed union holds before it is `Sites::Many`.
+pub const MAX_SITES: usize = 4;
+
+/// The sorted union of two sorted, distinct lists, as a packed array of `N` with its length; `None` past `N` elements.
+fn union<T: Ord + Copy + Default, const N: usize>(a: &[T], b: &[T]) -> Option<([T; N], u8)> {
+    let mut out = [T::default(); N];
+    let mut len = 0usize;
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < a.len() || j < b.len() {
+        let next = match (a.get(i), b.get(j)) {
+            (Some(&x), Some(&y)) if x == y => { i += 1; j += 1; x }
+            (Some(&x), Some(&y)) if x < y => { i += 1; x }
+            (Some(_), Some(&y)) => { j += 1; y }
+            (Some(&x), None) => { i += 1; x }
+            (None, Some(&y)) => { j += 1; y }
+            (None, None) => break,
+        };
+        if len == N { return None; }
+        out[len] = next;
+        len += 1;
+    }
+    Some((out, len as u8))
+}
 
 /// The classes (constructed functions, by function id) of the objects a value may hold: a flat lattice
 /// widened to closed unions. `Never` holds no object (a primitive, `null`, `undefined`, or nothing yet);
@@ -56,24 +83,10 @@ impl Classes {
             (Self::Never, other) | (other, Self::Never) => other,
             (Self::Many, _) | (_, Self::Many) => Self::Many,
             (Self::Set { ids: a, len: la, proven: pa }, Self::Set { ids: b, len: lb, proven: pb }) => {
-                let mut ids = [0u32; MAX_CLASSES];
-                let mut len = 0usize;
-                let (mut i, mut j) = (0usize, 0usize);
-                let (la, lb) = (usize::from(la), usize::from(lb));
-                while i < la || j < lb {
-                    let next = match (a[..la].get(i), b[..lb].get(j)) {
-                        (Some(&x), Some(&y)) if x == y => { i += 1; j += 1; x }
-                        (Some(&x), Some(&y)) if x < y => { i += 1; x }
-                        (Some(_), Some(&y)) => { j += 1; y }
-                        (Some(&x), None) => { i += 1; x }
-                        (None, Some(&y)) => { j += 1; y }
-                        (None, None) => break,
-                    };
-                    if len == MAX_CLASSES { return Self::Many; }
-                    ids[len] = next;
-                    len += 1;
+                match union::<u32, MAX_CLASSES>(&a[..usize::from(la)], &b[..usize::from(lb)]) {
+                    Some((ids, len)) => Self::Set { ids, len, proven: pa && pb },
+                    None => Self::Many,
                 }
-                Self::Set { ids, len: len as u8, proven: pa && pb }
             }
         }
     }
@@ -113,6 +126,59 @@ impl Classes {
             Self::Never => false,
             Self::Set { .. } => self.ids().contains(&class),
             Self::Many => true,
+        }
+    }
+}
+
+/// An object-literal allocation site: the function and the PC of the allocation (`Record::note_literal`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Site {
+    pub function: u32,
+    pub pc: u32,
+}
+
+/// The literal allocation sites an object value may come from: a flat lattice widened to closed unions, joined like
+/// `Classes`. `Never` holds no object; `Set` holds objects of the listed sites only (`sites[..len]`, sorted and distinct);
+/// `Many` may hold an object of any origin, a literal or not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Sites {
+    Never,
+    Set { sites: [Site; MAX_SITES], len: u8 },
+    Many,
+}
+
+impl Sites {
+    /// Objects of the one literal site `site` alone.
+    pub fn one(site: Site) -> Self {
+        let mut sites = [Site::default(); MAX_SITES];
+        sites[0] = site;
+        Self::Set { sites, len: 1 }
+    }
+
+    /// The sites of a value of type `ty` the solve knows no literal of: none where the type holds no object, any otherwise.
+    pub fn of_type(ty: Type) -> Self {
+        if ty.is_subtype(Type::IMMEDIATE) { Self::Never } else { Self::Many }
+    }
+
+    /// The sites either may hold: the union, `Many` past `MAX_SITES`.
+    pub fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Never, other) | (other, Self::Never) => other,
+            (Self::Many, _) | (_, Self::Many) => Self::Many,
+            (Self::Set { sites: a, len: la }, Self::Set { sites: b, len: lb }) => {
+                match union::<Site, MAX_SITES>(&a[..usize::from(la)], &b[..usize::from(lb)]) {
+                    Some((sites, len)) => Self::Set { sites, len },
+                    None => Self::Many,
+                }
+            }
+        }
+    }
+
+    /// The listed sites of a closed union, `None` where the value is not one (`Never` or `Many`).
+    pub fn set(&self) -> Option<&[Site]> {
+        match self {
+            Self::Set { sites, len } => Some(&sites[..usize::from(*len)]),
+            _ => None,
         }
     }
 }
@@ -224,7 +290,7 @@ impl Elements {
             _ => self.ty,
         };
         let ty = if self.holes || !in_bounds { ty.join(Type::language(ValueType::Undefined)) } else { ty };
-        Cell { ty, classes: self.classes, elements: Elements::ANY }
+        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false }
     }
 }
 
@@ -235,18 +301,28 @@ pub struct Cell {
     pub ty: Type,
     pub classes: Classes,
     pub elements: Elements,
+    /// The literal allocation sites of the objects the value may be (`Sites`).
+    pub sites: Sites,
+    /// Whether the value may be the global object. Not a lattice point of `ty` or `classes` (`Classes::Many` absorbs
+    /// objects, so the global object cannot ride in them): a flag the closed world's verification reads (`aot_facts::gate`).
+    pub global: bool,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false };
     /// Any value: the top.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY };
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false };
 
-    /// A value of type `ty` from nowhere the solve follows: its classes from the type alone.
+    /// A value of type `ty` from nowhere the solve follows: its classes and sites from the type alone.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
-        Self { ty, classes: Classes::of_type(ty), elements }
+        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false }
+    }
+
+    /// The cell with the global object among the values it may hold.
+    pub const fn maybe_global(self) -> Self {
+        Self { global: true, ..self }
     }
 
     /// A value of type `ty` holding objects of `classes`.
@@ -260,7 +336,13 @@ impl Cell {
     }
 
     pub fn join(self, other: Self) -> Self {
-        Self { ty: self.ty.join(other.ty), classes: self.classes.join(other.classes), elements: self.elements.join(other.elements) }
+        Self {
+            ty: self.ty.join(other.ty),
+            classes: self.classes.join(other.classes),
+            elements: self.elements.join(other.elements),
+            sites: self.sites.join(other.sites),
+            global: self.global || other.global,
+        }
     }
 
     /// Whether `self` is below or equal to `other` in the lattice: every value `self` describes `other` does.
@@ -365,6 +447,19 @@ mod tests {
         assert_eq!(joined.classes.single(), Some((14, true)));
         assert_eq!(Cell::NEVER.join(int), int);
         assert!(joined.within(Cell::ANY));
+    }
+
+    #[test]
+    fn literal_sites_join_as_a_closed_union() {
+        let site = |function, pc| Site { function, pc };
+        let joined = Sites::one(site(3, 7)).join(Sites::one(site(3, 2)));
+        assert_eq!(joined.set(), Some(&[site(3, 2), site(3, 7)][..]));
+        let full = (0..MAX_SITES as u32 - 1).fold(Sites::one(site(3, 2)), |sites, pc| sites.join(Sites::one(site(4, pc))));
+        assert_eq!(full.set().map(<[Site]>::len), Some(MAX_SITES));
+        assert_eq!(full.join(Sites::one(site(9, 0))), Sites::Many);
+        assert_eq!(Cell::of(Type::INT32).sites, Sites::Never);
+        assert_eq!(Cell::instance(14).sites, Sites::Many);
+        assert_eq!(Cell::NEVER.join(Cell::of(Type::INT32)).sites, Sites::Never);
     }
 
     #[test]

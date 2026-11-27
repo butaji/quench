@@ -4593,7 +4593,7 @@ impl Vm {
     fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
         let current = &self.lane_stack.script_targets.entries[index];
         // Where no tier runs, no region reads the record: the pair is marked only.
-        if crate::compiled::admission::vm_may_run(self, crate::compiled::admission::Tier::ANY) {
+        if quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), crate::compiled::admission::Tier::ANY) {
             self.note_site_callee(link, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(current.callee), function: current.function });
         }

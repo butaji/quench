@@ -25,6 +25,7 @@ NumberOperation::Math math_sqrt
 NumberOperation::Extreme math_minmax
 NumberOperation::Imul math_imul
 NumberOperation::IntCase c_switch_dense
+NumberOperation::Power - Math.pow of a constant exponent: no benchmark op isolates it
 Operation::RequireObjectCoercible v_destructure_obj
 Operation::RequireIteratorResult - iterator result check: no benchmark op isolates it
 Operation::LogicalNot not_op

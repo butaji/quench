@@ -18,12 +18,11 @@ use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOO
 impl LoopBody {
     pub(crate) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
-    /// A new loop site's body, planned under the static benefit rule every body follows
-    /// (`tier_model::static_benefit`): a loop reaches its own function, so the rule admits it, where
-    /// the process runs Cranelift function tiers (`--b-jit` runs none).
-    pub(crate) fn initial(tiers: &Tiers) -> Self {
-        let loop_fact = crate::compiled::tier_model::StaticFacts { in_loop_or_cycle: true, residue: 0 };
-        if crate::compiled::tier_model::static_benefit(tiers.admits_all, loop_fact) && crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined }
+    /// A new loop site's body. A loop's body runs once per iteration, a loop weight above its function's frequency,
+    /// so its predicted tier is a compiled one (`tier_policy::predicted_tier`, which never picks the interpreter
+    /// for a frequency that high); it compiles where the process runs Cranelift function tiers (`--b-jit` runs none).
+    pub(crate) fn initial() -> Self {
+        if quench_runtime::vm::tier_policy::cranelift_runs() { Self::IDLE } else { Self::Declined }
     }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
@@ -100,7 +99,7 @@ const LONG_TRIP_WARMUPS: u64 = 4;
 pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
     let vm = unsafe { vm(cx) };
     if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !crate::compiled::admission::lane_bodies_enrolled(vm)
-        || !crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { return false; }
+        || !quench_runtime::vm::tier_policy::cranelift_runs() { return false; }
     // SAFETY: the context's program outlives the lane run.
     let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
     let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {

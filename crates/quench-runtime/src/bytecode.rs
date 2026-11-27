@@ -96,7 +96,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
         || (local_name_requires_environment(name) && declared_in_environment())
 }
 #[allow(unused_imports)]
-pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, instruction_leaders, jump_edge, may_repeat, reachable_from};
+pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, instruction_leaders, jump_edge, loop_depth, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
 pub use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
@@ -1987,11 +1987,39 @@ impl Function {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
 
-    /// Reusing an activation is observable while its call is protected by a handler.
-    /// A terminal return may skip its following Return instruction without being a
-    /// proper tail call: the caller must still catch the callee's abrupt completion.
+    /// Whether a call at `pc` of this function may replace this activation (`staged::effects::tail_site`'s
+    /// `caller_done`). Reusing an activation is observable while its call is protected by a handler, and
+    /// it discards what the activation still owes its caller: a generator or async body settles or suspends
+    /// its frame, a constructor's result depends on its own frame, and an `arguments` object the activation
+    /// made or may still make reads the frame's values. Those callers keep their frame.
     pub fn permits_js_tail_call_at(&self, pc: u32) -> bool {
-        self.strict && !self.class_initializer && self.handler_at(pc).is_none()
+        self.strict
+            && !self.class_initializer
+            && !self.is_class_constructor
+            && !self.derived_constructor
+            && !self.is_async
+            && !self.is_generator
+            && self.arguments_slot.is_none()
+            && self.handler_at(pc).is_none()
+    }
+
+    /// `permits_js_tail_call_at` for the call at `pc`, read from the bit set derived once for every PC of
+    /// the function on its first call (`FunctionCaches::tail_sites`). Every input of the rule is fixed by
+    /// the record, so the bit never changes.
+    #[inline(always)]
+    pub fn tail_site_permitted(&self, pc: u32) -> bool {
+        let bits = self.caches().tail_sites.get_or_init(|| self.derive_tail_sites());
+        bits.get(pc as usize / 64).is_some_and(|word| *word & (1u64 << (pc % 64)) != 0)
+    }
+
+    fn derive_tail_sites(&self) -> Box<[u64]> {
+        let mut bits = vec![0u64; self.code.len().div_ceil(64)].into_boxed_slice();
+        for pc in 0..self.code.len() {
+            if self.permits_js_tail_call_at(pc as u32) {
+                bits[pc / 64] |= 1u64 << (pc % 64);
+            }
+        }
+        bits
     }
 
     pub fn handler_at(&self, pc: u32) -> Option<Handler> {
@@ -2658,6 +2686,7 @@ impl Function {
                 suspended_registers,
                 suspended_environment,
                 admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
+                tail_callee: !self.is_async && !self.is_generator,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,

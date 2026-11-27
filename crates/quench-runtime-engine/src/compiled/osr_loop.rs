@@ -1464,7 +1464,7 @@ fn admit_region(
     // A loop whose every iteration leaves (at a call, a throw) is still a region where the stencil tier runs:
     // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop (`stencil_only`).
     let leaves = iteration::iterates_natively(&instructions, header, method_calls, native_call).err();
-    if let Some(offset) = leaves && !crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) {
+    if let Some(offset) = leaves && !quench_runtime::vm::tier_policy::base_runs() {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     let stencil_only = leaves.is_some();

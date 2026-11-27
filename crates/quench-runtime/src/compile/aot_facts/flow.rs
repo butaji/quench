@@ -44,6 +44,9 @@ pub(super) struct Call {
     /// The fact of the `this` it passes its callee (`staged::Receiver`): a register's, the caller's own
     /// `this` or a field of it, an allocated object's; unknown for any other receiver.
     pub(super) receiver: Word,
+    /// Whether the call passes no receiver (`staged::Receiver::Undefined`): a sloppy callee then binds `this` to the global
+    /// object (`types::Types::receivers`).
+    pub(super) plain: bool,
     /// The facts of the arguments it passes (`staged::Invocation::arguments`), in order.
     pub(super) arguments: Vec<Word>,
 }
@@ -51,14 +54,17 @@ pub(super) struct Call {
 /// What one function contributes to the closed-world facts.
 pub(super) struct FunctionFlow {
     pub(super) calls: Vec<Call>,
-    /// Every binding write, with the fact of the value written.
-    pub(super) writes: Vec<(Key, Word)>,
+    /// Every binding write, with the PC that makes it and the fact of the value written (`phase::folds` orders them).
+    pub(super) writes: Vec<(u32, Key, Word)>,
     /// Whether a write the analysis cannot follow reaches the function's own slots.
     pub(super) wild_owner: bool,
     /// Whether a write the analysis cannot follow reaches the globals.
     pub(super) global_wild: bool,
     /// Whether a store through a non-Number key may write a name of the global object (`effects::writes_global_name`).
     pub(super) computed_global: bool,
+    /// Whether an instruction keys an access into a value that may be the global object (`effects::keyed_global`): a
+    /// computed access the closed world's call graph cannot see through.
+    pub(super) global_keyed: bool,
     /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
     /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
     pub(super) global_source: bool,
@@ -102,6 +108,9 @@ pub(super) struct FunctionFlow {
     /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
     /// `types::escapes` takes its returns as positions the solve cannot follow.
     pub(super) returns_out: bool,
+    /// Whether the function is strict code (`Function::strict`, which class bodies and Modules set): a plain call binds its
+    /// `this` to `undefined`, not to the global object, so only a sloppy function's `this` may be the global object (`types`).
+    pub(super) strict: bool,
     /// The values the function hands to code the solve cannot follow: each value it throws, and every register at
     /// a `yield` or `await`, which the runtime carries to a consumer or a promise reaction (`types::escapes`).
     pub(super) handed: Vec<Word>,
@@ -122,6 +131,12 @@ pub(super) struct FunctionFlow {
     /// The `extends` links the function makes: `(class, parent)` for each intrinsic `setPrototypeOf` that links two class
     /// prototypes (`accessors::heritage_link`). `types::Types::holder` walks them.
     pub(super) parents: Vec<(u32, u32)>,
+    /// The parameters `(destination, source)` of a copy helper: a body that copies each element a for-in over `source`
+    /// reaches into `destination` and returns it, as `Object.extend` does (`Record::copies`). Its one store is accounted at
+    /// its call sites (`copies::expand`), not as a wild store.
+    pub(super) copies: Option<(u16, u16)>,
+    /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (its `Cell::sites`).
+    pub(super) literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -151,7 +166,8 @@ struct Arrival {
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>) -> FunctionFlow {
+    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>,
+    feedback: &super::length_settle::Feedback) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let whole = whole_literals(function);
@@ -167,6 +183,10 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         decode,
         records,
         accessors,
+        filled: &feedback.filled,
+        hole_free_stores: &feedback.hole_free_stores,
+        in_bounds_reads: &feedback.in_bounds_reads,
+        spans: &feedback.spans,
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
@@ -188,7 +208,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     record.registers.sort();
     let arity = arity_of(function);
     let returns_out = ctx.is_root || function.is_generator || function.is_async;
-    let mut flow = record.finish(arity, returns_out, in_register);
+    let mut flow = record.finish(arity, returns_out, in_register, function.strict);
     flow.entries = entries;
     flow
 }
@@ -209,7 +229,7 @@ fn bound_parameters(function: &Function) -> Box<[bool]> {
 
 /// The blocks a backedge enters (a normal edge to a block no later than its source): every loop has one, and every cycle
 /// of the graph passes through one, so widening at these blocks alone makes the solve finite.
-fn loop_headers(blocks: &Blocks) -> BitSet {
+pub(super) fn loop_headers(blocks: &Blocks) -> BitSet {
     let mut headers = BitSet::with_capacity(blocks.ranges.len());
     for (block, (targets, kinds)) in blocks.targets.iter().zip(&blocks.kinds).enumerate() {
         for (&target, kind) in targets.iter().zip(kinds) {
@@ -365,7 +385,7 @@ impl Solver<'_> {
             let events = step(ctx, pc, instruction, &mut state);
             stored_bounds(instruction, &events.writes, &masks, record);
             mask_bounds(self.ctx, instruction, &mut masks);
-            record.commit(instruction, &state, events);
+            record.commit(pc as u32, instruction, &state, events);
             let written: Box<[_]> = instruction.written_registers().map(|register| {
                 let word = state[usize::from(register)];
                 (u16::from(register), settled(self.ctx, word), Source::of(word.origin))

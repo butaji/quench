@@ -93,11 +93,12 @@ impl Completion {
     /// Whether a run returns a Number by its status and a result word (a numeric region, or a scalar entry).
     pub(crate) fn numeric(self) -> bool { self != Self::Body }
 
-    /// The signature the run's function has.
+    /// The signature the run's function has: a scalar entry's under `call_conv` (the default), every other run's the
+    /// lane body convention.
     pub(crate) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         match self {
             Self::Scalar(abi) => abi.signature(pointer, call_conv),
-            _ => body_signature_in_lane(pointer, call_conv),
+            _ => body_signature_in_lane(pointer),
         }
     }
 
@@ -188,7 +189,7 @@ impl Lowering<'_, '_> {
     }
 
     /// A numeric entry's parameters. A window entry proves each a Number once; a scalar entry
-    /// holds each as the number it takes, after its one check of the machine stack.
+    /// holds each as the number it takes, after its check of the machine stack unless `stack_check_free` admits none.
     pub(crate) fn enter_numeric_parameters(&mut self, state: &mut State, pc: usize, parameters: &[ir::Value]) {
         let Completion::Scalar(abi) = self.completion else {
             for register in 0..self.params as Register {
@@ -197,17 +198,19 @@ impl Lowering<'_, '_> {
             }
             return;
         };
-        self.check_native_stack(state, pc);
+        if !super::polls::stack_check_free(self.vm.graph, self.function_id) { self.check_native_stack(state, pc); }
         self.hold_callee_slots(state, pc);
         for (index, value) in parameters.iter().skip(SCALAR_LEADING_WORDS).enumerate() {
             if abi.is_float(index) { self.set_number(state, index as Register, *value); } else { self.set_int(state, index as Register, *value); }
         }
     }
 
-    /// Leaves at `pc` where this entry has run past the machine stack's budget (`CallContext::stack_limit`),
-    /// the one depth check of a run: its recursion calls entries that make their own.
+    /// Leaves at `pc` where this entry has run past the machine stack's budget (`CallContext::stack_limit`) less
+    /// `STACK_CHECK_MARGIN`, which keeps free the frames of the bounded callees `stack_check_free` admits unchecked.
+    /// Entries that recurse, or reach unnamed calls, each make their own check.
     fn check_native_stack(&mut self, state: &State, pc: usize) {
         let limit = self.raw_load(Lane::I64, super::super::invariant(), self.context, super::super::CONTEXT_STACK_LIMIT);
+        let limit = self.raw_binary_imm(Binary::Add, limit, super::polls::STACK_CHECK_MARGIN as i64);
         let stack = emit(&mut self.builder).stack_pointer();
         let room = self.raw_compare(Relation::UnsignedGreaterEqual, stack, limit);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);

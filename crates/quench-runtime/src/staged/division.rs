@@ -90,6 +90,7 @@ fn number(operation: &NumberOperation) -> OperandTimes {
         Math { source, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", operand(*source)), ("operation", BYTECODE)]),
         Extreme { left, right, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("left", operand(*left)), ("right", operand(*right)), ("maximum", BYTECODE)]),
         Imul { left, right, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("left", operand(*left)), ("right", operand(*right))]),
+        Power { base, exponent, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("base", operand(*base)), ("exponent", operand(*exponent))]),
     }
 }
 

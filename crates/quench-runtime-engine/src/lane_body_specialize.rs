@@ -7,7 +7,7 @@ use super::*;
 
 /// Whether the mode compiles function bodies at all (Cranelift's tiers or `--b-jit`'s stencils): `--no-jit` compiles none.
 fn mode_compiles_bodies() -> bool {
-    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).compiled().is_some()
+    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default(), fresh: false }).compiled().is_some()
 }
 
 #[quench_macros::ext(LaneViewSpecializeOps)]
@@ -26,11 +26,11 @@ impl LaneView {
     /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).
     pub(crate) fn body_epoch(&self) -> u32 { self.tier().body_epoch.get() }
 
-    /// Specializes the frameless body at the function's entry: the attempt the static benefit admits (`lane_facts::body_pick`),
-    /// or none, where the interpreter runs the function. Whether the body is still compiling or specialized, so its
-    /// prologue stays. A specialized body is a fact of the view from then on: its prologue record enters it with `entry`,
-    /// which tests nothing the specialization proved (`lane_body_entry`).
-    pub(crate) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
+    /// Specializes the frameless body at the function's entry in `tier`, the tier its predicted pick names
+    /// (`tier_policy::lane_body_tier`), or none where the interpreter runs the function (`None`). Whether the body is
+    /// still compiling or specialized, so its prologue stays. A specialized body is a fact of the view from then on:
+    /// its prologue record enters it with `entry`, which tests nothing the specialization proved (`lane_body_entry`).
+    pub(crate) fn specialize_lane_body(&self, entry: Handler, tier: Option<quench_runtime::vm::tier_policy::Tier>, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
@@ -51,7 +51,7 @@ impl LaneView {
                 (work(crate::compiled::LaneBodyWork::Poll(pending)), recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, quench_runtime::vm::tier_policy::body_tier_in_lane(), entry, recompiles, stuck, looks);
+        *body = self.body_after(outcome, tier, entry, recompiles, stuck, looks);
         // A state change moves the epoch; a body still waiting for its next entry does not, so a refused loop backs off.
         if !matches!(body, LaneBody::Unspecialized { .. }) {
             let epochs = &self.tier().body_epoch;
@@ -71,7 +71,7 @@ impl LaneView {
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
-                *body = self.body_after(outcome, quench_runtime::jit_mode::Tier::Ahead, entry, recompiles, stuck, 0);
+                *body = self.body_after(outcome, Some(quench_runtime::vm::tier_policy::Tier::Ahead), entry, recompiles, stuck, 0);
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }
@@ -82,7 +82,7 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight is what it waits on.
-    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: quench_runtime::jit_mode::Tier, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
@@ -97,7 +97,8 @@ impl LaneView {
             }
             crate::compiled::LaneBodyOutcome::Published(published) => {
                 self.respecialize_callers();
-                self.specialized(entry, published, tier, recompiles, stuck)
+                // A body is published only on a route its pick admits, which names its tier (`lane_body_tier`).
+                self.specialized(entry, published, tier.expect("a published lane body has a compiled tier"), recompiles, stuck)
             }
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
             crate::compiled::LaneBodyOutcome::Stale => {
@@ -105,7 +106,7 @@ impl LaneView {
                 LaneBody::Unspecialized { recompiles, stuck }
             }
             crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { recompiles, stuck },
-            // The static benefit refused it: no loop or call cycle reaches it, and its residue is small. The interpreter runs it.
+            // Its predicted tier is the interpreter (`lane_facts::body_pick`): the interpreter runs it.
             crate::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
                 LaneBody::Declined
@@ -122,7 +123,7 @@ impl LaneView {
         }
     }
 
-    /// Whether the static benefit refused a compile of its body (`LaneBodyOutcome::Unpaid`), which the loop tier reads
+    /// Whether the predicted tier refused a compile of its body (`LaneBodyOutcome::Unpaid`), which the loop tier reads
     /// before it waits for its own iterations.
     pub(crate) fn body_unpaid(&self) -> bool { self.tier().history.get().unpaid }
 }

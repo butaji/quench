@@ -558,7 +558,7 @@ pub const fn math_call(native: Native) -> Option<MathCall> {
         Native::MathMax => Extreme(true),
         Native::MathMin => Extreme(false),
         Native::MathImul => Imul,
-        Native::MathPow => Binary(crate::staged::math::power),
+        Native::MathPow => Binary(crate::staged::power::power),
         Native::MathAtan2 => Binary(crate::staged::math::atan2),
         Native::MathF16Round => Libm(f16_round),
         Native::MathAtanh => Libm(atanh),

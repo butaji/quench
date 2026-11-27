@@ -180,7 +180,7 @@ fn number_operands(number: &NumberOperation) -> Vec<Operand> {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Relation { left, right, .. }
         | NumberOperation::RelationValue { left, right, .. } | NumberOperation::Bitwise { left, right, .. }
         | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
-        | NumberOperation::Imul { left, right, .. } => vec![left, right],
+        | NumberOperation::Imul { left, right, .. } | NumberOperation::Power { base: left, exponent: right, .. } => vec![left, right],
         NumberOperation::Unary { source, .. } | NumberOperation::BitwiseNot { source, .. } | NumberOperation::Math { source, .. } => vec![source],
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![Operand::register(source)],
         NumberOperation::IntCase { .. } => Vec::new(),
@@ -232,7 +232,7 @@ fn element_store_grade(site: Site<'_>) -> Effects {
 }
 
 /// The grade of an element read `base[key]`: with no index accessor in the closed world (`AotFacts::index_accessors_absent`),
-/// a Number key converts to no guest code (`lengths::element_runs_guest_code`), and a base that is never nullish throws
+/// a Number key converts to no guest code (`lengths::transfer::element_runs_guest_code`), and a base that is never nullish throws
 /// nothing, so the read runs nothing (`RUNS_NOTHING`). A hole reads `undefined` through the prototype chain, which holds
 /// no index accessor, so the read's bounds do not change its grade. Any other read is open (`ANY`).
 fn element_read_grade(site: Site<'_>, base: Register, key: Operand) -> Effects {
@@ -431,14 +431,14 @@ mod tests {
     }
 
     #[test]
-    fn call_form_is_frameless_only_when_nothing_leaves_allocates_or_runs_guest_code() {
+    fn call_form_is_frameless_only_when_nothing_leaves_collects_or_runs_guest_code() {
         assert_eq!(call_form(Signature::NEVER, false), CallForm::Frameless);
         let throws = Signature { leaves: Leaves::Never, effects: may_throw() };
         assert_eq!(call_form(throws, false), CallForm::Frameless);
         let leaves = Signature { leaves: Leaves::RestartCall, effects: Effects::NONE };
         assert_eq!(call_form(leaves, false), CallForm::Framed);
-        let allocates = Signature { leaves: Leaves::Never, effects: Effects { allocates: true, ..Effects::NONE } };
-        assert_eq!(call_form(allocates, false), CallForm::Framed);
+        let collects = Signature { leaves: Leaves::Never, effects: Effects { may_collect: true, ..Effects::NONE } };
+        assert_eq!(call_form(collects, false), CallForm::Framed);
         let runs = Signature { leaves: Leaves::Never, effects: Effects { may_call_js: true, ..Effects::NONE } };
         assert_eq!(call_form(runs, false), CallForm::Framed);
         assert_eq!(call_form(Signature::ANY, false), CallForm::Framed);

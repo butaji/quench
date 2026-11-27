@@ -126,6 +126,14 @@ impl Readers {
         self.close(cells);
     }
 
+    /// Notes that a store of each name in `names` (`accessors::names_of`, the names an accessor defines) may run its
+    /// setter, which is guest code that may read the stored field, so the name is read off any class. Called before `finish`.
+    pub(super) fn accessor_names(&mut self, names: &BTreeSet<u32>) {
+        for &atom in names {
+            self.named(atom, Classes::Many);
+        }
+    }
+
     /// Whether a read the program makes, or code it cannot follow makes, may observe the value stored under `key`.
     /// Only a field key is decided here; any other key is observed (`true`).
     pub(super) fn observes(&self, key: FactKey) -> bool {
@@ -138,6 +146,13 @@ impl Readers {
                 || (self.index_atoms.contains(&atom) && self.index_reads != Classes::Never),
             _ => true,
         }
+    }
+
+    /// Whether code the solve cannot follow may enumerate or read every field of an instance of `class`: an instance reaches a
+    /// sink (`reflective`), where a for-in, a spread, `Object.keys`, a `JSON` walk or `Reflect.ownKeys` is not followed. Those
+    /// operations hand their operands to a sink (`plain`, `open`), so they are the enumerators; no name table is consulted.
+    pub(super) fn reflects_class(&self, class: u32) -> bool {
+        self.reflective.may_hold(class)
     }
 
     /// Whether the call at `pc` of function `function` has a result no read follows (`call` in `scan`).
@@ -422,6 +437,15 @@ mod tests {
         assert!(dead.iter().all(|&key| !facts.field_has_reader(key)));
         let live = keys_of(&facts, atom(&program, "live"));
         assert!(live.iter().all(|&key| facts.field_has_reader(key)));
+    }
+
+    #[test]
+    fn a_name_an_accessor_defines_has_a_reader() {
+        let program = program("(function () { function T() { this.dead = 1; } var o = { set dead(v) {} }; o.dead = 2; return new T(); })();");
+        let facts = analyze(&program);
+        let keys = keys_of(&facts, atom(&program, "dead"));
+        assert!(!keys.is_empty(), "the store settles a cell");
+        assert!(keys.iter().all(|&key| facts.field_has_reader(key)), "a store of the name may run the setter");
     }
 
     #[test]

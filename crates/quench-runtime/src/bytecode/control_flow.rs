@@ -354,3 +354,10 @@ impl Function {
 pub fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
     backward.iter().any(|&(target, source)| target <= pc && pc <= source)
 }
+
+/// How many loops the instruction at `pc` is in: the backward transfers of `backward` whose span
+/// (`target..=source`) holds it. A call site's loop depth weighs its callee's static frequency
+/// (`CallGraph::frequency`).
+pub fn loop_depth(backward: &[(usize, usize)], pc: usize) -> u32 {
+    backward.iter().filter(|&&(target, source)| target <= pc && pc <= source).count() as u32
+}

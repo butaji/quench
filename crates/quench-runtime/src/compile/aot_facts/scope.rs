@@ -1,7 +1,7 @@
 //! What the functions of a program share: each function's parent, the Number constants, and the
 //! atoms that name the global object.
 
-use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
+use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ProgramKind, ResidualProgram};
 use crate::heap::TypedArrayKind;
 use crate::typed_ir::{IntRange, Type};
 use std::collections::BTreeSet;
@@ -42,6 +42,8 @@ const TYPED_ARRAY_CONSTRUCTORS: [(&str, TypedArrayKind); 9] = [
 pub(super) struct Scope {
     /// Each function's parent, by function id.
     parents: Vec<Option<u32>>,
+    /// Whether the program is a Module: its root is strict code, whose `this` is `undefined` (`root_this_is_global`).
+    module: bool,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
     /// The atoms of the builtins that add properties to the objects they are given (`PROPERTY_ADDERS`).
@@ -81,6 +83,10 @@ pub(super) struct Scope {
     string_methods: Vec<(u32, StringMethod)>,
     /// The atoms whose text is a canonical array index: a string key of one reads an element, not a named field.
     index_names: BTreeSet<u32>,
+    /// Each object literal site's keys, in the order its values sit in the literal's registers (`ObjectSite::atoms`).
+    pub(super) object_sites: Vec<Vec<u32>>,
+    /// The atom `assign` interns to, if the program names it: `Object.assign` copies its source's keys (`copies`).
+    pub(super) assign: Option<u32>,
 }
 
 impl Scope {
@@ -89,6 +95,7 @@ impl Scope {
             parents: (0..program.function_count())
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
+            module: matches!(program.kind, ProgramKind::Module),
             constant_types: program.constants.iter().zip(constant_atoms(program))
                 .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             global_objects: program
@@ -126,6 +133,8 @@ impl Scope {
             array: program.atoms.iter().position(|name| name == "Array").map(|atom| atom as u32),
             typed_arrays: TYPED_ARRAY_CONSTRUCTORS.iter().filter_map(|(name, kind)| atom_named(program, name).map(|atom| (atom, *kind))).collect(),
             constant_atoms: constant_atoms(program),
+            object_sites: program.object_sites.iter().map(|site| site.atoms.iter().copied().collect()).collect(),
+            assign: program.atoms.iter().position(|name| name == "assign").map(|atom| atom as u32),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
             builtins: BUILTINS.iter().filter_map(|builtin| {
@@ -195,6 +204,12 @@ impl Scope {
     /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).
     pub(super) fn passes_this(&self, atom: u32) -> bool {
         self.this_passers.contains(&atom)
+    }
+
+    /// Whether the root's `this` is the global object: a Script's is (sloppy top-level code), a Module's is `undefined`
+    /// (its code is strict, as a Module is).
+    pub(super) fn root_this_is_global(&self) -> bool {
+        !self.module
     }
 
     /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).

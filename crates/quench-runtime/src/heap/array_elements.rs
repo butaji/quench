@@ -141,14 +141,12 @@ pub use crate::staged::encodings::DOUBLE_LEN;
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.
 pub use crate::staged::encodings::ENCODED_LEN;
 
-/// Whether backings may take the double kind (`DOUBLE_LEN`): in production unless
-/// `QUENCH_DEV=no-double-elements`; in a test only where it asks (`TEST_DOUBLES`), as tests
-/// slice backings as wide values.
+/// Whether backings may take the double kind (`DOUBLE_LEN`): always in production; in a test
+/// only where it asks (`TEST_DOUBLES`), as tests slice backings as wide values.
 #[cfg(not(test))]
 #[inline(always)]
 fn double_elements() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| !crate::trace::Dev::NoDoubleElements.on())
+    true
 }
 
 /// `double_elements` in a test.
