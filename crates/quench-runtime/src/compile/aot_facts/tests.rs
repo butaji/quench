@@ -4,6 +4,7 @@ use super::{analyze, world, AotFacts, FieldDefault};
 use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
+use crate::staged::effects::{Affine, Indices};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
 use crate::heap::TypedArrayKind;
@@ -797,6 +798,30 @@ fn a_fill_loop_that_stops_short_of_the_length_keeps_the_holes() {
 }
 
 #[test]
+fn a_loop_bounded_by_the_field_the_array_was_allocated_with_is_below_its_length() {
+    let program = program("function C() { this.t = 3; } C.prototype.f = function f() { var a = new Array(this.t); for (var i = 0; i < this.t; i++) { a[i] = 0; } return a[1]; } new C().f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`this.t` loaded again is the length `new Array(this.t)` made, at {pc}");
+    }
+}
+
+#[test]
+fn a_store_to_the_field_between_the_allocation_and_the_loop_retires_the_bound() {
+    let program = program("function C() { this.t = 3; } C.prototype.f = function f() { var a = new Array(this.t); this.t = 5; for (var i = 0; i < this.t; i++) { a[i] = 0; } return 0; } new C().f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "the store to `this.t` kills the load the allocation read, so the store at {pc} is not proven");
+    }
+}
+
+#[test]
 fn a_sloppy_prototype_method_keyed_on_this_called_as_a_method_keeps_the_world_closed() {
     // `this` of `m` is the object `o.m()` passes, never the global object, so `this[k]` reads no global function.
     let program = program("function C() {} C.prototype.m = function (k) { return this[k]; }; var o = new C(); o.m('x'); \
@@ -846,4 +871,34 @@ fn a_prototype_method_written_again_by_a_hot_function_names_no_phase_target() {
     let facts = analyze(&program);
     let run = function_named(&program, "run") as u32;
     assert!(!facts.call_targets.keys().any(|&(function, _)| function == run));
+}
+
+/// The pcs of the element stores (`ElementWrite`) of function `id`.
+fn element_stores(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u32> {
+    program.with_record(id, |function| {
+        (0..function.code.len()).filter(|&pc| matches!(Operation::<u64, ()>::of(function.instruction_at(pc)), Some(Operation::ElementWrite { .. })))
+            .map(|pc| pc as u32).collect()
+    })
+}
+
+#[test]
+fn a_store_through_an_index_counted_up_while_a_count_counts_down_covers_the_count_from_the_index() {
+    let program = program("function f(i, x, w, j, c, n) { while (--n >= 0) { var v = x * 2 + w[j] + c; c = Math.floor(v / 67108864); w[j++] = v & 0x3ffffff; } return c; } f(0, 3, [0, 0, 0, 0], 0, 0, 4);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let stores = element_stores(&program, f);
+    assert_eq!(stores.len(), 1, "the loop stores into one array");
+    let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
+    assert_eq!(store.indices, Indices::Span { start: Affine::parameter(3), len: Affine::parameter(5) }, "the store covers `j .. j + n`");
+}
+
+#[test]
+fn a_store_whose_index_steps_by_two_covers_the_whole_array() {
+    let program = program("function f(i, x, w, j, c, n) { while (--n >= 0) { w[j] = x; j += 2; } return c; } f(0, 3, [0, 0, 0, 0], 0, 0, 4);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let stores = element_stores(&program, f);
+    assert_eq!(stores.len(), 1, "the loop stores into one array");
+    let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
+    assert_eq!(store.indices, Indices::Whole, "a step of two leaves no span of the count");
 }

@@ -46,7 +46,7 @@ pub fn value(op: &Operation<(), ()>, env: &impl Abstract) -> Option<Cell> {
         Operation::Equality { .. } | Operation::LogicalNot { .. } | Operation::TypeofTest { .. } | Operation::InstanceOf { .. } =>
             Cell::of(Type::language(ValueType::Boolean)),
         Operation::Void { .. } => Cell::of(Type::language(ValueType::Undefined)),
-        Operation::ElementRead { base, key, .. } => element(env, env.register(base), operand_cell(env, key)),
+        Operation::ElementRead { base, key, .. } => element(env, env.register(base), operand_cell(env, key), false),
         // The local-slot increment defines the value `step` gives its source, as the Number form does.
         Operation::IncDecLocal { source, decrement, .. } => Cell::of(step(env.register(source).ty, decrement)),
         _ => return None,
@@ -108,11 +108,12 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
 
 /// The cell of an indexed read of `base` at `index`: the elements `base` names (`Elements::element`), joined with those no
 /// field names (`Abstract::unnamed_elements`). A read takes `undefined` where the array has holes or the index is not
-/// within a fixed length (`within_length`). Any value where the types are not solved yet.
-pub fn element(env: &impl Abstract, base: Cell, index: Cell) -> Cell {
+/// within a fixed length (`within_length`), unless `in_bounds`: the solve proved the index within the array's length
+/// (`length_settle`). Any value where the types are not solved yet.
+pub fn element(env: &impl Abstract, base: Cell, index: Cell, in_bounds: bool) -> Cell {
     let Some(unnamed) = env.unnamed_elements() else { return Cell::ANY };
     let elements = base.elements.join(unnamed);
-    elements.element(within_length(elements.length, index.ty))
+    elements.element(in_bounds || within_length(elements.length, index.ty))
 }
 
 /// Whether an index of type `index` stays within an array of length `length`: a fixed length, and an integer range inside

@@ -21,14 +21,18 @@ pub(crate) struct ElementStore {
     pub(crate) indices: Indices,
 }
 
-/// The indices an element store through `index` touches in `function`. A Number that is parameter `p` on entry
+/// The indices an element store through `index` at `pc` touches in `function`. A Number that is parameter `p` on entry
 /// (`Origin::Parameter`, which a write to the register retires, and a join with any other origin drops) is the one
-/// index `p`: `Span { start: p, len: 1 }`. Any other index may be any index: `Whole`.
-pub(super) fn indices_of(function: u32, index: Word) -> Indices {
+/// index `p`: `Span { start: p, len: 1 }`. A store the previous round proved covers the parameters `start .. start + len`
+/// (`Feedback::spans`) is that span. Any other index may be any index: `Whole`.
+pub(super) fn indices_of(ctx: &Ctx<'_>, pc: u32, index: Word) -> Indices {
     match index.origin {
-        Some(Origin::Parameter { function: owner, index: parameter }) if owner == function && index.is_number() =>
+        Some(Origin::Parameter { function: owner, index: parameter }) if owner == ctx.id && index.is_number() =>
             Indices::Span { start: Affine::parameter(parameter), len: Affine::constant(1) },
-        _ => Indices::Whole,
+        _ => match ctx.spans.get(&(ctx.id, pc)) {
+            Some(&(start, len)) => Indices::Span { start: Affine::parameter(start), len: Affine::parameter(len) },
+            None => Indices::Whole,
+        },
     }
 }
 
@@ -68,6 +72,42 @@ pub(super) struct Record {
     element_stores: std::collections::BTreeMap<u32, ElementStore>,
     accessors: Vec<Accessor>,
     parents: Vec<(u32, u32)>,
+    /// Per allocation PC of an object literal of a fixed shape, its keys and the values they hold at the allocation (`Origin::Literal`).
+    literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
+    /// The shape of the function's copy scan (`CopyScan`), from which `copies` decides whether it is a copy helper.
+    scan: CopyScan,
+}
+
+/// What the function does with the for-in loops, element reads and writes, and returns it reaches (`observe`), the facts
+/// `Record::copies` matches the copy helper shape against. A parameter is named by its index, where its register still holds it.
+#[derive(Default)]
+struct CopyScan {
+    /// Per for-in loop started (`ForInStart`), the parameter its source register holds, if any.
+    for_in_sources: Vec<Option<u16>>,
+    /// The key register each for-in step defines (`ForInNext`).
+    for_in_keys: Vec<crate::bytecode::Register>,
+    /// Per element read (`GetIndex`): its result register, the parameter its base holds, and its key register.
+    element_reads: Vec<(crate::bytecode::Register, Option<u16>, crate::bytecode::Register)>,
+    /// Per element store (`ElementWrite`): the parameter its base holds, its key register and its value register.
+    element_writes: Vec<(Option<u16>, crate::bytecode::Register, crate::bytecode::Register)>,
+    /// Every store or delete whose key the analysis cannot name (`ElementWrite`, `IndexWrite`, `IndexSetHelper`, `Delete`).
+    stores: u32,
+    /// Per return, the parameter its value holds, if any.
+    returns: Vec<Option<u16>>,
+}
+
+impl CopyScan {
+    /// The copy helper shape: a body whose only store is one element store, through the key a for-in over parameter `source`
+    /// defines, of the element that loop reads from `source`, into parameter `dst`, and which returns `dst`. Returns `(dst, source)`.
+    fn copies(&self) -> Option<(u16, u16)> {
+        let [source] = self.for_in_sources.as_slice() else { return None };
+        let [key] = self.for_in_keys.as_slice() else { return None };
+        let [(dst, store_key, store_value)] = self.element_writes.as_slice() else { return None };
+        let [returned] = self.returns.as_slice() else { return None };
+        let (source, dst) = ((*source)?, (*dst)?);
+        let read = self.element_reads.iter().any(|&(result, base, index)| result == *store_value && base == Some(source) && index == *key);
+        (self.stores == 1 && dst != source && *store_key == *key && read && *returned == Some(dst)).then_some((dst, source))
+    }
 }
 
 impl Record {
@@ -101,6 +141,8 @@ impl Record {
             element_stores: std::collections::BTreeMap::new(),
             accessors: Vec::new(),
             parents: Vec::new(),
+            literals: std::collections::BTreeMap::new(),
+            scan: CopyScan::default(),
         }
     }
 
@@ -127,7 +169,7 @@ impl Record {
         // An element store writes the elements of its array's class, at the indices its index register holds.
         if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
-            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx.id, index) });
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index) });
         }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
@@ -155,6 +197,8 @@ impl Record {
                 self.captures.insert((owner, slot));
             }
         }
+        self.note_literal(ctx, instruction, pc as u32, state);
+        self.note_copy_scan(ctx, instruction, state);
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
         }
@@ -271,6 +315,50 @@ impl Record {
         }
     }
 
+    /// Notes the keys and values of an object literal of a fixed shape the instruction allocates (`Origin::Literal`): the keys are the
+    /// site's, the values the registers of the literal's window (or its two registers), as the allocation holds them.
+    fn note_literal(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32, state: &[Word]) {
+        let Some((_, allocation)) = crate::staged::Allocation::decode(instruction, &[]) else { return };
+        let (site, values): (u32, Vec<Word>) = match allocation {
+            crate::staged::Allocation::ObjectLiteral { site, window } =>
+                (site, (0..window.count).map(|offset| state[usize::from(window.base + offset)]).collect()),
+            crate::staged::Allocation::ObjectPair { site, first, second } => (site, vec![state[usize::from(first)], state[usize::from(second)]]),
+            _ => return,
+        };
+        let Some(keys) = ctx.scope.object_sites.get(site as usize) else { return };
+        if keys.len() == values.len() {
+            self.literals.insert(pc, keys.iter().copied().zip(values).collect());
+        }
+    }
+
+    /// Notes the for-in loops, element reads and writes, and returns the instruction makes, for `CopyScan::copies`.
+    fn note_copy_scan(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) {
+        // The parameter a register holds on entry, if this function's own parameter it still is.
+        let parameter = |register: crate::bytecode::Register| match state[usize::from(register)].origin {
+            Some(Origin::Parameter { function, index }) if function == ctx.id => Some(index),
+            _ => None,
+        };
+        if instruction.op() == crate::bytecode::Op::ForInStart {
+            self.scan.for_in_sources.push(parameter(instruction.register_b()));
+        }
+        if instruction.op() == crate::bytecode::Op::GetIndex {
+            if let Some(result) = instruction.defined_register() {
+                self.scan.element_reads.push((result, parameter(instruction.register_b()), instruction.register_c()));
+            }
+        }
+        match decoded(instruction) {
+            Some(crate::staged::Operation::ForInNext { destination, .. }) => self.scan.for_in_keys.push(destination),
+            Some(crate::staged::Operation::ElementWrite { base, key, value, .. }) => {
+                self.scan.stores += 1;
+                self.scan.element_writes.push((parameter(base), key, value));
+            }
+            Some(crate::staged::Operation::IndexWrite { .. } | crate::staged::Operation::IndexSetHelper { .. } | crate::staged::Operation::Delete { .. }) =>
+                self.scan.stores += 1,
+            Some(crate::staged::Operation::Return { source }) => self.scan.returns.push(parameter(source)),
+            _ => {}
+        }
+    }
+
     /// Notes the proofs `instruction` at `pc` may hold that it runs no guest code: a global name read (`Declared`, and
     /// `Intrinsic` for a builtin the table names) unless it is an invocation, and a read of field off `this` (`OwnField`).
     fn note_quiet(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32) {
@@ -334,6 +422,8 @@ impl Record {
             element_stores: self.element_stores,
             accessors: self.accessors,
             parents: self.parents,
+            copies: self.scan.copies(),
+            literals: self.literals,
         }
     }
 }

@@ -131,6 +131,12 @@ pub(super) struct FunctionFlow {
     /// The `extends` links the function makes: `(class, parent)` for each intrinsic `setPrototypeOf` that links two class
     /// prototypes (`accessors::heritage_link`). `types::Types::holder` walks them.
     pub(super) parents: Vec<(u32, u32)>,
+    /// The parameters `(destination, source)` of a copy helper: a body that copies each element a for-in over `source`
+    /// reaches into `destination` and returns it, as `Object.extend` does (`Record::copies`). Its one store is accounted at
+    /// its call sites (`copies::expand`), not as a wild store.
+    pub(super) copies: Option<(u16, u16)>,
+    /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (`Origin::Literal`).
+    pub(super) literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -180,6 +186,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         filled: &feedback.filled,
         hole_free_stores: &feedback.hole_free_stores,
         in_bounds_reads: &feedback.in_bounds_reads,
+        spans: &feedback.spans,
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
@@ -222,7 +229,7 @@ fn bound_parameters(function: &Function) -> Box<[bool]> {
 
 /// The blocks a backedge enters (a normal edge to a block no later than its source): every loop has one, and every cycle
 /// of the graph passes through one, so widening at these blocks alone makes the solve finite.
-fn loop_headers(blocks: &Blocks) -> BitSet {
+pub(super) fn loop_headers(blocks: &Blocks) -> BitSet {
     let mut headers = BitSet::with_capacity(blocks.ranges.len());
     for (block, (targets, kinds)) in blocks.targets.iter().zip(&blocks.kinds).enumerate() {
         for (&target, kind) in targets.iter().zip(kinds) {

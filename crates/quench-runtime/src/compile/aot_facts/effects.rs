@@ -49,6 +49,8 @@ pub(super) struct Ctx<'a> {
     pub(super) hole_free_stores: &'a std::collections::BTreeSet<(u32, u32)>,
     /// The element reads the previous round proved in bounds, by (function, pc) (`length_settle::Feedback`).
     pub(super) in_bounds_reads: &'a std::collections::BTreeSet<(u32, u32)>,
+    /// The element stores the previous round proved cover a span of parameters, by (function, pc): (start, len) (`length_settle::Feedback`).
+    pub(super) spans: &'a std::collections::BTreeMap<(u32, u32), (u16, u16)>,
 }
 
 /// What an instruction does beyond its registers: the bindings it writes, and whether it makes
@@ -307,6 +309,12 @@ fn value_of(
     // over a constant operand, a numeric one over registers), and an indexed read by its index. An increment is defined
     // by `typing::value` like the other Number operations.
     let before = Before { ctx, state };
+    // An object literal of a fixed shape is named by its allocation site (`Origin::Literal`): its keys and values are the
+    // literal's table (`Record::observe`), which a copy of it reads (`copies`).
+    if matches!(operation, Some(Operation::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. }, .. })) {
+        let cell = operation.as_ref().and_then(|operation| typing::value(operation, &before)).unwrap_or(Cell::ANY);
+        return Word { cell, origin: Some(Origin::Literal { function: ctx.id, pc: pc as u32 }) };
+    }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
@@ -342,6 +350,10 @@ fn value_of(
         // `+x` of a Number is `x` itself, origin included: the cell `typing::number_cell` defines for it.
         Some(Operation::Number(NumberOperation::ToNumeric { source, .. })) if typing::reached_number(state[usize::from(source)].cell) =>
             state[usize::from(source)],
+        // An element read of the operation row, as the indexed `GetIndex` reads its element (`element_read`), so the previous
+        // round's in-bounds proof reaches it too.
+        Some(Operation::ElementRead { base, key, .. }) =>
+            Word::of_cell(element_read(ctx, pc, &before, settled(ctx, state[usize::from(base)]), typing::operand_cell(&before, key))),
         _ => operation.as_ref().and_then(|operation| typing::value(operation, &before)).map_or(Word::UNKNOWN, Word::of_cell),
     }
 }
@@ -350,10 +362,7 @@ fn value_of(
 /// may hold a hole or the index is not within its length, unless the previous round proved the read in bounds
 /// (`in_bounds_reads`), which settles the index within the length.
 fn element_read(ctx: &Ctx<'_>, pc: usize, before: &Before<'_, '_>, base: Cell, index: Cell) -> Cell {
-    let Some(unnamed) = before.unnamed_elements() else { return Cell::ANY };
-    let elements = base.elements.join(unnamed);
-    let in_bounds = ctx.in_bounds_reads.contains(&(ctx.id, pc as u32)) || typing::within_length(elements.length, index.ty);
-    elements.element(in_bounds)
+    typing::element(before, base, index, ctx.in_bounds_reads.contains(&(ctx.id, pc as u32)))
 }
 
 /// The array `new Array(...)` or `Array(...)` allocates at `pc`, named by its allocation site as a literal is (`Origin::Alloc`).

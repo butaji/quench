@@ -218,7 +218,7 @@ fn may_define_index(program: &ResidualProgram, call: &Call, aliased: bool) -> bo
 }
 
 /// Whether no index accessor can run for an element access of `program`, so that the access runs no guest code for a key that
-/// converts to none (`lengths::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
+/// converts to none (`lengths::transfer::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
 /// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::member_wild`),
 /// no `defineProperty` may name an index, and the program names no proxy or descriptor-defining builtin (`INDEX_ACCESSOR_NAMES`).
 pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
@@ -239,7 +239,7 @@ pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, fl
 /// Names whose presence lets a property of an object change with no store the flows record: a descriptor-defining builtin
 /// (`defineProperty`, `defineProperties`, `assign`), a prototype setter that retargets a function's chain (`setPrototypeOf`,
 /// `__proto__`), and the reflective and proxy objects that write through a trap or `Reflect.set`.
-const APPLY_WRITE_NAMES: [&str; 7] = ["defineProperty", "defineProperties", "assign", "setPrototypeOf", "__proto__", "Reflect", "Proxy"];
+const APPLY_WRITE_NAMES: [&str; 6] = ["defineProperty", "defineProperties", "setPrototypeOf", "__proto__", "Reflect", "Proxy"];
 
 /// Whether a write of `key` names property `atom` (`Member`, `MemberAny` or `MemberOn`): a store the census counts.
 fn writes_named(key: Key, atom: u32) -> bool {

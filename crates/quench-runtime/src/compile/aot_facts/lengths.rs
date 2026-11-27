@@ -10,100 +10,27 @@
 //! world may define, or through the conversion of a key that is no Number or string (`element_runs_guest_code`).
 //! A call resizes only the arrays of the element classes its resolved callees may write (`Types::call_writes`).
 //!
+//! Sums: two parameters a loop steps in opposite directions, one up by one and one down by one each iteration, keep their sum
+//! zero at the back edge (`Relation::SumInvariant`, with the pending `Delta` of an iteration). An element store through the index
+//! then covers the parameters the count runs over (`store_span`), so a store of `w[j++]` in `while (--n >= 0)` covers `j .. j + n`.
+//!
 //! The relations are one fact per register set, held beside the registers' words in each block's state: a
 //! join intersects them (`Lengths::meet`), so a relation holds at a point only if every path proves it. The
 //! set is finite (its relations name registers and the program's constants), so the solve settles without
 //! widening.
+mod relations;
+mod transfer;
 
-use super::effects::{Ctx, Events, runs_guest_code};
+use super::effects::{Ctx, Events};
 use super::value::{Key, Origin, Word};
-use super::FunctionFacts;
-use crate::bytecode::{FieldLookup, Operand, OperandKind, Register, WideInstruction};
-use crate::staged::{Callee, Comparison, Invocation, NumberOperation, Operation};
-use crate::typed_ir::{Elements, Length, Type};
-use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-use crate::ValueType;
+use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
+use crate::staged::{NumberOperation, Operation};
+use crate::typed_ir::Length;
+use relations::{delta, holds_array, is_string, way};
+use transfer::{Resize, moves_bits, shift_kind, step_of_constant, sum_of_registers};
 
-/// A fact about the registers of a function, relating an index to the length of an array.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Relation {
-    /// `length` holds the length of `array`, an array or a string (`holds_array`).
-    Length { length: Register, array: Register },
-    /// `sum` holds `index + offset`, where `index` holds a Number.
-    Sum { sum: Register, index: Register, offset: i64 },
-    /// `index + reach <= length(array)`: `index + d` is below the length of `array` for every `d < reach`. The strict
-    /// `index + k < length` is `reach` `k + 1`, and the at-most `index + k <= length` is `reach` `k`.
-    Within { index: Register, array: Register, reach: i64 },
-    /// `index < bound`, both Numbers: `index` is below whatever `bound` is below, one less (`below`).
-    Less { index: Register, bound: Register },
-    /// `sum < 2 * bound`, where `sum` holds the sum of two Numbers one of which is below the other: its half, a shift right by
-    /// a count that moves a bit, is below the larger one (`Lengths::halve`).
-    Twice { sum: Register, bound: Register },
-    /// `array` holds elements `[0, index)`, all written: a fill loop's index has passed each element before it. Holds
-    /// from `i = 0` (any array, the range is empty) until a write to `i` or `array` breaks it.
-    Filled { array: Register, index: Register },
-    /// `array` holds elements `[0, index]`, all written: the element at `index` was just stored over a `Filled` prefix.
-    FilledThrough { array: Register, index: Register },
-    /// `index >= bound`, both Numbers: the loop's test failed, so the index has reached the bound.
-    AtLeast { index: Register, bound: Register },
-    /// `array` holds elements `[0, length)`, all written: a fill loop ran to the length of `array` (`Length`).
-    Complete { array: Register },
-}
-
-impl Relation {
-    /// Whether the relation names `register`, as its length, sum, index, array or bound.
-    fn names(self, register: Register) -> bool {
-        match self {
-            Self::Length { length, array } => length == register || array == register,
-            Self::Sum { sum, index, .. } => sum == register || index == register,
-            Self::Within { index, array, .. } => index == register || array == register,
-            Self::Less { index, bound } => index == register || bound == register,
-            Self::Twice { sum, bound } => sum == register || bound == register,
-            Self::Filled { array, index } | Self::FilledThrough { array, index } => array == register || index == register,
-            Self::AtLeast { index, bound } => index == register || bound == register,
-            Self::Complete { array } => array == register,
-        }
-    }
-
-    /// The relation after `register` moves by `by`, for a relation that names it: what holds of the register's new value.
-    /// A bound it is below stays true only when it rises, and a bound above it only when it falls; `None` where a move breaks it.
-    fn shifted(self, register: Register, by: i64) -> Option<Self> {
-        match self {
-            Self::Within { index, array, reach } if index == register => Some(Self::Within { index, array, reach: reach - by }),
-            Self::Sum { sum, index, offset } if sum == register => Some(Self::Sum { sum, index, offset: offset + by }),
-            Self::Less { index, .. } if index == register && by <= 0 => Some(self),
-            Self::Less { bound, .. } if bound == register && by >= 0 => Some(self),
-            Self::Twice { sum, .. } if sum == register && by <= 0 => Some(self),
-            Self::Twice { bound, .. } if bound == register && by >= 0 => Some(self),
-            // The index of `index >= bound` rises, and the bound falls, and the relation holds still.
-            Self::AtLeast { index, .. } if index == register && by >= 0 => Some(self),
-            Self::AtLeast { bound, .. } if bound == register && by <= 0 => Some(self),
-            // A fill prefix through `index` steps by one into the prefix through the new index: `[0, index]` is `[0, index')`.
-            Self::FilledThrough { array, index } if index == register && by == 1 => Some(Self::Filled { array, index }),
-            _ => None,
-        }
-    }
-
-    /// The relation with `to` for `from` in every place it names, as a copy of `from` into `to` makes it. A relation that
-    /// names `to` already is not carried: a copy would name its destination twice.
-    fn renamed(self, from: Register, to: Register) -> Option<Self> {
-        if self.names(to) {
-            return None;
-        }
-        let swap = |register: Register| if register == from { to } else { register };
-        Some(match self {
-            Self::Length { length, array } => Self::Length { length: swap(length), array: swap(array) },
-            Self::Sum { sum, index, offset } => Self::Sum { sum: swap(sum), index: swap(index), offset },
-            Self::Within { index, array, reach } => Self::Within { index: swap(index), array: swap(array), reach },
-            Self::Less { index, bound } => Self::Less { index: swap(index), bound: swap(bound) },
-            Self::Twice { sum, bound } => Self::Twice { sum: swap(sum), bound: swap(bound) },
-            Self::Filled { array, index } => Self::Filled { array: swap(array), index: swap(index) },
-            Self::FilledThrough { array, index } => Self::FilledThrough { array: swap(array), index: swap(index) },
-            Self::AtLeast { index, bound } => Self::AtLeast { index: swap(index), bound: swap(bound) },
-            Self::Complete { array } => Self::Complete { array: swap(array) },
-        })
-    }
-}
+pub(super) use relations::{Relation, proves_below, store_span};
+pub(super) use transfer::{advance, refine};
 
 /// The most relations a point holds. A relation past it is not recorded, which only loses facts.
 const CAPACITY: usize = 32;
@@ -129,16 +56,57 @@ impl Lengths {
         }
     }
 
-    /// `self` met with `other` at a join: a relation the other point does not hold is lost. Whether one was.
+    /// `self` met with `other` at a join: a relation the other point does not hold is lost. A sum survives only where both points
+    /// have the same pending change of it: the same pending changes to its registers, or both sums zero and the steps going the
+    /// same way round (`way`). Whether one was lost.
     pub(super) fn meet(&mut self, other: &Lengths) -> bool {
         let before = self.relations.len();
-        self.relations.retain(|relation| other.relations.contains(relation));
+        let kept: Vec<Relation> = self.relations.iter().copied().filter(|relation| other.relations.contains(relation)
+            && match *relation {
+                Relation::SumInvariant { a, b, .. } => {
+                    let pending = |relations: &[Relation]| delta(relations, a) + delta(relations, b);
+                    let (here, there) = (pending(&self.relations), pending(&other.relations));
+                    here == there && if here == 0 {
+                        let (one, two) = (way(&self.relations, a, b), way(&other.relations, a, b));
+                        one.is_none() || two.is_none() || one == two
+                    } else {
+                        [a, b].into_iter().all(|reg| delta(&self.relations, reg) == delta(&other.relations, reg))
+                    }
+                }
+                _ => true,
+            }).collect();
+        self.relations = kept;
+        self.prune_deltas();
         self.relations.len() != before
     }
 
-    /// Retires every relation that names `register`.
+    /// Retires every relation that names `register`, and the pending changes no sum is left to hold.
     fn kill(&mut self, register: Register) {
         self.relations.retain(|relation| !relation.names(register));
+        self.prune_deltas();
+    }
+
+    /// Retires each `Delta` no `SumInvariant` names: a pending change is only meaningful to the sum it is part of.
+    fn prune_deltas(&mut self) {
+        let sums: Vec<Relation> = self.relations.iter().copied().filter(|relation| matches!(relation, Relation::SumInvariant { .. })).collect();
+        self.relations.retain(|relation| match *relation {
+            Relation::Delta { reg, .. } => sums.iter().any(|sum| sum.names(reg)),
+            _ => true,
+        });
+    }
+
+    /// Records that every two registers which hold parameters of this function on entry, unchanged (`Origin::Parameter`, Numbers),
+    /// sum to zero against them (`Relation::SumInvariant`): none of them has been stepped yet, so both differences are zero.
+    pub(super) fn pair_parameters(&mut self, ctx: &Ctx<'_>, words: &[Word]) {
+        let parameters: Vec<(Register, u16)> = words.iter().enumerate().filter_map(|(register, word)| match word.origin {
+            Some(Origin::Parameter { function, index }) if function == ctx.id && word.is_number() => Some((register as Register, index)),
+            _ => None,
+        }).collect();
+        for (position, &(a, base_a)) in parameters.iter().enumerate() {
+            for &(b, base_b) in &parameters[position + 1..] {
+                self.insert(Relation::SumInvariant { a, b, base_a, base_b });
+            }
+        }
     }
 
     /// Records that `index` holds 0: every array the registers hold has an empty prefix `[0, 0)` written (`Filled`).
@@ -151,16 +119,31 @@ impl Lengths {
     }
 
     /// Shifts `register` by `by`: the relations that name it move with it (`Relation::shifted`), and the ones that survive
-    /// are returned for the caller to keep.
+    /// are returned for the caller to keep. A sum the register is part of stays while its pending change stays within one
+    /// step, and the step is recorded as that change (`Delta`), so the sum is zero again once its partner steps back.
     fn rebase(&mut self, register: Register, by: i64) -> Vec<Relation> {
+        let pending = delta(&self.relations, register) + by;
+        let partnered = self.relations.iter().any(|relation| matches!(relation, Relation::SumInvariant { .. }) && relation.names(register));
+        let sums_hold = pending.abs() <= 1;
         let mut shifted = Vec::new();
         self.relations.retain(|relation| {
             if !relation.names(register) {
                 return true;
             }
-            shifted.extend(relation.shifted(register, by));
+            match *relation {
+                Relation::Delta { .. } => {}
+                Relation::SumInvariant { .. } => {
+                    if sums_hold {
+                        shifted.push(*relation);
+                    }
+                }
+                _ => shifted.extend(relation.shifted(register, by)),
+            }
             false
         });
+        if partnered && sums_hold && pending != 0 {
+            shifted.push(Relation::Delta { reg: register, d: pending });
+        }
         shifted
     }
 
@@ -174,14 +157,18 @@ impl Lengths {
     /// registers, or shifts a sum. True where the registers' writes are taken here; false where the caller retires every
     /// register the instruction writes.
     fn define(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, words: &[Word]) -> bool {
-        if instruction.result_flags() != 0 {
+        // An increment or a conversion may write a numeric local (its result flag), which is the register it writes all the same.
+        let numeric_step = matches!(instruction.op(), crate::bytecode::Op::IncDec | crate::bytecode::Op::ToNumeric) && instruction.writes_numeric_local();
+        if instruction.result_flags() != 0 && !numeric_step {
             return false;
         }
         if let Some(Operation::Move { destination, source }) = Operation::<u64, ()>::of(instruction) {
             let copies = self.copies(destination, source);
-            // A move of `index + k` into the index itself steps the index by `k`: its bounds shift with it.
+            // A move of `index + k` into the index itself steps the index by `k`: its bounds shift with it. The index may be a copy
+            // of the destination (`copy = index`, as `ToNumeric` makes one), which the move's step carries too.
             let stepped = self.relations.iter().find_map(|relation| match *relation {
-                Relation::Sum { sum, index, offset } if sum == source && index == destination => Some(offset),
+                Relation::Sum { sum, index, offset } if sum == source
+                    && (index == destination || self.relations.contains(&Relation::Sum { sum: index, index: destination, offset: 0 })) => Some(offset),
                 _ => None,
             });
             let kept = match stepped {
@@ -196,11 +183,28 @@ impl Lengths {
             }
             return true;
         }
-        // `i++` and `i--` in place: the index steps by one.
-        if instruction.op() == crate::bytecode::Op::IncDec && instruction.result_register() == instruction.register_b() {
+        // `i++` and `i--`: in place, the index steps by one; into another register, that register is the index plus one.
+        if instruction.op() == crate::bytecode::Op::IncDec {
             let by = if instruction.boolean_flag() == Some(true) { -1 } else { 1 };
-            for relation in self.rebase(instruction.result_register(), by) {
-                self.insert(relation);
+            let (destination, source) = (instruction.result_register(), instruction.register_b());
+            if destination == source {
+                for relation in self.rebase(destination, by) {
+                    self.insert(relation);
+                }
+            } else {
+                self.kill(destination);
+                if words.get(usize::from(source)).is_some_and(|word| word.is_number()) {
+                    self.insert(Relation::Sum { sum: destination, index: source, offset: by });
+                }
+            }
+            return true;
+        }
+        // `ToNumeric` of a Number is the Number: the copy is the source with no offset.
+        if instruction.op() == crate::bytecode::Op::ToNumeric {
+            let (destination, source) = (instruction.result_register(), instruction.register_b());
+            self.kill(destination);
+            if destination != source && words.get(usize::from(source)).is_some_and(|word| word.is_number()) {
+                self.insert(Relation::Sum { sum: destination, index: source, offset: 0 });
             }
             return true;
         }
@@ -284,7 +288,9 @@ impl Lengths {
             | Relation::FilledThrough { array, .. } | Relation::Complete { array } => {
                 words.get(usize::from(array)).is_some_and(|word| is_string(word) || !(every || resize.touches(word)))
             }
-            Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } | Relation::AtLeast { .. } => true,
+            Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } | Relation::AtLeast { .. }
+            | Relation::Loaded { .. } | Relation::Equal { .. } | Relation::SumInvariant { .. } | Relation::Delta { .. }
+            | Relation::NonNegative { .. } => true,
         });
         if !self.define(ctx, instruction, words) {
             for register in instruction.written_registers() {
@@ -293,283 +299,39 @@ impl Lengths {
         }
         self.read_length(ctx, instruction, words);
     }
-}
 
-/// What a step may resize: no array (`Nothing`), every array (`Every`: a mutator, or guest code the solve does not follow), or the
-/// arrays of the element classes the call at a point may write (`Calls`, `Types::call_writes`).
-#[derive(Clone, Copy)]
-enum Resize<'a, 'b> {
-    Nothing,
-    Every,
-    /// A call: it resizes the arrays of the classes its settled effects may write (`FunctionFacts::may_write_elements_of`).
-    Calls { facts: &'a FunctionFacts<'b>, pc: u32 },
-}
+    /// Retires the field loads (`Relation::Loaded`) a step may change: a load of `key` from any base, at a write of the name
+    /// (`Key::Member`, `MemberOn`, `MemberAny` of `key`), at a write through a key the analysis cannot name, a shape change, or
+    /// a step that may run guest code (`calls_js`: a call or an accessor may write any field). `Equal` names registers, not
+    /// fields, so a store leaves it.
+    fn clobber_loads(&mut self, events: &Events, calls_js: bool) {
+        let wild = calls_js || events.wild_member || events.wild_owner || events.shape.is_some();
+        let names = |written: &Key, key: u32| matches!(*written, Key::Member(atom) | Key::MemberAny(atom) | Key::MemberOn { atom, .. } if atom == key);
+        self.relations.retain(|relation| match *relation {
+            Relation::Loaded { key, .. } => !wild && !events.writes.iter().any(|(written, _)| names(written, key)),
+            _ => true,
+        });
+    }
 
-impl Resize<'_, '_> {
-    /// Whether the step may resize some array, of any class.
-    fn may_resize(self) -> bool {
-        match self {
-            Self::Nothing => false,
-            Self::Every => true,
-            Self::Calls { facts, pc } => facts.may_write_any_elements(pc),
+    /// Records the field read `dest = base.key` (`read_length`'s field, any name) where it runs no guest code (`calls_js` false):
+    /// `dest` holds `base`'s `key` (`Relation::Loaded`), and every other load of `key` from `base` that holds equals it (`Equal`).
+    /// A read into `base` itself holds no load, since the base is gone once it is written.
+    fn record_load(&mut self, instruction: WideInstruction, calls_js: bool) {
+        if calls_js || instruction.result_flags() != 0 || !matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
+            return;
+        }
+        let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() else { return };
+        let (dest, Some(base)) = (instruction.result_register(), base.register_index()) else { return };
+        if dest == base {
+            return;
+        }
+        let earlier: Vec<Register> = self.relations.iter().filter_map(|relation| match *relation {
+            Relation::Loaded { dest: held, base: held_base, key } if held_base == base && key == atom => Some(held),
+            _ => None,
+        }).collect();
+        self.insert(Relation::Loaded { dest, base, key: atom });
+        for held in earlier {
+            self.insert(Relation::equal(held, dest));
         }
     }
-
-    /// Whether the step may resize the array `word` holds.
-    fn touches(self, word: &Word) -> bool {
-        match self {
-            Self::Nothing => false,
-            Self::Every => true,
-            Self::Calls { facts, pc } => facts.may_write_elements_of(pc, word.elements_key()),
-        }
-    }
-}
-
-/// What the step at `pc` may resize, read from the facts before it (`words`): a mutator resizes its receiver's array; an element
-/// access resizes through what `element_runs_guest_code` finds; a call resizes what its settled effects may write; any other
-/// step that runs guest code resizes every array.
-fn resize_of<'a, 'b>(ctx: &Ctx<'_>, facts: &'a FunctionFacts<'b>, pc: usize, instruction: WideInstruction, words: &[Word]) -> Resize<'a, 'b> {
-    let mutator = Invocation::of(instruction, ctx.decode).is_some_and(|invocation| match invocation.callee {
-        Callee::Method { atom, .. } => ctx.scope.is_array_mutator(atom),
-        Callee::Register(register) => matches!(words[usize::from(register)].origin,
-            Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) if ctx.scope.is_array_mutator(atom)),
-        Callee::Known(_) => false,
-    });
-    if mutator {
-        Resize::Every
-    } else if element_op(instruction) {
-        if element_runs_guest_code(facts, instruction, words) { Resize::Every } else { Resize::Nothing }
-    } else if Invocation::of(instruction, ctx.decode).is_some() {
-        Resize::Calls { facts, pc: pc as u32 }
-    } else if runs_guest_code(ctx, instruction, words) {
-        Resize::Every
-    } else {
-        Resize::Nothing
-    }
-}
-
-/// Whether `instruction` is an element access: a `GetIndex`, or an element read or write.
-pub(super) fn element_op(instruction: WideInstruction) -> bool {
-    instruction.op() == crate::bytecode::Op::GetIndex
-        || matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. } | Operation::ElementWrite { .. }))
-}
-
-/// Whether the element access `instruction` runs guest code on `words`, the facts before it: through an index accessor, which the
-/// world may define (`Scope::index_accessors_absent`), or through the conversion of a key that is no Number or string.
-pub(super) fn element_runs_guest_code(facts: &FunctionFacts<'_>, instruction: WideInstruction, words: &[Word]) -> bool {
-    let plain_key = element_key(instruction).is_some_and(|key| words.get(usize::from(key)).is_some_and(|word| word.is_number() || is_string(word)));
-    !(facts.index_accessors_absent() && plain_key)
-}
-
-/// The register an element access reads its key from: a `GetIndex`'s third operand, or an element operation's key.
-fn element_key(instruction: WideInstruction) -> Option<Register> {
-    match Operation::<u64, ()>::of(instruction) {
-        Some(Operation::ElementRead { key, .. } | Operation::ElementWrite { key, .. }) => Some(key),
-        _ => (instruction.op() == crate::bytecode::Op::GetIndex).then(|| instruction.register_c()),
-    }
-}
-
-/// Whether `relations` prove `index + offset < length(array)`.
-pub(super) fn proves_below(relations: &[Relation], index: Register, array: Register, offset: i64) -> bool {
-    below(relations, index, array, offset, relations.len())
-}
-
-/// Whether `relations` prove `index + offset < length(array)` through at most `depth` links: a `Within` past `offset`, a length
-/// (the index is the length, so it is below it one short of it), a sum's base past its own offset, or a `Less` link to a bound
-/// below the length one less. `depth` cuts off a cycle of links, which no consistent set holds.
-fn below(relations: &[Relation], index: Register, array: Register, offset: i64, depth: usize) -> bool {
-    relations.iter().any(|relation| match *relation {
-        Relation::Within { index: held, array: held_array, reach } => held == index && held_array == array && reach > offset,
-        Relation::Length { length, array: held_array } => length == index && held_array == array && offset < 0,
-        Relation::Sum { sum, index: base, offset: by } => sum == index && depth > 0 && below(relations, base, array, by + offset, depth - 1),
-        Relation::Less { index: held, bound } => held == index && depth > 0 && below(relations, bound, array, offset - 1, depth - 1),
-        Relation::Twice { .. } | Relation::Filled { .. } | Relation::FilledThrough { .. } | Relation::AtLeast { .. } | Relation::Complete { .. } => false,
-    })
-}
-
-/// Advances `lengths` over the instruction at `pc`. `run` steps the register words over it (`effects::step`) and returns its events,
-/// with whether the step may resize an array: a call or guest code that may write an array's elements, a mutator, or an element
-/// store the relations do not prove within its array. The relations are read from the words before the instruction (a call's
-/// callee, the bounds an element store meets, a resize's keys and receivers) and after it (the arrays' kinds, the registers it defines).
-pub(super) fn advance(ctx: &Ctx<'_>, facts: &FunctionFacts<'_>, pc: usize, instruction: WideInstruction, lengths: &mut Lengths,
-    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> (Events, bool) {
-    let resize = resize_of(ctx, facts, pc, instruction, words);
-    let stored_below = match Operation::<u64, ()>::of(instruction) {
-        Some(Operation::ElementWrite { base, key, .. }) => proves_below(lengths.relations(), key, base, 0),
-        _ => false,
-    };
-    // An element store over a fill prefix extends it through the stored index (`FilledThrough`).
-    let filled_store = match Operation::<u64, ()>::of(instruction) {
-        Some(Operation::ElementWrite { base, key, .. }) if lengths.relations.contains(&Relation::Filled { array: base, index: key }) => Some((base, key)),
-        _ => None,
-    };
-    let events = run(words);
-    let grows = events.wild_elements
-        || (!stored_below && events.writes.iter().any(|(key, word)| matches!(key, Key::Element(_)) && word.cell.elements.length != Length::Never));
-    let may_resize = grows || resize.may_resize();
-    lengths.write(ctx, instruction, words, &events, resize, stored_below);
-    if let Some((array, index)) = filled_store {
-        lengths.insert(Relation::FilledThrough { array, index });
-    }
-    // A write that leaves an index at 0 has an empty prefix in every array (`Filled`, `[0, 0)`).
-    for register in instruction.written_registers() {
-        if words.get(usize::from(register)).is_some_and(|word| word.cell.ty.int_range().is_some_and(|range| range.min == 0 && range.max == 0)) {
-            lengths.zeroed(words, register);
-        }
-    }
-    if let Some(length) = allocated_length(ctx, pc, instruction, words) {
-        lengths.insert(length);
-    }
-    (events, may_resize)
-}
-
-/// The Length relation a `new Array(n)` at `pc` gives its array: `n` holds the array's length. Read from the words after the call;
-/// the callee must be the Array constructor, its one argument a Number, and the result the allocation at `pc`.
-fn allocated_length(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, words: &[Word]) -> Option<Relation> {
-    let invocation = Invocation::of(instruction, ctx.decode)?;
-    let Callee::Register(callee) = invocation.callee else { return None };
-    if !ctx.scope.is_array_constructor(words.get(usize::from(callee))?.origin) { return None; }
-    let arguments: Vec<Register> = invocation.arguments.registers(ctx.records).collect();
-    let [length] = arguments.as_slice() else { return None };
-    let array = instruction.result_register();
-    let allocated = words.get(usize::from(array))?.origin == Some(Origin::Alloc { function: ctx.id, pc: pc as u32 });
-    (allocated && words.get(usize::from(*length))?.is_number()).then_some(Relation::Length { length: *length, array })
-}
-
-/// The relations the edge of the conditional jump `instruction` carries, from the state `lengths` and `words` the jump
-/// leaves. `to_target` is whether the edge is the jump's target. Where the comparison holds on the edge, an index whose
-/// value (or sum) is `left < right` (or `<=`, `>`, `>=`) of a register holding a bound on an array's length is below that
-/// length: by the bound's own relation (`bound_of`), and as a `Less` link to the bound (`proves_below` follows it).
-pub(super) fn refine(ctx: &Ctx<'_>, instruction: WideInstruction, to_target: bool, words: &[Word], lengths: &Lengths) -> Lengths {
-    let mut refined = lengths.clone();
-    let Some(Operation::CompareJump { comparison: Comparison::Relation { relation, .. }, left, right, negate }) = Operation::<u64, ()>::of(instruction)
-        else { return refined };
-    // The comparison holds on this edge when the jump's edge is not the one `negate` takes it on. A failing `<` proves
-    // `left >= right`, and a holding `>=` does too: the loop's exit edge of `index < bound` reaches the bound.
-    let holds = to_target != negate;
-    if let (Some(index), Some(bound)) = (left.register_index(), right.register_index()) {
-        let at_least = match relation {
-            NumberRelation::LessThan => !holds,
-            NumberRelation::GreaterEqual => holds,
-            _ => false,
-        };
-        if at_least && words.get(usize::from(index)).is_some_and(|word| word.is_number()) && words.get(usize::from(bound)).is_some_and(|word| word.is_number()) {
-            refined.insert(Relation::AtLeast { index, bound });
-            for array in complete_arrays(&refined.relations, index, bound) {
-                refined.insert(Relation::Complete { array });
-            }
-        }
-    }
-    if !holds {
-        return refined;
-    }
-    // `index + slack <= bound`: a strict comparison adds one to the index.
-    let (small, big, slack): (Operand, Operand, i64) = match relation {
-        NumberRelation::LessThan => (left, right, 1),
-        NumberRelation::LessEqual => (left, right, 0),
-        NumberRelation::GreaterThan => (right, left, 1),
-        NumberRelation::GreaterEqual => (right, left, 0),
-        _ => return refined,
-    };
-    let (Some(small), Some(big)) = (small.register_index(), big.register_index()) else { return refined };
-    // The index is the sum the small operand holds, or the small operand itself where it is a Number.
-    let indexed = lengths.relations.iter().find_map(|held| match *held {
-        Relation::Sum { sum, index, offset } if sum == small => Some((index, offset)),
-        _ => None,
-    }).or_else(|| words.get(usize::from(small)).filter(|word| word.is_number()).map(|_| (small, 0)));
-    let Some((index, offset)) = indexed else { return refined };
-    if let Some((array, reach)) = bound_of(&lengths.relations, big) {
-        refined.insert(Relation::Within { index, array, reach: offset + slack + reach });
-    }
-    // `index < bound` between Numbers: `proves_below` follows it through the bound's own relations, and `bound_below` reads
-    // the bound an index is below (a loop's counter against its bound, whichever length the bound is at most).
-    if slack == 1 && offset == 0 && words.get(usize::from(big)).is_some_and(|word| word.is_number()) {
-        refined.insert(Relation::Less { index, bound: big });
-    }
-    refined
-}
-
-/// The arrays whose whole prefix `[0, bound)` is filled through `index` (`Filled { index }`) and whose length is `bound`: a fill
-/// loop that ran `index` to `bound` with the array's length as the bound has written every element.
-fn complete_arrays(relations: &[Relation], index: Register, bound: Register) -> Vec<Register> {
-    relations.iter().filter_map(|relation| match *relation {
-        Relation::Filled { array, index: filled } if filled == index && relations.contains(&Relation::Length { length: bound, array }) => Some(array),
-        _ => None,
-    }).collect()
-}
-
-/// The array a bound is at most the length of, and how far short of it the bound is: a length register holds the length (no
-/// shortfall), and a register with a `Within` (`bound + reach <= length`) is at most `reach` short of it. The smallest shortfall is kept.
-fn bound_of(relations: &[Relation], bound: Register) -> Option<(Register, i64)> {
-    relations.iter().filter_map(|relation| match *relation {
-        Relation::Length { length, array } if length == bound => Some((array, 0)),
-        Relation::Within { index, array, reach } if index == bound => Some((array, reach)),
-        _ => None,
-    }).min_by_key(|&(_, reach)| reach)
-}
-
-/// The integer an operand is, where it is a constant of the program that holds one integer (`Scope::constant_type`).
-fn constant_of(ctx: &Ctx<'_>, operand: Operand) -> Option<i64> {
-    if !matches!(operand.kind(), Some(OperandKind::Constant)) {
-        return None;
-    }
-    let range = ctx.scope.constant_type(usize::from(operand.payload())).int_range()?;
-    (range.min == range.max).then_some(range.min)
-}
-
-/// Whether `instruction` is a Number binary operation of `operation` with no flags.
-fn is_number_binary(instruction: WideInstruction, operation: NumberArithmetic) -> bool {
-    instruction.op() == crate::bytecode::Op::Binary
-        && instruction.result_flags() == 0
-        && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) == Some(operation)
-}
-
-/// The step a constant addition or subtraction makes of a register, as `(destination, source, delta)` where
-/// `destination = source + delta`: `source + k`, `k + source` or `source - k`. A `k - source` steps no register by a constant.
-fn step_of_constant(ctx: &Ctx<'_>, instruction: WideInstruction) -> Option<(Register, Register, i64)> {
-    let (left, right) = (instruction.operand_b(), instruction.operand_c());
-    let (source, delta) = if is_number_binary(instruction, NumberArithmetic::Add) {
-        match (left.register_index(), right.register_index()) {
-            (Some(source), None) => (source, constant_of(ctx, right)?),
-            (None, Some(source)) => (source, constant_of(ctx, left)?),
-            _ => return None,
-        }
-    } else if is_number_binary(instruction, NumberArithmetic::Subtract) {
-        (left.register_index()?, constant_of(ctx, right)?.checked_neg()?)
-    } else {
-        return None;
-    };
-    Some((instruction.result_register(), source, delta))
-}
-
-/// The registers of `destination = first + second`, a Number addition of two registers.
-fn sum_of_registers(instruction: WideInstruction) -> Option<(Register, Register, Register)> {
-    if !is_number_binary(instruction, NumberArithmetic::Add) {
-        return None;
-    }
-    Some((instruction.result_register(), instruction.operand_b().register_index()?, instruction.operand_c().register_index()?))
-}
-
-/// Whether a constant shift count moves a bit: its low bits (`WORD32_SHIFT_MASK`) are not all zero.
-fn moves_bits(ctx: &Ctx<'_>, count: Operand) -> bool {
-    constant_of(ctx, count).is_some_and(|count| ((count as u32) & crate::value::WORD32_SHIFT_MASK) != 0)
-}
-
-/// Whether a shift is zero-filling (`>>>`, `true`) or sign-propagating (`>>`, `false`); `None` for any other operation.
-fn shift_kind(operation: NumberBitwise) -> Option<bool> {
-    match operation {
-        NumberBitwise::ShiftRight => Some(false),
-        NumberBitwise::ShiftRightUnsigned => Some(true),
-        _ => None,
-    }
-}
-
-/// Whether `word` holds a string: its length never changes, so a relation to it survives every write to a length.
-fn is_string(word: &Word) -> bool {
-    word.cell.ty != Type::NEVER && word.cell.ty.is_subtype(Type::language(ValueType::String))
-}
-
-/// Whether `word` holds an array (an element class it names) or a string, whose length a relation may name.
-fn holds_array(word: &Word) -> bool {
-    word.cell.elements != Elements::NEVER || is_string(word)
 }

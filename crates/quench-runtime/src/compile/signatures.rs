@@ -232,7 +232,7 @@ fn element_store_grade(site: Site<'_>) -> Effects {
 }
 
 /// The grade of an element read `base[key]`: with no index accessor in the closed world (`AotFacts::index_accessors_absent`),
-/// a Number key converts to no guest code (`lengths::element_runs_guest_code`), and a base that is never nullish throws
+/// a Number key converts to no guest code (`lengths::transfer::element_runs_guest_code`), and a base that is never nullish throws
 /// nothing, so the read runs nothing (`RUNS_NOTHING`). A hole reads `undefined` through the prototype chain, which holds
 /// no index accessor, so the read's bounds do not change its grade. Any other read is open (`ANY`).
 fn element_read_grade(site: Site<'_>, base: Register, key: Operand) -> Effects {

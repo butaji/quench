@@ -53,6 +53,10 @@ pub(super) enum Origin {
     /// The array a literal or an array constructor allocates at `pc` of `function` (`effects::value_of`): its own element
     /// class, which only a store or a call joins to another (`Word::link`).
     Alloc { function: u32, pc: u32 },
+    /// The object a literal of a fixed shape allocates at `pc` of `function` (`MakeObjectLiteral`, `MakeObject2`): its keys are
+    /// the site's, and its values are recorded in the function's `FunctionFlow::literals` (`Record::observe`), where
+    /// `copies` reads them when the object is copied from.
+    Literal { function: u32, pc: u32 },
     /// The argument parameter `index` of `function` holds in a register on entry (`flow::Solver::entry_facts`): its array's
     /// class is the parameter's, which a resolved call joins to the argument's (`types::entry_links`).
     Parameter { function: u32, index: u16 },
