@@ -81,6 +81,7 @@ pub(crate) use store_domains::store_domains;
 use relocs::RelocKind; pub(crate) use relocs::{atom_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] pub(crate) mod constructions;
+#[path = "lane_region/dead_stores.rs"] pub(crate) mod dead_stores;
 #[path = "lane_region/virtual_objects.rs"] pub(crate) mod virtual_objects;
 #[path = "lane_region/dense_elements.rs"] pub(crate) mod dense_elements;
 #[path = "lane_region/dense_appends.rs"] pub(crate) mod dense_appends;
@@ -5158,6 +5159,10 @@ impl Lowering<'_, '_> {
             return None;
         }
         let register = self.store_owner(pc, instruction)?;
+        // A store no program code observes is dead: it emits nothing (`field_store_unread`).
+        if register.is_some_and(|base| self.field_store_unread(pc, base, instruction.atom_index())) {
+            return Some(true);
+        }
         let carried = match self.loop_fields.iter().find(|field| field.stores.contains(&pc)) {
             Some(field) => Some(*self.hoisted.get(&field.reads[0])?),
             None => None,
