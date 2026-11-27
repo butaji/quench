@@ -11,7 +11,7 @@ use crate::value::ValueLayout;
 /// value's name is the kind the frame proves of its cell (`Frame::type_of`); a frame that proves
 /// no kind leaves at the miss edge.
 #[inline(always)]
-pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register) -> Step<S::Word, F::Control> {
     let bits = frame.tagged(stage, source);
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
@@ -31,7 +31,7 @@ pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
 /// `typeof source` tested against the name at `index` in `TYPEOF_NAMES`, negated where `negated`
 /// (`typeof x === "name"`): the boolean where the value's name is known (`name_word`).
 #[inline(always)]
-pub(super) fn typeof_test<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn typeof_test<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register, index: u64, negated: bool) -> Step<S::Word, F::Control> {
     let bits = frame.tagged(stage, source);
     let Some(name) = name_word(stage, frame, bits) else { return Step::Unresolved };
@@ -45,7 +45,7 @@ pub(super) fn typeof_test<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fr
 /// `typeof source` as its result string, into `destination`: the frame's interned string of the
 /// name `name_word` gives (`Frame::typeof_string`).
 #[inline(always)]
-pub(super) fn typeof_string<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn typeof_string<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register) -> Step<S::Word, F::Control> {
     let bits = frame.tagged(stage, source);
     let Some(name) = name_word(stage, frame, bits) else { return Step::Unresolved };

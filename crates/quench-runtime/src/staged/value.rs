@@ -163,7 +163,7 @@ pub mod language {
 /// function (`FUNCTION`), a direct string (`STRING`, the exact family test `is_direct_string` makes). A heap value
 /// no tag decides (a rope or heap string, a symbol, a BigInt) sets none.
 #[inline(always)]
-pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+pub fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
     let array = family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG);
     let function = family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG);
@@ -257,7 +257,7 @@ pub fn is_direct_collection<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 /// Whether `bits` is a legacy slot reference (`Value::legacy_heap_index`): a heap value of no
 /// record family, whose low half is its slot.
 #[inline(always)]
-pub(crate) fn is_legacy_slot<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn is_legacy_slot<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::HEAP_TAG)
 }
 
@@ -370,10 +370,10 @@ const fn typeof_name_index(name: &str) -> u64 {
 
 /// The indexes in `bytecode::TYPEOF_NAMES` of the names a value's tag alone decides: `typeof` of
 /// `undefined`, of `null` (an object) and a boolean and a Number.
-pub(crate) const TYPEOF_UNDEFINED: u64 = typeof_name_index("undefined");
-pub(crate) const TYPEOF_OBJECT: u64 = typeof_name_index("object");
-pub(crate) const TYPEOF_BOOLEAN: u64 = typeof_name_index("boolean");
-pub(crate) const TYPEOF_NUMBER: u64 = typeof_name_index("number");
+pub const TYPEOF_UNDEFINED: u64 = typeof_name_index("undefined");
+pub const TYPEOF_OBJECT: u64 = typeof_name_index("object");
+pub const TYPEOF_BOOLEAN: u64 = typeof_name_index("boolean");
+pub const TYPEOF_NUMBER: u64 = typeof_name_index("number");
 
 /// The index in `bytecode::TYPEOF_NAMES` of the one name `typeof` yields for every value of the language
 /// set `languages` (the `language` bits), where the set decides one: a set of functions is `function`, a
@@ -415,7 +415,7 @@ pub fn typeof_test_of(ty: crate::typed_ir::Type, index: u64, negated: bool) -> O
 /// The tag classes `typeof` reads from a value's own word: a Number (int32 or double), a boolean,
 /// and `null`. Every `typeof` row selects its name from these.
 #[inline(always)]
-pub(crate) fn typeof_classes<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond, S::Cond) {
+pub fn typeof_classes<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond, S::Cond) {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
     let double = is_double(stage, bits);
@@ -437,7 +437,7 @@ impl TypeofKind {
     }
 
     /// The index in `bytecode::TYPEOF_NAMES` of this kind's name.
-    pub(crate) const fn index(self) -> u64 {
+    pub const fn index(self) -> u64 {
         self.0
     }
 }
@@ -447,7 +447,7 @@ impl TypeofKind {
 /// whose cell decides (a string, BigInt, symbol, object or function), or an internal marker leaves
 /// at `miss`.
 #[inline(always)]
-pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
     // A Number is the first test: its arm runs no boolean, `null`, `undefined` or deleted compare. The
     // other arm is the same ladder as before, its guard left at `miss` where no class decides the word.
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
@@ -476,7 +476,7 @@ pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, mis
 /// the address of the table of the eight result strings (`Vm::typeof_names`, interned when the heap is
 /// made and indexed as `bytecode::TYPEOF_NAMES`), at the value's index; a heap value leaves at `miss`.
 #[inline(always)]
-pub(crate) fn immediate_typeof_string<S: Stage>(stage: &mut S, bits: S::Word, names: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn immediate_typeof_string<S: Stage>(stage: &mut S, bits: S::Word, names: S::Word, miss: S::Miss) -> Option<S::Word> {
     let index = immediate_typeof_index(stage, bits, miss)?;
     let offset = stage.mul_imm(index, core::mem::size_of::<crate::Value>() as u64);
     let entry = stage.add(names, offset);
@@ -486,7 +486,7 @@ pub(crate) fn immediate_typeof_string<S: Stage>(stage: &mut S, bits: S::Word, na
 /// The binary64 value of the int32 whose tagged word is `bits`: its low half, sign-extended and
 /// converted (`Value::as_int` read as a Number). Both int32 unboxing rows share it.
 #[inline(always)]
-pub(crate) fn int32_as_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
+pub fn int32_as_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
     let low = machine.raw_unary(Unary::Narrow(Lane::I32), bits);
     machine.raw_unary(Unary::FromSigned(Lane::F64), low)
 }
@@ -533,7 +533,7 @@ pub fn known_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::
 /// double; a NaN-space word is an int32 (its tag) or a double NaN, and any other tag is not a Number
 /// (`decided` is false). `value` is meaningful where `decided` holds.
 #[inline(always)]
-pub(crate) fn tagged_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> (M::Word, M::Word) {
+pub fn tagged_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> (M::Word, M::Word) {
     let number = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
     let ordered = machine.raw_compare(Relation::FloatEqual, number, number);
     let nan = machine.raw_compare_imm(Relation::Equal, ordered, 0);
@@ -573,7 +573,7 @@ pub fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M:
 #[cfg(not(stencil_build))]
 /// The interpreter's `immediate_typeof_index` of `value`.
 #[inline(always)]
-pub(crate) fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {
+pub fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {
     let mut stage = crate::staged::Concrete::pure();
     immediate_typeof_index(&mut stage, value.to_bits(), ()).map(|index| index as usize)
 }

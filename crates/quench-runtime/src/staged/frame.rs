@@ -54,8 +54,7 @@ struct ContextWords {
     this: usize,
 }
 
-#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
-pub(crate) const CONTEXT_WORDS: usize = size_of::<ContextWords>() / WORD_BYTES;
+pub const CONTEXT_WORDS: usize = size_of::<ContextWords>() / WORD_BYTES;
 
 /// A context field's index, counted down from register 0: the last field is word 1 and the
 /// first is `CONTEXT_WORDS`.
@@ -126,12 +125,12 @@ pub const NATIVE_FLAG: u64 = 1 << PackedFlag::Native as u32;
 /// The side-record flags (one-frame-one-call.md F4): a frame with any of them has one entry on
 /// the lane stack's side records (`LaneStack::sides`), innermost last; a frame with none
 /// completes plainly from its header alone.
-pub(crate) const KEEPS_FLAG: u64 = 1 << PackedFlag::Keeps as u32;
-pub(crate) const ENV_FLAG: u64 = 1 << PackedFlag::Env as u32;
+pub const KEEPS_FLAG: u64 = 1 << PackedFlag::Keeps as u32;
+pub const ENV_FLAG: u64 = 1 << PackedFlag::Env as u32;
 pub const COMPLETION_FLAG: u64 = 1 << PackedFlag::Completion as u32;
-pub(crate) const CROSSES_FLAG: u64 = 1 << PackedFlag::Crosses as u32;
-pub(crate) const OWNS_FLAG: u64 = 1 << PackedFlag::Owns as u32;
-pub(crate) const SIDE_FLAGS: u64 = KEEPS_FLAG | ENV_FLAG | COMPLETION_FLAG | CROSSES_FLAG | OWNS_FLAG;
+pub const CROSSES_FLAG: u64 = 1 << PackedFlag::Crosses as u32;
+pub const OWNS_FLAG: u64 = 1 << PackedFlag::Owns as u32;
+pub const SIDE_FLAGS: u64 = KEEPS_FLAG | ENV_FLAG | COMPLETION_FLAG | CROSSES_FLAG | OWNS_FLAG;
 pub const ARGC_SHIFT: u32 = FLAG_BASE + FLAG_BITS;
 const _: () = assert!(PLAIN_FLAG == 1 << 32);
 const _: () = assert!(BODY_FLAG == 1 << 33);
@@ -172,7 +171,7 @@ pub const KIND_NATIVE: u8 = 0;
 /// them). `quench-bjit`'s stencil crate and lib mount this file, so both read these constants.
 #[repr(C)]
 #[allow(dead_code)]
-pub(crate) struct WasmFrameHeader {
+pub struct WasmFrameHeader {
     /// The result pointer, the first header word.
     result: usize,
     /// The linear memory's base address.
@@ -182,11 +181,11 @@ pub(crate) struct WasmFrameHeader {
 }
 
 /// The result pointer's word index in the Wasm frame header.
-pub(crate) const WASM_RESULT_WORD: usize = offset_of!(WasmFrameHeader, result) / WORD_BYTES;
+pub const WASM_RESULT_WORD: usize = offset_of!(WasmFrameHeader, result) / WORD_BYTES;
 /// The linear memory base's word index in the Wasm frame header.
-pub(crate) const WASM_BASE_WORD: usize = offset_of!(WasmFrameHeader, base) / WORD_BYTES;
+pub const WASM_BASE_WORD: usize = offset_of!(WasmFrameHeader, base) / WORD_BYTES;
 /// The linear memory length's word index in the Wasm frame header.
-pub(crate) const WASM_LENGTH_WORD: usize = offset_of!(WasmFrameHeader, length) / WORD_BYTES;
+pub const WASM_LENGTH_WORD: usize = offset_of!(WasmFrameHeader, length) / WORD_BYTES;
 /// The Wasm frame header's size in words: the first register's word index, one past the header.
 pub const WASM_HEADER_WORDS: usize = size_of::<WasmFrameHeader>() / WORD_BYTES;
 const _: () = assert!(WASM_RESULT_WORD == 0);
