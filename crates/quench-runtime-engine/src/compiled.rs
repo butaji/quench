@@ -115,7 +115,7 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 #[cfg(feature = "jit")]
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
@@ -297,7 +297,7 @@ pub use fault_handler::NativeFaultHandler;
 pub(crate) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
-    MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
+    MethodCalls, RegionAnalysisFailure, RegionRejection,
 };
 
 pub(crate) use quench_runtime::staged::Domain as NumberRelationDomain;

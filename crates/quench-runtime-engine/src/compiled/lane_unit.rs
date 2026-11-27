@@ -581,7 +581,6 @@ impl Emitter {
                         call: pc as u32,
                         target: call.target,
                         callee_register: register(instruction.register_b()),
-                        callee_entry_word: None,
                         receiver: register(instruction.register_c()),
                         window: register(ImmediateLayout::call_window_base(instruction.imm())),
                         arguments: ImmediateLayout::argument_count(instruction.imm()), result: (!returns).then_some(call_result),

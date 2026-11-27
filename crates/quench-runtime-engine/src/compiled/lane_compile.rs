@@ -400,7 +400,7 @@ impl Vm {
     }
 
     /// The AOT facts of `program`, where it is the running program: facts of another program name no call of it.
-    fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
+    pub(crate) fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
         self.programs.residual(self.active_program).filter(|running| std::ptr::eq(*running, program))
             .and_then(|_| self.programs.aot_facts(self.active_program))
     }

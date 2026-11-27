@@ -110,7 +110,7 @@ pub(crate) use call_frames::ProvenCall;
 #[path = "lane_region/fixed_arrays.rs"] pub(crate) mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] pub(crate) mod element_tests;
 #[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] pub(crate) mod loop_shape_tests;
-use loop_arrays::{ArraySource, LoopArray};
+use loop_arrays::LoopArray;
 use loop_strings::{LoopString, StringVariables};
 #[path = "lane_region/bound_this.rs"] pub(crate) mod bound_this;
 use frame::EmitFrame;
@@ -586,16 +586,8 @@ pub(crate) struct Lowering<'a, 'f> {
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a FieldSites,
-    /// An OSR region's field reads answered from the entry record, by unit PC.
-    entry_fields: &'a EntryWords,
     /// The typed array kinds the body's element records took (`body_views::typed_reads`): the kind's view each access proves.
     kinds: &'a [super::body_views::ObservedKind],
-    /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
-    int_entries: &'a [(Register, IntRange)],
-    /// The registers observed to hold doubles at entry (`RegionSpecializer::number_entries`).
-    number_entries: &'a [Register],
-    /// The capture slots observed to hold int32s (`RegionSpecializer::int_captures`).
-    int_captures: &'a [u16],
     /// The by-name loads that read the global scope (`Vm::global_reads_in_lane`).
     global_reads: &'a quench_runtime::vm::global_facts::GlobalReads,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
@@ -693,10 +685,10 @@ pub(crate) struct Lowering<'a, 'f> {
     scalar_values: BTreeMap<usize, native_calls::HoistedScalar>,
     /// Per dense array a loop searches, whether its prototypes hold no index, proved on the loop's entry
     /// (`hoist_arrays`) and unset by an invalidation (`forget_append_rooms`).
-    prototype_clear: BTreeMap<ArraySource, Variable>,
+    prototype_clear: BTreeMap<Register, Variable>,
     /// The hoisted dense arrays, by loop header and source, whose entering edge guarded every element
     /// an int32 (`int_only_array`, `hoist_arrays`): their reads take the element's word as it is.
-    int_only: BTreeSet<(usize, ArraySource)>,
+    int_only: BTreeSet<(usize, Register)>,
     /// The loops whose entering edge tests the construct plan of each callee their kept
     /// constructions build by, once for the loop (`virtual_objects::hoist_constructions`).
     construct_ready: Vec<virtual_objects::ConstructReady>,
@@ -715,7 +707,7 @@ pub(crate) struct Lowering<'a, 'f> {
     /// (`arrays_stay_put`), so the record table's base is read-only throughout.
     arrays_fixed: bool,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
-    array_vars: BTreeMap<ArraySource, ArrayVariables>,
+    array_vars: BTreeMap<Register, ArrayVariables>,
     views: ElementViews,
     /// Whether loops version their bounds on entry (`RegionPlan::entry_bounds`).
     entry_bounds: bool,
@@ -725,9 +717,6 @@ pub(crate) struct Lowering<'a, 'f> {
     /// The unit's integer proofs, computed once before lowering (`Lowering::prove_ranges`): the
     /// arithmetic that cannot overflow and the hoisted element accesses within their array.
     ranges: int_ranges::IntRanges,
-    /// The registers whose int32 range the entry guards once and the ranges pass takes as
-    /// the entry state (`Lowering::entering_ranges`).
-    entering: Vec<(Register, IntRange)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -1761,18 +1750,8 @@ pub(crate) struct RegionPlan {
     pub(crate) entry_bounds: bool,
 }
 
-/// Futamura's first projection for one region: the same `lower` a lane body, a static typed
-/// region and a numeric region run, parameterized by its `RegionPlan`. AOT and JIT both call
-/// this specializer; only the plan and the `VmFacts` division differ.
-/// No entry-snapshot field reads: a lane body or a static typed region reads its fields
-/// from the registers and caches, not from an OSR entry record.
-pub(crate) static NO_ENTRY_FIELDS: [Option<u32>; 0] = [];
-
 /// The proved loads of each field-cache site, flat and indexed by the site (`site_loads`).
 pub(crate) type FieldSites = [Option<Vec<NativeFieldLoad>>];
-/// The entry-record word of each unit PC whose field read the record answers, flat and
-/// indexed by the PC.
-pub(crate) type EntryWords = [Option<u32>];
 
 /// The loads of field-cache `site`, if it has any.
 pub(crate) fn site_loads(fields: &FieldSites, site: u16) -> Option<&Vec<NativeFieldLoad>> {
@@ -1788,6 +1767,9 @@ pub(crate) fn flat_table<T>(entries: impl IntoIterator<Item = (usize, T)>) -> Ve
     table
 }
 
+/// Futamura's first projection for one region: the same `lower` a lane body, a static typed
+/// region and a numeric region run, parameterized by its `RegionPlan`. AOT and JIT both call
+/// this specializer; only the plan and the `VmFacts` division differ.
 pub(crate) struct RegionSpecializer<'p> {
     pub(crate) function_id: u32,
     pub(crate) unit: &'p super::lane_unit::Unit,
@@ -1799,27 +1781,8 @@ pub(crate) struct RegionSpecializer<'p> {
     pub(crate) direct: &'p DirectSites,
     pub(crate) frame_captures: &'p [(usize, usize)],
     pub(crate) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
-    /// An OSR region's field reads answered from the entry record, by unit PC and entry
-    /// word (`osr_loop::field_word`).
-    pub(crate) entry_fields: &'p EntryWords,
     /// The typed array kinds the body's element records took (`body_views::typed_reads`), by unit PC (sorted).
     pub(crate) kinds: &'p [super::body_views::ObservedKind],
-    /// The registers whose values at entry were int32s: candidates for an int32 entry contract
-    /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
-    pub(crate) int_entries: &'p [(Register, IntRange)],
-    /// The registers whose values at entry were doubles: with `int_entries`, candidates for a
-    /// Number entry contract (`refine_inductive_inputs`) where an int32 one fails.
-    pub(crate) number_entries: &'p [Register],
-    /// The registers whose values at entry were strings: a loop array they hold is no view, its
-    /// reads take the string row (`Lowering::string_or_row`), which reads any value.
-    pub(crate) string_entries: &'p [Register],
-    /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
-    pub(crate) typed_captures: &'p [u16],
-    /// The capture slots that held int32s at compilation (`Observation::int_captures`).
-    pub(crate) int_captures: &'p [u16],
-    /// The kind each loop array's register held at entry (`Observation::typed_kinds`): an array's
-    /// reads and writes keep their own kind's arm, not a walk over every kind.
-    pub(crate) typed_kinds: &'p [(Register, quench_runtime::tier_surface::TypedArrayKind)],
     pub(crate) plan: RegionPlan,
     /// The gate's proof that this region's compile may run (minted by `specialize`).
     pub(crate) admitted: super::admission::CompiledUnit,
@@ -1831,7 +1794,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.kinds, (self.int_entries, self.number_entries, self.string_entries), self.typed_captures, self.int_captures, self.typed_kinds, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.kinds, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1884,7 +1847,7 @@ pub(crate) fn lower_body(
     UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
     MISMATCH.with(|mismatch| mismatch.set(false));
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, kinds, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[], admitted,
+        generic, direct, frame_captures, isa: &*isa, kinds, admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
@@ -1944,12 +1907,7 @@ pub(crate) fn lower(
     direct: &DirectSites,
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
-    entry_fields: &EntryWords,
     kinds: &[super::body_views::ObservedKind],
-    (int_entries, number_entries, string_entries): (&[(Register, IntRange)], &[Register], &[Register]),
-    typed_captures: &[u16],
-    int_captures: &[u16],
-    typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -2047,6 +2005,12 @@ pub(crate) fn lower(
     builder.append_block_param(stop, types::I64);
     builder.set_cold_block(leave);
     builder.set_cold_block(stop);
+    // The typed array kind each access of the unit's own function proves (`FunctionFacts::element_view`).
+    let element_facts = vm.facts;
+    let element_kind = |pc: usize| match unit.origins.get(pc) {
+        Some(super::lane_unit::Origin::Caller(pc)) => element_facts?.function_facts(function_id).element_view(*pc),
+        _ => None,
+    };
     let mut lowering = Lowering {
         builder,
         program,
@@ -2055,11 +2019,7 @@ pub(crate) fn lower(
         function_id,
         helpers,
         fields,
-        entry_fields,
         kinds,
-        int_entries,
-        number_entries,
-        int_captures,
         interrupt,
         fault_poll,
         trips: None,
@@ -2122,7 +2082,6 @@ pub(crate) fn lower(
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         ranges: int_ranges::IntRanges::new(0),
-        entering: Vec::new(),
         at: 0,
         field_regions: BTreeMap::new(),
         forward: Vec::new(), sealable: BitSet::new(),
@@ -2212,7 +2171,6 @@ pub(crate) fn lower(
                 }
             }
         }
-        refined |= lowering.seed_loop_ints(&mut initial, &loops);
         if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &lowering.raises, typed_seeds); }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
@@ -2223,24 +2181,15 @@ pub(crate) fn lower(
     // A preliminary run of the facts over the arrays the loops index without their captured reads
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false, |at| lowering.held_field(at),
-        lowering.views, typed_kinds, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
-    lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, lowering.views, &element_kind, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     let quiet_store = |pc: usize| preliminary.numeric_store(pc) && lowering.typed_access(pc) == Some(super::facts::TypedAccess::Store);
     let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store, global_reads);
     lowering.hoists = hoists;
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
-        |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
-            read.pc == at && read.owner.is_none() && matches!(crate::compiled::performed(&instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })))),
-        |at| lowering.held_field(at), lowering.views, typed_kinds, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, lowering.views, &element_kind, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
-    lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
-        && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
+    lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)).collect();
     lowering.loop_strings = loop_strings::loop_strings(unit, &loops, &lowering.intrinsics, |pc| coverage.lowered(pc));
-    lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     lowering.arrays_fixed = lowering.arrays_stay_put();
     lowering.loop_fields = loop_fields(program, unit, &loops);
@@ -3227,7 +3176,6 @@ impl Lowering<'_, '_> {
         self.proving_entry = matches!(coverage, Coverage::Prefix) && self.completion.status_and_pc();
         self.conform(state, pc);
         self.proving_entry = false;
-        self.guard_entering_ranges(state, pc);
     }
 
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
@@ -3817,12 +3765,7 @@ impl Lowering<'_, '_> {
     fn inline_call(&mut self, state: &mut State, pc: usize, frame: usize) -> bool {
         let inlined = self.unit.frames[frame];
         let exit = self.guard_exit(state, pc as u32);
-        // An OSR region's callee comes from the entry snapshot: the caller's read is
-        // resolved at compile time and dropped, and its register is reused by the loop.
-        let callee = match inlined.callee_entry_word {
-            Some(word) => self.loop_entry_word(word),
-            None => self.tagged(state, inlined.callee_register),
-        };
+        let callee = self.tagged(state, inlined.callee_register);
         let callee_index = usize::from(inlined.callee_register);
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
@@ -4268,12 +4211,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
-    /// entry contract: the definition yields an int32, or the register held one at entry.
-    fn int32_candidate(&self, register: Register, ty: Type) -> bool {
-        ty.is_int32() || self.int_entries.iter().any(|(entry, _)| *entry == register)
-    }
-
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
     /// and backedge must preserve it too; failed hypotheses are removed before
     /// reanalysis so a dependent candidate cannot keep using their assumptions.
@@ -4293,28 +4230,11 @@ impl Lowering<'_, '_> {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
                     && self.is_live(header, register) && self.written.contains(index)
-                    && initial[index].is_any_or_number() && self.int32_candidate(register, ty) {
+                    && initial[index].is_any_or_number() && ty.is_int32() {
                     candidates.insert(index);
                 }
             });
         if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, &self.raises) {
-            self.facts = facts;
-        }
-        // An accumulator that entered as a Number (an int32 or a double) and that every
-        // definition keeps a Number is carried as a double, as C carries its `double` sum: the
-        // entering edge proves it once, and the loop neither boxes nor tests it.
-        let mut numbers: BitSet = BitSet::with_capacity(initial.len());
-        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
-            |pc, register, _| {
-                let index = usize::from(register);
-                let entered = self.int_entries.iter().any(|(entry, _)| *entry == register) || self.number_entries.contains(&register);
-                if (header..=back).contains(&pc) && register < self.unit.caller_registers && entered
-                    && self.is_live(header, register) && self.written.contains(index) && initial[index] == Type::ANY {
-                    numbers.insert(index);
-                }
-            });
-        if !numbers.is_empty() && let Some(facts) = super::facts::inductive(initial, numbers, Type::NUMBER, header..=back,
             instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, &self.raises) {
             self.facts = facts;
         }
@@ -4386,15 +4306,20 @@ impl Lowering<'_, '_> {
         false
     }
 
-    /// Whether the capture `instruction` reads held an int32 when this body compiled, so its
-    /// entry guard takes the checked integer view (a guess the guard checks, as for `int_entries`).
-    fn capture_observed_int(&self, instruction: WideInstruction) -> bool {
-        instruction.capture_depth() == 0 && self.int_captures.contains(&quench_runtime::bytecode::ImmediateLayout::capture_slot(instruction.imm()))
-    }
-
     /// A capture may choose the same checked integer view as a bitwise use, or
     /// as the already-proved integer on the other side of a Number relation.
     /// This selects an entry guard; it does not prove the capture's type.
+    /// Whether the capture the unit instruction at `pc` reads, of the unit's own function's environment, holds an int32 at
+    /// every read the solve settles (`FunctionFacts::capture_cells`): its read takes the integer view with no guard.
+    fn capture_solved_int(&self, pc: usize) -> bool {
+        let instruction = self.unit.instructions[pc];
+        let Some(super::lane_unit::Origin::Caller(_)) = self.unit.origins.get(pc) else { return false };
+        instruction.capture_depth() == 0 && self.vm.facts.is_some_and(|facts| {
+            let slot = quench_runtime::bytecode::ImmediateLayout::capture_slot(instruction.imm());
+            facts.function_facts(self.function_id).capture_cells().iter().any(|(captured, cell)| *captured == slot && cell.ty.is_int32())
+        })
+    }
+
     fn capture_int32_use(&self, pc: usize, boundaries: &BitSet) -> bool {
         let mut aliases: BitSet = BitSet::with_capacity(usize::from(self.unit.registers));
         aliases.insert(usize::from(self.unit.instructions[pc].result_register()));
@@ -4470,7 +4395,7 @@ impl Lowering<'_, '_> {
             let (value, int32) = if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. })) {
                 let Ok(admitted_callee) = self.admitted_callee_read(state, pc, &reads, &boundaries, exit, callee) else { continue };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
-                let int32 = self.capture_int32_use(pc, &boundaries) || self.capture_observed_int(instruction);
+                let int32 = self.capture_int32_use(pc, &boundaries) || self.capture_solved_int(pc);
                 (value, int32)
             } else {
                 let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { continue };
@@ -4634,13 +4559,12 @@ impl Lowering<'_, '_> {
 
     /// Prove the views of the arrays the loop at `header` indexes without redefining them, on
     /// its entering edge; a base that is no such array leaves at the header.
-    fn hoist_arrays(&mut self, state: &mut State, header: usize, captured: bool) {
-        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
-            .filter(|array| array.header == header && matches!(array.source, ArraySource::Capture(_)) == captured).collect();
+    fn hoist_arrays(&mut self, state: &mut State, header: usize) {
+        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied().filter(|array| array.header == header).collect();
         if arrays.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
         for array in arrays {
-            let Some(bits) = self.hoisted_array_bits(state, array) else { continue };
+            let bits = self.tagged(state, array.source);
             let variables = self.array_variables(array);
             self.builder.def_var(variables.bits, bits);
             match array.views {
@@ -4690,8 +4614,8 @@ impl Lowering<'_, '_> {
                 ElementViews::Typed(_) => {
                     let kind = array.views.observed_kind().and_then(NativeKind::new);
                     // A view an access before the loop proved and kept for the same register and kind is the loop's.
-                    let register = match array.source { ArraySource::Register(register) => Some(register), _ => None };
-                    let kept = register.zip(kind).and_then(|(register, native)| self.typed_view_of(state, (register, native.kind, array.writable), exit));
+                    let register = array.source;
+                    let kept = kind.and_then(|native| self.typed_view_of(state, (register, native.kind, array.writable), exit));
                     match kept {
                         Some(view) => {
                             self.builder.def_var(variables.values, view.values);
@@ -4713,19 +4637,6 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, length);
                 }
             }
-        }
-    }
-
-    /// The tagged value of `array`'s source on the loop's entry edge: its register's, or its
-    /// hoisted capture read's (none where that read was not hoisted tagged).
-    fn hoisted_array_bits(&mut self, state: &mut State, array: LoopArray) -> Option<ir::Value> {
-        match array.source {
-            ArraySource::Register(register) => Some(self.tagged(state, register)),
-            ArraySource::Capture(pc) => {
-                let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
-                Some(self.builder.use_var(read.value))
-            }
-            ArraySource::Field(pc) => Some(self.loop_entry_word(self.entry_fields.get(pc).copied().flatten()?)),
         }
     }
 
@@ -4931,23 +4842,6 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         let lookup = instruction.field_lookup()?;
-        // An OSR region's static field read answers from the entry record, as the verified
-        // lowering's does: the value the field held at entry, which the loop does not write.
-        if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
-            && let Some(Some(word)) = self.entry_fields.get(pc).copied()
-        {
-            let exit = self.guard_exit(state, pc as u32);
-            let held = HeldRead { entry_word: Some(word), ..HeldRead::default() };
-            let bits = self.field_value(state, (base, lookup), &[], held, exit)?;
-            // A register's `length` read the solve proves an int32 holds its int payload: narrowed, with no tag test.
-            if register.is_some() && super::reads_length(self.program, instruction) && self.proven_result(pc, destination).is_some_and(|ty| ty.is_int32()) {
-                let int = self.raw_unary(Unary::Narrow(Lane::I32), bits);
-                self.set_int(state, destination, int);
-            } else {
-                self.set_tagged(state, destination, bits);
-            }
-            return Some(true);
-        }
         let exit = self.guard_exit(state, pc as u32);
         let (first, rest) = parts.split_first()?;
         // A direct array's `length` is its record's, an int32.
@@ -5028,8 +4922,7 @@ impl Lowering<'_, '_> {
         if let Some(string) = self.loop_string(pc, Some(register)).filter(|string| entering != Some(string.header)) {
             return self.held_length(string);
         }
-        let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
-            && (entering != Some(array.header) || !matches!(array.source, ArraySource::Capture(_)));
+        let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_));
         if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
             let (_, count) = self.hoisted_view(array);
             let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
@@ -5090,11 +4983,6 @@ impl Lowering<'_, '_> {
     /// than leave, as this unit's other reads would leave one recompile at a time.
     fn left_a_field_read(&self) -> bool {
         self.generic.iter().any(|pc| self.unit.instructions.get(*pc).is_some_and(|instruction| matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. }))))
-    }
-
-    /// Word `word` of the loop's entry record (`frame_fields::entry_record_word`).
-    fn loop_entry_word(&mut self, word: u32) -> ir::Value {
-        frame_fields::entry_record_word(&mut self.builder, self.payload, word)
     }
 
     /// A dominating proof of `owner`'s object (`headers::object_header`).

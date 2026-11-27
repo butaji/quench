@@ -311,10 +311,9 @@ impl Vm {
             shapes: &[],
         };
         let speculated = widened(generic);
-        // The typed kind each element record observed (`dispatch_fast::typed_element_kind`), from the region's header.
-        let typed: Vec<_> = self.programs.views_in_lane(self.active_program).and_then(|views| views.get(function as usize))
-            .and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .map(|view| (region.header as usize..=region.backedge as usize).map(|pc| crate::dispatch_fast::typed_element_kind(view, pc)).collect())
+        // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
+        let typed: Vec<_> = self.aot_facts_of(program)
+            .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
             .unwrap_or_default();
         let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[], typed: &typed };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).

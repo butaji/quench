@@ -246,11 +246,3 @@ impl LoopTier {
     }
 }
 
-/// The registers of the running activation that hold int32s at entry and that the loop writes,
-/// each with the range its value gives the entry (`IntRange::entering`): an observation the
-/// compiled code's entry contract checks.
-pub(crate) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::IntRange)> {
-    region.entry_registers().filter_map(|register| r.get(register).as_int()
-        .map(|value| (register, quench_runtime::typed_ir::IntRange::entering(value)))).collect()
-}
-
