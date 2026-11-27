@@ -272,7 +272,7 @@ mod tests {
     }
 
     fn store(heap: &mut Heap, object: Value, shape: u32, slot: u16, value: Value) -> bool {
-        let id = object.direct_object_index().unwrap();
+        let id = heap.record_id(object.direct_object_index().unwrap());
         // SAFETY: a live record of the shape, whose slot it holds.
         unsafe { concrete_own_store(heap, id, shape, false, slot, value) }
     }

@@ -3,7 +3,7 @@ use super::{
     PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
-use crate::value::{HeapReference, Value};
+use crate::value::{HeapReference, ObjectRef32, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
@@ -242,9 +242,16 @@ impl Heap {
         Some((mutable_slot.cell.as_mut()?, read_only_slot.cell.as_ref()?))
     }
 
+    /// The record id of the ordinary object `object` names (identity now; R4-B2b reads the cell header).
+    #[inline(always)]
+    pub fn record_id(&self, object: ObjectRef32) -> u32 {
+        object.0
+    }
+
     #[inline(always)]
     pub fn object(&self, value: Value) -> Option<&Object> {
-        if let Some(record_id) = value.direct_object_index() {
+        if let Some(object) = value.direct_object_index() {
+            let record_id = self.record_id(object);
             // SAFETY: a direct-object Value is only created after the
             // ObjectRecord is initialized, and records retire after weak pruning.
             return Some(unsafe { self.object_records.get_live(record_id) });
@@ -419,7 +426,8 @@ impl Heap {
 
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
-        if let Some(record_id) = value.direct_object_index() {
+        if let Some(object_ref) = value.direct_object_index() {
+            let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let object = unsafe { self.object_records.get_live_mut(record_id, &self.properties) };
             widen_narrow_run(object, &mut self.properties);
@@ -452,7 +460,8 @@ impl Heap {
     /// is a heap reference.
     #[inline(always)]
     pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
-        if let Some(record_id) = value.direct_object_index() {
+        if let Some(object_ref) = value.direct_object_index() {
+            let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
             // narrow value in place and widen the run for any other.
@@ -806,7 +815,7 @@ impl Heap {
     }
 
     #[inline] pub fn object_record(&self, value: Value) -> Option<&Object> {
-        let record_id = value.direct_object_index()?;
+        let record_id = self.record_id(value.direct_object_index()?);
         Some(self.object_record_by_id(record_id))
     }
 
@@ -908,7 +917,7 @@ impl Heap {
     #[inline(always)]
     pub fn record_object_value(&self, value: Value) -> Option<&Object> {
         match value.direct_object_index() {
-            Some(record_id) => Some(self.object_record_by_id(record_id)),
+            Some(object_ref) => Some(self.object_record_by_id(self.record_id(object_ref))),
             None => self.record_object(value.heap_reference()?),
         }
     }
@@ -941,7 +950,7 @@ impl Heap {
     #[quench_macros::test_visible]
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
-        let record_id = value.direct_object_index()?;
+        let record_id = self.record_id(value.direct_object_index()?);
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
         Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) })
     }

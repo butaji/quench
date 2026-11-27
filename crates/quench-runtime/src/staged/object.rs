@@ -294,8 +294,7 @@ pub(crate) fn instance_decision<S: Stage>(stage: &mut S, records: S::Word, value
 fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word) -> S::Word {
     let direct = super::value::is_direct_object(stage, value);
     stage.choose(direct, #[inline(always)] |stage| {
-        let id = super::value::direct_object_id(stage, value);
-        let record = object_record_at(stage, records, id);
+        let record = object_record_of(stage, records, value);
         let (decided, holds) = stage.walk_prototypes(records, record, target, INSTANCEOF_WALK_LINKS);
         let [fails, holding, undecided] = [WALK_FAILS, WALK_HOLDS, WALK_UNDECIDED].map(|answer| stage.constant(answer));
         let answer = stage.select(holds, holding, fails);
@@ -311,11 +310,20 @@ fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, ta
     })
 }
 
-/// The address of object record `id` in the record table at `records`.
+/// The address of object record `id` in the record table at `records`. Called only by `object_record_of`,
+/// `direct_object_record`, and places that already hold a record id (not a `Value`).
 #[inline(always)]
-pub fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
+pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
     let offset = stage.mul_imm(id, OBJECT.record_size as u64);
     stage.add(records, offset)
+}
+
+/// The address of the object record the direct object reference `bits` names (its low half), in the
+/// record table at `records`. The only staged resolver: R4-B2b makes it read the cell header.
+#[inline(always)]
+pub fn object_record_of<S: Stage>(stage: &mut S, records: S::Word, bits: S::Word) -> S::Word {
+    let id = super::value::direct_object_id(stage, bits);
+    object_record_at(stage, records, id)
 }
 
 /// The id and address of the object record the direct object reference `bits` names, in the
@@ -329,7 +337,7 @@ pub(crate) fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, recor
     stage.guard(object, miss)?;
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
-    let id = stage.and_imm(bits, u64::from(u32::MAX));
+    let id = super::value::direct_object_id(stage, bits);
     Some((id, object_record_at(stage, records, id)))
 }
 

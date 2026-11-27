@@ -137,7 +137,7 @@ mod tests {
 
     /// The row's add of `value` to `object` by `transition`.
     fn add_by(heap: &mut Heap, object: Value, transition: Transition, value: Value) -> bool {
-        let id = object.direct_object_index().expect("a direct object");
+        let id = heap.record_id(object.direct_object_index().expect("a direct object"));
         // SAFETY: a live record of the heap; the row proves its layout.
         unsafe { concrete_add_property(heap, id, transition, value) }
     }

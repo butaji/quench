@@ -115,6 +115,17 @@ pub(crate) enum HeapReference {
     WasmGcRecord(u32),
 }
 
+/// An ordinary object reference: the low half of a direct object `Value`. Today it equals the
+/// object's record id; after R4-B2b it is a class-space granule. Read the record id only
+/// through `Heap::record_id` (Concrete) or `staged::object::object_record_of` (staged).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ObjectRef32(pub(crate) u32);
+
+impl ObjectRef32 {
+    /// The raw low half, for code that cannot reach the heap yet. Temporary: R4-B2b deletes it.
+    #[inline(always)] pub const fn raw(self) -> u32 { self.0 }
+}
+
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
 #[repr(usize)]
@@ -578,9 +589,9 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)] pub fn direct_object_index(self) -> Option<u32> {
+    #[inline(always)] pub fn direct_object_index(self) -> Option<ObjectRef32> {
         // `heap_reference` as one family test: hot reads ask for this family alone.
-        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
+        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(ObjectRef32(self.0 as u32))
     }
 
     #[inline(always)] pub(crate) fn direct_array_index(self) -> Option<u32> {
@@ -821,7 +832,7 @@ mod tests {
         );
         let direct_object = Value::direct_object(42);
         assert_eq!(direct_object.heap_index(), Some(42));
-        assert_eq!(direct_object.direct_object_index(), Some(42));
+        assert_eq!(direct_object.direct_object_index(), Some(super::ObjectRef32(42)));
         assert_eq!(
             direct_object.heap_reference(),
             Some(super::HeapReference::ObjectRecord(42))
