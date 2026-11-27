@@ -34,7 +34,9 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
     /// the back edge's fuel check and the target run in this record (`target_run`), which continues at
     /// the test's taken or fall-through edge. Any other family ignores `PREFIX` and `TEST`. `CMP`, where
     /// not 0, fixes the test's comparison and operand form at install (`target_comparison`), so the
-    /// back edge runs that one test with no switch on the record's operator.
+    /// back edge runs that one test with no switch on the record's operator. A `FUSED_PLAIN` pair's
+    /// `CMP` may instead fix a `Binary` equality (`plain_equality`, `equality_fusion`): its operator and
+    /// operand form are the record's, so `A` runs its Number relation with no decode.
     #[inline(never)]
     pub(crate) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
         // Both rows of the pair come from one program: `A`'s opcode names the view its records
@@ -50,8 +52,6 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
-            let fields = LaneFields::<A, { $flag }>(i);
-            let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<A>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap_reads().arena_values_base()
             } else { std::ptr::null() };
@@ -60,7 +60,22 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
             let raw_result = mode & quench_runtime::staged::raw_bit(0) != 0;
             frame.raw_result = raw_result;
             if proven { frame.operands_int = true; }
-            match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
+            // A fixed equality (`plain_equality`) is the Number relation its operator denotes (`binary_operation`), over the
+            // record's own operands: the operator and form are constants, so nothing is decoded. An int32 right constant
+            // is answered by the record's `mode` (`EQUALITY_IMMEDIATE_SHIFT`), as the formed compare jumps answer theirs.
+            let step = if const { plain_equality(FAMILY, CMP).is_some() } {
+                if const { fixed_equality(FAMILY, CMP).1 == 1 } {
+                    frame.reads = frame.reads.with_immediate(Value::integer((mode >> EQUALITY_IMMEDIATE_SHIFT) as u32 as i32));
+                }
+                let Some(number) = quench_runtime::staged::numeric::binary_operation(const { fixed_equality(FAMILY, CMP).0 }, i.a, Operand(i.b), Operand(i.c))
+                    else { unreachable!("a fixed equality is a Number relation") };
+                quench_runtime::staged::numeric::step_of::<{ quench_runtime::staged::numeric::kind::RELATION_VALUE }, _, _>(&mut stage, &mut frame, number)
+            } else {
+                let fields = LaneFields::<A, { $flag }>(i);
+                let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
+                row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation)
+            };
+            match step {
                 Step::Value(value) => {
                     held = value;
                     if const { !quench_runtime::staged::row_writes_result(LaneFields::<A>::OPCODE) } && mode & quench_runtime::staged::MODE_DEAD_FIRST == 0 {
@@ -478,15 +493,65 @@ pub(crate) fn fused_row<const A: u16, const B: u16, const FAMILY: u8>(backward: 
 /// the table grows without touching the macro (a repeated entry never matches first).
 const fn fused_index(pair: usize) -> usize { if pair < quench_runtime::staged::FUSED_ROWS.len() { pair } else { 0 } }
 
+/// The fixed equality `CMP` names in family `FAMILY` (`equality_fixed`): only a `FUSED_PLAIN` pair's `CMP` is one;
+/// a target run's `CMP` is its comparison (`target_comparison`).
+const fn plain_equality(family: u8, cmp: u8) -> Option<(u32, u8)> {
+    if family == quench_runtime::staged::FUSED_PLAIN { equality_fixed(cmp) } else { None }
+}
+
+/// `plain_equality` where it names one, read in the arm that only such an instance runs: every instance
+/// evaluates the arm's constants, so any other gives a placeholder no run reads.
+const fn fixed_equality(family: u8, cmp: u8) -> (u32, u8) {
+    match plain_equality(family, cmp) { Some(fixed) => fixed, None => (0, 0) }
+}
+
+/// `Binary` then the truth jump `B` as one `FUSED_PLAIN` record, its equality fixed by `CMP` (`equality_fusion`).
+const fn equality_fused<const B: u16, const CMP: u8>() -> Handler {
+    fused_rows!({ quench_runtime::staged::BINARY_ROW }, B, false, { quench_runtime::staged::FUSED_PLAIN }, B, { quench_runtime::staged::NO_LINK }, CMP)
+}
+
+macro_rules! equality_table { ($jump:expr; $($code:literal)*) => { [$(equality_fused::<{ $jump as u16 }, $code>()),*] }; }
+/// The fused records of `Binary` then `JumpFalse` and of `Binary` then `JumpTrue`, indexed by `CMP` - 1.
+const EQUALITY_JUMP_FALSE: [Handler; 12] = equality_table!(Op::JumpFalse; 1 2 3 4 5 6 7 8 9 10 11 12);
+const EQUALITY_JUMP_TRUE: [Handler; 12] = equality_table!(Op::JumpTrue; 1 2 3 4 5 6 7 8 9 10 11 12);
+
+/// The handler of `Binary` then the truth jump `jump` with the fixed equality `code` (`equality_fusion`).
+fn equality_handler(jump: Op, code: u8) -> Handler {
+    let table = if matches!(jump, Op::JumpFalse) { &EQUALITY_JUMP_FALSE } else { &EQUALITY_JUMP_TRUE };
+    table[usize::from(code) - 1]
+}
+
+/// The fixed equality of the pair `a` then `b` (`plain_equality`): a `Binary` `a` whose operator and right operand
+/// are fixed here, then a truth jump `b`. Returns the `CMP` code (`equality_code`) and the record's `mode` word, which
+/// holds an int32 right constant from `EQUALITY_IMMEDIATE_SHIFT`. `None` for any other pair, including a `Binary` a
+/// flagged result or a left constant, which the generic pair keeps.
+fn equality_fusion(a: quench_runtime::bytecode::WideInstruction, b: quench_runtime::bytecode::WideInstruction, constants: &[Value]) -> Option<(u8, u64)> {
+    use quench_runtime::bytecode::OperandKind::{Constant, Register};
+    if !matches!(a.op(), Op::Binary) || a.result_flags() != 0 || !matches!(b.op(), Op::JumpFalse | Op::JumpTrue) { return None; }
+    let index = EQUALITY_OPERATORS.iter().position(|operator| *operator == a.binary_operator())?;
+    if a.operand_b().kind() != Some(Register) { return None; }
+    let right = a.operand_c();
+    let (form, word) = match right.kind()? {
+        Register => (0, 0),
+        Constant => match constants.get(usize::from(right.payload()))?.as_int() {
+            Some(int) => (1, u64::from(int as u32) << EQUALITY_IMMEDIATE_SHIFT),
+            None => (2, 0),
+        },
+        _ => return None,
+    };
+    Some((equality_code(index as u8, form), word))
+}
+
 /// Gives each record whose row and next record's row are a pair of `staged::FUSED_ROWS` the
 /// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
 /// pair takes its fused record only where `liveness` proves `A`'s result register dead after
 /// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
 /// A pair whose `B` is a Number operator takes its raw-out settings (`MODE_RAW_OUT`) where `raw_out_link` holds.
 /// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
-/// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
-/// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
-pub(crate) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runtime::bytecode::WideInstruction], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
+/// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. A `Binary` equality then a
+/// truth jump takes its fixed-equality record (`equality_fusion`), its operator and int32 constant fixed at install.
+/// Returns each fused record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
+pub(crate) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runtime::bytecode::WideInstruction], constants: &[Value], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
     // Pair `$pair`'s record handlers for its step family, indexed by the direction (`fused_row`). Its table
     // mode is no instance: `fuse_rows` writes it as the record's settings bits, so one family instance serves
     // every mode of the pair.
@@ -577,7 +642,16 @@ pub(crate) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runti
         // The record's settings: a `FUSED_DEAD_FIRST` pair skips `A`'s write only where liveness proves it
         // (`dead_first`), a `FUSED_RAW` pair keeps `A`'s result raw only where `raw` holds, and `B`'s raw-out
         // bit is `out`. Each is clear where its table mode does not hold, which is the staged pair without it.
-        let mut word = if direction == 1 { quench_runtime::staged::MODE_BACKWARD } else { 0 };
+        // A `Binary` equality then a truth jump takes its fixed-equality record and the int32 constant in `mode` (`equality_fusion`).
+        let equality = if *mode == quench_runtime::staged::FUSED_PLAIN { equality_fusion(decoded[pc], decoded[pc + 1], constants) } else { None };
+        let (fused, immediate) = match equality {
+            Some((code, word)) => {
+                let handler = equality_handler(decoded[pc + 1].op(), code);
+                ([handler, handler], word)
+            }
+            None => (*fused, 0),
+        };
+        let mut word = (if direction == 1 { quench_runtime::staged::MODE_BACKWARD } else { 0 }) | immediate;
         if *mode == quench_runtime::staged::FUSED_DEAD_FIRST && dead_first { word |= quench_runtime::staged::MODE_DEAD_FIRST; }
         if *mode == quench_runtime::staged::FUSED_RAW && raw { word |= quench_runtime::staged::raw_bit(0); }
         if out { word |= quench_runtime::staged::MODE_RAW_OUT; }

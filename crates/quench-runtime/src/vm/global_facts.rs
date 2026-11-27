@@ -50,6 +50,19 @@ pub struct StableCell {
     pub value: Value,
 }
 
+/// The receivers a method read by name (`GlobalRead::NativeMember`) folds on: those of no named
+/// property linked to a prototype that holds the member, so the member is that prototype's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverLink {
+    /// No receiver is proved: the read runs.
+    None,
+    /// A direct array linked to `Array.prototype`, whose link this is (`elements::plain_array_of`).
+    Array(u32),
+    /// A Map or Set of the exact shape and prototype link the read's cache observed, whose prototype
+    /// holds the member (`elements::collection_of`).
+    Collection { shape: u32, link: u32 },
+}
+
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlobalRead {
@@ -79,9 +92,8 @@ pub enum GlobalRead {
     /// `folds` where the receiver is that global, so the read itself may fold to the value; a
     /// method read by name off an unknown receiver (`x.push`) only names the call's candidate,
     /// and the read still runs: the receiver may hold its own member of that name.
-    /// `array_link`, for a member of `Array.prototype` (`a.push`), is that prototype's link: the read folds
-    /// where its receiver is a direct array of no named property whose prototype is it (`elements::plain_array_of`).
-    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool, cell: Option<StableCell>, array_link: Option<u32> },
+    /// `link` names the receivers of no own member of that name, where the read folds (`ReceiverLink`).
+    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool, cell: Option<StableCell>, link: ReceiverLink },
     /// A `Slot` read (the b-jit's) of a global name whose function is the native `native` (`parseInt`) when the body was
     /// compiled, held by the global object's watched exact shape `holder` (`NativeMember`'s code dependency). The read is the
     /// slot's; a call of the register it defines guards the function's identity (`base_region::function::native_call`).

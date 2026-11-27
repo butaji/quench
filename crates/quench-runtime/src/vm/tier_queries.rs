@@ -200,6 +200,8 @@ heap_reads! {
     fn record_object_value(value: Value) -> Option<&'a Object>;
     /// The array record arena's base (`Heap::array_record_base`).
     fn array_record_base() -> Option<*const ArrayObject>;
+    /// The Map and Set record arena's base (`Heap::collection_record_base`).
+    fn collection_record_base() -> Option<*const u8>;
     /// The function record arena's base (`Heap::function_record_base`).
     fn function_record_base() -> Option<*const FunctionRecord>;
     /// The string record arena's base (`Heap::string_record_base`).

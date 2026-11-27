@@ -4174,7 +4174,7 @@ impl JsStepDispatch {
         Self {
             head: JsStepHead {
                 loop_entry: 0,
-                array_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
+                array_record_base: 0, collection_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
                 object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
@@ -4236,6 +4236,7 @@ impl JsStepDispatch {
             && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
             && self.empty_object_proto == vm.realm_object_prototype(vm.realm.globals).to_bits()
             && self.empty_array_proto == vm.array_prototype_for_realm(vm.realm.globals).to_bits()
+            && self.collection_record_base == vm.heap_reads().collection_record_base().map_or(0, |base| base as usize)
         {
             return;
         }
@@ -4258,6 +4259,7 @@ impl JsStepDispatch {
         self.object_record_base = vm.heap_reads().object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap_reads().function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap_reads().array_record_base().map_or(0, |base| base as usize);
+        self.collection_record_base = vm.heap_reads().collection_record_base().map_or(0, |base| base as usize);
         self.string_record_base = vm.heap_reads().string_record_base().map_or(0, |base| base as usize);
         self.ascii_unit_strings = vm.heap_reads().ascii_unit_strings_base().map_or(0, |base| base as usize);
         let (directory, pages) = vm.heap_reads().typed_view_directory();

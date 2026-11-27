@@ -17,7 +17,7 @@ use crate::places::{LEFT, RIGHT, Places, index_of};
 use crate::staged::{Concrete, ElementFrame, Frame, elements, entry, value};
 use crate::staged::barrier::{counted_store_unlogged, MarkList};
 use crate::staged::element_rows::ElementView;
-use crate::staged::typed_view::{TypedRecords, ViewAccess, prove_typed_view};
+use crate::staged::typed_view::{TypedRecords, ViewAccess, prove_typed_view, prove_viewed};
 use crate::words::{int_word, is_double, is_int};
 
 /// The table of array records the dispatch payload holds, where one is reserved.
@@ -96,7 +96,7 @@ impl Places {
         let records = TypedRecords { directory: word_at(payload, JS_STEP_TYPED_VIEW_DIRECTORY), pages: word_at(payload, JS_STEP_TYPED_VIEW_PAGES),
             relocations: word_at(payload, JS_STEP_BUFFER_RELOCATIONS) };
         (records.directory != 0).then_some(())?;
-        prove_typed_view(&mut stage, records, base, ViewAccess { kind: Some(native), writable }, ()).map(ElementView::Typed)
+        prove_viewed(&mut stage, records, base, native, writable, ()).map(|viewed| ElementView::Typed(viewed.view()))
     }
 }
 

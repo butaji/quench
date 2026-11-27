@@ -757,6 +757,8 @@ impl Vm {
         {
             let before = std::mem::take(bytes).capacity();
             *detached = true;
+            // The views over the bytes are detached with them: code holding one retires.
+            crate::heap::live_view_changed();
             self.heap.adjust_external_bytes(before, 0);
         }
     }

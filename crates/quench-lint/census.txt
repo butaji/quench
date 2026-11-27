@@ -1,4 +1,4 @@
-staged_rechecks 260
+staged_rechecks 256
 hand_lowerings 138
 variant_rows 8
 opaque_helper_calls 21

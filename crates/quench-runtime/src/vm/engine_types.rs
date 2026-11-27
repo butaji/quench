@@ -1366,6 +1366,9 @@ pub struct StableFacts {
     /// The program whose root constant the code folds (`Lowering::root_constant_read`): its
     /// publication subscribes the program's second root run (`ProgramStore::subscribe_root_constants`).
     pub root_program: Option<crate::vm::program_store::ProgramId>,
+    /// Whether it holds the typed views it proved past a call (`staged::HeldViews`): the first
+    /// change of a live view retires it (`heap::subscribe_typed_views`).
+    pub views: bool,
 }
 
 /// A loop analysis failure attributed to the function PC whose requirement blocked it.

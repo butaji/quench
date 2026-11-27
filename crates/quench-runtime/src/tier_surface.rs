@@ -6,7 +6,7 @@
 /// against the records themselves (`staged::layout_offset_checks`).
 pub use crate::heap::{
     layouts, DOUBLE_LEN, ENCODED_LEN, IN_PLACE_SLOTS_WORDS, LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT,
-    NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
+    NATIVE_COLLECTION_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
     NATIVE_TYPED_ARRAY_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK,
     TYPED_ARRAYS, armed_proofs_address, buffer_relocations_address, index_free_chain_link_address,
 };
@@ -30,7 +30,7 @@ pub use crate::heap::{
 /// that fire them.
 pub use crate::heap::{
     global_value_fact, hold_prototype_values, note_global_write, retire_array_storage_proofs,
-    subscribe_global_layout, subscribe_global_value, subscribe_prototype_values, ArrayStorageProofs, GlobalCell,
+    subscribe_global_layout, subscribe_global_value, subscribe_prototype_values, subscribe_typed_views, typed_views_stable, ArrayStorageProofs, GlobalCell,
     GlobalFact, GlobalLayoutFact, INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache,
     LaneProofScope, PropertyStoreLayout,
 };

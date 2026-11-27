@@ -2,7 +2,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, StableCell, scalar_native};
+use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, ReceiverLink, GlobalSlot, GlobalTable, StableCell, scalar_native};
 
 #[quench_macros::ext(CompiledLaneSitesVm)]
 impl Vm {
@@ -228,29 +228,43 @@ impl Vm {
         };
         let value = self.own_plain_data(holder, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
-        let array_link = matches!(row.holder, quench_runtime::vm::native_rows::Holder::ArrayPrototype)
-            .then(|| quench_runtime::tier_surface::ProtoLink::of(holder).bits());
-        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None, array_link })
+        let link = match row.holder {
+            quench_runtime::vm::native_rows::Holder::ArrayPrototype => ReceiverLink::Array(quench_runtime::tier_surface::ProtoLink::of(holder).bits()),
+            _ => ReceiverLink::None,
+        };
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None, link })
     }
 
     /// The field read `instruction` of a method by a name some realm prototype holds as a native a loop
     /// calls in place (`lane_region::native_calls::Inline::InPlace`): `map.get`, `set.has`. That
     /// native is only the analysis's witness: the call checks its callee is such a native at each
     /// run (`lane_allocations::scalar_native_in_lane`), as a name may be several prototypes' (`has`).
+    /// Where the read's cache saw a Map or Set receiver, the read folds on that receiver's shape
+    /// and the prototype it saw hold the member (`ReceiverLink::Collection`).
     fn cached_method_native(&mut self, instruction: &quench_runtime::bytecode::WideInstruction) -> Option<GlobalRead> {
-        let Some(quench_runtime::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
+        let Some(quench_runtime::bytecode::FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup() else { return None };
         let row = quench_runtime::vm::native_rows::in_place_method(self.atom_name(atom))?;
-        let holder = match row.holder {
-            quench_runtime::vm::native_rows::Holder::MapPrototype => self.map_proto,
-            quench_runtime::vm::native_rows::Holder::SetPrototype => self.set_proto,
-            quench_runtime::vm::native_rows::Holder::WeakMapPrototype => self.weak_map_proto,
-            quench_runtime::vm::native_rows::Holder::WeakSetPrototype => self.weak_set_proto,
-            _ => return None,
-        };
+        let observed = self.field_cache_entry(cache_site);
+        // The prototype the read's cache saw hold the member, where it is Map's or Set's: the read folds on
+        // receivers of the shape it saw (`ReceiverLink::Collection`); else the row's own prototype names the call.
+        let seen = [self.map_proto, self.set_proto].into_iter()
+            .find(|prototype| self.native_holder(*prototype) == Some(observed.holder) && observed.receiver != quench_runtime::vm::NO_FIELD_RECEIVER);
+        let holder = seen.or_else(|| match row.holder {
+            quench_runtime::vm::native_rows::Holder::MapPrototype => Some(self.map_proto),
+            quench_runtime::vm::native_rows::Holder::SetPrototype => Some(self.set_proto),
+            quench_runtime::vm::native_rows::Holder::WeakMapPrototype => Some(self.weak_map_proto),
+            quench_runtime::vm::native_rows::Holder::WeakSetPrototype => Some(self.weak_set_proto),
+            _ => None,
+        })?;
         let value = self.own_plain_data(holder, atom)??;
-        let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(held), .. } = self.function_record(value)? else { return None };
-        (*held == row.native).then(|| self.native_holder(holder)).flatten()
-            .map(|holder| GlobalRead::NativeMember { value, native: row.native, holder, folds: false, cell: None, array_link: None })
+        let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
+        let native = *native;
+        if !quench_runtime::vm::engine_calls::in_place_in_loop(native) { return None; }
+        let link = match seen {
+            Some(prototype) => ReceiverLink::Collection { shape: observed.receiver, link: quench_runtime::tier_surface::ProtoLink::of(prototype).bits() },
+            None => ReceiverLink::None,
+        };
+        Some(GlobalRead::NativeMember { value, native, holder: self.native_holder(holder)?, folds: false, cell: None, link })
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
@@ -299,7 +313,7 @@ impl Vm {
         let value = self.own_plain_data(object, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
-        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell, array_link: None }))
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell, link: ReceiverLink::None }))
     }
 
     /// The exact shape of `holder`, an object whose own native functions code calls inline,

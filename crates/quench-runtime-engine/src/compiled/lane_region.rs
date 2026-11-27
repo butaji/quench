@@ -159,9 +159,10 @@ fn loop_carries(instructions: &[WideInstruction], leaders: &BitSet, start: usize
 }
 
 /// A typed array view an access proved (`Proofs::typed`): the register holding the base, its native kind, the view's elements and
-/// length, and whether it was proved for stores (which also answers reads).
+/// length, whether it was proved for stores (which also answers reads), and whether an instruction that may change a view
+/// ran since (`kept`): a kept view is the same view once the code holds views (`Lowering::typed_view_of`).
 #[derive(Clone, Copy, PartialEq)]
-struct TypedProof { register: Register, kind: quench_runtime::tier_surface::TypedArrayKind, values: ir::Value, length: ir::Value, writable: bool }
+struct TypedProof { register: Register, kind: quench_runtime::tier_surface::TypedArrayKind, values: ir::Value, length: ir::Value, writable: bool, kept: bool }
 /// A block reads the captures of a few inlined callees; more spill without a limit.
 const INLINE_CAPTURE_ADMISSIONS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
@@ -291,6 +292,12 @@ struct LocalProofs {
 }
 
 impl LocalProofs {
+    /// Keeps the typed views past an instruction that may change one: the next access takes a kept view only
+    /// where the code holds views (`Lowering::typed_view_of`), else proves it again.
+    pub(crate) fn keep_typed_views(&mut self) {
+        for view in &mut self.typed { view.kept = true; }
+    }
+
     /// Notes that tagged `bits` read as the double `number`: the most recent views win a full
     /// list (a loop body that proves many Numbers keeps the ones its next reads name).
     pub(crate) fn note_number(&mut self, bits: ir::Value, number: quench_runtime::staged::Float64<ir::Value>) {
@@ -364,7 +371,7 @@ impl State {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
-        self.proofs.typed.clear();
+        self.proofs.keep_typed_views();
         // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
         self.proofs.admitted_captures.clear();
         self.proofs.headers.fill(None);
@@ -1099,8 +1106,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.admitted_captures.contains(view))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
-        state.proofs.typed = first.typed.iter().copied().filter(|view| rest.iter()
-            .all(|other| other.typed.contains(view))).collect();
+        state.proofs.typed = first.typed.iter().copied().filter_map(|view| rest.iter().try_fold(view, |joined, other| other.typed.iter()
+            .find(|proof| TypedProof { kept: joined.kept, ..**proof } == joined).map(|proof| TypedProof { kept: joined.kept | proof.kept, ..joined }))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
         state.proofs.specialized = first.specialized && rest.iter().all(|other| other.specialized);
@@ -2580,7 +2587,9 @@ impl Lowering<'_, '_> {
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
         state.proofs.admitted_captures.retain(|view| incoming.proofs.admitted_captures.contains(view));
-        state.proofs.typed.retain(|view| incoming.proofs.typed.contains(view));
+        // A view both arrivals prove is the join's, kept where either arrival kept it (`keep_typed_views`).
+        state.proofs.typed.retain_mut(|view| incoming.proofs.typed.iter().find(|other| TypedProof { kept: view.kept, ..**other } == *view)
+            .map(|other| view.kept |= other.kept).is_some());
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
@@ -3134,9 +3143,15 @@ impl Lowering<'_, '_> {
         }
         self.left_here = self.generic.contains(&pc);
         self.advance_inductions(pc);
-        if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
+        if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
             state.proofs.arrays.clear();
-            state.proofs.typed.clear();
+            // A call marker runs the call's guards and binds its frame's registers (from `base` up), and no guest
+            // code: the views of the registers below stay proved.
+            let base = self.unit.frames[frame].base;
+            state.proofs.typed.retain(|view| view.register < base);
+        } else if !retains_array_views(&self.program.constants, instruction) {
+            state.proofs.arrays.clear();
+            state.proofs.keep_typed_views();
         }
         if let Some(read) = self.hoisted.get(&pc).copied() {
             self.hoisted_read(state, pc, instruction, read);
@@ -3432,7 +3447,7 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload) };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
-            stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
+            stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, views: &mut self.stable.views, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
@@ -4440,8 +4455,7 @@ impl Lowering<'_, '_> {
                     let kind = array.views.observed_kind().and_then(NativeKind::new);
                     // A view an access before the loop proved and kept for the same register and kind is the loop's.
                     let register = match array.source { ArraySource::Register(register) => Some(register), _ => None };
-                    let kept = register.zip(kind).and_then(|(register, native)| state.proofs.typed.iter()
-                        .find(|view| view.register == register && view.kind == native.kind && (view.writable || !array.writable)).copied());
+                    let kept = register.zip(kind).and_then(|(register, native)| self.typed_view_of(state, (register, native.kind, array.writable), exit));
                     match kept {
                         Some(view) => {
                             self.builder.def_var(variables.values, view.values);
@@ -4452,7 +4466,7 @@ impl Lowering<'_, '_> {
                             if let (Some(register), Some(native)) = (register, kind) {
                                 let (values, length) = (self.builder.use_var(variables.values), self.builder.use_var(variables.length));
                                 state.proofs.typed.retain(|view| view.register != register);
-                                state.proofs.typed.push(TypedProof { register, kind: native.kind, values, length, writable: array.writable });
+                                state.proofs.typed.push(TypedProof { register, kind: native.kind, values, length, writable: array.writable, kept: false });
                             }
                         }
                     }

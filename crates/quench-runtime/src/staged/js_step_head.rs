@@ -128,4 +128,8 @@ pub struct JsStepHead<V> {
     pub typed_view_directory: usize,
     pub typed_view_pages: usize,
     pub buffer_relocations: usize,
+    /// The Map and Set record reservation (`Heap::collection_record_base`), refreshed with the other
+    /// record bases; zero where absent. A method read by name of a collection tests its record
+    /// (`elements::plain_collection_link`).
+    pub collection_record_base: usize,
 }

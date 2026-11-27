@@ -302,6 +302,32 @@ pub fn plain_array_of<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Wo
     stage.guard(linked, miss)
 }
 
+/// A Map or Set record's size and where its object part starts.
+#[derive(Clone, Copy)]
+pub struct CollectionLayout { pub record_size: usize, pub object_offset: usize }
+
+/// Proves `base` a Map or Set (a direct collection), whose records are at `record_base`, of exact
+/// shape `shape` and prototype link `link`, else leaves at `miss`: a member read by name of it is
+/// then that prototype's, where the shape holds no member of the name. `layout` is the record's
+/// (`heap::NATIVE_COLLECTION_LAYOUT`).
+#[inline(always)]
+pub fn collection_of<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, layout: CollectionLayout, (shape, link): (u32, u32), miss: S::Miss) -> Option<()> {
+    let is_collection = super::value::is_direct_collection(stage, base);
+    stage.guard(is_collection, miss)?;
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let index = stage.and_imm(base, u64::from(u32::MAX));
+    let offset = stage.mul_imm(index, layout.record_size as u64);
+    let record = stage.add(record_base, offset);
+    let object = stage.add_imm(record, layout.object_offset as u64);
+    let exact = super::object::exact_shape(stage, object);
+    let shaped = stage.eq_imm(exact, u64::from(shape));
+    stage.guard(shaped, miss)?;
+    let prototype = super::object::proto_link(stage, object);
+    let linked = stage.eq_imm(prototype, u64::from(link));
+    stage.guard(linked, miss)
+}
+
 /// The record of the direct array `base`, which the caller proved one, among the array records at
 /// `record_base`, which it proved present: the record's address is its index, `base`'s low half,
 /// times the record size past `record_base`.

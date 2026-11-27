@@ -244,6 +244,7 @@ pub(crate) use dependencies::{
     NO_PROVED_LAYOUT, ProofKind, FactStore, ChainCell};
 mod cell_access;
 mod buffer_bytes;
+mod view_holders;
 mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
@@ -276,7 +277,7 @@ mod native_layout;
 mod record_layouts;
 #[allow(unused_imports)]
 pub use record_layouts::{
-    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
+    NATIVE_ARRAY_LAYOUT, NATIVE_COLLECTION_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
     PropertyStoreLayout, absent_environment_storage,
 };
 mod string_parts;
@@ -287,6 +288,8 @@ pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub use cell::*;
 pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
+pub use view_holders::{subscribe_typed_views, typed_views_stable};
+pub(crate) use view_holders::live_view_changed;
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{

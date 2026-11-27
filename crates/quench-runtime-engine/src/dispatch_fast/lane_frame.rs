@@ -2987,6 +2987,30 @@ pub(crate) fn target_comparison(test: &crate::dispatch_fast::LaneInstruction) ->
     1 + (index * 2) as u8 + u8::from(constant)
 }
 
+/// The operators a `Binary` fused with a truth jump fixes at install (`fused::equality_fusion`), by index: `==`, `!=`, `===`, `!==`.
+const EQUALITY_OPERATORS: [u32; 4] = {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::Equality as u32, B::Inequality as u32, B::StrictEquality as u32, B::StrictInequality as u32]
+};
+
+/// The right operand forms of a fixed equality: two registers (0); a register and an int32 constant (1), which
+/// the record's `mode` holds from `EQUALITY_IMMEDIATE_SHIFT`; a register and any other constant (2), read from the context.
+pub(crate) const EQUALITY_FORMS: u8 = 3;
+
+/// Where a fixed equality's int32 constant sits in its record's `mode`, above every settings bit (`MODE_RAW_OUT` is the highest).
+pub(crate) const EQUALITY_IMMEDIATE_SHIFT: u32 = 32;
+const _: () = assert!(quench_runtime::staged::MODE_RAW_OUT < 1 << EQUALITY_IMMEDIATE_SHIFT);
+
+/// The `CMP` code of a fixed equality: operator index `index` in `EQUALITY_OPERATORS`, operand form `form`. 1 to 12; 0 is none.
+pub(crate) const fn equality_code(index: u8, form: u8) -> u8 { 1 + EQUALITY_FORMS * index + form }
+
+/// The operator (a `BinaryOperator`'s value) and operand form a fixed-equality `CMP` code names (`equality_code`); `None` for 0.
+pub(crate) const fn equality_fixed(code: u8) -> Option<(u32, u8)> {
+    if code == 0 { return None; }
+    let index = (code - 1) / EQUALITY_FORMS;
+    Some((EQUALITY_OPERATORS[index as usize], (code - 1) % EQUALITY_FORMS))
+}
+
 /// The `FUSED_TARGET` copy slot of no row: `target_run`'s `$copy` for a target run with no copy.
 const NO_COPY: u16 = quench_runtime::staged::NO_LINK;
 
