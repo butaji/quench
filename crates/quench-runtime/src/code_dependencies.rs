@@ -1,8 +1,11 @@
 //! Weak native publications indexed by the shape or slot owner they depend on.
 //! These notifications do not turn observations into unchecked read permissions.
 
-use std::{num::NonZeroU32, rc::{Rc, Weak}};
+use std::{collections::BTreeMap, num::NonZeroU32, rc::{Rc, Weak}};
 use crate::{folded_roots::{FoldedRoots, RootedCode}, typed_ir::Type};
+
+mod cells;
+pub use cells::CellReaders;
 
 pub trait DependentCode {
     fn is_published(&self) -> bool;
@@ -145,16 +148,33 @@ struct Reader {
     next: Link,
 }
 
-#[derive(Default)]
-pub struct CodeReaders {
-    heads: Vec<Link>,
+/// Weak readers, each listed under its key: an owner's id for code (`CodeReaders`), a fact cell's
+/// key for code that trusts the cell (`cells::CellReaders`). A key's readers form one list through
+/// `Reader::next`, so a retirement walks only the readers of the key it names. Keys are ordered,
+/// not dense, so a key's list head is found in a `BTreeMap`.
+pub struct Readers<K: Ord + Copy> {
+    heads: BTreeMap<K, NonZeroU32>,
     readers: Vec<Reader>,
     free: Link,
 }
 
-impl CodeReaders {
+/// The readers of each owner: a shape, a slot owner, a global, a method atom.
+pub type CodeReaders = Readers<u32>;
+
+impl<K: Ord + Copy> Default for Readers<K> {
+    fn default() -> Self {
+        Self { heads: BTreeMap::new(), readers: Vec::new(), free: None }
+    }
+}
+
+impl<K: Ord + Copy> Readers<K> {
     pub(crate) fn memory_bytes(&self) -> usize {
-        self.heads.capacity() * size_of::<Link>() + self.readers.capacity() * size_of::<Reader>()
+        self.heads.len() * size_of::<(K, NonZeroU32)>() + self.readers.capacity() * size_of::<Reader>()
+    }
+
+    /// Whether no key has a reader listed.
+    pub fn is_empty(&self) -> bool {
+        self.heads.is_empty()
     }
 
     fn release(&mut self, link: NonZeroU32) -> Link {
@@ -166,13 +186,18 @@ impl CodeReaders {
         next
     }
 
+    fn set_head(&mut self, key: K, head: Link) {
+        match head {
+            Some(link) => { self.heads.insert(key, link); }
+            None => { self.heads.remove(&key); }
+        }
+    }
+
     /// Publication is cold: prune expired readers and deduplicate the same code
-    /// here, rather than accumulating dead weak handles on an unchanged owner.
-    pub fn subscribe(&mut self, owner: u32, code: &Rc<dyn DependentCode>) -> bool {
-        let owner = owner as usize;
-        self.heads.resize(self.heads.len().max(owner + 1), None);
+    /// here, rather than accumulating dead weak handles on an unchanged key.
+    pub fn subscribe(&mut self, key: K, code: &Rc<dyn DependentCode>) -> bool {
         let weak = Rc::downgrade(code);
-        let mut cursor = self.heads[owner];
+        let mut cursor = self.heads.get(&key).copied();
         let mut previous: Link = None;
         while let Some(link) = cursor {
             let reader = &self.readers[(link.get() - 1) as usize];
@@ -185,7 +210,7 @@ impl CodeReaders {
                 cursor = self.release(link);
                 match previous {
                     Some(previous) => self.readers[(previous.get() - 1) as usize].next = cursor,
-                    None => self.heads[owner] = cursor,
+                    None => self.set_head(key, cursor),
                 }
             }
         }
@@ -203,38 +228,37 @@ impl CodeReaders {
                 link
             }
         };
-        self.readers[(link.get() - 1) as usize] = Reader { code: Some(weak), next: self.heads[owner] };
-        self.heads[owner] = Some(link);
+        let next = self.heads.get(&key).copied();
+        self.readers[(link.get() - 1) as usize] = Reader { code: Some(weak), next };
+        self.heads.insert(key, link);
         true
     }
 
-    /// A widening visits only this owner's readers, before the incompatible effect. An owner
-    /// without readers, every owner of a run without native code, is the test alone; the
-    /// walk is out of line (`retire_readers`).
-    /// Whether the owner had readers.
+    /// A widening visits only this key's readers, before the incompatible effect. A key without
+    /// readers is the test alone; the walk is out of line (`retire_readers`).
+    /// Whether the key had readers.
     #[inline(always)]
-    pub(crate) fn retire(&mut self, owner: u32) -> bool {
-        let readers = self.heads.get(owner as usize).is_some_and(Option::is_some);
+    pub(crate) fn retire(&mut self, key: K) -> bool {
+        let readers = self.heads.contains_key(&key);
         if readers {
-            self.retire_readers(owner);
+            self.retire_readers(key);
         }
         readers
     }
 
     #[inline(never)]
-    fn retire_readers(&mut self, owner: u32) {
-        self.take(owner).into_iter().for_each(|code| code.retire());
+    fn retire_readers(&mut self, key: K) {
+        self.take(key).into_iter().for_each(|code| code.retire());
     }
 
     pub(crate) fn reset(&mut self) {
         self.take_all().into_iter().for_each(|code| code.retire());
     }
 
-    /// Unlinks `owner`'s readers and gives the code still alive among them, for a caller to
+    /// Unlinks `key`'s readers and gives the code still alive among them, for a caller to
     /// retire once it no longer holds the table these readers live in (`heap::Dependencies`).
-    pub(crate) fn take(&mut self, owner: u32) -> Vec<Rc<dyn DependentCode>> {
-        let Some(head) = self.heads.get_mut(owner as usize) else { return Vec::new() };
-        let mut cursor = head.take();
+    pub(crate) fn take(&mut self, key: K) -> Vec<Rc<dyn DependentCode>> {
+        let mut cursor = self.heads.remove(&key);
         let mut taken = Vec::new();
         while let Some(link) = cursor {
             taken.extend(self.readers[(link.get() - 1) as usize].code.as_ref().and_then(Weak::upgrade));
@@ -243,7 +267,7 @@ impl CodeReaders {
         taken
     }
 
-    /// `take` of every owner: an event no owner names.
+    /// `take` of every key: an event no key names.
     pub(crate) fn take_all(&mut self) -> Vec<Rc<dyn DependentCode>> {
         let taken = self.readers.iter_mut().filter_map(|reader| reader.code.take().and_then(|code| code.upgrade())).collect();
         self.heads.clear();
@@ -253,7 +277,7 @@ impl CodeReaders {
     }
 }
 
-impl Drop for CodeReaders {
+impl<K: Ord + Copy> Drop for Readers<K> {
     fn drop(&mut self) { self.reset(); }
 }
 
