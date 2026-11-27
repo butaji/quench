@@ -5115,6 +5115,10 @@ fn polymorphic_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Valu
     if holds_holder && let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
         return Some(value);
     }
+    // The other receivers' prototype hints, held in the record's `mode` (`hold_holder_arm`).
+    if let Some(value) = vm.holder_arms_hit(i.mode, i.imm(), object) {
+        return Some(value);
+    }
     let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
     match hit {
         PolymorphicHit::Own(entry) => {
@@ -5133,11 +5137,40 @@ fn polymorphic_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Valu
                     }
                     vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK)
                 });
+            } else {
+                hold_holder_arm(vm, ip, object, value);
             }
         }
         PolymorphicHit::Hint => {}
     }
     Some(value)
+}
+
+/// Holds the prototype's answer `value` for `object`, a receiver the record's own prototype hint
+/// does not name, as one of the up to four arms of the polymorphic record at `ip` (its `mode`,
+/// sixteen bits each, a hint index plus one): an empty arm or one whose watch retired takes it;
+/// with all four live it holds none. Out of line, as `set_prototype_hint`.
+#[cold]
+#[inline(never)]
+fn hold_holder_arm(vm: &mut Vm, ip: Ip, object: Value, value: Value) {
+    if holds_loop_site(ip) {
+        return;
+    }
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let mode = i.mode;
+    let Some(k) = (0..4).find(|k| {
+        let arm = (mode >> (16 * k)) as u16;
+        arm == 0 || !vm.holder_hint_live(arm - 1)
+    }) else {
+        return;
+    };
+    let arm = (mode >> (16 * k)) as u16;
+    if let Some(index) = vm.hold_holder_hint((arm != 0).then(|| arm - 1), i.imm(), object, value, NO_CALL_LINK - 1) {
+        let mode = (mode & !(0xffff << (16 * k))) | u64::from(index + 1) << (16 * k);
+        // SAFETY: as `set_record_hint`; the polymorphic row reads `mode` only as its arms.
+        unsafe { (*ip.cast_mut()).mode = mode };
+    }
 }
 
 /// The hashed entries of the `GetField` record at `ip` (`HASHED_SITE`): the site's hashed entries
