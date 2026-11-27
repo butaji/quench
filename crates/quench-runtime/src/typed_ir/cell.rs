@@ -224,7 +224,7 @@ impl Elements {
             _ => self.ty,
         };
         let ty = if self.holes || !in_bounds { ty.join(Type::language(ValueType::Undefined)) } else { ty };
-        Cell { ty, classes: self.classes, elements: Elements::ANY }
+        Cell { ty, classes: self.classes, elements: Elements::ANY, global: false }
     }
 }
 
@@ -235,18 +235,26 @@ pub struct Cell {
     pub ty: Type,
     pub classes: Classes,
     pub elements: Elements,
+    /// Whether the value may be the global object. Not a lattice point of `ty` or `classes` (`Classes::Many` absorbs
+    /// objects, so the global object cannot ride in them): a flag the closed world's verification reads (`aot_facts::gate`).
+    pub global: bool,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, global: false };
     /// Any value: the top.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY };
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, global: false };
 
     /// A value of type `ty` from nowhere the solve follows: its classes from the type alone.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
-        Self { ty, classes: Classes::of_type(ty), elements }
+        Self { ty, classes: Classes::of_type(ty), elements, global: false }
+    }
+
+    /// The cell with the global object among the values it may hold.
+    pub const fn maybe_global(self) -> Self {
+        Self { global: true, ..self }
     }
 
     /// A value of type `ty` holding objects of `classes`.
@@ -260,7 +268,12 @@ impl Cell {
     }
 
     pub fn join(self, other: Self) -> Self {
-        Self { ty: self.ty.join(other.ty), classes: self.classes.join(other.classes), elements: self.elements.join(other.elements) }
+        Self {
+            ty: self.ty.join(other.ty),
+            classes: self.classes.join(other.classes),
+            elements: self.elements.join(other.elements),
+            global: self.global || other.global,
+        }
     }
 
     /// Whether `self` is below or equal to `other` in the lattice: every value `self` describes `other` does.

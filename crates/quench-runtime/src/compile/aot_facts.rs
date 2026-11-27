@@ -567,21 +567,40 @@ impl<'a> FunctionFacts<'a> {
     }
 }
 
-/// The facts of `program`, solved in the world its source proves (`world`).
+/// The facts of `program`, solved optimistically in `World::Closed` where the settled solve verifies that no code can be
+/// added (`gate::verify`), else in `World::Open`.
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
-    analyze_as(program, world(program))
+    let Some(openers) = gate::openers(program) else { return analyze_as(program, World::Open) };
+    if openers.is_empty() {
+        return analyze_as(program, World::Closed);
+    }
+    match solve(program, World::Closed, Some(&openers)) {
+        (facts, true) => facts,
+        (_, false) => analyze_as(program, World::Open),
+    }
 }
 
-/// How closed `program` is, as its source says (`gate`): an image keeps the answer its compile
-/// found (`AotImage::world`), so a binary without the source frontend derives the same facts
-/// again (`analyze_as`).
+/// How closed `program` is (`analyze`). An image keeps the answer its compile found (`AotImage::world`), so a binary without
+/// the source frontend derives the same facts again (`analyze_as`).
 pub fn world(program: &ResidualProgram) -> World {
-    gate::world(program)
+    match gate::openers(program) {
+        None => World::Open,
+        Some(openers) if openers.is_empty() => World::Closed,
+        Some(openers) if solve(program, World::Closed, Some(&openers)).1 => World::Closed,
+        Some(_) => World::Open,
+    }
 }
 
-/// The facts of `program`, solved the same way in every world: `world` only marks the keys new code
-/// can move (`AotFacts::live`), whose facts the census keeps as guesses (`Census::guessed`).
+/// The facts of `program`, solved the same way in every world: `world` only marks the keys new code can move
+/// (`AotFacts::live`), whose facts the census keeps as guesses (`Census::guessed`). The caller asserts the world (an
+/// image's, or `analyze`'s after verification), so nothing is verified here.
 pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
+    solve(program, world, None).0
+}
+
+/// The solve of `program` in `world`, and whether the world's assumption holds for it: a closed solve with `openers` is
+/// verified once settled (`gate::verify`); any other solve, or one that does not settle, is not.
+fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (AotFacts, bool) {
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, names: &std::collections::BTreeSet<u32>,
         types: Option<&types::Types>| -> Vec<FunctionFlow> {
@@ -647,6 +666,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let mut reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>> = BTreeMap::new();
     let mut field_readers = Readers::new(program);
     let mut open_escapes = None;
+    let mut verified = false;
     if settled {
         let mut settled_flows = analyze_typed(&resolved, &accessor_names, Some(&found));
         for (id, flow) in settled_flows.iter_mut().enumerate() {
@@ -693,6 +713,9 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         open_escapes = Some(escapes::escapes(&settled_flows, &facts, &census, &scope));
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
         facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_functions());
+        if let (Some(openers), Some(escaped)) = (openers, open_escapes.as_ref()) {
+            verified = gate::verify(program, openers, &settled_flows, &facts, &census, escaped);
+        }
     }
     // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
     let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
@@ -728,5 +751,5 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         eprintln!("aot-lanes: any fields {any} of {total}");
         eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} access classes, {} cells", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.access_classes.len(), facts.cells.len());
     }
-    facts
+    (facts, verified)
 }

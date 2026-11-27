@@ -81,7 +81,7 @@ pub(super) fn prototype_base(base: Word) -> Option<PrototypeBase> {
 /// changes an array, an index store past the length, a `delete`.
 fn length_change(class: ElementClass) -> (Key, Word) {
     let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
-    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
+    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown, global: false }))
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
@@ -110,7 +110,7 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
             let length = if in_bounds { Length::Never } else { Length::Any };
             let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
-            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
+            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, global: stored.cell.global })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));
             events.wild_member |= !index.is_number();

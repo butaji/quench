@@ -44,6 +44,9 @@ pub(super) struct Call {
     /// The fact of the `this` it passes its callee (`staged::Receiver`): a register's, the caller's own
     /// `this` or a field of it, an allocated object's; unknown for any other receiver.
     pub(super) receiver: Word,
+    /// Whether the call passes no receiver (`staged::Receiver::Undefined`): a sloppy callee then binds `this` to the global
+    /// object (`types::Types::receivers`).
+    pub(super) plain: bool,
     /// The facts of the arguments it passes (`staged::Invocation::arguments`), in order.
     pub(super) arguments: Vec<Word>,
 }
@@ -59,6 +62,9 @@ pub(super) struct FunctionFlow {
     pub(super) global_wild: bool,
     /// Whether a store through a non-Number key may write a name of the global object (`effects::writes_global_name`).
     pub(super) computed_global: bool,
+    /// Whether an instruction keys an access into a value that may be the global object (`effects::keyed_global`): a
+    /// computed access the closed world's call graph cannot see through.
+    pub(super) global_keyed: bool,
     /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
     /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
     pub(super) global_source: bool,

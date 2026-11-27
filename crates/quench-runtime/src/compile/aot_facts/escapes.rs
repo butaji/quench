@@ -170,7 +170,7 @@ fn builtin_array_call(call: &Call, callees: &[u32], scope: &Scope) -> bool {
 /// Adds to `escaped` the functions a cell may hold a closure of: its type's identity and its elements' type's identity. A
 /// type with a function alternative but no body (identity lost: a join of two closures, or `Type::ANY`) may hold any
 /// materialized closure, so each of them escapes.
-fn mark(cell: &Cell, materialized: &BTreeSet<u32>, escaped: &mut BTreeSet<u32>) {
+pub(super) fn mark(cell: &Cell, materialized: &BTreeSet<u32>, escaped: &mut BTreeSet<u32>) {
     for ty in [cell.ty, cell.elements.ty] {
         if let Some(function) = ty.body_index() {
             escaped.insert(function);
