@@ -3109,17 +3109,34 @@ macro_rules! row_decode {
 }
 
 /// The first `FLAG` of a comparison jump whose operator its instance fixes (`compare_jump_row`):
-/// `FLAG_COMPARE + operator`, past every other flag.
+/// `FLAG_COMPARE + compare_slot(operator)`, past every other flag.
 const FLAG_COMPARE: u8 = 200;
-/// The operators a comparison jump's instance fixes: every binary operator code (`binary_operator`).
-const COMPARE_OPERATORS: u8 = 22;
+/// The operators a comparison jump's instance fixes: the comparison operator codes (`binary_operator`):
+/// the equalities and relations (0 to 7), then `in` and `instanceof`.
+const COMPARE_OPERATORS: u8 = 10;
+
+/// The slot of comparison `operator` among `COMPARE_OPERATORS`; `None` for an arithmetic operator,
+/// which no comparison jump tests.
+const fn compare_slot(operator: u32) -> Option<u8> {
+    use oxc_ast::ast::BinaryOperator as B;
+    if operator <= B::GreaterEqualThan as u32 { Some(operator as u8) }
+    else if operator == B::In as u32 { Some(8) }
+    else if operator == B::Instanceof as u32 { Some(9) }
+    else { None }
+}
+
+/// `compare_slot`'s inverse.
+const fn slot_operator(slot: u8) -> u32 {
+    use oxc_ast::ast::BinaryOperator as B;
+    match slot { 8 => B::In as u32, 9 => B::Instanceof as u32, slot => slot as u32 }
+}
 
 /// The comparisons whose jumps also have instances that fix their operand kinds (`FLAG_COMPARE_FORMED`):
-/// the relations and the strict equalities a loop or a recursion tests.
-const FORMED_COMPARISONS: [u32; 6] = {
+/// the relations and the equalities a loop, a recursion or a state test (`this.state == STATE_X`) makes.
+const FORMED_COMPARISONS: [u32; 8] = {
     use oxc_ast::ast::BinaryOperator as B;
     [B::LessThan as u32, B::LessEqualThan as u32, B::GreaterThan as u32, B::GreaterEqualThan as u32,
-        B::StrictEquality as u32, B::StrictInequality as u32]
+        B::StrictEquality as u32, B::StrictInequality as u32, B::Equality as u32, B::Inequality as u32]
 };
 /// The first `FLAG` of a comparison jump that fixes its operator, a `FORMED_COMPARISONS` entry, and its
 /// operand kinds: `FLAG_COMPARE_FORMED + 2 * entry + form`, where form 0 is two registers and 1 a register
@@ -3188,7 +3205,7 @@ fn boolean_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Opt
 
 /// The first `FLAG` of a comparison jump whose operands the view's int32 kinds prove int32s (`proven_compare_jump`):
 /// `FLAG_COMPARE_PROVEN + 2 * entry + form`, the operator and operand form of `FLAG_COMPARE_FORMED`. It ends the
-/// flag space: the last instance is 255.
+/// flag space: the last instance is 251.
 const FLAG_COMPARE_PROVEN: u8 = FLAG_COMPARE_BOOLEAN + BOOLEAN_TESTS.len() as u8;
 const _: () = assert!(FLAG_COMPARE_PROVEN as usize + 2 * FORMED_COMPARISONS.len() <= 256);
 
@@ -3207,7 +3224,7 @@ const fn operand_fixed_offset(flag: u8) -> Option<u8> {
 
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
-    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
+    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some(slot_operator(flag - FLAG_COMPARE)) }
     if let Some(offset) = operand_fixed_offset(flag) {
         return Some(FORMED_COMPARISONS[(offset / 2) as usize]);
     }
@@ -3232,7 +3249,7 @@ const fn proven_compare_flag(flag: u8) -> bool {
 fn proven_compare_row<const BACKWARD: bool>(offset: usize) -> Option<Handler> {
     macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! proven { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_PROVEN + $n)),+] } }
-    let table: [Handler; 2 * FORMED_COMPARISONS.len()] = proven!(0 1 2 3 4 5 6 7 8 9 10 11);
+    let table: [Handler; 2 * FORMED_COMPARISONS.len()] = proven!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
     table.get(offset).copied()
 }
 
@@ -3285,7 +3302,7 @@ fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constan
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
 fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
     macro_rules! guarded { ($($n:literal)+) => { [$(compare_guarded_row::<BACKWARD, $n> as Handler),+] } }
-    guarded!(0 1 2 3 4 5)
+    guarded!(0 1 2 3 4 5 6 7)
 }
 
 /// The guarded instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) whose two operands are
@@ -3329,7 +3346,7 @@ script_handler! {
 fn compare_operands_of<const BACKWARD: bool>(handler: Handler) -> Option<bool> {
     macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! constant_formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
-    let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11);
+    let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11 13 15);
     Some(constant.iter().any(|row| *row as *const () == handler as *const ()))
 }
 
@@ -3346,12 +3363,12 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
         _ => None,
     };
     if let (Some(entry), Some(form)) = (FORMED_COMPARISONS.iter().position(|&formed| formed == operator), form) {
-        let table: [Handler; 2 * FORMED_COMPARISONS.len()] = formed!(0 1 2 3 4 5 6 7 8 9 10 11);
+        let table: [Handler; 2 * FORMED_COMPARISONS.len()] = formed!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
         return Some(table[2 * entry + form]);
     }
     macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
-    table.get(operator as usize).copied()
+    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9);
+    table.get(usize::from(compare_slot(operator)?)).copied()
 }
 
 /// The plain comparison jump row (`jump_row`) of `handler` where it is an instance its first run moved to
@@ -3361,9 +3378,9 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55)
+        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51)
     }
-    const _: () = assert!(COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 56);
+    const _: () = assert!(COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 52);
     if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
     if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
     if compare_guarded_instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
