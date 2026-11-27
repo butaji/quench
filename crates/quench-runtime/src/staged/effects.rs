@@ -9,24 +9,24 @@ pub use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct RegionSet(pub(crate) u16);
+pub struct RegionSet(pub u16);
 
 impl RegionSet {
-    pub(crate) const NONE: Self = Self(0);
+    pub const NONE: Self = Self(0);
 
-    pub(crate) const fn of(region: Region) -> Self {
+    pub const fn of(region: Region) -> Self {
         Self(1 << region as u16)
     }
 
-    pub(crate) const fn with(self, region: Region) -> Self {
+    pub const fn with(self, region: Region) -> Self {
         Self(self.0 | 1 << region as u16)
     }
 
-    pub(crate) const fn contains(self, region: Region) -> bool {
+    pub const fn contains(self, region: Region) -> bool {
         self.0 & 1 << region as u16 != 0
     }
 
-    pub(crate) const fn intersects(self, other: Self) -> bool {
+    pub const fn intersects(self, other: Self) -> bool {
         self.0 & other.0 != 0
     }
 }
@@ -35,29 +35,29 @@ impl RegionSet {
 /// fast path is inline does not collect; only a slow helper and a safepoint do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Effects {
-    pub(crate) reads: RegionSet,
-    pub(crate) writes: RegionSet,
-    pub(crate) may_alloc: bool,
-    pub(crate) may_collect: bool,
-    pub(crate) may_call_js: bool,
-    pub(crate) may_throw: bool,
+    pub reads: RegionSet,
+    pub writes: RegionSet,
+    pub may_alloc: bool,
+    pub may_collect: bool,
+    pub may_call_js: bool,
+    pub may_throw: bool,
 }
 
 impl Effects {
-    pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
+    pub const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
-    pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
+    pub const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
 
-    pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
+    pub const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region.
-    pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    pub const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
 
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
-    pub(crate) const fn join(self, other: Self) -> Self {
+    pub const fn join(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
             may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
             may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
@@ -203,7 +203,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The effect row of the operation, from its variant alone.
-    pub(crate) const fn effects(&self) -> Effects {
+    pub const fn effects(&self) -> Effects {
         match self.memory_effects() {
             Some(effects) => effects,
             None => self.control_effects(),
