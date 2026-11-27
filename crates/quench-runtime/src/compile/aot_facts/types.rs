@@ -52,10 +52,10 @@ pub(crate) struct Types {
     unseen: Cell,
     /// The element classes the flows' links make (`ElementClasses`): which element keys name the same arrays.
     elements: ElementClasses,
-    /// Per key, the integer bounds its widening moves a grown range to (`typing::widen`): the thresholds of the
-    /// constants stored to the key (`typing::thresholds` of its singleton integer writes), and int32's span. Only
-    /// singleton writes count: a literal or a value of literals, which stays the same from pass to pass, so the
-    /// thresholds the passes widen to do not move under the solve.
+    /// Per key, the integer bounds its widening moves a grown range to (`typing::widen`): `typing::thresholds` of the
+    /// constants stored to the key (its singleton integer writes) and of the bounds its functions compare it with or
+    /// mask it to (`FunctionFlow::bounds`), and int32's span. Each of these follows from the bytecode and the literals,
+    /// not from the types the passes find, so the thresholds the passes widen to do not move under the solve.
     thresholds: BTreeMap<Key, Vec<i64>>,
 }
 
@@ -72,6 +72,9 @@ impl Types {
             if let Some(stored) = fact.cell.ty.int_range().filter(|range| range.min == range.max) {
                 constants.entry(key).or_default().push(stored.min);
             }
+        }
+        for &(key, bound) in flows.iter().flat_map(|flow| &flow.bounds) {
+            constants.entry(key).or_default().push(bound);
         }
         types.thresholds = constants.into_iter().map(|(key, stored)| (key, typing::thresholds(stored))).collect();
         for (id, flow) in flows.iter().enumerate() {

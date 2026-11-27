@@ -35,6 +35,8 @@ pub(super) struct Record {
     closures: Vec<u32>,
     guest_runs: Vec<u32>,
     quiet: Vec<(u32, Quiet)>,
+    /// The integer bounds the replay puts on keys, in replay order (`flow::Solver::replay`, `FunctionFlow::bounds`).
+    pub(super) bounds: Vec<(Key, i64)>,
 }
 
 impl Record {
@@ -60,6 +62,7 @@ impl Record {
             closures: Vec::new(),
             guest_runs: Vec::new(),
             quiet: Vec::new(),
+            bounds: Vec::new(),
         }
     }
 
@@ -238,6 +241,7 @@ impl Record {
             returns_out,
             handed: self.handed,
             closures: self.closures,
+            bounds: self.bounds,
         }
     }
 }

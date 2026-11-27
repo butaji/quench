@@ -8,12 +8,13 @@ use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
 use super::scope::Scope;
 use super::shape::Shape;
-use super::value::{Key, Word};
-use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
+use super::value::{Key, Origin, Word};
+use crate::bytecode::{ControlEdge, Function, Operand, OperandKind, Successors, WideInstruction, used_registers};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
-use crate::staged::{Comparison, Operation};
-use crate::typed_ir::{Cell, Classes, Elements, Representation, Type, WIDENING_ROUNDS, language_bit};
+use crate::staged::{Comparison, NumberOperation, Operation};
+use crate::typed_ir::{Cell, Classes, Elements, IntRange, Representation, Type, WIDENING_ROUNDS, language_bit};
+use crate::vm::operations::NumberBitwise;
 use crate::ValueType;
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
@@ -90,6 +91,10 @@ pub(super) struct FunctionFlow {
     /// The functions whose closure the function defines in a register. Where a value's identity is lost (a function
     /// alternative with no body), any of them may be the closure it holds (`types::escapes`).
     pub(super) closures: Vec<u32>,
+    /// The integer bounds the function puts on the keys it stores to and compares against, in replay order (`Record::bounds`):
+    /// each constant a relational jump compares a key's value with, and each mask bound a store writes. `Types::of` widens
+    /// the key's ranges to them, so a field that counts up to a constant it is compared with settles at that constant.
+    pub(super) bounds: Vec<(Key, i64)>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -382,6 +387,48 @@ fn edge_fact(instruction: WideInstruction, state: &[Word], to_target: bool) -> O
     }
 }
 
+/// The integer range of a program constant operand (`Scope::constant_type`); `None` for a register.
+fn constant_range(ctx: &Ctx<'_>, operand: Operand) -> Option<IntRange> {
+    if matches!(operand.kind(), Some(OperandKind::Constant)) { ctx.scope.constant_type(usize::from(operand.payload())).int_range() } else { None }
+}
+
+/// The key a value read from `origin` is the binding or named property of (`Record::commit` reads keys the same way).
+fn origin_key(origin: Option<Origin>) -> Option<Key> {
+    match origin? {
+        Origin::Binding(key) => Some(key),
+        Origin::Member(atom) => Some(Key::Member(atom)),
+        Origin::MemberOn { class, instance, atom, .. } => Some(Key::MemberOn { class, instance, atom }),
+        _ => None,
+    }
+}
+
+/// The bounds a relational jump puts on the key of its register operand, where its other operand is a constant: each
+/// end of the constant's range (`Record::bounds`). A field compared with `this.count < 1000` gets 1000 under its key.
+fn compared_bounds(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word], record: &mut Record) {
+    let Some(Operation::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. }) = Operation::<u64, ()>::of(instruction) else { return };
+    for (operand, other) in [(left, right), (right, left)] {
+        let Some(register) = operand.register_index() else { continue };
+        let Some(range) = constant_range(ctx, other) else { continue };
+        let Some(key) = origin_key(state[usize::from(register)].origin) else { continue };
+        record.bounds.extend([range.min, range.max].map(|bound| (key, bound)));
+    }
+}
+
+/// Marks the registers `instruction` writes: a `&` with a nonnegative constant operand holds that constant's mask bound
+/// (`typing::mask_bound`), and any other write clears the mark. Only the bytecode decides the marks, so they agree in every pass.
+fn mask_bounds(ctx: &Ctx<'_>, instruction: WideInstruction, masks: &mut [Option<i64>]) {
+    for register in instruction.written_registers() { masks[usize::from(register)] = None; }
+    if let Some(Operation::Number(NumberOperation::Bitwise { destination, left, right, operation: NumberBitwise::And })) = Operation::<u64, ()>::of(instruction) {
+        masks[usize::from(destination)] = [left, right].into_iter().find_map(|operand| typing::mask_bound(constant_range(ctx, operand)?));
+    }
+}
+
+/// The mask bound a store writes to the keys it stores to: a value the instruction reads that holds one (`mask_bounds`).
+fn stored_bounds(instruction: WideInstruction, writes: &[(Key, Word)], masks: &[Option<i64>], record: &mut Record) {
+    let Some(bound) = used_registers(instruction).find_map(|register| masks[usize::from(register)]) else { return };
+    record.bounds.extend(writes.iter().map(|&(key, _)| (key, bound)));
+}
+
 /// Whether a word is exactly `null` or exactly `undefined`: its type holds no other value, so it is that constant.
 fn is_nullish_constant(word: Word) -> bool {
     word.cell.ty == Type::language(ValueType::Null) || word.cell.ty == Type::language(ValueType::Undefined)
@@ -419,12 +466,17 @@ impl Solver<'_> {
         state
     }
 
-    /// Replays `block` from its input `state`, recording what its instructions do.
+    /// Replays `block` from its input `state`, recording what its instructions do. The mask bounds the block's
+    /// registers hold (`mask_bounds`) start empty at each block: they follow from the bytecode alone, not from the facts.
     fn replay(&self, block: usize, mut state: Vec<Word>, record: &mut Record) {
+        let mut masks: Vec<Option<i64>> = vec![None; state.len()];
         for pc in self.blocks.ranges[block].clone() {
             let instruction = self.function.instruction_at(pc);
             record.observe(self.ctx, instruction, pc, &state);
+            compared_bounds(self.ctx, instruction, &state, record);
             let events = step(self.ctx, pc, instruction, &mut state);
+            stored_bounds(instruction, &events.writes, &masks, record);
+            mask_bounds(self.ctx, instruction, &mut masks);
             record.commit(instruction, &state, events);
             let written: Box<[_]> = instruction.written_registers().map(|register| {
                 let word = state[usize::from(register)];
