@@ -998,12 +998,12 @@ impl ProtoLink {
         self.0
     }
 
-    /// The layout id of an ordinary object linked here whose exact shape is `shape` and whose
-    /// values are a plain arena run: no flag, no storage-form bit (`header_word`). It is the one
-    /// representation of the class a construction of more fields than inline storage holds
-    /// makes, which an ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
-    pub fn arena_layout(self, shape: u32) -> u32 {
-        super::layouts::intern(header_word(self.0, shape))
+    /// The class id (layout id) of an ordinary object linked here, of exact shape `shape` and
+    /// capacity class `capacity` (`heap::layouts::intern_class`), with no flags. Capacity 0 is the
+    /// record-table class: the one a construction of more fields than inline storage held, which an
+    /// ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
+    pub fn class(self, shape: u32, capacity: u32) -> u32 {
+        super::layouts::intern_class(shape, self, 0, capacity)
     }
 
     /// The window link naming object record `id`; `None` past the object window, where the
@@ -1097,7 +1097,7 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 /// An object's two header words as its layout's entry holds them (`heap::layouts`): the
 /// auxiliary word low, `meta` high.
 #[inline(always)]
-const fn header_word(meta: u32, auxiliary: u32) -> u64 {
+pub(crate) const fn header_word(meta: u32, auxiliary: u32) -> u64 {
     auxiliary as u64 | (meta as u64) << u32::BITS
 }
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload);

@@ -71,11 +71,11 @@ fn read_type() -> SlotType {
 pub use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
 pub const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
 pub(crate) use aux_form::CONSTANT_FORM;
-const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM | CONSTANT_FORM | SHAPE_LIMIT_BITS);
+pub(crate) const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM | CONSTANT_FORM | SHAPE_LIMIT_BITS);
 /// The auxiliary bits above `CONSTANT_FORM` no storage form uses (26): no shape reaches them.
 const SHAPE_LIMIT_BITS: u32 = 1 << 26;
 /// Shapes are numbered below `CONSTANT_FORM`.
-const SHAPE_LIMIT: u32 = CONSTANT_FORM - 1;
+pub(crate) const SHAPE_LIMIT: u32 = CONSTANT_FORM - 1;
 const _: () = assert!(CONSTANT_FORM & (STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && SHAPE_MASK == SHAPE_LIMIT);
 const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
 /// The words a narrow run of `len` values fills.
