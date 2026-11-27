@@ -77,8 +77,8 @@ pub(crate) enum Symbol {
     /// The layout id of the objects of a field guard key's construction (`guarded_layout`):
     /// `NO_LAYOUT` where the guard does not resolve.
     GuardLayout(u32),
-    /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where the
-    /// recipe's fields may stay inline or its prototype does not resolve. Keyed by the recipe, as `Shape`.
+    /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where its
+    /// prototype does not resolve. Keyed by the recipe, as `Shape`.
     ClassLayout(u32),
 }
 
@@ -509,14 +509,14 @@ fn holder_shape(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u16) -> Option
     (at == usize::from(slot)).then_some((shape, slot, ty))
 }
 
-/// The layout id of the instances shape recipe `key` builds (`Symbol::ClassLayout`): the shape `shape` gives it,
-/// under its prototype's link, interned as `guarded_layout` does. Where its fields may stay inline, `None`.
+/// The layout id of the instances shape recipe `key` builds (`Symbol::ClassLayout`): the header a construction of its
+/// fields allocates with (`InlineObjectHeader::for_fields`, the construct plan's own rule) over the shape `shape`
+/// gives it. `None` where the recipe's prototype does not resolve.
 fn class_layout_id(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     let recipe = image.shapes.get(key as usize)?;
-    if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
     let prototype = heap_value(image, vm, recipe.prototype?)?;
     let shape = shape(image, vm, key)?;
-    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape))
+    Some(quench_runtime::tier_surface::InlineObjectHeader::for_fields(prototype, shape, recipe.fields.len()).layout_id())
 }
 
 /// The data attributes of a field's attribute bits.

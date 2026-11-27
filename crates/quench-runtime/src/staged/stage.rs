@@ -423,9 +423,10 @@ pub enum ImageWord {
     /// guard key: one compare of a record's own word with it proves the exact shape, the plain
     /// arena run and the prototype link (`ic::IcOp::GuardFormed` of an `ic::SYMBOLIC_SHAPE` id).
     Layout,
-    /// The layout id (`ProtoLink::class`) of the instances a shape recipe builds, by the recipe's key in the
-    /// image's shape table, resolved where the image links: the header word those instances carry while their values
-    /// are a plain arena run, or an id no record has where the recipe may stay inline (`symbols::class_layout_id`).
+    /// The layout id of the instances a shape recipe builds, by the recipe's key in the image's shape table, resolved
+    /// where the image links: the header word a construction of the recipe's fields allocates with, inline or arena
+    /// form (`InlineObjectHeader::for_fields`, `symbols::class_layout_id`), or an id no record has where the
+    /// recipe's prototype does not resolve.
     /// A lowering names it by the recipe key, `stage.image_word(ImageWord::ClassLayout, key)`.
     ClassLayout,
 }

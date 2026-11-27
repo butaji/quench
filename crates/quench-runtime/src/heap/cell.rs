@@ -857,6 +857,18 @@ impl InlineObjectHeader {
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self { layout: 0 };
 
+    /// The header a construction of `fields` values of `proto` and `shape` allocates with: inline
+    /// storage while they fit the inline slots, else an arena run. The one rule a construct plan
+    /// (`ConstructPlan::derive_header`) and an ahead image's layout id (`Symbol::ClassLayout`) both take.
+    pub fn for_fields(proto: Value, shape: u32, fields: usize) -> Self {
+        if fields <= INLINE_PROPERTY_COUNT { Self::of(proto, shape) } else { Self::of_run(proto, shape) }
+    }
+
+    /// The layout id the header's words intern to: the header word of every object allocated from it.
+    #[inline] pub fn layout_id(self) -> u32 {
+        self.layout
+    }
+
     pub fn of(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::inline_property_storage(shape))
     }

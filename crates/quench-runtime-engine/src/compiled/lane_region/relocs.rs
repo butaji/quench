@@ -42,7 +42,7 @@ pub(crate) enum RelocKind {
     /// (`staged::ImageWord::Layout`): an id no record has where the guard does not resolve.
     GuardLayout,
     /// The layout id of the instances the shape recipe `key` builds (`staged::ImageWord::ClassLayout`): an id no
-    /// record has where the recipe's fields may stay inline.
+    /// record has where the recipe's prototype does not resolve.
     ClassLayout,
 }
 
