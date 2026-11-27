@@ -938,9 +938,11 @@ fn note_frame_this(cx: *mut LaneContext, vm: &Vm, frame: usize, this: Value) {
 }
 
 /// Retires the lane's `this` trust (`note_lane_this`): every view's trusted rows take their checked forms.
+/// A linked ahead image retires it too: its bodies run compiled under `--no-jit` and hand activations
+/// back to the lane (`CompiledAheadImagesVm::load_ahead_images`).
 #[cold]
 #[inline(never)]
-fn retire_this_trust(vm: &Vm) {
+pub(crate) fn retire_this_trust(vm: &Vm) {
     vm.this_trust.set(THIS_RETIRED);
     vm.programs.rewrite_lane_handlers(&|handler| {
         TRUSTED_THIS_ROWS.iter().find(|(_, trusted)| *trusted as *const () == handler).map(|(plain, _)| *plain as *const ())

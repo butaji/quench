@@ -565,7 +565,8 @@ impl Vm {
         images.linked = linked.ok();
         // A linked image's bodies are compiled already: they enter under `--no-jit` too, as a
         // system-linked image's do (`load_linked_image`).
-        if images.linked.is_some() { self.programs.enable_ahead_lane_bodies(); }
+        // Their activations' `this` is no binding the lane checked, so the lane trusts none (`note_lane_this`).
+        if images.linked.is_some() { self.programs.enable_ahead_lane_bodies(); crate::dispatch_fast::retire_this_trust(self); }
         self.programs.add_ahead_images(images);
     }
 
@@ -579,6 +580,7 @@ impl Vm {
         // The image's bodies are compiled already, so the gate that keeps runtime lane-body
         // compiles off on AArch64 (`enable_js_lane_methods`) does not apply to them.
         self.programs.enable_ahead_lane_bodies();
+        crate::dispatch_fast::retire_this_trust(self);
         Ok(())
     }
 }
