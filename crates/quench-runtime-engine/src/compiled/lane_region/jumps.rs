@@ -13,7 +13,7 @@ impl Lowering<'_, '_> {
             self.backedge |= target == self.coverage.entry();
             if target == self.coverage.entry() { self.count_trip(); }
             if self.shared_backedge(state, target) { return false; }
-            self.interrupt_check(state, pc as u32);
+            self.back_edge_check(state, pc, target);
             if let Some(header) = self.unit.instructions.get(target).copied()
                 && quench_runtime::staged::meaning::means(header, quench_runtime::staged::meaning::Meaning::ConditionalJump)
                 && header.result_flags() == 0

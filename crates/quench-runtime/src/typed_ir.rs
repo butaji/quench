@@ -12,7 +12,7 @@ mod int_range;
 mod int_type;
 mod lattice;
 mod representation;
-pub use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
+pub use lattice::{ANY_LANGUAGES, Languages, MAX_STRING_ATOMS, StringFact, StringLength, Type, TypeKind, language_bit};
 pub use representation::{repr, Representation};
 mod slot_type;
 pub use slot_type::SlotType;

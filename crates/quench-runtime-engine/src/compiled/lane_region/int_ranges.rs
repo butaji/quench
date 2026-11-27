@@ -5,10 +5,9 @@
 //!
 //! A thin view over the facts analysis: one run of it models the unit (`facts::Model`: its
 //! inlined frames, its dense accesses, the PCs a previous body left at) and takes the entry's
-//! guarded ranges (`Lowering::entering`), so the ranges and the proofs are rows of the same
-//! fixpoint that types every register, which widens a range that keeps growing instead of
-//! assuming one and checking it on the back edge. Length facts are the solver's
-//! (`Lowering::proven_below_length`, `Lowering::bound_below`, `Lowering::may_resize`).
+//! proven inputs (`initial`), so the ranges, the length relations and the proofs
+//! are rows of the same fixpoint that types every register, which widens a range that keeps
+//! growing instead of assuming one and checking it on the back edge.
 
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
@@ -151,27 +150,6 @@ impl Lowering<'_, '_> {
             }).collect()
     }
 
-    /// The entering ranges (`entering`) the loop keeps: those still narrower than int32 at the
-    /// entry `entry` once its backedges join in. An entry sample is one value; where the loop
-    /// writes the register out of the range (a hash, say), the header's fact is the whole int32
-    /// range and the guard proves nothing, yet it leaves every later entry the sample misses.
-    pub(crate) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
-        if self.entering.is_empty() { return Vec::new(); }
-        let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
-        let reads = self.typed_reads(instructions);
-        let signless = self.signless_products(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, entering: &self.entering, model: Some(model),
-            signless: &signless };
-        let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
-            native_calls: self.native_calls, raises: &self.raises };
-        let facts = facts::analyze_text(&text, initial, seeds);
-        let Some(header) = facts.at(entry) else { return self.entering.clone() };
-        self.entering.iter().copied().filter(|&(register, _)| header.get(usize::from(register))
-            .and_then(|ty| ty.int_range()).is_some_and(|range| range != IntRange::FULL)).collect()
-    }
-
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
     pub(crate) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
@@ -179,7 +157,7 @@ impl Lowering<'_, '_> {
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.typed_reads(instructions);
         let signless = self.signless_products(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, entering: &self.entering, model: Some(model),
+        let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls, raises: &self.raises };

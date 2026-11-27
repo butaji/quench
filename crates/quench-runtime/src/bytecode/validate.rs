@@ -552,7 +552,7 @@ impl ResidualProgram {
 
     #[quench_macros::test_visible]
     pub(crate) fn validate(&self) -> Result<(), String> {
-        if let Some(source) = &self.source { source.validate_call_sites()?; }
+        self.validate_call_sites()?;
         // The compiled-source bytes a position may name: those of the kept text, after its
         // wrapper prefix. A program that keeps no text has none to bound them by.
         let source_end = self.source.as_ref().map(|source| source.base as usize + source.text.len());
@@ -1002,7 +1002,7 @@ function.plain_local_slots(&self.superinstructions)
                     Some(site) => (site.atoms.len(), true),
                     None => (0, false),
                 },
-                super::LiteralStep::Json(start) => (0, self.data_literal_text(start).is_some()),
+                super::LiteralStep::Json(constant) => (0, matches!(self.constants.get(constant as usize), Some(super::Constant::String(_)))),
             };
             if !valid || taken > depth {
                 return false;
@@ -1392,7 +1392,7 @@ mod tests {
             declared_types: None,
             source_name: String::new(),
             source: None,
-            record: super::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into() },
+            record: super::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
             functions: vec![function.into()].into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),

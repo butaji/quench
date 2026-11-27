@@ -63,15 +63,11 @@ pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
     PROCESS_MEMORY_POLICY.get().copied()
 }
 
-/// Selects the process's memory policy once: the default, or memory-first under the
-/// `QUENCH_DEV=memory-first` experiment, which child processes inherit with the environment.
-pub(crate) fn select_memory_policy() -> MemoryPolicy {
+/// Selects the process's memory policy once, as a fact of the image it runs: an AOT closed image
+/// is memory-first, and every other run is throughput, the default.
+pub(crate) fn select_memory_policy(closed_image: bool) -> MemoryPolicy {
     *PROCESS_MEMORY_POLICY.get_or_init(|| {
-        let policy = if quench_runtime::trace::Dev::MemoryFirst.on() {
-            MemoryPolicy::MemoryFirst
-        } else {
-            MemoryPolicy::default()
-        };
+        let policy = if closed_image { MemoryPolicy::MemoryFirst } else { MemoryPolicy::default() };
         crate::allocator_policy::apply(policy);
         policy
     })
@@ -420,7 +416,7 @@ fn execute_shared_on_worker(
     let _guest_call_limit =
         guest_call_limit(&exec_argv).map(quench_stack::GuestCallLimitGuard::enter);
 
-    let memory_policy = select_memory_policy();
+    let memory_policy = select_memory_policy(false);
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
         // The CLI compiles what it loads: the source and WebAssembly frontends. A static
         // image's support has no source frontend, and enables Wasm only where its program
@@ -938,7 +934,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         }
         index += 1;
     }
-    select_memory_policy();
+    select_memory_policy(false);
     if interactive && input_type_module {
         eprintln!("Cannot specify --input-type for REPL");
         return Ok(ExitCode::FAILURE);

@@ -70,7 +70,7 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::bytecode::MAX_ARRAY_LENGTH;
     pub use quench_runtime::vm::pending_job::PendingJob;
     pub use quench_runtime::vm::atom_set::{AtomSet, IndexAtoms};
-    pub use quench_runtime::vm::call_printer::{freeze_call_sites, freeze_source_call_sites};
+    pub use quench_runtime::vm::call_printer::freeze_call_sites;
     pub use quench_runtime::vm::engine_types::{copy_arguments, fill_window as fill_registers};
     pub use quench_runtime::vm::group_by::GroupByKind;
     pub use quench_runtime::vm::property_definition::PropertyDefinitionKind;
@@ -214,7 +214,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::numeric_image::NumericImageOps1 as _;
     pub use crate::compiled::object_slots::InheritedConstantOps1 as _;
     pub use crate::compiled::object_slots::NativeFieldLoadOps1 as _;
-    pub use crate::compiled::osr_compile::OsrFactsOps2 as _;
     pub use crate::compiled::osr_compile::PendingOsrRegionOps1 as _;
     pub use crate::compiled::osr_compile::calls::CompiledOsrCompileCallsVm as _;
     pub use crate::compiled::osr_compile::calls::CallCodeOps1 as _;

@@ -16,7 +16,7 @@ use quench_runtime::staged::wasm::Width;
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use quench_runtime::staged::wasm_memory::{
-    Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
+    Access, Memory, MemoryWasmMemoryExt, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
 };
 use quench_runtime::wasm::INDEX_GROW_FAILURE;
 use quench_runtime::wasm::memory::WASM_PAGE_BITS;

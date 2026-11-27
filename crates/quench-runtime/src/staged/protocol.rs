@@ -144,6 +144,24 @@ pub(crate) fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut
     Some(stage.select(object, receiver, global))
 }
 
+/// `bind_this_with` where the callee's sloppiness is a condition of the stage (`sloppy`, true where the callee is sloppy):
+/// a strict callee's receiver is its own, a sloppy one's binds as `bind_this_with` binds it.
+pub(crate) fn bind_this_dynamic<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut S, receiver: S::Word, sloppy: S::Cond,
+    global: G, miss: S::Miss) -> Option<S::Word> {
+    let ordinary = is_direct_object(stage, receiver);
+    let object = is_object_family(stage, receiver, ordinary);
+    let undefined = stage.eq_imm(receiver, Value::UNDEFINED.to_bits());
+    let null = stage.eq_imm(receiver, Value::NULL.to_bits());
+    let nullish = stage.any(undefined, null);
+    let bound = stage.any(object, nullish);
+    let strict = stage.not(sloppy);
+    let fine = stage.any(strict, bound);
+    stage.guard(fine, miss)?;
+    let global = global(stage);
+    let bound_this = stage.select(object, receiver, global);
+    Some(stage.select(sloppy, bound_this, receiver))
+}
+
 /// `bind_this` on machine words for the interpreter's own binding of a sloppy callee's `this`:
 /// the same row the native tiers emit.
 #[inline(always)]

@@ -115,7 +115,8 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
             .take(1)
             .collect()
     };
-    let unit = crate::compiled::lane_unit::unit(code, function, body, &targets, &|callee| code.function_get(callee as usize))?;
+    let graph = vm.programs.call_graph(vm.active_program);
+    let unit = crate::compiled::lane_unit::unit(code, graph.as_deref(), function, body, &targets, &|callee| code.function_get(callee as usize))?;
     if unit.frames.is_empty() || unit.registers > u16::from(u8::MAX) { return None; }
     // An inlined callee's stores to `this` store to its receiver register, which is the frame's
     // `this` the unit's other records read (`lane_unit` renames field bases, not these).

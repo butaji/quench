@@ -21,13 +21,9 @@
 use super::plan::{CallEntry, CalleeKind, DirectPlan, Identity, NativeId, WordList};
 use super::region::Region;
 use super::property::get_field;
-use super::protocol::{bind_this_with, complete_call, fill_call, guard_received};
+use super::protocol::{bind_this_dynamic, bind_this_with, complete_call, fill_call, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
-#[cfg(not(stencil_build))]
-use super::CallRecord;
-#[cfg(not(stencil_build))]
-use crate::bytecode::WideInstruction;
 use crate::bytecode::{FieldBase, FieldLookup};
 use crate::Value;
 
@@ -90,6 +86,20 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     /// (`call_room`) rather than fixing them in the plan; `None` for the plan's.
     #[inline(always)]
     fn call_fill(&self) -> Option<u16> {
+        None
+    }
+
+    /// The callee's window size where the frame reads it at run time (an indirect callee's record): the admission and the
+    /// fill take it in place of the plan's `registers`. `None` for the plan's.
+    #[inline(always)]
+    fn call_registers_dynamic(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
+    /// The callee's sloppiness where the frame reads it at run time: a word true where the callee is sloppy, in place of
+    /// the plan's `sloppy` (`callee_this`). `None` for the plan's.
+    #[inline(always)]
+    fn call_sloppy_dynamic(&mut self, _stage: &mut S) -> Option<S::Word> {
         None
     }
 
@@ -255,23 +265,13 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     fn call_helper(&mut self, _stage: &mut S, _site: &Invocation, direct: Option<S::Word>) -> Option<S::Word> {
         direct
     }
-
-    #[cfg(not(stencil_build))]
-    /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
-    /// call row runner asks where the row declined (the record's operands are read from it, since an
-    /// `Invocation` does not name every form). `None` where the frame runs no general calls.
-    #[cfg(not(stencil_build))]
-    #[inline(always)]
-    fn call_general(&mut self, _form: CallRecord, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
-        None
-    }
 }
 
 /// The call of `site`: by the frame's direct entry where it has one (a unit's inlined callee is a
 /// `CallEntry::Inline` the unit spliced, whose entry stays the fallback), else by the VM. A
 /// guard that fails leaves at `miss`, where the VM's call runs.
 #[inline(always)]
-pub(crate) fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
+pub fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
     -> Step<S::Word, F::Control> {
     let direct = match frame.call_entry(&site) {
         CallEntry::Direct(plan) | CallEntry::Inline(plan) => match plan.kind {
@@ -325,7 +325,7 @@ fn callee_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fram
 /// The callee's `this`: a construction's allocated receiver, or the receiver a call binds (a bound
 /// function's own), after the callee's identity is proved.
 #[inline(always)]
-pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
+pub fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
     (site, plan): (&Invocation, &DirectPlan)) -> Option<S::Word> {
     if plan.kind.allocates_receiver() {
         let held = callee_word(stage, frame, file, miss, (site, plan, None))?;
@@ -336,6 +336,13 @@ pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
     let receiver = receiver_word(stage, frame, file, miss, site.receiver)?;
     callee_word(stage, frame, file, miss, (site, plan, Some(receiver)))?;
     let this = plan.bound.map_or(receiver, |bound| stage.constant(bound.this));
+    if let Some(flag) = frame.call_sloppy_dynamic(stage) {
+        let sloppy = stage.ne_imm(flag, 0_u64);
+        let binder = &mut *frame;
+        let this = bind_this_dynamic(stage, this, sloppy, |stage: &mut S| binder.call_global(stage).unwrap_or_else(|| stage.constant(0)), miss)?;
+        frame.call_this_bound(stage, this, miss)?;
+        return Some(this);
+    }
     let binder = &mut *frame;
     let global = plan.sloppy.map(|global| move |stage: &mut S| binder.call_global(stage).unwrap_or_else(|| stage.constant(global)));
     let this = bind_this_with(stage, this, global, miss)?;
@@ -347,7 +354,7 @@ pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
 /// the plan folded, then the call's: a window of the caller's file, or the registers of the list
 /// the frame resolves.
 #[inline(always)]
-pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
+pub fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
     (site, plan, registers): (&Invocation, &DirectPlan, u16)) -> Option<()> {
     let constants: &[u64] = match plan.bound {
         Some(bound) => frame.call_constants(bound.arguments)?,
@@ -366,6 +373,18 @@ pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F
         Arguments::List(_) => return None,
     };
     fill_call(stage, top, prefix, passed, registers);
+    Some(())
+}
+
+/// `fill_arguments` where the callee's window has `words` registers at run time (`CallFrame::call_registers_dynamic`): the
+/// call's arguments are its window's, with no bound prefix and no words the frame holds; else `None`.
+pub(super) fn fill_arguments_dynamic<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word,
+    (site, plan): (&Invocation, &DirectPlan), words: S::Word) -> Option<()> {
+    if plan.bound.is_some() || frame.call_words().is_some() { return None; }
+    let Arguments::Window { first, count } = site.arguments else { return None };
+    let arguments = stage.add_imm(file, word_bytes(first));
+    let undefined = stage.constant(Value::UNDEFINED.to_bits());
+    stage.fill_window_dynamic(top, undefined, arguments, count, words);
     Some(())
 }
 
@@ -389,7 +408,10 @@ fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fra
     if let Some(control) = frame.call_hand_over(stage, this, room) {
         return Some(Direct::Activated(control));
     }
-    fill_arguments(stage, frame, file, room.top, (site, &plan, frame.call_fill().unwrap_or(plan.registers)))?;
+    match frame.call_registers_dynamic(stage) {
+        Some(words) => fill_arguments_dynamic(stage, frame, file, room.top, (site, &plan), words)?,
+        None => fill_arguments(stage, frame, file, room.top, (site, &plan, frame.call_fill().unwrap_or(plan.registers)))?,
+    }
     let entered = frame.call_enter(stage, this, room)?;
     let receiver = constructs.then_some(this);
     let value = complete_call(stage, entered.status, entered.word, receiver, plan.returned, entered.unfinished)?;
@@ -412,9 +434,14 @@ impl<W, P> Operation<W, P> {
 
 /// Complete the activation with the value of `source`, where the frame can.
 #[inline(always)]
-pub(crate) fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
+pub fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
     frame.ret(stage, source).map_or(Step::Unresolved, Step::Control)
 }
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;
 
 #[cfg(test)]
 mod tests;

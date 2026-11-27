@@ -478,6 +478,8 @@ pub struct AheadImages {
     /// The program's closed-world facts, which shaped its lane bodies' units (`unit_of`): the
     /// compile's, or derived once again from the program where the image was read from a file.
     pub facts: std::cell::OnceCell<AotFacts>,
+    /// The call graph of the program the facts describe (`compile::call_graph`), derived with them on first use.
+    pub graph: std::cell::OnceCell<crate::compile::call_graph::CallGraph>,
 }
 
 /// What the tier finds in a function at its entries. Each fact depends only on the function and
@@ -1569,10 +1571,6 @@ pub struct InlinedCall {
     pub target: CallTarget,
     /// The register holding the callee, guarded at the call.
     pub callee_register: Register,
-    /// An OSR region's entry word holding the callee, which the region resolved at compile
-    /// time and dropped the caller's read for; the marker reads it there instead of the
-    /// register, which the loop may reuse.
-    pub callee_entry_word: Option<u32>,
     /// The register holding the call's receiver, the callee's `this`.
     pub receiver: Register,
     /// The call's first argument register.
@@ -5160,7 +5158,7 @@ impl AheadImages {
     #[inline]
 
     pub fn of(image: AotImage) -> Self {
-        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new() }
+        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new(), graph: std::cell::OnceCell::new() }
     }
 
     /// Whether the image has no functions.

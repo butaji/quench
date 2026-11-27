@@ -650,3 +650,31 @@ fn an_index_accessor_the_program_defines_retires_the_bound_on_element_accesses()
         assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "an index accessor may run at {pc}");
     }
 }
+
+#[test]
+fn a_number_keyed_read_of_an_array_runs_nothing_in_a_closed_world() {
+    let program = program("function f() { var a = [1, 2]; var i = 1; return a[i]; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        let effects = facts.function_facts(f as u32).site_effects(pc);
+        assert!(!effects.may_call_js && !effects.may_throw, "a Number-keyed read of a closed array runs no guest code at {pc}");
+    }
+}
+
+#[test]
+fn an_index_accessor_the_program_defines_keeps_an_element_read_open() {
+    let program = program(
+        "function f() { var a = [1, 2]; var i = 1; return a[i]; } f(); \
+         Object.defineProperty(Array.prototype, '0', { get: function () { return 1; } });",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        assert!(facts.function_facts(f as u32).site_effects(pc).may_call_js, "an index accessor may run at {pc}");
+    }
+}

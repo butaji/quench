@@ -95,6 +95,10 @@ pub struct CallRecord {
     /// interpreter reads both from a linked body frame's window (`ScriptCallTarget::env`, `capture`).
     pub env: u64,
     pub capture: u64,
+    /// The callee's window size (`DirectPlan::registers`), which an indirect closed-set call reads at run time.
+    pub registers: u64,
+    /// 1 where the callee is sloppy (`DirectPlan::sloppy` is `Some`), else 0.
+    pub sloppy: u64,
 }
 
 /// Two cache lines: the record is aligned to one.

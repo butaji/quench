@@ -26,71 +26,70 @@ impl AccessWasmMemoryExt for Access {
     }
 }
 
-impl Access {
-    /// The access a scalar load makes; a vector load has none. Always inlined: a handler's
-    /// constant load folds to its width and sign, so the bytes move as one word, not by memcpy.
-    #[inline(always)]
-    pub const fn of_load(load: MemoryLoad) -> Option<Self> {
-        let ty = match load {
-            MemoryLoad::I32Load
-            | MemoryLoad::I32Load8S
-            | MemoryLoad::I32Load8U
+/// The access a scalar load makes; a vector load has none. Always inlined: a handler's constant
+/// load folds to its width and sign, so the bytes move as one word, not by memcpy. A const fn, so
+/// a free fn: an inherent impl of `Access` cannot live outside quench-staged.
+#[inline(always)]
+pub const fn access_of_load(load: MemoryLoad) -> Option<Access> {
+    let ty = match load {
+        MemoryLoad::I32Load
+        | MemoryLoad::I32Load8S
+        | MemoryLoad::I32Load8U
+        | MemoryLoad::I32Load16S
+        | MemoryLoad::I32Load16U => WasmType::I32,
+        MemoryLoad::F32Load => WasmType::F32,
+        MemoryLoad::I64Load
+        | MemoryLoad::I64Load8S
+        | MemoryLoad::I64Load8U
+        | MemoryLoad::I64Load16S
+        | MemoryLoad::I64Load16U
+        | MemoryLoad::I64Load32S
+        | MemoryLoad::I64Load32U => WasmType::I64,
+        MemoryLoad::F64Load => WasmType::F64,
+        _ => return None,
+    };
+    let signed = matches!(
+        load,
+        MemoryLoad::I32Load8S
             | MemoryLoad::I32Load16S
-            | MemoryLoad::I32Load16U => WasmType::I32,
-            MemoryLoad::F32Load => WasmType::F32,
-            MemoryLoad::I64Load
             | MemoryLoad::I64Load8S
-            | MemoryLoad::I64Load8U
             | MemoryLoad::I64Load16S
-            | MemoryLoad::I64Load16U
             | MemoryLoad::I64Load32S
-            | MemoryLoad::I64Load32U => WasmType::I64,
-            MemoryLoad::F64Load => WasmType::F64,
-            _ => return None,
-        };
-        let signed = matches!(
-            load,
-            MemoryLoad::I32Load8S
-                | MemoryLoad::I32Load16S
-                | MemoryLoad::I64Load8S
-                | MemoryLoad::I64Load16S
-                | MemoryLoad::I64Load32S
-        );
-        Some(Self {
-            ty,
-            bytes: load.width(),
-            signed,
-        })
-    }
+    );
+    Some(Access {
+        ty,
+        bytes: load.width(),
+        signed,
+    })
+}
 
-    #[inline(always)]
-    pub const fn of_store(store: MemoryStore) -> Self {
-        Self {
-            ty: store.value_type(),
-            bytes: store.width(),
-            signed: false,
-        }
+/// The access a scalar store makes. A const fn, so a free fn (see `access_of_load`).
+#[inline(always)]
+pub const fn access_of_store(store: MemoryStore) -> Access {
+    Access {
+        ty: store.value_type(),
+        bytes: store.width(),
+        signed: false,
     }
 }
 
-impl Memory {
-    /// The linear-memory step `op` is (`Decoder::WasmMemory`), or none for an opcode it does not name.
-    pub const fn of(op: Op) -> Option<Self> {
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            if let Some(access) = Access::of_load(load) {
-                return Some(Self::Load(access));
-            }
+/// The linear-memory step `op` is (`Decoder::WasmMemory`), or none for an opcode it does not name.
+/// A const fn, so a free fn (see `access_of_load`).
+pub const fn memory_of(op: Op) -> Option<Memory> {
+    if let Some(load) = memory_load_from_direct_op(op) {
+        if let Some(access) = access_of_load(load) {
+            return Some(Memory::Load(access));
         }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            return Some(Self::Store(Access::of_store(store)));
-        }
-        match op.class() {
-            Class::WasmMemorySize => Some(Self::Size),
-            Class::WasmMemoryGrow => Some(Self::Grow),
-            Class::WasmMemoryFill => Some(Self::Fill),
-            Class::WasmMemoryCopy => Some(Self::Copy),
-            _ => None,
-        }
+    }
+    if let Some(store) = memory_store_from_direct_op(op) {
+        return Some(Memory::Store(access_of_store(store)));
+    }
+    match op.class() {
+        Class::WasmMemorySize => Some(Memory::Size),
+        Class::WasmMemoryGrow => Some(Memory::Grow),
+        Class::WasmMemoryFill => Some(Memory::Fill),
+        Class::WasmMemoryCopy => Some(Memory::Copy),
+        _ => None,
     }
 }
 
@@ -139,10 +138,10 @@ impl MemoryWasmMemoryExt for Memory {
 /// included.
 pub fn bound_memory_register(instruction: WideInstruction) -> Option<crate::bytecode::Register> {
     let op = instruction.op();
-    if MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some() {
+    if memory_load_from_direct_op(op).is_some() || memory_store_from_direct_op(op).is_some() {
         return Some(instruction.b());
     }
-    match Memory::of(op)? {
+    match memory_of(op)? {
         Memory::Size => Some(instruction.b()),
         Memory::Fill => Some(instruction.a()),
         Memory::Load(_) | Memory::Store(_) | Memory::Grow | Memory::Copy => None,
@@ -150,21 +149,22 @@ pub fn bound_memory_register(instruction: WideInstruction) -> Option<crate::byte
 }
 
 // Scalar memory32 accesses with a static offset have one opcode each. The access semantics
-// remain the MemoryLoad/MemoryStore rules above; the opcode only names the operator so dispatch
-// needs no selector decode.
+// remain the MemoryLoad/MemoryStore rules in quench-staged; the opcode only names the operator so
+// dispatch needs no selector decode. The two maps are free fns: an inherent impl of a type that
+// quench-staged defines cannot live here.
 macro_rules! direct_accesses {
-    ($kind:ty; $($name:ident => $op:ident;)+) => {
-        impl $kind {
-            pub const fn direct_op(self) -> Option<crate::bytecode::Op> {
-                match self { $(Self::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
-            }
-            pub const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
-                match op { $(crate::bytecode::Op::$op => Some(Self::$name),)+ _ => None }
-            }
+    ($kind:ident, $direct:ident, $from:ident; $($name:ident => $op:ident;)+) => {
+        /// The opcode of a direct access of `operator`, or none for an operator with no opcode.
+        pub const fn $direct(operator: $kind) -> Option<crate::bytecode::Op> {
+            match operator { $($kind::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
+        }
+        /// The operator a direct access opcode names, or none for any other opcode.
+        pub const fn $from(op: crate::bytecode::Op) -> Option<$kind> {
+            match op { $(crate::bytecode::Op::$op => Some($kind::$name),)+ _ => None }
         }
     }
 }
-direct_accesses! { crate::wasm::memory::MemoryLoad;
+direct_accesses! { MemoryLoad, memory_load_direct_op, memory_load_from_direct_op;
     I32Load => WasmI32Load;
     I64Load => WasmI64Load;
     F32Load => WasmF32Load;
@@ -180,7 +180,7 @@ direct_accesses! { crate::wasm::memory::MemoryLoad;
     I64Load32S => WasmI64Load32S;
     I64Load32U => WasmI64Load32U;
 }
-direct_accesses! { crate::wasm::memory::MemoryStore;
+direct_accesses! { MemoryStore, memory_store_direct_op, memory_store_from_direct_op;
     I32Store => WasmI32Store;
     I64Store => WasmI64Store;
     F32Store => WasmF32Store;

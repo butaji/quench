@@ -16,10 +16,10 @@ pub fn step_out_of_line<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
 
 mod out_of_line {
     use super::*;
-    macro_rules! shards { ($($shard:ident)*) => { $(pub(super) mod $shard {
+    macro_rules! shards { ($($shard:ident)*) => { $(pub mod $shard {
         use super::*;
         #[inline(never)]
-        pub(in super::super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+        pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
             super::super::step(stage, frame, operation)
         }
     })* }; }
@@ -406,41 +406,6 @@ pub enum RowStep {
 }
 
 #[cfg(not(stencil_build))]
-/// The part of `step` opcode `op`'s row reaches.
-pub const fn row_step(op: Op) -> RowStep {
-    match op.staged() {
-        Some(Decoder::Flow) => RowStep::Flow,
-        Some(Decoder::Local) => RowStep::Local,
-        Some(Decoder::WasmInt) => RowStep::WasmInt,
-        Some(Decoder::Names) | Some(Decoder::Proved) => RowStep::Names,
-        Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
-        Some(Decoder::Element) => RowStep::Keyed,
-        Some(Decoder::WasmFloat) => RowStep::WasmFloat,
-        // `IntCaseIndex` decodes to a Number operation (`NumberOperation::IntCase`), which the generic step does not run.
-        Some(Decoder::Generic) => if matches!(op, Op::IntCaseIndex) { RowStep::Number }
-            else if matches!(op, Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply) { RowStep::Arith } else { RowStep::Generic },
-        Some(Decoder::WasmJump) => RowStep::WasmJump,
-        Some(Decoder::WasmState) => RowStep::WasmState,
-        Some(Decoder::WasmMemory) => RowStep::WasmMemory,
-        Some(Decoder::WasmVector) => RowStep::WasmVector,
-        Some(Decoder::Lane) => match op {
-            Op::TierPrologue | Op::BodyEntry => RowStep::Entry,
-            _ => RowStep::Full,
-        },
-        Some(Decoder::Value) => match op {
-            Op::LoadCapture | Op::StoreCapture => RowStep::Names,
-            Op::IncDec | Op::ToNumeric => RowStep::Number,
-            // A unary decodes to the operations the arithmetic step runs (`decode_unary`): a `typeof`
-            // test or name, `!`, a Number operator or the VM's.
-            Op::Unary => RowStep::Arith,
-            Op::LoadThis | Op::LoadCallee | Op::RequireObjectCoercible | Op::RequireIteratorResult => RowStep::Value,
-            _ => RowStep::Full,
-        },
-        _ => RowStep::Full,
-    }
-}
-
-#[cfg(not(stencil_build))]
 /// `step` of a Wasm integer row (`RowStep::WasmInt`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -453,7 +418,7 @@ pub fn step_wasm_int<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, op
 
 /// `step` of a flow row (`RowStep::Flow`); any other operation is unresolved.
 #[inline(always)]
-pub(crate) fn step_flow_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_flow_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Jump => if const { super::op_kind::admits(KIND, &[super::op_kind::JUMP]) } { Step::Control(frame.jump(stage)) } else { unreachable!() },
         Operation::JumpIf { register, taken } => if const { super::op_kind::admits(KIND, &[super::op_kind::JUMP_IF]) } { jump_if(stage, frame, register, taken) } else { unreachable!() },
@@ -482,7 +447,7 @@ fn raise_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 
 /// `step` of a local row (`RowStep::Local`).
 #[inline(always)]
-pub(crate) fn step_local_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_local_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     local_step_of::<KIND, _, _>(stage, frame, operation)
 }
 
@@ -494,7 +459,7 @@ pub fn step_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
 
 /// `step` of a numeric row (`RowStep::Number`).
 #[inline(always)]
-pub(crate) fn step_number_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_number_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Number(operation) => if const { super::op_kind::admits(KIND, &[super::op_kind::NUMBER]) } { numeric::step(stage, frame, operation) } else { unreachable!() },
         _ => if const { super::op_kind::outside(KIND, &[super::op_kind::NUMBER]) } { Step::Unresolved } else { unreachable!() },
@@ -509,7 +474,7 @@ pub fn step_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 
 /// `step` of a value row (`RowStep::Value`).
 #[inline(always)]
-pub(crate) fn step_value_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_value_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::RequireObjectCoercible { register } => if const { super::op_kind::admits(KIND, &[super::op_kind::REQUIRE_OBJECT_COERCIBLE]) } { require_object_coercible(stage, frame, register) } else { unreachable!() },
         Operation::LoadThis { destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::LOAD_THIS]) } { load_this(stage, frame, destination, frame.miss()) } else { unreachable!() },
@@ -527,7 +492,7 @@ pub fn step_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
 
 /// `step` of a names row (`RowStep::Names`).
 #[inline(always)]
-pub(crate) fn step_names_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_names_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     super::names::step_of::<KIND, _, _>(stage, frame, operation)
 }
 
@@ -539,7 +504,7 @@ pub fn step_names<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
 
 /// `step` of a property row (`RowStep::Property`).
 #[inline(always)]
-pub(crate) fn step_property_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_property_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     super::property::property_step_of::<KIND, _, _>(stage, frame, operation)
 }
 
@@ -551,7 +516,7 @@ pub fn step_property<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
 
 /// `step` of a keyed row (`RowStep::Keyed`).
 #[inline(always)]
-pub(crate) fn step_keyed_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_keyed_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     keyed_step_of::<KIND, _, _>(stage, frame, operation)
 }
 
@@ -583,16 +548,6 @@ pub fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, 
 }
 
 #[cfg(not(stencil_build))]
-/// `step` of a direct memory row (`RowStep::WasmMemory`) on the interpreter's stage and frame.
-#[inline(always)]
-pub fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
-    match operation {
-        Operation::WasmAccess(operation) => super::wasm_access::step(stage, frame, operation),
-        _ => Step::Unresolved,
-    }
-}
-
-#[cfg(not(stencil_build))]
 /// `step` of a Wasm vector row (`RowStep::WasmVector`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -605,7 +560,7 @@ pub fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F,
 
 /// `step` of a `Binary` or `Unary` row (`RowStep::Arith`): only the operations those decode to.
 #[inline(always)]
-pub(crate) fn step_arith_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_arith_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Number(operation) => if const { super::op_kind::admits(KIND, &[super::op_kind::NUMBER]) } { numeric::step(stage, frame, operation) } else { unreachable!() },
         Operation::Void { .. } | Operation::Unary { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. }
@@ -627,7 +582,7 @@ pub fn step_arith<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
 
 /// `step` of a generic row (`RowStep::Generic`).
 #[inline(always)]
-pub(crate) fn step_generic_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_generic_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     super::generic::step_of::<KIND, _, _>(stage, frame, operation)
 }
 
@@ -640,7 +595,7 @@ pub fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 #[cfg(not(stencil_build))]
 /// `step` of a Wasm i32 jump row (`RowStep::WasmJump`).
 #[inline(always)]
-pub(crate) fn step_wasm_jump_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub fn step_wasm_jump_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::WasmJump(jump) => if const { super::op_kind::admits(KIND, &[super::op_kind::WASM_JUMP]) } { super::wasm_jump::step(stage, frame, jump) } else { unreachable!() },
         Operation::BranchTable(table) => if const { super::op_kind::admits(KIND, &[super::op_kind::BRANCH_TABLE]) } { super::wasm_jump::branch_table(stage, frame, table) } else { unreachable!() },
@@ -654,3 +609,8 @@ pub(crate) fn step_wasm_jump_of<const KIND: u16, S: NumericStage, F: NumericFram
 pub fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_wasm_jump_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

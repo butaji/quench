@@ -2101,50 +2101,6 @@ fn admit(
     Some(())
 }
 
-/// The observations a compilation starts from: the holderless own-data field reads
-/// the native OSR reader may load directly, by region field index.
-pub(crate) struct Observation<'a> {
-    pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
-    /// The own entries of each store site whose receiver the region redefines
-    /// (`LoopRegion::dynamic_field_stores`), by cache site: the shapes its in-place arms take.
-    pub(crate) store_loads: &'a [(u16, Vec<NativeFieldLoad>)],
-    /// The registers holding int32s at entry, whose loop may keep them as int32s where every
-    /// definition in it yields one (`RegionSpecializer::int_entries`).
-    pub(crate) int_entries: &'a [(Register, quench_runtime::typed_ir::IntRange)],
-    /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
-    /// through such a capture is viewed as a typed array (`LoopArray::views`).
-    pub(crate) typed_captures: &'a [u16],
-    /// The type each register held where the compile began, by register (`Type::INT32` for an int32,
-    /// `Type::NUMBER` for another Number, `Type::ANY` otherwise); a register past the slice is `Type::ANY`.
-    pub(crate) entry_types: &'a [Type],
-    /// The registers holding strings where the compile began: a loop's element read through one
-    /// takes the string row, with no hoisted view (`RegionSpecializer::string_entries`).
-    pub(crate) string_entries: &'a [Register],
-    /// What each instruction of the region, from its header, met where its int32 handler
-    /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
-    /// which the sample of the live registers above completes.
-    pub(crate) operand_kinds: &'a [crate::dispatch_fast::operand_feedback::OperandKinds],
-    /// The typed array kind each instruction of the region, from its header, observed where its
-    /// interpreter record is a typed element row (`dispatch_fast::is_typed_element_row`): an element
-    /// row no loop entry proves then proves the view for that kind alone (`base_region::function::typed_rows`).
-    pub(crate) typed_rows: &'a [Option<quench_runtime::tier_surface::TypedArrayKind>],
-    /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
-    /// takes the checked integer view where its uses are integer arithmetic.
-    pub(crate) int_captures: &'a [u16],
-    /// The typed arrays the region's arrays hold at entry, by register (`Vm::typed_array_kind`):
-    /// an array read or written through one is viewed at that kind, one arm per access instead of
-    /// `typed_elements::by_word`'s walk over every kind (`LoopArray::views`).
-    pub(crate) typed_kinds: &'a [(Register, quench_runtime::tier_surface::TypedArrayKind)],
-    /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its
-    /// callee's environment (`Vm::callee_capture_slots`): where the frame's own capture reads
-    /// load, its identity guard fixing the environment.
-    pub(crate) frame_captures: &'a [(usize, usize)],
-    /// The construct plan each construction record holds now, by function and PC
-    /// (`VmFacts::construct_plans`).
-    pub(crate) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<super::ScalarConstructPlan>>,
-}
-
-
 /// A definition of a tracked register: its value at entry, by its index in
 /// `LoopRegion::entry_registers`, or the instruction at a PC offset from the header.
 type Definition = usize;

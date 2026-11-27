@@ -17,7 +17,7 @@ fn region(source: &str, left: bool) -> ir::Function {
 /// `region` over the element `views`.
 fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let at = |class: Class| -> Vec<usize> { unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().class().eq(&class)).map(|(pc, _)| pc).collect() };
@@ -25,8 +25,7 @@ fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
-        Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
+        &generic, &BTreeMap::new(), &[], &*isa, &[], Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
 }
 
 /// The instructions of `function`'s loop blocks.
@@ -119,148 +118,6 @@ fn a_uint8_load_is_an_int32_word_that_no_conversion_touches() {
 const MATMUL: &str = "function mm(a, b, c, n) { for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) { var s = 0; \
     for (var k = 0; k < n; k++) s += a[i * n + k] * b[k * n + j]; c[i * n + j] = s; } }";
 
-/// The innermost loop of the function `source` declares entered natively at its header as an OSR region
-/// is, over typed `views`, every register an int32 of the range `entering` there (`int_entries`).
-fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::Function {
-    let program = quench_runtime::Engine::specialize(source, "index-math.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-    let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
-        { let mut back = None; quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| if target <= pc && back.is_none() { back = Some(target) }); back.map(|target| (target, pc)) })
-        .expect("the function has a loop");
-    let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, entering)).collect();
-    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses();
-    lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entries, &[], &[]), &[], &[],
-        Coverage::Loop { header, backedge, poll: false }, Completion::Body, views).expect("a loop region").function
-}
-
-/// Whether `value` is the sign extension of an int32.
-fn is_sign_extension(function: &ir::Function, value: ir::Value) -> bool {
-    let ir::ValueDef::Result(def, _) = function.dfg.value_def(function.dfg.resolve_aliases(value)) else { return false };
-    function.dfg.insts[def].opcode() == ir::Opcode::Sextend
-}
-
-/// Whether `value` is an integer constant (an element's byte scale is one, a program's product has none).
-fn is_any_constant(function: &ir::Function, value: ir::Value) -> bool {
-    let ir::ValueDef::Result(def, _) = function.dfg.value_def(function.dfg.resolve_aliases(value)) else { return false };
-    matches!(function.dfg.insts[def], ir::InstructionData::UnaryImm { .. })
-}
-
-/// The instructions of `body` of `opcode` with 64-bit operands of which `accepts` takes the operands' definitions.
-fn wide_operations(function: &ir::Function, body: &[ir::Inst], opcode: ir::Opcode,
-    accepts: impl Fn(&ir::Function, [ir::Value; 2]) -> bool) -> usize {
-    body.iter().filter(|&&inst| function.dfg.insts[inst].opcode() == opcode
-        && function.dfg.value_type(function.dfg.first_result(inst)) == types::I64
-        && accepts(function, [function.dfg.inst_args(inst)[0], function.dfg.inst_args(inst)[1]])).count()
-}
-
-#[test]
-fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    assert_eq!(conversions(&function, &body), 0, "an index is no Number that converts to an integer and back: {function}");
-    let sums = wide_operations(&function, &body, ir::Opcode::Iadd, |function, operands|
-        operands.iter().any(|operand| is_sign_extension(function, *operand)));
-    assert!(sums >= 2, "each index adds its int32 to a 64-bit product: {function}");
-}
-
-#[test]
-fn an_index_that_may_be_a_negative_zero_is_still_an_integer_word() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    // `x * y` is `-0` for a zero and a negative factor, which no integer type holds; an element
-    // index reads no sign, so the product is the integer word it would be without that case.
-    let source = "function f(a, x, y) { var s = 0; for (var i = 0; i < 100; i++) s += a[x * y]; return s; }";
-    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::FULL);
-    let body = loop_body(&function);
-    assert_eq!(conversions(&function, &body), 0, "{function}");
-    let everything: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).collect();
-    let words = |instructions: &[ir::Inst]| wide_operations(&function, instructions, ir::Opcode::Imul, |function, operands|
-        operands.iter().all(|operand| is_sign_extension(function, *operand)));
-    assert_eq!(words(&everything), 1, "the product runs in 64-bit words: {function}");
-    assert_eq!(words(&body), 0, "and once, on the loop's entering edge, as its operands are invariant: {function}");
-}
-
-/// The branches in `body` on an int32 overflow flag: the exits an int32 operation takes.
-fn overflow_exits(function: &ir::Function, body: &[ir::Inst]) -> usize {
-    body.iter().filter(|&&inst| {
-        let ir::InstructionData::Brif { arg, .. } = function.dfg.insts[inst] else { return false };
-        matches!(function.dfg.value_def(function.dfg.resolve_aliases(arg)),
-            ir::ValueDef::Result(def, 1) if matches!(function.dfg.insts[def].opcode(),
-                ir::Opcode::SaddOverflow | ir::Opcode::SsubOverflow | ir::Opcode::SmulOverflow))
-    }).count()
-}
-
-#[test]
-fn matmul_indices_have_no_int32_overflow_exit_in_the_loop() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    assert_eq!(overflow_exits(&function, &body), 0, "the counter stays below its int32 bound and the indices are words: {function}");
-}
-
-/// The unsigned `index < length` tests of element accesses among `instructions`.
-fn bounds_compares(function: &ir::Function, instructions: &[ir::Inst]) -> usize {
-    instructions.iter().filter(|&&inst| matches!(function.dfg.insts[inst],
-        ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThan, .. })).count()
-}
-
-/// The signed `bound <= length` compares among `instructions`: the comparison of a loop's bound with
-/// its array's length (`loop_versions`).
-fn version_compares(function: &ir::Function, instructions: &[ir::Inst]) -> usize {
-    instructions.iter().filter(|&&inst| matches!(function.dfg.insts[inst],
-        ir::InstructionData::IntCompare { cond: IntCC::SignedLessThanOrEqual, .. })).count()
-}
-
-#[test]
-fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_access() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(SUM, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
-        .filter(|inst| !body.contains(inst)).collect();
-    assert_eq!(bounds_compares(&function, &body), 0, "the loop's accesses carry their proof: {function}");
-    assert!(version_compares(&function, &before) >= 1, "the entry compares the bound with the length: {function}");
-    // A loop that writes its bound keeps the per-access test and has nothing to compare at its entry.
-    let shrinking = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i]; if (s > 1e9) n--; } return s; }";
-    let function = entered_region(shrinking, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    assert!(bounds_compares(&function, &body) >= 1, "a bound the loop writes proves nothing: {function}");
-}
-
-/// The region of the innermost loop of `source` over `views`, with the feedback a previous body left:
-/// `left_header` records that the loop's header is one a previous body left at (`generic`), whose
-/// types are unknown, so its entry proves no index.
-fn region_with_feedback(source: &str, views: ElementViews, left_header: bool) -> ir::Function {
-    let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-    let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
-    let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let addresses = LaneHelper::addresses();
-    let generic = if left_header { vec![header] } else { Vec::new() };
-    lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
-        Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
-}
-
-#[test]
-fn a_masked_index_compares_its_mask_with_the_array_length_once_and_not_per_access() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    // `i & 255` lies in 0..=255 wherever it is read: the entry compares 255 with the length once.
-    let masked = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i & 255]; } return s; }";
-    let function = entered_region(masked, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
-        .filter(|inst| !body.contains(inst)).collect();
-    assert_eq!(bounds_compares(&function, &body), 0, "the masked accesses carry their proof: {function}");
-    assert!(bounds_compares(&function, &before) >= 1, "the entry compares the mask's ceiling with the length: {function}");
-    // A loop a previous body left at its header keeps every access's own test: there is no second version to version it.
-    let function = region_with_feedback(masked, ElementViews::Typed(Some(Kind::Float64)), true);
-    let body = loop_body(&function);
-    assert!(bounds_compares(&function, &body) >= 1, "left at its header, no index is proved: {function}");
-}
-
 #[test]
 fn a_loop_nest_proves_the_views_of_its_arrays_once_where_their_bases_are_invariant() {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
@@ -272,41 +129,3 @@ fn a_loop_nest_proves_the_views_of_its_arrays_once_where_their_bases_are_invaria
         "no loop of the nest proves a view again per iteration of the one around it: {function}");
 }
 
-#[test]
-fn an_index_that_adds_an_invariant_base_to_a_counter_compares_base_and_bound_once() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let source = "function row(a, r, n) { var s = 0; for (var k = 0; k < n; k++) s += a[r + k]; return s; }";
-    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    assert_eq!(bounds_compares(&function, &body), 0, "{function}");
-}
-
-/// The comparison of the entering edge: instructions of `function` outside its loops.
-fn before_loops(function: &ir::Function) -> Vec<ir::Inst> {
-    let body = loop_body(function);
-    function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).filter(|inst| !body.contains(inst)).collect()
-}
-
-#[test]
-fn matmul_k_loop_multiplies_nothing_and_compares_no_index_with_a_length() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let body = loop_body(&function);
-    let program_product = |function: &ir::Function, operands: [ir::Value; 2]| !operands.iter().any(|operand| is_any_constant(function, *operand));
-    let products = wide_operations(&function, &body, ir::Opcode::Imul, program_product);
-    assert_eq!(products, 0, "`i * n` is evaluated on the entering edge and `k * n` advances by `n`: {function}");
-    assert_eq!(bounds_compares(&function, &body), 0, "both accesses carry the entry's proof: {function}");
-    let entry = before_loops(&function);
-    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, program_product) >= 2, "the entry holds `i * n` and the start of `k * n`: {function}");
-    assert!(version_compares(&function, &entry) >= 2, "the entry compares the reach of each access with its length: {function}");
-}
-
-#[test]
-fn a_loop_invariant_product_is_one_word_the_entry_evaluates_once() {
-    use quench_runtime::tier_surface::TypedArrayKind as Kind;
-    let source = "function f(a, x, y, n) { var s = 0; for (var k = 0; k < n; k++) s += a[x * y + k]; return s; }";
-    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::entering(0));
-    let products = wide_operations(&function, &loop_body(&function), ir::Opcode::Imul, |function, operands|
-        !operands.iter().any(|operand| is_any_constant(function, *operand)));
-    assert_eq!(products, 0, "`x * y` does not change with `k`: {function}");
-}

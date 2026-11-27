@@ -134,7 +134,13 @@ impl NumericStage for super::super::Concrete {
     fn u32_to_f64(&mut self, value: u64) -> u64 { (i64::from(value as u32) as f64).to_bits() }
     #[inline(always)]
     fn to_int32(&mut self, number: u64, _miss: ()) -> Option<u64> {
-        Some(u64::from(crate::units::to_int32(f64::from_bits(number)) as u32))
+        // The stencil's `units::to_int32`. The runtime's `units` module (not in quench-staged) re-exports
+        // `value::number_to_i32` as `to_int32`, so the cargo flavor names that.
+        #[cfg(stencil_build)]
+        let int = crate::units::to_int32(f64::from_bits(number));
+        #[cfg(not(stencil_build))]
+        let int = crate::value::number_to_i32(f64::from_bits(number));
+        Some(u64::from(int as u32))
     }
     #[inline(always)]
     fn int_bitwise(&mut self, operation: NumberBitwise, left: u64, right: u64) -> u64 {

@@ -56,9 +56,9 @@ pub(crate) const BASE_TESTED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT
 
 /// The entry check a declared parameter type gives: the one derivation of which parameters a function's
 /// entry checks and what each check is. Both tiers read it and map each kind to their own test, or to no
-/// test with an explicit arm (`scalar::lane_check`, `base_region::declared::DeclaredFact::of`). There is no
+/// test with an explicit arm (`base_region::declared::DeclaredFact::of`). There is no
 /// Int32 kind: a declared type never names an int32, and the u-jit picks an int32 entry from what the body
-/// requires (`scalar::require_entry_types`).
+/// requires (the solve's entry cell).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EntryCheck {
     /// A Number: an int32 or a binary64 word.

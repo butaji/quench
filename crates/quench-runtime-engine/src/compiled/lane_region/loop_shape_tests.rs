@@ -12,21 +12,19 @@ use cranelift_codegen::{dominator_tree::DominatorTree, flowgraph::ControlFlowGra
 const HOT_LOOP_BLOCKS: usize = 4;
 
 /// The region of `SUM`'s loop over a Float64Array, entered at its header as the loop tier enters it
-/// (every register but the array holding the int32 it had), and how many registers the loop writes.
+/// and how many registers the loop writes.
 fn sum_loop() -> (ir::Function, usize) {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let program = quench_runtime::Engine::specialize(SUM, "loop-shape.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
         (instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc)
             .then(|| (instruction.jump_target() as usize, pc))).expect("the function has a loop");
     let written: BTreeSet<Register> = unit.instructions[header..=backedge].iter().flat_map(|instruction| writes(*instruction)).collect();
-    let entering: Vec<_> = (1..unit.registers).map(|register| (register, IntRange::FULL)).collect();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entering, &[], &[]), &[], &[],
-        Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)))
+        &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)))
         .expect("the loop lowers");
     (region.function, written.len())
 }

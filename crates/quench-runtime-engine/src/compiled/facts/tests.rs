@@ -3,7 +3,6 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
-use quench_runtime::typed_ir::IntRange;
 
 #[test]
 fn native_call_retires_conditional_shapes_in_cfg_facts() {
@@ -125,19 +124,17 @@ fn zero_register_blocks_keep_reachability_without_allocating_type_rows() {
 }
 
 /// The unit PCs of `source`'s first function whose int32 arithmetic or step the run proves
-/// overflow-free, and the PCs of all its arithmetic and steps, entered with register 0 typed
-/// `input` and guarded to the `entering` ranges.
-fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, IntRange)]) -> (Vec<usize>, Vec<usize>) {
+/// overflow-free, and the PCs of all its arithmetic and steps.
+fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) {
     use quench_runtime::vm::operations::NumberArithmetic;
     let program = quench_runtime::Engine::specialize(source, "ranges.js").unwrap();
     let function = program.function(1);
     let instructions: Vec<_> = function.instructions().collect();
     let leaders = super::super::lane_region::leaders(&instructions);
-    let mut initial = vec![Type::ANY; usize::from(function.registers)];
-    initial[0] = input;
+    let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
         written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
-    let seeds = Seeds { entering, ..Seeds::typed() };
+    let seeds = Seeds::typed();
     let mut free = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(&program.constants, instructions[pc]) { free.push(pc); }
@@ -148,8 +145,6 @@ fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, Int
         .map(|(pc, _)| pc).collect();
     (free, steps)
 }
-
-fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) { overflow_proofs_entered(source, Type::ANY, &[]) }
 
 #[test]
 fn a_counted_loops_induction_variable_and_sum_are_overflow_free() {
@@ -171,15 +166,6 @@ fn a_counter_below_a_proved_int32_bound_never_overflows_and_one_below_a_number_m
     assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
     let (free, steps) = overflow_proofs("function run(n){let s=0;for(let i=0;i<n;i++){s=i;}return s;}");
     assert!(!steps.is_empty() && steps.iter().all(|pc| !free.contains(pc)), "{free:?} of {steps:?}");
-}
-
-#[test]
-fn an_entry_guarded_range_seeds_its_input_and_an_unguarded_int32_proves_nothing() {
-    let source = "function run(k){const r=k-1;return r;}";
-    let (free, steps) = overflow_proofs_entered(source, Type::INT32, &[(0, IntRange::entering(0))]);
-    assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
-    let (free, _) = overflow_proofs_entered(source, Type::INT32, &[]);
-    assert!(free.is_empty(), "{free:?}");
 }
 
 #[test]

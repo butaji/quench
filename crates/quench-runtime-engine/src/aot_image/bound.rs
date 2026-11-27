@@ -122,7 +122,7 @@ impl BoundCalls {
                 packed: ((*record).packed & !FUNCTION_WORD) | u64::from(direct.target.function),
                 captures: direct.capture_word(), global_this: direct.sloppy.map_or(0, quench_runtime::Value::to_bits), descriptor,
                 env: direct.target.context_words().0, capture: direct.target.context_words().1,
-                ..*record };
+                registers: u64::from(direct.registers), sloppy: u64::from(direct.sloppy.is_some()), ..*record };
             (*record).callee = identity;
         }
         Some(())

@@ -46,6 +46,8 @@ pub(super) fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8
         descriptor: facts.descriptor,
         env: facts.env,
         capture: facts.capture,
+        registers: u64::from(facts.registers),
+        sloppy: u64::from(facts.global_this.is_some()),
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };

@@ -23,7 +23,7 @@ pub(crate) struct LanePlan {
     pub(crate) function: u32,
     /// The word its publication sets when one of its Stable facts changes.
     pub(crate) invalidation: quench_runtime::code_dependencies::Invalidation,
-    /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
+    /// The callee instructions its unit inlined at most (`lane_unit::with_plans`).
     pub(crate) budget: usize,
     /// The thresholds of the VM that planned it, which its publication reads (`amortizes_entry`).
     pub(crate) tiers: &'static Tiers,
@@ -192,6 +192,8 @@ pub(crate) struct LoweringJob<'p> {
     facts: VmFacts<'static>,
     /// The active program's AOT facts (`ProgramStore::aot_facts`), shared with every lowering of it.
     aot: Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>>,
+    /// The active program's call graph (`ProgramStore::call_graph`), which its call plans' inlining reads.
+    graph: Option<std::sync::Arc<quench_runtime::compile::call_graph::CallGraph>>,
     method_cache_atoms: quench_runtime::vm::method_cache::AtomBits,
     invalidation: usize,
     constants: Vec<Value>,
@@ -214,7 +216,7 @@ impl LoweringJob<'_> {
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
             names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }), construct_plans: Some(&construct_plans),
-            facts: self.aot.as_deref(), ..self.facts };
+            facts: self.aot.as_deref(), graph: self.graph.as_deref(), ..self.facts };
         let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Body, facts: Default::default() }).compiled()?;
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.kinds, self.views, admitted)
@@ -373,7 +375,7 @@ fn left_places(unit: &lane_unit::Unit, generic: &[LaneExit], first: usize) -> (V
 }
 
 /// A lane body's work (`body_work_in_lane`), the route `jit_routes` installs.
-pub(crate) type BodyWork = fn(&mut Vm, &ResidualProgram, u32, &dyn Fn(u32, u32) -> Vec<CallTarget>, &dyn Fn(u32, u32) -> Option<u64>,
+pub(crate) type BodyWork = fn(&mut Vm, &ResidualProgram, u32, &dyn Fn(u32, u32) -> Vec<CallTarget>,
     &dyn Fn(Value) -> (usize, usize), &dyn Fn(&Vm) -> Vec<DirectCandidates>, LaneBodyWork<'_>, Option<u32>) -> LaneBodyOutcome;
 
 #[quench_macros::ext(CompiledLaneCompileVm)]
@@ -400,7 +402,7 @@ impl Vm {
     }
 
     /// The AOT facts of `program`, where it is the running program: facts of another program name no call of it.
-    fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
+    pub(crate) fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
         self.programs.residual(self.active_program).filter(|running| std::ptr::eq(*running, program))
             .and_then(|_| self.programs.aot_facts(self.active_program))
     }
@@ -415,14 +417,16 @@ impl Vm {
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
     /// it inlines is admitted.
     fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
+        generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let Some(body) = program.function_get(function as usize) else { refuse(self, Refusal::NoUnit); return None; };
         let valid = std::cell::Cell::new(true);
-        // The call plans of the program the unit plans, which decide each covered site's inlining (`Planner::inline`).
+        // The call plans of the program the unit plans, which decide each covered site's inlining (`Planner::inline`),
+        // and the program's call graph, which the inlining rule reads.
         let aot = self.aot_facts_of(program);
-        let plans = lane_region::bindings::CallPlans::new(program, aot.as_deref());
-        let unit = lane_unit::with_plans(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
-            &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), &|caller, pc| plans.at(caller, pc), trips,
+        let graph = self.call_graph_of(program);
+        let plans = lane_region::bindings::CallPlans::new(program, aot.as_deref(), graph.as_deref());
+        let unit = lane_unit::with_plans(program, graph.as_deref(), function, body, budget,
+            &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), &|caller, pc| plans.at(caller, pc),
             &|callee| program.function_get(callee as usize)).or_else(|| { refuse(self, Refusal::NoUnit); None })?;
         if !valid.get() { refuse(self, Refusal::InvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
@@ -438,11 +442,11 @@ impl Vm {
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
+        captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>,
         gate: &PlanGate<'_>) -> Option<(LanePlan, ir::Function)> {
         let LanePrepared { unit, fields, global_reads, direct, direct_sites, closed, entry, entry_left, left_at } =
-            self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, None, gate)?;
+            self.prepare_lane_plan(program, function, targets, direct, generic, budget, entry, None, gate)?;
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = quench_runtime::code_dependencies::Invalidation::default();
@@ -460,9 +464,9 @@ impl Vm {
     /// entry, or `gate` decides against it.
     #[allow(clippy::too_many_arguments)]
     fn prepare_lane_plan(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        trips: &dyn Fn(u32, u32) -> Option<u64>, direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>,
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>,
         view: Option<&crate::dispatch_fast::LaneView>, gate: &PlanGate<'_>) -> Option<LanePrepared> {
-        let unit = self.plan_unit_in_lane(program, function, targets, trips, generic, budget)?;
+        let unit = self.plan_unit_in_lane(program, function, targets, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { refuse(self, Refusal::NoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
         let mut fields = self.unit_fields_in_lane(program, &unit, &left_at, view);
@@ -489,6 +493,7 @@ impl Vm {
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let active = self.active_program;
         let aot = self.aot_facts_of(&program);
+        let graph = self.call_graph_of(&program);
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, &*program))
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
@@ -496,7 +501,7 @@ impl Vm {
         // A typed element read the interpreter's record observed takes its kind (`body_views::typed_reads`).
         let kinds = super::body_views::typed_reads(self, function, unit);
         LoweringJob { views: super::body_views::body_views(self, function, unit), function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
-            helpers: Self::process_helpers(), facts: self.vm_facts(), aot, method_cache_atoms: self.method_cache_atoms.bits().clone(),
+            helpers: Self::process_helpers(), facts: self.vm_facts(), aot, graph, method_cache_atoms: self.method_cache_atoms.bits().clone(),
             invalidation, constants, tables, leaves, kinds, entry, program }
     }
 
@@ -521,7 +526,7 @@ impl Vm {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], &|_, _, _, _| true)
+            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None, &|_, _, _, _| true)
             else { break None };
             match image::compile(native, plan.lowered.scalar.take(), plan.lowered.proven.take(), super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code.code, code.scalar, code.proven),
@@ -539,13 +544,13 @@ impl Vm {
     /// published and the interpreter otherwise.
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
-        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         #[cfg(feature = "jit")]
-        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller) }
+        { self.start_lane_method_compiled(program, function, targets, captures, direct, generic, budget, entry, looped, called, caller) }
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller);
+            let _ = (program, function, targets, captures, direct, generic, budget, entry, looped, called, caller);
             Err(Unstarted::Declined)
         }
     }
@@ -553,7 +558,7 @@ impl Vm {
     #[cfg(feature = "jit")]
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
-        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         // A plan costs the program's own time, as much as its compile and on its thread: what
         // decides against the compile after planning decides before it, charging the plan too.
@@ -621,7 +626,7 @@ impl Vm {
         // plan took (`LoweringJob`) and runs with the code generation on the code generator's
         // thread, while the program runs on.
         self.host.before_native_compilation();
-        let prepared = self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, Some(caller), &gate);
+        let prepared = self.prepare_lane_plan(program, function, targets, direct, generic, budget, entry, Some(caller), &gate);
         self.host.after_native_compilation();
         match stopped.into_inner() {
             Some(Unstarted::Short) => { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
@@ -683,18 +688,18 @@ impl Vm {
     /// (a caller PC) plans the body to start there, as a running loop enters it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
-        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Without the JIT's routes (`jit_routes`) the body declines and the interpreter runs.
         match crate::jit_routes::jit() {
-            Some(routes) => (routes.body)(self, program, function, targets, trips, captures, direct, work, entry),
+            Some(routes) => (routes.body)(self, program, function, targets, captures, direct, work, entry),
             None => LaneBodyOutcome::Declined,
         }
     }
 
     /// `body_work_in_lane`'s route, which `jit_routes` installs.
     fn compile_body_work(&mut self, program: &ResidualProgram, function: u32,
-        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
@@ -720,7 +725,7 @@ impl Vm {
                 return LaneBodyOutcome::Published(published);
             }
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, looped, called, caller.expect("a started body names its view")) {
+            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, looped, called, caller.expect("a started body names its view")) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,

@@ -422,8 +422,8 @@ pub(crate) struct ValueArena {
     /// native code reads representations keeps them.
     tracking: bool,
     /// Whether a slot whose owner's type is Number holds its Number as a raw double
-    /// (`encode_slot`). Never set: record slots keep the tagged encoding, and a class cell's raw
-    /// fields are a class fact (`layouts::FieldReps`), not an arena word. The words of an owner that
+    /// (`encode_slot`). Never set: every field holds the one Value word, a double's raw bits under
+    /// invariant I (c-design 4.1); this encoding is dead and goes (R4-raw). The words of an owner that
     /// left or entered that type wait in `widened` for the heap to recode them (`recode_owned_run`).
     float: bool,
     widened: Vec<u32>,

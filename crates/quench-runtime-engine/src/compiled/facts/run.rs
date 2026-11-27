@@ -50,8 +50,6 @@ pub(crate) struct Seeds<'a> {
     pub(crate) contracts: &'a [Contract],
     /// The typed element reads (sorted PCs) and the element type their typed array's kind proves each yields.
     pub(crate) typed_reads: &'a [TypedRead],
-    /// The registers the entry guards to a range narrower than int32 (`Lowering::guard_entering_ranges`).
-    pub(crate) entering: &'a [(Register, IntRange)],
     /// The unit the run proves ranges of; a type-only run has none.
     pub(crate) model: Option<Model<'a>>,
     /// The PCs (ascending) of the products no consumer reads the sign of a zero of
@@ -61,9 +59,9 @@ pub(crate) struct Seeds<'a> {
 }
 
 impl<'a> Seeds<'a> {
-    /// A type-only run: no contract, entry range or model.
+    /// A type-only run: no contract or model.
     pub(crate) fn typed() -> Self {
-        Self { contracts: &[], typed_reads: &[], entering: &[], model: None, signless: &[] }
+        Self { contracts: &[], typed_reads: &[], model: None, signless: &[] }
     }
 }
 
@@ -86,16 +84,9 @@ pub(crate) struct Text<'a> {
 pub(crate) type Raise = (usize, usize, Option<Register>);
 
 impl Point {
-    /// The state at the entry: the checked inputs, an int32 one taking the range the entry
-    /// guards where it has one.
-    fn entering(initial: &[Type], seeds: Seeds<'_>) -> Self {
-        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = initial.iter().copied().collect();
-        for &(register, range) in seeds.entering {
-            if let Some(slot) = types.get_mut(usize::from(register))
-                && let Some(narrowed) = slot.int_range().and_then(|known| known.intersect(range)) {
-                *slot = Type::int(narrowed);
-            }
-        }
+    /// The state at the entry: the proven inputs.
+    fn entering(initial: &[Type]) -> Self {
+        let types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = initial.iter().copied().collect();
         Self { types }
     }
 
@@ -424,7 +415,7 @@ pub(crate) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) 
     let blocks = heads.len();
     let mut flow = FactFlow {
         text, seeds,
-        entry: (text.entry < length).then(|| Point::entering(initial, seeds)),
+        entry: (text.entry < length).then(|| Point::entering(initial)),
         rounds: (0..blocks).map(|_| Cell::new(0)).collect(),
         headers: (0..blocks).map(|_| Cell::new(false)).collect(),
         reached: quench_runtime::dataflow::BitSet::with_capacity(length),

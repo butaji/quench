@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use cranelift_codegen::ir::{self, AliasRegion, AliasRegionData, MemFlagsData};
 
 use quench_runtime::staged::region::{Access, Mutability, Region};
+use quench_runtime::staged::elements::BackingAccess;
+use quench_runtime::staged::Effects;
 
 /// The flags of a trusted (aligned, non-trapping) access: tagged with its region so Cranelift
 /// reorders it past accesses to other regions, and where nothing changes the memory while code
@@ -24,6 +26,38 @@ pub(crate) fn flags(access: Access) -> MemFlagsData {
 /// The flags of a trusted, mutable access in `region`, a handle `declare_field_regions` made.
 fn trusted(region: AliasRegion) -> MemFlagsData {
     MemFlagsData::new().with_notrap().with_aligned().with_alias_region(Some(region))
+}
+
+/// What a load of a region reads, as the unit's effect row proves it (`LoadFact::of_unit`): the one place a load's fact
+/// picks its access, and with it its flags (`flags`).
+#[derive(Clone, Copy)]
+pub(crate) enum LoadFact {
+    /// The word may change while the code runs: the region's mutable access.
+    Mutable(Region),
+    /// The unit writes the region nowhere and runs no code that may write it, move records or collect, so the word is
+    /// fixed for the run: the region's readonly access.
+    Fixed(Region),
+}
+
+impl LoadFact {
+    /// The fact of a load of `region` in a unit whose whole effect row is `effects` (`Unit::effects`).
+    pub(crate) fn of_unit(effects: Effects, region: Region) -> Self {
+        if effects.writes_region(region) || effects.may_move_or_call() { Self::Mutable(region) } else { Self::Fixed(region) }
+    }
+
+    /// The access the fact names.
+    pub(crate) fn access(self) -> Access {
+        match self {
+            Self::Mutable(region) => region.mutable(),
+            Self::Fixed(region) => region.readonly(),
+        }
+    }
+}
+
+/// The access of an array's backing words in a unit whose effect row is `effects`: the header (the record's payload
+/// word, `Region::Payload`) and the length (`Region::Elements`), each fixed where the unit proves it.
+pub(crate) fn backing_access(effects: Effects) -> BackingAccess {
+    BackingAccess { header: LoadFact::of_unit(effects, Region::Payload).access(), length: LoadFact::of_unit(effects, Region::Elements).access() }
 }
 
 /// The (class, atom) a named property is keyed by: the proven class of its receiver and its atom.

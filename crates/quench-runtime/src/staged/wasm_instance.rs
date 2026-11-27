@@ -105,7 +105,7 @@ pub fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word>
     stage.binding_word(slot)
 }
 
-// The bytecode queries (`Instance::of`, `constant_registers`) read opcodes: `glue.rs`.
+// The bytecode queries (`instance_of`, `constant_registers`) read opcodes: `glue.rs`.
 #[cfg(not(stencil_build))]
 mod glue;
 #[cfg(not(stencil_build))]
