@@ -107,6 +107,22 @@ fn pure_aot_call_chain_and_returning_native_leave_no_body() {
     assert!(!diagnostics.contains("QUENCH_BODY_LEAVE"), "{diagnostics}");
 }
 
+/// A shape-guarded field loop runs in a pure-AOT image: the guard's shape id is a value the lane
+/// loader patches, not an address the executable's linker could page-reference.
+#[test]
+fn pure_aot_shape_guarded_loop_matches_the_interpreter() {
+    let directory = workspace("shape-guard");
+    let source = "function build(n) {\n  const o = { x: 0, y: 0 };\n  for (let i = 0; i < n; i++) { o.x = o.x + i; o.y = o.y + o.x; }\n  return o.x + o.y;\n}\nconsole.log(build(1000));\n";
+    let entry = directory.join("shape-guard.js");
+    let (binary, report) = compile(&directory, source, "shape-guard", false);
+    assert_eq!(report["support_variant"], "core");
+    assert_eq!(report["jit"], false);
+    let native = run(&binary);
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    let interpreted = Command::new(env!("CARGO_BIN_EXE_quench")).arg(&entry).output().unwrap();
+    assert_eq!(native.stdout, interpreted.stdout);
+}
+
 #[test]
 fn core_date_runs_without_the_time_zone_database() {
     let directory = workspace("date");

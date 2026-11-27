@@ -185,10 +185,12 @@ fn lower_function(
 ) -> Result<AotFunction, String> {
     let (mut base, calls) = base::lower(program, facts, target, id, symbols)?;
     let mut lane = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?;
-    // A linked body's absolute words become the page references Mach-O can link in text.
-    crate::aot_image::page::rewrite(&mut base.code)?;
+    // A linked body's absolute words become the page references Mach-O can link in text. A guard's
+    // shape id is a value, not an address: its word stays `Abs8`, which `live::link_lane_at` fills
+    // when the VM places the lane body.
+    crate::aot_image::page::rewrite(&mut base.code, |_| false)?;
     if let Some(lane) = &mut lane {
-        crate::aot_image::page::rewrite(&mut lane.code)?;
+        crate::aot_image::page::rewrite(&mut lane.code, |relocation| relocation.namespace == crate::compiled::lane_region::relocs::RelocKind::GuardShape as u32)?;
     }
     sites.extend(calls.into_iter().map(|call| ((call.function, call.pc), call)));
     Ok(AotFunction { id, base, lane })

@@ -31,13 +31,14 @@ const A64_HOLE_SEARCH_BYTES: usize = 16;
 
 /// Rewrites every absolute word of `code` into a page reference, where the target writes a
 /// relocatable object with Mach-O's rules. On other targets a word stays a word, which its
-/// linker fills.
-pub(crate) fn rewrite(code: &mut RelocatableCode) -> Result<(), String> {
+/// linker fills. `keeps_value` names the words whose loader fills a value rather than an
+/// address (a guard's shape id): those stay `Abs8` and are patched where the code is linked.
+pub(crate) fn rewrite(code: &mut RelocatableCode, keeps_value: impl Fn(Relocation) -> bool) -> Result<(), String> {
     #[cfg(target_arch = "aarch64")]
     {
         let mut relocations = Vec::with_capacity(code.relocations.len());
         for relocation in code.relocations.iter() {
-            if relocation.kind != Reloc::Abs8 {
+            if relocation.kind != Reloc::Abs8 || keeps_value(*relocation) {
                 relocations.push(*relocation);
                 continue;
             }
@@ -48,7 +49,7 @@ pub(crate) fn rewrite(code: &mut RelocatableCode) -> Result<(), String> {
         code.relocations = relocations.into_boxed_slice();
     }
     #[cfg(not(target_arch = "aarch64"))]
-    let _ = code;
+    let _ = (code, keeps_value);
     Ok(())
 }
 

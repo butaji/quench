@@ -393,8 +393,10 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32, facts: &quenc
 /// Each direct row's record with its site and callee: the rows' `Symbol::CallRecord`s in code order are
 /// the records in row order (`Body::records`; an image body has no builtin row, whose record names none).
 fn image_calls(built: &Body, facts: quench_runtime::compile::aot_facts::FunctionFacts<'_>) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
+    // A chain's parts name the same record at the same site: each record's site is its first symbol.
+    let mut seen = std::collections::BTreeSet::new();
     let sites: Vec<u32> = built.symbols.iter().filter_map(|site| match site.symbol {
-        crate::aot_image::Symbol::CallRecord { pc, .. } => Some(pc),
+        crate::aot_image::Symbol::CallRecord { pc, .. } if seen.insert(pc) => Some(pc),
         _ => None,
     }).collect();
     if sites.len() != built.records.len() { return Err("a direct row names no call record".into()); }

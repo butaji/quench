@@ -13,7 +13,6 @@ use crate::aot_image::{LaneImage, base::BaseImage, symbols::SymbolTable};
 use crate::aot_image::symbols::Symbol;
 use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::vm::engine_types::ExitTable;
-#[cfg(feature = "jit")]
 use super::lane_unit::Origin;
 use crate::aot_image::{self, AotImage, file::Words, live::{self, LiveImage}};
 #[cfg(feature = "jit")]
@@ -145,7 +144,7 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
 
 #[cfg(not(feature = "jit"))]
 pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &ClosedFrozen),
-    _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable,
+    _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable, _: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     Err("ahead image lowering requires the jit feature")
 }

@@ -14,6 +14,7 @@ impl AheadImages {
 
     /// The image of `program`, lowered under its closed-world facts for this process's CPU, which
     /// runs it (`NativeTarget::host`).
+    #[cfg(feature = "jit")]
     #[inline]
     pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
         let facts = quench_runtime::compile::aot_facts::analyze(program);
