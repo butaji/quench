@@ -689,7 +689,7 @@ impl Vm {
 
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
-    fn call_native_dispatch(
+    pub(super) fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -2150,8 +2150,8 @@ fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if Vm::is_disposal_native(native) {
         return Some(enter_disposal);
     }
-    if Vm::is_collection_native(native) {
-        return Some(enter_collection);
+    if let Some(entry) = super::collections::entry(native) {
+        return Some(entry);
     }
     #[cfg(feature = "wasm")]
     if super::wasm_js::is_wasm_js_native(native) {
@@ -2227,10 +2227,6 @@ fn enter_finalization(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Va
 
 fn enter_disposal(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_disposal_native(p, native, this, args)
-}
-
-fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_collection_native(p, native, this, args)
 }
 
 #[cfg(feature = "wasm")]

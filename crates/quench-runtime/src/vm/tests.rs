@@ -12492,7 +12492,7 @@ fn weak_ref_targets_are_kept_until_host_checkpoint() {
             if dereference {
                 vm.clear_kept_objects();
                 let value = vm
-                    .call_collection_native(&program, Native::WeakRefDeref, weak, &[])
+                    .call_native_dispatch(&program, Native::WeakRefDeref, weak, &[])
                     .unwrap();
                 assert!(!value.is_undefined());
             }
