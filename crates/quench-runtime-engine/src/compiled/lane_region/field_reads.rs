@@ -92,8 +92,8 @@ impl Lowering<'_, '_> {
         // named property whose prototype is the holder, or a Map or Set of no named property linked
         // to a prototype that holds the name (`ReceiverLink`). A string method's read proves its
         // receiver a string by one tag test, as the call it names would; an Array method's proves
-        // its receiver such an array (`elements::plain_array_of`); a collection method's reads the
-        // receiver's link and folds to that prototype's member (`elements::plain_collection_link`).
+        // its receiver such an array (`elements::plain_array_of`); a collection method's proves its
+        // receiver of the shape and link its cache saw (`elements::collection_of`).
         let receiver = match instruction.field_lookup() {
             Some(FieldLookup::Atom { base, .. }) => base.register_index().filter(|register| usize::from(*register) < state.values.len()),
             _ => None,
@@ -117,25 +117,17 @@ impl Lowering<'_, '_> {
         };
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Shape);
-        let mut member = None;
         if let (Some(register), ReceiverLink::Array(link)) = (receiver, link) {
             let bits = self.tagged(state, register);
             let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             super::builtin_calls::continues(quench_runtime::staged::elements::plain_array_of(&mut stage, records, bits, link, exit));
-        } else if let (Some(register), ReceiverLink::Collection([first, second])) = (receiver, link) {
+        } else if let (Some(register), ReceiverLink::Collection { shape, link }) = (receiver, link) {
             let bits = self.tagged(state, register);
             let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.collection_record_base));
             let mut stage = super::super::object_slots::emit(&mut self.builder);
-            let linked = super::builtin_calls::continues(quench_runtime::staged::elements::plain_collection_link(&mut stage, records, bits,
-                quench_runtime::tier_surface::NATIVE_COLLECTION_LAYOUT, exit));
-            let is_first = stage.eq_imm(linked, u64::from(first.0));
-            let is_second = stage.eq_imm(linked, u64::from(second.0));
-            let known = stage.any(is_first, is_second);
-            super::builtin_calls::continues(stage.guard(known, exit));
-            let (first_value, second_value) = (self.identity_constant(first.1), self.identity_constant(second.1));
-            member = Some(if first == second { first_value } else { self.builder.ins().select(is_first, first_value, second_value) });
-            self.hold_holder_any(state, exit, second.2);
+            super::builtin_calls::continues(quench_runtime::staged::elements::collection_of(&mut stage, records, bits,
+                quench_runtime::tier_surface::NATIVE_COLLECTION_LAYOUT, (shape, link), exit));
         } else if let Some(register) = receiver.filter(|register| !state.values[usize::from(*register)].value.ty.is_subtype(string)) {
             let bits = self.tagged(state, register);
             let mut stage = super::super::object_slots::emit(&mut self.builder);
@@ -154,11 +146,8 @@ impl Lowering<'_, '_> {
             _ => {}
         }
         self.hold_holder_any(state, exit, holder);
-        let (word, ty) = match member {
-            Some(word) => (word, Type::language(quench_runtime::ValueType::Function)),
-            None => (self.identity_constant(value), Type::immediate(value)),
-        };
-        self.define(state, instruction.result_register(), word, RegisterFact::definition(ty, Representation::Tagged));
+        let constant = self.identity_constant(value);
+        self.define(state, instruction.result_register(), constant, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
         Some(true)
     }
 

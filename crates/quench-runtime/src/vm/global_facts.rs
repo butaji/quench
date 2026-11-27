@@ -58,9 +58,9 @@ pub enum ReceiverLink {
     None,
     /// A direct array linked to `Array.prototype`, whose link this is (`elements::plain_array_of`).
     Array(u32),
-    /// A Map or Set linked to one of these prototypes, each `(link, member value, watched holder shape)`;
-    /// both the same where one prototype holds the name (`elements::plain_collection_link`).
-    Collection([(u32, Value, u32); 2]),
+    /// A Map or Set of the exact shape and prototype link the read's cache observed, whose prototype
+    /// holds the member (`elements::collection_of`).
+    Collection { shape: u32, link: u32 },
 }
 
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
