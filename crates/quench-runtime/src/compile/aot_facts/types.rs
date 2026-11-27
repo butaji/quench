@@ -25,7 +25,7 @@ use super::quiet::{Proofs, StringBuiltins};
 use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, View, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, Sites, View, WIDENING_ROUNDS};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -399,7 +399,7 @@ fn call_results(
 
 /// The cell of an element class's elements: their type and classes, and the length they leave (`Elements`).
 fn elements_cell(elements: Elements) -> Cell {
-    Cell { ty: elements.ty, classes: elements.classes, elements, global: false }
+    Cell { ty: elements.ty, classes: elements.classes, elements, sites: Sites::of_type(elements.ty), global: false }
 }
 
 /// Whether `function` is sloppy code: a plain call may bind its `this` to the global object (`Function::strict` is unset). A
