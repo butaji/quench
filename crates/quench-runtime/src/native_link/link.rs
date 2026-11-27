@@ -1,4 +1,4 @@
-mod audit;
+pub(in crate::native_link) mod audit;
 use audit::audit;
 
 use super::NativeImageInputs;
@@ -239,7 +239,7 @@ impl NativeSupport {
         self.apply_link_options(&mut command, inputs, executable)?;
         self.add_objects(&mut command, inputs, executable);
         let interface = super::exports::configure(&mut command, inputs, executable)?;
-        checked_output(&mut command, "native image link")?;
+        checked_link(&mut command)?;
         let symbols = audit(inputs, executable, self.support)?;
         let footprint = super::footprint::read(executable, &symbols)?;
         let dynamic_interface = interface.verify(executable)?;
@@ -496,6 +496,17 @@ fn exact_dependency(file: &Path, name: &str, reported_files: &[Value]) -> Result
         ));
     }
     Ok(matches.remove(0))
+}
+
+/// The image link's driver. A successful link's stderr reaches this process's stderr, so the
+/// linker's reports (a `QUENCH_EXTRA_LINK_ARGS` `--why-live` chain) are not discarded.
+fn checked_link(command: &mut Command) -> Result<(), String> {
+    let output = command.output().map_err(|error| format!("native image link: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("native image link failed ({}):\n{}", output.status, String::from_utf8_lossy(&output.stderr)));
+    }
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
 }
 
 pub fn checked_output(command: &mut Command, operation: &str) -> Result<Vec<u8>, String> {
