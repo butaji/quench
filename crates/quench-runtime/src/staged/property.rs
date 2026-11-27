@@ -320,13 +320,13 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn prove_shape(&mut self, _stage: &mut S, _owner: Owner, _proof: (u32, super::Shaped<S::Word>), _direct: bool) {}
 
-    /// The layout proved of `owner`'s object of exact `shape`, which a read reuses.
+    /// The layout proved of `object` (the word of `owner`'s object) of exact `shape`, which a read reuses.
     #[inline(always)]
-    fn kept_layout(&self, _owner: Owner, _shape: u32) -> Option<Layout<S::Word, S::Cond>> { None }
+    fn kept_layout(&self, _owner: Owner, _object: S::Word, _shape: u32) -> Option<Layout<S::Word, S::Cond>> { None }
 
-    /// Records the layout a read proved of `owner`'s object of exact `shape`.
+    /// Records the layout a read proved of `object` (the word of `owner`'s object) of exact `shape`.
     #[inline(always)]
-    fn keep_layout(&mut self, _owner: Owner, _proof: (u32, super::ShapeFact), _layout: Layout<S::Word, S::Cond>) {}
+    fn keep_layout(&mut self, _owner: Owner, _object: S::Word, _proof: (u32, super::ShapeFact), _layout: Layout<S::Word, S::Cond>) {}
 
     /// Holds the values of the prototypes of exact shape `shape` as constants, under a code
     /// dependency. A frame that takes none answers `None`.
@@ -532,11 +532,11 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         FieldPlan::Ops(ops) => {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
             let records = frame.object_records(stage);
-            run_owned(stage, frame, (owner, !readable), ops, (at, records), miss)
+            run_owned(stage, frame, (owner, !readable), object, ops, (at, records), miss)
         }
         FieldPlan::Own { layout, slot } => {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
-            own_slot(stage, frame, (owner, !readable), &at, (layout, slot), miss)
+            own_slot(stage, frame, (owner, !readable), object, &at, (layout, slot), miss)
         }
         FieldPlan::Arms(list) => {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
@@ -563,7 +563,7 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         FieldPlan::Hinted { ops, entry } => frame.entried(stage, owner, object, entry, miss, #[inline(always)] |stage, frame, miss| {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
             let records = frame.object_records(stage);
-            run_owned(stage, frame, (owner, !readable), ops, (at, records), miss)
+            run_owned(stage, frame, (owner, !readable), object, ops, (at, records), miss)
         }),
         FieldPlan::Private { atom } => frame.private_field(stage, object, atom, miss),
     }
@@ -608,33 +608,33 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 
 /// `run_owned` of `FieldPlan::Own`: the layout guard and the slot it proves.
 #[inline(always)]
-fn own_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool),
+fn own_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool), object: S::Word,
     at: &Reached<S::Word, S::Cond>, (layout, slot): (u32, u16), miss: S::Miss) -> Option<S::Word> {
     // `run_owned`'s arm of the same two ops.
-    word_formed_slot(stage, frame, owned, at, layout, (slot, crate::typed_ir::Representation::Tagged, usize::from(slot) + 1), miss)
+    word_formed_slot(stage, frame, owned, object, at, layout, (slot, crate::typed_ir::Representation::Tagged, usize::from(slot) + 1), miss)
 }
 
 /// `ops` over the record `at` reached, where a leading shape guard is the owner's proof: its
 /// own-slot load reads through the layout the frame kept, or proves and keeps it.
 #[inline(always)]
-fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
-    (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
+fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), object: S::Word,
+    ops: &[IcOp<'_>], (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
-        return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *rep, *storage_len), miss);
+        return word_formed_slot(stage, frame, (owner, direct), object, &at, *word, (*slot, *rep, *storage_len), miss);
     }
     if let [IcOp::GuardImageLayout(key), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
-        return slots::image_layout_slot(stage, frame, (owner, true), &at, *key, (*slot, *rep, *storage_len), miss);
+        return slots::image_layout_slot(stage, frame, (owner, true), object, &at, *key, (*slot, *rep, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
         && frame.proven_shape(stage, owner).map(|(proven, _)| proven) != Some(*shape)
-        && frame.kept_layout(owner, *shape).is_none() {
-        return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
+        && frame.kept_layout(owner, object, *shape).is_none() {
+        return formed_slot(stage, frame, (owner, direct, *shape), object, &at, (*slot, *rep, *storage_len), miss);
     }
     let at = Reached { shaped: Some(guard_receiver_shape(stage, frame, (owner, direct), &at, *shape, miss)?), ..at };
     match rest {
         [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
-            kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
+            kept_slot(stage, frame, (owner, *shape), object, &at, (*slot, *form, *storage_len, *rep), miss),
         _ => ic::run_unrolled(stage, rest, at, records, miss),
     }
 }
@@ -712,11 +712,11 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     if let FieldPlan::Ops(ops) = plan {
         let at = frame.receiver_record(stage, owner, object, false, miss)?;
         let records = frame.object_records(stage);
-        return run_owned(stage, frame, (owner, true), ops, (at, records), miss);
+        return run_owned(stage, frame, (owner, true), object, ops, (at, records), miss);
     }
     if let FieldPlan::Own { layout, slot } = plan {
         let at = frame.receiver_record(stage, owner, object, false, miss)?;
-        return own_slot(stage, frame, (owner, true), &at, (layout, slot), miss);
+        return own_slot(stage, frame, (owner, true), object, &at, (layout, slot), miss);
     }
     // A prototype-held read, the other plan a row's holes name, inline too: only nested plans recurse.
     if let FieldPlan::Inherited { shape, constants, proof } = plan {
@@ -729,7 +729,7 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         return frame.entried(stage, owner, object, entry, miss, #[inline(always)] |stage, frame, miss| {
             let at = frame.receiver_record(stage, owner, object, false, miss)?;
             let records = frame.object_records(stage);
-            run_owned(stage, frame, (owner, true), ops, (at, records), miss)
+            run_owned(stage, frame, (owner, true), object, ops, (at, records), miss)
         });
     }
     if let FieldPlan::Entry(kind) = plan {

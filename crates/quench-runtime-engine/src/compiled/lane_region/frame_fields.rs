@@ -150,7 +150,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     /// The entry's `this`, which a body that reads fields has proved bound.
     fn field_this(&mut self, stage: &mut Emit<'b, 'c>, _miss: ir::Block) -> Option<ir::Value> {
-        Some(stage.builder.use_var(self.this?))
+        Some(headers::this_word(stage.builder, self.this?))
     }
 
     fn receiver_record(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, readable: bool,
@@ -193,10 +193,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
     fn proven_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner) -> Option<(u32, ShapeFact)> {
-        let key = self.proof_key(owner)?;
-        let word = self.proof_word(stage.builder, owner);
-        word.and_then(|word| headers::header_shape(stage.builder, self.state, word)).or_else(||
-            self.state.proofs.layouts.range((key, 0)..=(key, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
+        let word = self.proof_word(stage.builder, owner)?;
+        headers::header_shape(stage.builder, self.state, word).or_else(||
+            self.state.proofs.layouts.range((word, 0)..=(word, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
     }
 
     fn prove_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, (shape, proof): (u32, Shaped<ir::Value>), direct: bool) {
@@ -209,21 +208,19 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
                 let fact = &mut self.state.values[usize::from(proved)];
                 *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
             }
+            self.state.proofs.kept_shapes.insert(word, shape);
         }
     }
 
 
-    fn kept_layout(&self, owner: Owner, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
-        let key = self.proof_key(owner)?;
-        self.state.proofs.layouts.get(&(key, shape)).map(|layout| layout.layout())
+    fn kept_layout(&self, owner: Owner, object: ir::Value, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
+        if matches!(owner, Owner::Temporary) { return None; }
+        self.state.proofs.layouts.get(&(object, shape)).map(|layout| layout.layout())
     }
 
-    fn keep_layout(&mut self, owner: Owner, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
-        let Some(key) = self.proof_key(owner) else { return };
-        let copies = match owner { Owner::Register(register) if key.is_some() => self.copies(register), _ => Vec::new() };
-        for kept in std::iter::once(key).chain(copies.into_iter().map(Some)) {
-            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout, fact));
-        }
+    fn keep_layout(&mut self, owner: Owner, object: ir::Value, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
+        if matches!(owner, Owner::Temporary) { return; }
+        self.state.proofs.layouts.insert((object, shape), CheckedObject::of(layout, fact));
     }
 
     fn hold_prototype(&mut self, stage: &mut Emit<'b, 'c>, shape: u32, miss: ir::Block) -> Option<()> {
