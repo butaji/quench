@@ -299,7 +299,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let (inputs, demand, realm) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    let (inputs, demand, realm, closed) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
     report["closed_world"] = super::compiler::demand_report(&demand);
     if let Some(realm) = &realm {
         report["builtin_families"] = json!(realm.families.bits());
@@ -313,13 +313,11 @@ fn compile(options: Options) -> Result<(), String> {
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
-    // A core image's closed world: the realm and engine entries its catalog names, which the probe runs on.
-    let closed = realm.as_ref().map(|realm| (realm, demand.execution_table()));
     // A core entry is probed before anything is saved: one that reaches its end with no input folds
     // to a replay image, and any other saves its realm and program at the last point it can
     // capture (`core_rest`, which names the frames that cannot be captured).
-    if let (true, Some((realm, execution))) = (core, &closed) {
-        let reach = super::core_rest::probe(&native_entry, realm, execution)?;
+    if let (true, Some(tables)) = (core, closed) {
+        let reach = super::core_rest::probe(&native_entry, tables)?;
         report["core_probe"] = match &reach {
             super::core_rest::Reach::Folds => json!({"status": "folds"}),
             super::core_rest::Reach::Input(input) => json!({"status": "input", "input": input, "save_point": "realm_and_program"}),

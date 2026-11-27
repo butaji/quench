@@ -237,15 +237,25 @@ const HOST_UNDUMPED: &[&[&str]] = &[
 ];
 
 /// Dumps each saved run of the linked Node `image` (`image_dump::dump_image`), each under its
-/// answers' environment; none where any cannot be dumped, which `report` names.
+/// answers' environment and named by the environment (`DUMP_VARIABLE`); none where any cannot be
+/// dumped, which `report` names.
 pub(super) fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut Value) -> Vec<Dump> {
-    let runs: Vec<Vec<(String, String)>> = saved.iter().map(|wait| wait.answers.iter().filter_map(|(question, answer)| match question {
+    let answers: Vec<Vec<(String, String)>> = saved.iter().map(|wait| wait.answers.iter().filter_map(|(question, answer)| match question {
         super::prefix::Question::Environment(name, value) if *answer => Some((name.clone(), value.clone())),
         _ => None,
     }).collect()).collect();
     let undumped: Vec<&[&str]> = UNDUMPED.iter().chain(HOST_UNDUMPED.iter()).copied().collect();
-    let prepare = |run: &mut Command| crate::host::startup_snapshot::neutralize_native_bootstrap_environment(run);
-    match image_dump::dump_image(image, work, &runs, &undumped, &prepare) {
+    let prepare = |run: &mut Command, index: usize, path: &Path| {
+        crate::host::startup_snapshot::neutralize_native_bootstrap_environment(run);
+        for name in super::ADOPTION_VARIABLES {
+            run.env_remove(name);
+        }
+        for (name, value) in &answers[index] {
+            run.env(name, value);
+        }
+        run.env(image_dump::DUMP_VARIABLE, format!("{index}:{}", path.display()));
+    };
+    match image_dump::dump_image(image, work, saved.len(), &undumped, &prepare) {
         Ok(dumps) => {
             report["dump"] = json!({"status": "prepared", "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes()})).collect::<Vec<_>>()});
             dumps.into_iter().map(|(dump, _)| dump).collect()

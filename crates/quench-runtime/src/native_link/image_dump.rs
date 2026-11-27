@@ -13,20 +13,45 @@
 //! and a Node image both dump and adopt through it. Each host names its own dumped roots
 //! (`UNDUMPED`) and what its process binds again after an adoption.
 //!
-//! A start that cannot have every address, or runs under a configuration the dump did not
-//! (`adoptable`), builds its state as the dumping run did.
+//! A start that cannot have every address (`adopt` returns none) builds its state as the
+//! dumping run did. A run dumps only when its build asks it to (`DumpRequest`), by argument or,
+//! for a Node image, by the environment its driver reads.
 
 use std::fs::File;
 use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
 mod symbols;
 pub use symbols::{dump_image, UNDUMPED};
 
-/// `WAIT:PATH`: the run dumps the state of index `WAIT` to `PATH` once it is built.
+/// The environment a Node image's dump run names its request in (`DumpRequest::parse`).
 pub const DUMP_VARIABLE: &str = "QUENCH_IMAGE_DUMP";
-/// The environment a dump is made in and must be adopted in: a start that names any of these
-/// configures its runtime differently from the dumping run, so it builds its own state.
-pub const ADOPTION_VARIABLES: [&str; 3] = ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"];
+/// The argument prefix a core image's dump run names its request in (`DumpRequest::from_arguments`).
+pub const DUMP_ARGUMENT: &str = "--quench-image-dump=";
+
+/// A run's dump request: the state of index `wait` is written to `path` once it is built.
+#[derive(Debug)]
+pub struct DumpRequest {
+    wait: usize,
+    path: PathBuf,
+}
+
+impl DumpRequest {
+    /// `WAIT:PATH`, the value both the environment and the argument carry.
+    pub fn parse(value: &str) -> Option<Self> {
+        let (wait, path) = value.split_once(':')?;
+        Some(Self { wait: wait.parse().ok()?, path: PathBuf::from(path) })
+    }
+
+    /// The request an argument list names: `--quench-image-dump=WAIT:PATH`.
+    pub fn from_arguments(arguments: impl IntoIterator<Item = String>) -> Option<Self> {
+        arguments.into_iter().find_map(|argument| Self::parse(argument.strip_prefix(DUMP_ARGUMENT)?))
+    }
+}
+
+/// The request this process dumps, once `begin` has taken it.
+static REQUEST: OnceLock<DumpRequest> = OnceLock::new();
 const MAGIC: [u8; 8] = *b"QNCHDMP1";
 const TRAILER_MAGIC: [u8; 8] = *b"QNCHDMPT";
 const PAGE: usize = 4096;
@@ -242,21 +267,18 @@ impl Header {
     }
 }
 
-/// The saved run this process dumps (`DUMP_VARIABLE`), if it dumps one.
+/// The state index this process dumps, if it dumps one.
 pub fn requested_wait() -> Option<usize> {
-    let value = std::env::var(DUMP_VARIABLE).ok()?;
-    value.split_once(':')?.0.parse().ok()
+    REQUEST.get().map(|request| request.wait)
 }
 
 /// The anonymous mappings that held before the dump began (`begin`), which it leaves out.
 static BEFORE: std::sync::Mutex<Vec<(u64, u64)>> = std::sync::Mutex::new(Vec::new());
 
-/// Starts the dump `DUMP_VARIABLE` asks for: from here every allocation is the arena's. Call
-/// first in `main`.
-pub fn begin() {
-    if requested_wait().is_none() {
-        return;
-    }
+/// Starts the dump `request` asks for (none: nothing is dumped): from here every allocation is
+/// the arena's. Call first in `main`, with the request the process was started with.
+pub fn begin(request: Option<DumpRequest>) {
+    let Some(request) = request else { return };
     // Read before the arena serves allocations, so the dump holds no copy of it.
     let before = maps().into_iter().filter(|mapping| mapping.anonymous()).map(|mapping| (mapping.start, mapping.end)).collect();
     *BEFORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = before;
@@ -264,6 +286,7 @@ pub fn begin() {
         eprintln!("quench: image dump: the arena's range is taken");
         std::process::exit(2);
     }
+    let _ = REQUEST.set(request);
 }
 
 /// One line of `/proc/self/maps`.
@@ -404,7 +427,7 @@ fn bytes_at(start: u64, end: u64) -> Vec<u8> {
 /// arena. Writes the process memory they lie in to the dump's path and exits.
 pub fn write(wait: usize, root: *mut u8) -> ! {
     let outcome = (|| -> Result<(), String> {
-        let path = std::env::var(DUMP_VARIABLE).ok().and_then(|value| value.split_once(':').map(|(_, path)| path.to_owned())).ok_or("no dump path")?;
+        let path = REQUEST.get().map(|request| request.path.display().to_string()).ok_or("no dump path")?;
         let (_, used) = quench_alloc::end_dump();
         // Read once the arena is closed, so the dump holds no copy of it.
         let mappings = maps();
@@ -577,17 +600,9 @@ pub fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), String> {
     file.write_all(&trailer).map_err(|error| error.to_string())
 }
 
-/// Whether this start may map a dump: it runs under the configuration the dump was made in.
-fn adoptable() -> bool {
-    ADOPTION_VARIABLES.iter().chain(&[DUMP_VARIABLE]).all(|name| std::env::var_os(name).is_none())
-}
-
 /// The root the dump of state `wait` holds, mapped from the dump this image carries; none
 /// where it carries none, or any of its addresses is taken, which leaves the process as it was.
 pub fn adopt(wait: usize) -> Option<*mut u8> {
-    if !adoptable() {
-        return None;
-    }
     let image = File::open("/proc/self/exe").ok()?;
     let length = image.metadata().ok()?.len();
     let mut tail = [0u8; 16];

@@ -1,7 +1,7 @@
 //! What a dump carries of an image: its statics and thread-locals (`UNDUMPED` names those it leaves
 //! out), and the dump of each state of a linked image (`dump_image`).
 
-use super::{finish, Dump, ADOPTION_VARIABLES, DUMP_VARIABLE};
+use super::{finish, Dump};
 use object::{Object, ObjectSection, ObjectSymbol};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 /// state of its own process.
 pub const UNDUMPED: &[&[&str]] = &[
     &["std"], &["core"], &["alloc"], &["quench_alloc"],
-    &["quench_runtime", "trace"], &["quench_runtime", "clock"], &["quench_runtime", "vm", "date", "local_zone"],
+    &["quench_runtime", "trace"], &["quench_runtime", "clock"], &["quench_runtime", "vm", "date", "local_zone"], &["quench_runtime", "native_link", "image_dump"],
     &["tracing_core"], &["parking_lot_core"], &["crossbeam_epoch"], &["rayon_core"], &["chrono"],
 ];
 
@@ -117,28 +117,22 @@ fn initial_bytes(file: &object::File, address: u64, length: usize) -> Vec<u8> {
     out
 }
 
-/// One run of the image with the dump variable set: its dump is written to `raw_path`.
-fn run_dump(image: &Path, prepare: &dyn Fn(&mut Command), index: usize, env: &[(String, String)], raw_path: &Path) -> Result<Vec<u8>, String> {
+/// One run of the image that dumps state `index` to `raw_path`: `prepare` names the request.
+fn run_dump(image: &Path, prepare: &dyn Fn(&mut Command, usize, &Path), index: usize, raw_path: &Path) -> Result<Vec<u8>, String> {
     let mut run = Command::new(image);
-    prepare(&mut run);
-    for name in ADOPTION_VARIABLES {
-        run.env_remove(name);
-    }
-    for (name, value) in env {
-        run.env(name, value);
-    }
-    run.env(DUMP_VARIABLE, format!("{index}:{}", raw_path.display())).stdin(Stdio::null()).stdout(Stdio::null());
+    prepare(&mut run, index, raw_path);
+    run.stdin(Stdio::null()).stdout(Stdio::null());
     crate::native_link::checked_output(&mut run, "image dump")?;
     std::fs::read(raw_path).map_err(|error| error.to_string())
 }
 
-/// Dumps each state of `runs` (its environment, by index) of the linked `image`, which still has
-/// its symbol table. Each runs twice, so a word that differs between the two runs is an address
-/// of the run's own (`finish`). `prepare` configures each run's command (a host's environment);
+/// Dumps each state index below `states` of the linked `image`, which still has its symbol table.
+/// Each runs twice, so a word that differs between the two runs is an address of the run's own
+/// (`finish`). `prepare` names each run's request (`DumpRequest`) and configures its command;
 /// `undumped` names the statics a dump leaves out (`UNDUMPED`, and a host's own). Returns each
 /// dump with the size of its raw form, or why one cannot be dumped.
 pub fn dump_image(
-    image: &Path, work: &Path, runs: &[Vec<(String, String)>], undumped: &[&[&str]], prepare: &dyn Fn(&mut Command),
+    image: &Path, work: &Path, states: usize, undumped: &[&[&str]], prepare: &dyn Fn(&mut Command, usize, &Path),
 ) -> Result<Vec<(Dump, usize)>, String> {
     let bytes = std::fs::read(image).map_err(|error| error.to_string())?;
     let file = object::File::parse(&*bytes).map_err(|error| error.to_string())?;
@@ -159,9 +153,9 @@ pub fn dump_image(
         }).collect()
     };
     let mut dumps = Vec::new();
-    for (index, env) in runs.iter().enumerate() {
-        let raw = run_dump(image, prepare, index, env, &work.join(format!("dump-{index}.raw")))?;
-        let again = run_dump(image, prepare, index, env, &work.join(format!("dump-{index}.again")))?;
+    for index in 0..states {
+        let raw = run_dump(image, prepare, index, &work.join(format!("dump-{index}.raw")))?;
+        let again = run_dump(image, prepare, index, &work.join(format!("dump-{index}.again")))?;
         let dump = finish(&raw, &again, &keep_statics, &keep_tls, &initial, &tls_initial)?;
         dumps.push((dump, raw.len()));
     }

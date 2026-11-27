@@ -2,7 +2,8 @@ use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
 use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ReachableRealm, RealmRoots, ResidualProgram, Runtime};
-use quench_layers::engine::{Demand, ExecutionTableSpec, emit_native_module_for, lower_native_js_module_for};
+use quench_layers::engine::{Demand, emit_native_module_for, lower_native_js_module_for};
+use super::core_rest::{write_closed_world, ClosedTables};
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
@@ -81,7 +82,7 @@ pub struct CompiledSources {
 impl CompiledSources {
     /// The link inputs of every program, the demand their images reach in aggregate, and (for a
     /// core image) the closed world of the realm they reach (`ReachableRealm`).
-    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>), String> {
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>, Option<ClosedTables>), String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -148,7 +149,11 @@ impl CompiledSources {
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
             .map_err(|error| error.to_string())?;
-        if let Some(realm) = &realm { write_builtin_table(&mut catalog, realm)?; }
+        // The core closed world's statics, and the values the probe and the dump run on (one construction).
+        let closed = match &realm {
+            Some(realm) => Some(write_closed_world(&mut catalog, realm, &demand.execution_table())?),
+            None => None,
+        };
         let sources_macro = match host {
             ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
             ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),
@@ -170,7 +175,6 @@ impl CompiledSources {
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
-        if host == ImageHost::Core { write_execution_table(&mut catalog, &demand.execution_table())?; }
         if host.carries_modules() { write_module_assets(&mut catalog, &directory, &self.assets, &pool)?; }
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
@@ -191,7 +195,7 @@ impl CompiledSources {
                 .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect(),
             ImageHost::Core => std::collections::BTreeSet::new(),
         };
-        Ok((NativeImageInputs::new(directory, objects, host_exports), demand, realm))
+        Ok((NativeImageInputs::new(directory, objects, host_exports), demand, realm, closed))
     }
 }
 
@@ -231,43 +235,6 @@ pub fn demand_report(demand: &Demand) -> Value {
             "link_live": table.link_live, "wasm": table.wasm,
         },
     })
-}
-
-/// The realm's intrinsic table: a family the program reaches names its installer, and one
-/// it does not keeps its realm objects and its installer out of the image. The natives table
-/// keeps exactly the natives the closed world reaches; every other entry is `None`.
-fn write_builtin_table(catalog: &mut fs::File, realm: &ReachableRealm) -> Result<(), String> {
-    use quench_runtime::BuiltinFamilies as F;
-    let families = realm.families;
-    let installer = |family: F, name: &str| {
-        if families.contains(family) { format!("Some(quench_runtime::vm::builtin_table::installers::{name})") } else { "None".to_owned() }
-    };
-    let natives = realm.natives.iter().map(|native| format!("quench_runtime::tier_surface::Native::{native:?}")).collect::<Vec<_>>().join(", ");
-    writeln!(catalog, "static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), natives: Some(&[{natives}]), regexp: {}, typed_memory: {}, collections: {}, date: {}, json: {}, promise: {}, shadow_realm: {} }};",
-        families.bits(),
-        installer(F::REGEXP, "REGEXP"), installer(F::TYPED_MEMORY, "TYPED_MEMORY"), installer(F::COLLECTIONS, "COLLECTIONS"),
-        installer(F::DATE, "DATE"), installer(F::JSON, "JSON"),
-        installer(F::PROMISE_ASYNC, "PROMISE_ASYNC"), installer(F::SHADOW_REALM, "SHADOW_REALM"))
-        .map_err(|error| error.to_string())
-}
-
-/// The engine entries the image links (`ExecutionTable`). Each demand flag gates its group: a group
-/// the closed world does not reach is `None` in the image, and the engine code behind it drops out
-/// of the link; the entries it does reach are the runtime's own (`ExecutionTable::ALL`).
-fn write_execution_table(catalog: &mut fs::File, spec: &ExecutionTableSpec) -> Result<(), String> {
-    let groups = [
-        (spec.interpret, &["interpret", "native_execution_rejections", "record_native_execution_rejection"][..]),
-        (spec.tier_up, &["js_tier_frame_entry", "offer_compiled", "run_offered", "js_jit_compiled_call", "tier_may_run", "hot_loop_lane_view", "report_lane_plan"][..]),
-        (spec.compile_source, &["prepare_native_script", "store_native_module_program", "kept_native_module_program"][..]),
-        (spec.link_live, &["stage_images_at_load", "attach_native_js", "load_ahead_images"][..]),
-        (spec.wasm, &["install_wasm_instance", "bind_wasm_instance", "run_compiled", "wasm_table_step", "wasm_instance_address", "compile_wasm_eagerly"][..]),
-    ];
-    let unlinked: String = groups.iter().filter(|(linked, _)| !linked)
-        .flat_map(|(_, names)| names.iter())
-        .map(|name| format!("{name}: None, "))
-        .collect();
-    writeln!(catalog, "static EXECUTION: quench_runtime::ExecutionTable = quench_runtime::ExecutionTable {{ {unlinked}..quench_runtime::ExecutionTable::ALL }};")
-        .map_err(|error| error.to_string())
 }
 
 /// Write the Node loader's module assets into the catalog: the entry, files, resolutions,
