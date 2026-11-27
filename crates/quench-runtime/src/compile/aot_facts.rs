@@ -51,17 +51,17 @@ pub struct AotFacts {
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
     /// Per function, the names its `prototype` is given, in code order (`prototype_fields`).
     pub(crate) prototype_fields: BTreeMap<u32, Vec<u32>>,
-    /// Per field name, the type of the values every store of it writes (`types`): what a slot of
-    /// that name holds, which a tier keeps only under the slot's dependency.
+    /// Per field name, the type of the values every store of it writes, into an object of any class: the
+    /// join of the name's `FactKey::Field` and `FactKey::AnyField` cells, which a tier keeps only under the
+    /// slot's dependency.
     pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
-    /// Per `(class, field name)`, the type of the values the stores into that class's instances write
-    /// (`types::Types::cell_on`): one cell of the lattice per field per class, sharper than the name's.
-    pub(crate) class_field_types: BTreeMap<(u32, u32), crate::typed_ir::Type>,
-    /// `(function, pc)` of a named field read or store → the class (constructed function) of every object it
-    /// reads or stores, from the settled types (`value::Class`): a guess, as the types are.
-    pub(crate) field_owners: BTreeMap<(u32, u32), u32>,
-    /// Per function, the class of every `this` its recorded calls pass, from the settled types: a guess.
-    pub(crate) this_classes: BTreeMap<u32, u32>,
+    /// The settled cell of every key of the program (`typed_ir::FactKey`): each class's own fields (joined
+    /// with the stores into objects of no one class), returns, bindings, array fields' elements, parameters
+    /// and receivers. The one store of the solve's facts: code that trusts a cell subscribes to its key.
+    pub(crate) cells: BTreeMap<crate::typed_ir::FactKey, crate::typed_ir::Cell>,
+    /// `(function, pc)` of a named field access → the classes of the objects it reads or stores, and of a call →
+    /// the classes of its receiver, where the settled cells list them (`typed_ir::Classes::Set`): a guess.
+    pub(crate) access_classes: BTreeMap<(u32, u32), crate::typed_ir::Classes>,
 }
 
 impl AotFacts {
@@ -86,7 +86,12 @@ impl AotFacts {
     /// The type of field `atom` of class `class`'s instances (`class_field_types`), else the name's (`field_type`):
     /// a guess held as the slot's type under the slot's dependency, as `field_type` is.
     pub fn field_type_on(&self, class: u32, atom: u32) -> crate::typed_ir::Type {
-        self.class_field_types.get(&(class, atom)).copied().unwrap_or_else(|| self.field_type(atom))
+        self.cell(crate::typed_ir::FactKey::Field { class, instance: true, atom }).map_or_else(|| self.field_type(atom), |cell| cell.ty)
+    }
+
+    /// The settled cell of `key` (`cells`), none where the solve keeps none.
+    pub fn cell(&self, key: crate::typed_ir::FactKey) -> Option<crate::typed_ir::Cell> {
+        self.cells.get(&key).copied()
     }
 
     /// The Any ratchet: how many field names the program stores whose type is `any`, and how many
@@ -137,12 +142,18 @@ impl<'a> FunctionFacts<'a> {
     /// The class (constructed function) of every object the named field read or store at `pc` reads or stores,
     /// where the settled types name one (`AotFacts::field_owners`): a guess, held under the layout's guard.
     pub fn field_owner(&self, pc: u32) -> Option<u32> {
-        self.facts.field_owners.get(&(self.function, pc)).copied()
+        self.access_classes(pc).single().map(|(class, _)| class)
+    }
+
+    /// The classes of the objects the named field access at `pc` reads or stores, or of the receiver the call at
+    /// `pc` passes (`AotFacts::access_classes`): a closed union a class switch dispatches on, a guess.
+    pub fn access_classes(&self, pc: u32) -> crate::typed_ir::Classes {
+        self.facts.access_classes.get(&(self.function, pc)).copied().unwrap_or(crate::typed_ir::Classes::Many)
     }
 
     /// The class of every `this` the function's recorded calls pass (`AotFacts::this_classes`): a guess.
     pub fn this_class(&self) -> Option<u32> {
-        self.facts.this_classes.get(&self.function).copied()
+        self.facts.cell(crate::typed_ir::FactKey::Receiver(self.function)).and_then(|cell| cell.classes.single()).map(|(class, _)| class)
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
@@ -239,16 +250,18 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         let named = |atom: u32| program.atoms.get(atom as usize).map_or("?", |name| name.as_ref()).to_string();
         eprintln!("aot-lanes: classes {:?}", found.class_trace().into_iter().map(|(key, class)| (match key { value::Key::Member(atom) => named(atom), other => format!("{other:?}") }, class)).collect::<Vec<_>>());
     }
-    // A method read off a value whose class the solve found (`value::Class`, a field holding instances of one
+    // A method read off a value whose class the solve found (`crate::typed_ir::Classes`, a field holding instances of one
     // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
     // take it from a flow over the settled types.
     if settled {
         for (id, flow) in analyze_typed(&resolved, Some(&found)).iter().enumerate() {
             let id = id as u32;
-            for (&pc, &class) in &flow.field_owners {
-                if let value::Class::One { class, .. } = class { facts.field_owners.insert((id, pc), class); }
+            for (&pc, &classes) in &flow.field_owners {
+                if matches!(classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, pc), classes); }
             }
-            if let value::Class::One { class, .. } = found.this(id).class { facts.this_classes.insert(id, class); }
+            for call in &flow.calls {
+                if matches!(call.receiver.cell.classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, call.pc), call.receiver.cell.classes); }
+            }
             for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
                 if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
                 let Some(target) = census.target(call.callee) else { continue };
@@ -262,15 +275,18 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
     if settled {
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
-        facts.class_field_types = found.class_fields().map(|(key, ty)| (key, seen(ty))).collect();
+        facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
     }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
         eprintln!("aot-lanes: field types {:?}", facts.field_types.iter().map(|(atom, ty)| (named(atom), *ty)).collect::<Vec<_>>());
-        eprintln!("aot-lanes: class field types {:?}", facts.class_field_types.iter().filter(|((_, atom), ty)| facts.field_types.get(atom) != Some(*ty)).map(|((class, atom), ty)| (*class, named(atom), *ty)).collect::<Vec<_>>());
+        eprintln!("aot-lanes: class field types {:?}", facts.cells.iter().filter_map(|(key, cell)| match *key {
+            crate::typed_ir::FactKey::Field { class, instance: true, atom } if facts.field_types.get(&atom) != Some(&cell.ty) => Some((class, named(&atom), cell.ty)),
+            _ => None,
+        }).collect::<Vec<_>>());
         let (any, total) = facts.any_fields();
         eprintln!("aot-lanes: any fields {any} of {total}");
-        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} field owners, {} this classes", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.field_owners.len(), facts.this_classes.len());
+        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} access classes, {} cells", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.access_classes.len(), facts.cells.len());
     }
     facts
 }

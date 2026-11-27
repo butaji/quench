@@ -2,7 +2,7 @@
 //! names.
 
 use super::flow::FunctionFlow;
-use super::value::{Fact, Key, Origin, PrototypeBase};
+use super::value::{Word, Key, Origin, PrototypeBase};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The most closures a method read's closed set may hold (`candidates`): a test per arm.
@@ -11,7 +11,7 @@ pub(crate) const MAX_CANDIDATES: usize = 8;
 /// Every binding write of the program, counted.
 pub(super) struct Census {
     /// Per binding: its number of writes, and the fact of its last write.
-    writes: BTreeMap<Key, (u32, Fact)>,
+    writes: BTreeMap<Key, (u32, Word)>,
     /// Whether a write the analysis cannot follow reaches the globals.
     global_wild: bool,
     /// Per function, whether a write it cannot follow reaches its own slots.
@@ -26,7 +26,7 @@ pub(super) struct Census {
 
 impl Census {
     pub(super) fn of(flows: &[FunctionFlow]) -> Self {
-        let mut writes: BTreeMap<Key, (u32, Fact)> = BTreeMap::new();
+        let mut writes: BTreeMap<Key, (u32, Word)> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let entry = writes.entry(key).or_insert((0, fact));
             entry.0 += 1;
@@ -35,7 +35,7 @@ impl Census {
         let mut members: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
         let mut members_on: BTreeMap<(u32, bool, u32), Option<u32>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
-            let stored = fact.ty.body_index();
+            let stored = fact.cell.ty.body_index();
             match key {
                 // A method read's guess is the one closure stored under its name: a store of anything else (an
                 // instance's data field of the same name, `this.queue = q`) is never the callee a call reaches, and the
@@ -74,8 +74,8 @@ impl Census {
     }
 
     /// Whether `target(callee)` is a method read's guess rather than a proof.
-    pub(super) fn guessed(&self, callee: Fact) -> bool {
-        callee.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_) | Origin::MemberOn { guess: true, .. }))
+    pub(super) fn guessed(&self, callee: Word) -> bool {
+        callee.cell.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_) | Origin::MemberOn { guess: true, .. }))
     }
 
     /// The closure `key` holds, when it is written once, with a closure, and no write the
@@ -88,7 +88,7 @@ impl Census {
             Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => return None,
         };
         match self.writes.get(&key) {
-            Some(&(1, fact)) if !wild => fact.ty.body_index(),
+            Some(&(1, fact)) if !wild => fact.cell.ty.body_index(),
             _ => None,
         }
     }
@@ -96,14 +96,14 @@ impl Census {
     /// Every binding the census proves holds one closure, which the second flow pass resolves.
     pub(super) fn singles(&self) -> BTreeMap<Key, u32> {
         self.writes.iter().filter_map(|(&key, &(count, fact))| {
-            let Some(function) = fact.ty.body_index() else { return None };
+            let Some(function) = fact.cell.ty.body_index() else { return None };
             (count == 1 && self.single(key) == Some(function)).then_some((key, function))
         }).collect()
     }
 
     /// The function a callee fact names: a closure, or the single closure of a binding.
-    pub(super) fn target(&self, callee: Fact) -> Option<u32> {
-        if let Some(function) = callee.ty.body_index() {
+    pub(super) fn target(&self, callee: Word) -> Option<u32> {
+        if let Some(function) = callee.cell.ty.body_index() {
             return Some(function);
         }
         match callee.origin? {
@@ -120,8 +120,8 @@ impl Census {
     /// The closed set of functions a method read's callee may be, where it is more than one: every closure stored
     /// under its name (`members`), as `target`'s one closure is. The call's records still guard the callee each
     /// arm reaches, and a callee none names takes the VM's call.
-    pub(super) fn candidates(&self, callee: Fact) -> Option<&BTreeSet<u32>> {
-        if callee.ty.body_index().is_some() { return None; }
+    pub(super) fn candidates(&self, callee: Word) -> Option<&BTreeSet<u32>> {
+        if callee.cell.ty.body_index().is_some() { return None; }
         let Some(Origin::Member(atom)) = callee.origin else { return None };
         self.members.get(&atom).filter(|set| (2..=MAX_CANDIDATES).contains(&set.len()))
     }

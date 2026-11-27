@@ -18,7 +18,8 @@
 
 use super::census::Census;
 use super::flow::FunctionFlow;
-use super::value::{Cell, Class, Key, Origin};
+use super::value::{Key, Origin};
+use crate::typed_ir::{Cell, Classes};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -57,7 +58,7 @@ impl Types {
         let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY };
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let joined = types.cells.entry(key).or_insert(Cell::NEVER);
-            *joined = joined.join(fact.cell());
+            *joined = joined.join(fact.cell);
         }
         for (id, flow) in flows.iter().enumerate() {
             let id = id as u32;
@@ -72,7 +73,7 @@ impl Types {
         types.params = parameters(flows, facts, census);
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
-                let receiver = Cell { ty: receiver_type(call), class: call.receiver.class };
+                let receiver = Cell { ty: receiver_type(call), ..call.receiver.cell };
                 for target in targets(id as u32, call, facts, census) {
                     let joined = types.receivers.entry(target).or_insert(Cell::NEVER);
                     *joined = joined.join(receiver);
@@ -83,7 +84,7 @@ impl Types {
         // object of that class: its `this` is an instance of the class, a guess, whatever the calls' receivers'
         // join is (`this.task.run()` reaches four classes' `run`, each with its own class's `this`).
         for (function, class) in holders(&types.cells) {
-            types.receivers.entry(function).or_insert(Cell::ANY).class = Class::One { class, proven: false };
+            types.receivers.entry(function).or_insert(Cell::ANY).classes = Classes::one(class, false);
         }
         types
     }
@@ -115,14 +116,24 @@ impl Types {
         Some(own.join(self.cells.get(&Key::MemberAny(atom)).copied().unwrap_or(Cell::NEVER)).guessed())
     }
 
-    /// The type of every class's own field `atom` (`cell_on`), per class, for the lowering: a class's
-    /// instances hold the type its stores write, sharper than the name's (`field`) where two classes store
-    /// the name with different types (richards' `v1`: an int32 on an idle task, a packet on a device task).
-    pub(super) fn class_fields(&self) -> impl Iterator<Item = ((u32, u32), Type)> + '_ {
-        self.cells.keys().filter_map(|key| match *key {
-            Key::MemberOn { class, instance: true, atom } => Some(((class, atom), self.cell_on(class, true, atom)?.ty)),
-            _ => None,
-        })
+    /// Every settled cell by its key in the one lattice's key space (`typed_ir::FactKey`): a class's own field
+    /// joined with the stores into objects of no one class (`cell_on`), every other key as solved, each
+    /// parameter and receiver. The name-wide `Key::Member` join is no key of its own: `fields` gives it.
+    pub(super) fn fact_cells(&self) -> impl Iterator<Item = (crate::typed_ir::FactKey, Cell)> + '_ {
+        use crate::typed_ir::FactKey;
+        let keyed = self.cells.keys().filter_map(|key| Some(match *key {
+            Key::MemberOn { class, instance, atom } => (FactKey::Field { class, instance, atom }, self.cell_on(class, instance, atom)?),
+            Key::MemberAny(atom) => (FactKey::AnyField(atom), self.cell(*key)),
+            Key::Return(function) => (FactKey::Return(function), self.cell(*key)),
+            Key::Global(atom) => (FactKey::Global(atom), self.cell(*key)),
+            Key::Slot { owner, slot } => (FactKey::Slot { owner, slot }, self.cell(*key)),
+            Key::Element(atom) => (FactKey::Elements(atom), self.cell(*key)),
+            Key::Member(_) => return None,
+        }));
+        let params = self.params.iter().flat_map(|(function, cells)| cells.iter().enumerate()
+            .map(move |(index, cell)| (FactKey::Parameter { function: *function, index: index as u16 }, cell.guessed())));
+        let receivers = self.receivers.iter().map(|(function, cell)| (FactKey::Receiver(*function), cell.guessed()));
+        keyed.chain(params).chain(receivers)
     }
 
     /// The type of every field name the program stores (`Key::Member`), for the lowering.
@@ -131,9 +142,9 @@ impl Types {
     }
 
     /// The classes the solve found, for the trace.
-    pub(super) fn class_trace(&self) -> Vec<(Key, Class)> {
-        self.cells.iter().filter(|(_, cell)| cell.class != Class::Many).map(|(key, cell)| (*key, cell.class))
-            .chain(self.receivers.iter().map(|(function, cell)| (Key::Slot { owner: *function, slot: u16::MAX }, cell.class))).collect()
+    pub(super) fn class_trace(&self) -> Vec<(Key, Classes)> {
+        self.cells.iter().filter(|(_, cell)| cell.classes != Classes::Many).map(|(key, cell)| (*key, cell.classes))
+            .chain(self.receivers.iter().map(|(function, cell)| (Key::Slot { owner: *function, slot: u16::MAX }, cell.classes))).collect()
     }
 
     /// The cell the call at `pc` of `function` returns: none where its callees are not known.
@@ -179,8 +190,8 @@ fn receiver_type(call: &super::flow::Call) -> Type {
     use super::flow::Target;
     let method = matches!(call.target, Target::Method(_))
         || matches!(call.callee.origin, Some(Origin::Member(_) | Origin::MemberOn { .. })) && !call.construct;
-    if !method || call.receiver.ty == Type::NEVER { return call.receiver.ty; }
-    let ty = call.receiver.ty;
+    if !method || call.receiver.cell.ty == Type::NEVER { return call.receiver.cell.ty; }
+    let ty = call.receiver.cell.ty;
     if ty.is_subtype(Type::DIRECT_OBJECT_FAMILY) { ty } else { Type::DIRECT_OBJECT_FAMILY }
 }
 
@@ -216,7 +227,7 @@ fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts, census: &C
 /// field types they feed are, which a tier holds only under the fields' slot dependencies, so such a call
 /// that stores what it was passed widens the slot and retires the code.
 fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTreeMap<u32, Vec<Cell>> {
-    let undefined = Cell { ty: Type::language(ValueType::Undefined), class: Class::Never };
+    let undefined = Cell::of(Type::language(ValueType::Undefined));
     let mut params: BTreeMap<u32, Vec<Cell>> = flows.iter().enumerate()
         .filter_map(|(id, flow)| Some((id as u32, vec![Cell::NEVER; usize::from(flow.arity?)])))
         .collect();
@@ -227,7 +238,7 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTre
                 let Some(slots) = params.get_mut(&target) else { continue };
                 reached.insert(target);
                 for (index, slot) in slots.iter_mut().enumerate() {
-                    *slot = slot.join(call.arguments.get(index).map_or(undefined, |argument| argument.cell()));
+                    *slot = slot.join(call.arguments.get(index).map_or(undefined, |argument| argument.cell));
                 }
             }
         }
