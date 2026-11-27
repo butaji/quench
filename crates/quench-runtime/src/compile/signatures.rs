@@ -5,9 +5,10 @@
 //! changes nothing, which settles because the lattice is finite and each pass is monotone in the
 //! signatures before it.
 //!
-//! A step's leave is decided by the settled facts where they decide it (`step_leave`): a step leaves
-//! only where a cell it depends on can move, or where it can really throw, run guest code or collect.
-//! The row rule (`Effects::can_leave`) is the fallback for the steps no fact decides.
+//! Every site has one grade, `site_grade`: its operation's kind row (`Operation::effects`) met with what the
+//! settled facts prove of the site (`facts_grade`). The fold reads the grade's leave (`Effects::can_leave`),
+//! and the lowerings read the same grade per pc (`Signatures::site_effects`), so a site is graded once.
+//! The row rule is the kind row alone; the facts only clear what they prove away.
 //!
 //! This is Kleisli composition in an effect-graded monad: a call's signature is the composition of
 //! its callees' signatures in the caller's sequence of steps. The signatures are retired by the same
@@ -21,18 +22,20 @@ use crate::typed_ir::{Cell, Classes, FactKey, Type};
 
 use super::aot_facts::AotFacts;
 
-/// The signature of each function of a program, by function id, and the targets of each call site
-/// the solve read: a call's signature is the join over those targets.
+/// The signature of each function of a program, by function id, the targets of each call site the solve
+/// read (a call's signature is the join over those targets), and the graded effects of every pc.
 pub struct Signatures {
     functions: Vec<Signature>,
     /// `(function, pc)` of a call → the functions it may reach, empty where none is known.
     calls: std::collections::BTreeMap<(u32, u32), Box<[u32]>>,
+    /// Per function, per pc: the graded effects of the step there (`Signatures::site_effects`).
+    sites: Vec<Box<[Effects]>>,
 }
 
-/// One instruction of a function, as the solve reads it once: its own effect row with whether the
-/// settled facts let it leave, or a call and the functions it may reach.
+/// One instruction of a function, as the solve reads it once: its graded effect row, or a call and the
+/// functions it may reach.
 enum Body {
-    Row { effects: Effects, can_leave: bool },
+    Row { effects: Effects },
     Call { pc: u32, targets: Box<[u32]> },
 }
 
@@ -40,10 +43,19 @@ impl Body {
     /// The step this instruction is in a pass, given the signatures the pass before found.
     fn step(&self, functions: &[Signature]) -> Step {
         match self {
-            Self::Row { effects, can_leave } => Step::Row { effects: *effects, can_leave: *can_leave },
+            Self::Row { effects } => Step::Row { effects: *effects },
             Self::Call { targets, .. } if targets.is_empty() => Step::Call(Signature::ANY),
             Self::Call { targets, .. } => Step::Call(targets.iter().fold(Signature::NEVER,
                 |joined, &target| joined.join(functions.get(target as usize).copied().unwrap_or(Signature::ANY)))),
+        }
+    }
+
+    /// The graded effects of this site under the signatures the solve found: a row's grade, or the effects of the
+    /// callee signature a call's step stands for.
+    fn effects(&self, functions: &[Signature]) -> Effects {
+        match self.step(functions) {
+            Step::Row { effects } => effects,
+            Step::Call(callee) => callee.effects,
         }
     }
 }
@@ -81,11 +93,13 @@ fn object_cell(site: Site<'_>, base: FieldBase) -> Option<Cell> {
     site.facts.function_facts(site.function).cell_at(site.pc, base.register_index()?)
 }
 
-/// Whether the named field access on `base` at `site` is on a closed set of classes: its object's cell is an
-/// object (`DIRECT_OBJECT_FAMILY`, so never nullish) and the solve lists the classes it may hold (`access_classes`).
-fn closed_object(site: Site<'_>, base: FieldBase) -> bool {
-    object_cell(site, base).is_some_and(|cell| cell.ty.is_subtype(Type::DIRECT_OBJECT_FAMILY))
-        && matches!(site.facts.function_facts(site.function).access_classes(site.pc), Classes::Set { .. })
+/// The classes of the object a named field access on `base` at `site` reads or stores, where the object is an
+/// object (`DIRECT_OBJECT_FAMILY`, so never nullish) and the solve lists its classes as a closed set
+/// (`access_classes`). None where either fails: the object may be nullish or of a class the solve does not list.
+fn closed_classes(site: Site<'_>, base: FieldBase) -> Option<Classes> {
+    let object = object_cell(site, base)?;
+    let classes = site.facts.function_facts(site.function).access_classes(site.pc);
+    (object.ty.is_subtype(Type::DIRECT_OBJECT_FAMILY) && matches!(classes, Classes::Set { .. })).then_some(classes)
 }
 
 /// Whether a store of field `atom` at `site` writes a key new code can move (`AotFacts::live`): the name's
@@ -142,50 +156,67 @@ fn numeric_operator(operator: u32) -> bool {
         | op::Addition | op::Subtraction | op::Multiplication | op::Division | op::Remainder)
 }
 
-/// Whether the step `op` at `site` can leave the activation, decided by the settled facts. The rules, in order:
-///
-/// 1. A store (`SetField`, `StoreField`) into a key new code can move (`AotFacts::live`: its any-object key,
-///    or a listed class's field) can move a cell that code trusts, so it leaves. A store moves no cell
-///    otherwise: under the settled solve every store is within its key's cell.
-/// 2. A named field read or store whose object's cell is an object and whose classes the solve lists as a
-///    closed set cannot leave. The classes' layouts hold the field under the slot subscription, so a miss is
-///    an edge the layout takes, not an exit.
-/// 3. A Number operation, or a numeric `Binary`, `Equality` or `CompareJump`, whose operands are Numbers
-///    (their cells have a representation) cannot leave. A Number operation over any other operand leaves at
-///    its miss edge, as its row says; the row table's `NONE` for Number operations does not hold for those.
-/// 4. A constant load, register move, jump, branch or return cannot leave.
-/// 5. Any other step keeps its row's rule (`Effects::can_leave`): it leaves if it may throw, run guest code or collect.
-fn step_leave(op: &Operation<(), ()>, site: Site<'_>) -> bool {
-    let generic = op.effects().can_leave();
-    match op {
-        Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Jump | Operation::JumpIf { .. } | Operation::Return { .. } => false,
-        Operation::SetField { base, atom, .. } | Operation::StoreField { base, atom, .. } => {
-            store_moves_live_key(site, *atom) || (generic && !closed_object(site, (*base).map_or(FieldBase::THIS, FieldBase::register)))
-        }
-        Operation::GetField { lookup: FieldLookup::Atom { base, .. }, .. } => generic && !closed_object(site, *base),
-        Operation::Binary { left, right, operator, .. } => generic && !(numeric_operator(*operator) && numeric_operands(site, &[*left, *right])),
-        Operation::Equality { left, right, .. } | Operation::CompareJump { left, right, .. } => generic && !numeric_operands(site, &[*left, *right]),
-        Operation::Number(number) => !numeric_operands(site, &number_operands(number)),
-        _ => generic,
+/// The grade of a named field read whose object's closed classes are `classes` (`closed_classes`). Every listed
+/// class holding the field as a settled cell makes the read a plain data read: it runs no guest code and throws
+/// nothing (`RUNS_NOTHING`). Any other read is open (`ANY`): a class without the field, or an accessor the solve
+/// has no key for, may run a getter.
+fn field_read_grade(classes: Option<Classes>, holds: impl Fn(u32) -> bool) -> Effects {
+    match classes {
+        Some(classes @ Classes::Set { .. }) if classes.ids().iter().all(|&class| holds(class)) => Effects::RUNS_NOTHING,
+        _ => Effects::ANY,
     }
 }
 
-/// The step of `instruction` at `site` that is not a call: its effect row, and whether the facts let it leave.
-/// A step the facts leave open keeps its row's leave flags; one they decide has them cleared
-/// (`Effects::without_leaves`), so the call form of a function that cannot leave is not framed by them.
-/// An instruction no row decodes may do anything.
+/// The grade of a named store of `atom` on `base`: a store that writes a key new code can move
+/// (`store_moves_live_key`) is open; one on a closed receiver writes a slot its classes' layouts hold, so it
+/// runs nothing (`RUNS_NOTHING`); any other store is open.
+fn store_grade(site: Site<'_>, base: FieldBase, atom: u32) -> Effects {
+    if store_moves_live_key(site, atom) || closed_classes(site, base).is_none() { Effects::ANY } else { Effects::RUNS_NOTHING }
+}
+
+/// The grade of an operation over `operands` that is a Number operation: `RUNS_NOTHING` where every operand is a
+/// Number at `site`, since its miss edge is then never taken; `ANY` otherwise.
+fn numeric_grade(site: Site<'_>, operands: &[Operand]) -> Effects {
+    if numeric_operands(site, operands) { Effects::RUNS_NOTHING } else { Effects::ANY }
+}
+
+/// What the settled facts prove of the operation `op` at `site`, as a grade for `Effects::meet`. Each arm names
+/// the one fact that clears the operation's flags; an operation no arm names is `ANY`, so the kind row stands.
+///
+/// 1. A store (`SetField`, `StoreField`) is graded by `store_grade`.
+/// 2. A named field read is graded by `field_read_grade` over the closed classes of its object.
+/// 3. A Number operation, a numeric `Binary`, `Equality` or `CompareJump` is graded by `numeric_grade`.
+fn facts_grade(op: &Operation<(), ()>, site: Site<'_>) -> Effects {
+    match op {
+        Operation::SetField { base, atom, .. } | Operation::StoreField { base, atom, .. } => {
+            store_grade(site, (*base).map_or(FieldBase::THIS, FieldBase::register), *atom)
+        }
+        Operation::GetField { lookup: FieldLookup::Atom { base, atom, .. }, .. } => {
+            field_read_grade(closed_classes(site, *base), |class| site.facts.cell(FactKey::Field { class, instance: true, atom: *atom }).is_some())
+        }
+        Operation::Binary { left, right, operator, .. } if numeric_operator(*operator) => numeric_grade(site, &[*left, *right]),
+        Operation::Equality { left, right, .. } | Operation::CompareJump { left, right, .. } => numeric_grade(site, &[*left, *right]),
+        Operation::Number(number) => numeric_grade(site, &number_operands(number)),
+        _ => Effects::ANY,
+    }
+}
+
+/// The graded effects of the operation `op` at `site`: its kind row, the top, met with what the facts prove of it
+/// (`facts_grade`). The one grading: the fold's leave and the per-site grades both read it.
+fn site_grade(op: &Operation<(), ()>, site: Site<'_>) -> Effects {
+    op.effects().meet(facts_grade(op, site))
+}
+
+/// The step of `instruction` at `site` that is not a call: its graded effect row. An instruction no row decodes
+/// may do anything.
 fn row(instruction: WideInstruction, site: Site<'_>) -> Body {
     let decode = DecodeContext::of(site.program);
     match Operation::<(), ()>::decode_completed(instruction, decode)
         .or_else(|| Operation::<(), ()>::decode_literal_completed_with(instruction, None, ()))
         .map(|(operation, _)| operation)
     {
-        Some(operation) => {
-            let can_leave = step_leave(&operation, site);
-            let effects = operation.effects();
-            Body::Row { effects: if can_leave { effects } else { effects.without_leaves() }, can_leave }
-        }
-        None => Body::Row { effects: Signature::ANY.effects, can_leave: true },
+        Some(operation) => Body::Row { effects: site_grade(&operation, site) },
+        None => Body::Row { effects: Effects::ANY },
     }
 }
 
@@ -205,7 +236,7 @@ fn bodies(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Vec<Bod
 
 /// Solves the signatures of every function of `program` over `facts`: each pass sets every
 /// function's signature to the fold of its steps against the signatures the pass before found,
-/// until a pass changes nothing.
+/// until a pass changes nothing. The per-site grades are read once the signatures have settled.
 pub fn solve(program: &ResidualProgram, facts: &AotFacts) -> Signatures {
     let count = program.function_count();
     let bodies: Vec<Vec<Body>> = (0..count).map(|function| bodies(program, facts, function as u32)).collect();
@@ -221,17 +252,26 @@ pub fn solve(program: &ResidualProgram, facts: &AotFacts) -> Signatures {
         }
         if !changed { break; }
     }
+    let sites: Vec<Box<[Effects]>> = bodies.iter()
+        .map(|body| body.iter().map(|step| step.effects(&functions)).collect::<Box<[Effects]>>())
+        .collect();
     let calls = bodies.iter().enumerate().flat_map(|(function, body)| body.iter().filter_map(move |step| match step {
         Body::Call { pc, targets } => Some(((function as u32, *pc), targets.clone())),
         Body::Row { .. } => None,
     })).collect();
-    Signatures { functions, calls }
+    Signatures { functions, calls, sites }
 }
 
 impl Signatures {
     /// The signature of function `function`; top for an id the program does not hold.
     pub fn of(&self, function: u32) -> Signature {
         self.functions.get(function as usize).copied().unwrap_or(Signature::ANY)
+    }
+
+    /// The graded effects of the step at `pc` of `function`: its operation's kind row met with what the settled facts
+    /// prove of the site, or for a call the effects of the callees it may reach. Top for a site the program does not hold.
+    pub fn site_effects(&self, function: u32, pc: u32) -> Effects {
+        self.sites.get(function as usize).and_then(|sites| sites.get(pc as usize)).copied().unwrap_or(Effects::ANY)
     }
 
     /// The call form of the call at `pc` of `caller`: the join of the signatures of the functions it
@@ -256,6 +296,37 @@ mod tests {
 
     fn may_throw() -> Effects {
         Effects { may_throw: true, ..Effects::NONE }
+    }
+
+    /// The kind row of a named read on the register `base`, as the lowering decodes it.
+    fn named_read(base: u16) -> Operation<(), ()> {
+        Operation::GetField { base: FieldBase::register(base), lookup: FieldLookup::Atom { atom: 0, base: FieldBase::register(base), cache_site: 0 }, destination: 0 }
+    }
+
+    #[test]
+    fn a_proven_plain_read_does_not_clear_stores() {
+        let kind = named_read(1).effects();
+        assert!(kind.may_call_js, "a named read's kind row may run a getter");
+        let graded = kind.meet(field_read_grade(Some(Classes::one(7, true)), |_| true));
+        assert!(!graded.may_call_js && !graded.may_throw && !graded.can_leave());
+        assert_eq!(graded.reads, kind.reads, "a plain read still reads the object's slots");
+    }
+
+    #[test]
+    fn an_open_receiver_or_a_class_without_the_field_keeps_the_read_open() {
+        let kind = named_read(1).effects();
+        assert!(kind.meet(field_read_grade(None, |_| true)).may_call_js, "an open receiver may run a getter");
+        assert!(kind.meet(field_read_grade(Some(Classes::one(7, true)), |_| false)).may_call_js, "a class without the field may run a getter");
+        assert!(kind.meet(field_read_grade(Some(Classes::Many), |_| true)).may_call_js, "an unlisted class may run a getter");
+    }
+
+    #[test]
+    fn a_grade_only_removes_effects_from_its_kind_row() {
+        let kind = Effects::ANY;
+        assert_eq!(kind.meet(Effects::ANY), kind);
+        assert_eq!(writes_frame().meet(Effects::RUNS_NOTHING), writes_frame());
+        assert!(!may_throw().meet(Effects::RUNS_NOTHING).may_throw);
+        assert_eq!(Effects::NONE.meet(Effects::ANY), Effects::NONE);
     }
 
     #[test]
