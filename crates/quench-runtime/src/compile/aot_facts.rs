@@ -28,7 +28,9 @@ mod tests;
 use std::collections::BTreeMap;
 
 use crate::bytecode::ResidualProgram;
+use crate::staged::effects::{CallForm, Signature};
 use crate::typed_ir::Representation;
+use super::signatures::{self, Signatures};
 use census::Census;
 use flow::FunctionFlow;
 use scope::Scope;
@@ -76,6 +78,9 @@ pub struct AotFacts {
     /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
     /// that key: what a call plan's miss subscribes to (`call_plan::Miss::Edge`).
     pub(crate) call_keys: BTreeMap<(u32, u32), (Option<u32>, crate::typed_ir::FactKey)>,
+    /// The composed effect signatures of the program's functions and call forms, solved over the settled facts
+    /// above (`signatures::solve`); none where the type solve did not settle, so no signature is taken from it.
+    pub(crate) signatures: Option<Signatures>,
 }
 
 impl AotFacts {
@@ -92,6 +97,10 @@ impl AotFacts {
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
             access_classes: BTreeMap::new(),
+            registers: BTreeMap::new(),
+            dependencies: BTreeMap::new(),
+            call_keys: BTreeMap::new(),
+            signatures: None,
         }
     }
 
@@ -260,6 +269,23 @@ impl<'a> FunctionFacts<'a> {
     pub fn numbers(&self) -> Option<&'a [Option<Representation>]> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
     }
+
+    /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the
+    /// effects they have. The same settled facts that answer this file's queries decide it, and the same edges
+    /// retire it. Top where the type solve did not settle.
+    pub fn signature(&self) -> Signature {
+        self.facts.signatures.as_ref().map_or(Signature::ANY, |signatures| signatures.of(self.function))
+    }
+
+    /// The call form of the call at `pc` (`staged::effects::call_form`): inlined where `inlinable`, else frameless
+    /// where the callees the facts name cannot leave, collect or run guest code, else framed. The same settled facts
+    /// decide it, and the same edges retire it. Framed where the type solve did not settle.
+    pub fn call_form(&self, pc: u32, inlinable: bool) -> CallForm {
+        match self.facts.signatures.as_ref() {
+            Some(signatures) => signatures.call_form(self.function, pc, inlinable),
+            None => crate::staged::effects::call_form(Signature::ANY, inlinable),
+        }
+    }
 }
 
 /// The facts of `program`, solved in the world its source proves (`world`).
@@ -378,6 +404,9 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
         facts.dependencies = dependencies(&facts, reads, &found);
+        // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
+        // (`signatures::solve`).
+        facts.signatures = Some(signatures::solve(program, &facts));
     }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
