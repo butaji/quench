@@ -11,8 +11,17 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{InitializerConstant, InitializerStore, InitializerValue};
-use crate::aot_image::symbols::{HeapValueRecipe, ShapeRecipe};
+use crate::aot_image::symbols::{HeapValueRecipe, ShapeRecipe, SymbolTable};
 pub(crate) use crate::aot_image::symbols::ADDED_FIELD;
+
+/// The shape recipe of the objects a construction of function `callee` makes: its prototype and its closure
+/// (`HeapValueRecipe::PrototypeOf`, `ClosureOf`), then `fields` (atoms) added in order as plain data properties.
+/// `None` where the closure or the prototype has no heap value key.
+pub(crate) fn construction_recipe(callee: u32, fields: impl IntoIterator<Item = u32>, symbols: &mut SymbolTable) -> Option<ShapeRecipe> {
+    let Symbol::HeapValue(closure) = symbols.heap_value(HeapValueRecipe::ClosureOf(callee)) else { return None };
+    let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(callee)) else { return None };
+    Some(ShapeRecipe { prototype: Some(prototype), constructor: Some(closure), fields: fields.into_iter().map(|atom| (atom, ADDED_FIELD)).collect() })
+}
 
 /// By `(function, pc)` of each construction in `unit` (its caller's or an inlined frame's), the
 /// plan the image keeps its receiver by, its callee and shape interned in `symbols`.
@@ -35,9 +44,8 @@ fn image_plan(program: &ResidualProgram, callee: u32, symbols: &mut SymbolTable)
     if stores.len() > crate::dispatch_fast::CONSTRUCT_PLAN_FIELDS { return None; }
     if stores.iter().enumerate().any(|(index, store)| stores[..index].iter().any(|earlier| earlier.atom == store.atom)) { return None; }
     let fields = stores.iter().map(|store| Some((store.atom, field_of(store)?))).collect::<Option<_>>()?;
+    let recipe = construction_recipe(callee, stores.iter().map(|store| store.atom), symbols)?;
     let Symbol::HeapValue(closure) = symbols.heap_value(HeapValueRecipe::ClosureOf(callee)) else { return None };
-    let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(callee)) else { return None };
-    let recipe = ShapeRecipe { prototype: Some(prototype), constructor: Some(closure), fields: stores.iter().map(|store| (store.atom, ADDED_FIELD)).collect() };
     let Symbol::Shape(shape) = symbols.shape(recipe) else { return None };
     Some(ScalarConstructPlan { callee: PlanCallee::Image(closure), shape, fields })
 }

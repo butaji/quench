@@ -77,8 +77,8 @@ pub(crate) enum Symbol {
     /// The layout id of the objects of a field guard key's construction (`guarded_layout`):
     /// `NO_LAYOUT` where the guard does not resolve.
     GuardLayout(u32),
-    /// The layout id of the instances of constructor `key` (a function id, `class_layout`): `NO_LAYOUT`
-    /// where the class has no fixed instance shape at link.
+    /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where the
+    /// recipe's fields may stay inline or its prototype does not resolve. Keyed by the recipe, as `Shape`.
     ClassLayout(u32),
 }
 
@@ -168,6 +168,11 @@ impl SymbolTable {
     /// The key of the guard of `access` of `slot` of an object of `recipe` (`Symbol::GuardShape`):
     /// the recipe's number in the same table as `shape`, the access and the slot, in one key
     /// (`guard_key`).
+    /// The layout id of the instances `recipe` builds (`Symbol::ClassLayout`): the recipe's number in the shape table.
+    pub(crate) fn class_layout(&mut self, recipe: ShapeRecipe) -> Symbol {
+        Symbol::ClassLayout(self.shapes.key(recipe))
+    }
+
     pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16, access: GuardAccess) -> Option<u32> {
         guard_key(self.shapes.key(recipe), slot, access)
     }
@@ -263,7 +268,7 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
         Symbol::HolderLink(key) => Some(holder_constant(image, vm, key).map_or(NO_LINK, |(_, link, _)| u64::from(link))),
         Symbol::HolderValue(key) => Some(holder_constant(image, vm, key).map_or(Value::UNDEFINED, |(_, _, value)| value).to_bits()),
         Symbol::GuardLayout(key) => Some(u64::from(guarded_layout(image, vm, key).unwrap_or(NO_LAYOUT))),
-        Symbol::ClassLayout(class) => Some(u64::from(class_layout(vm, class).unwrap_or(NO_LAYOUT))),
+        Symbol::ClassLayout(key) => Some(u64::from(class_layout_id(image, vm, key).unwrap_or(NO_LAYOUT))),
         _ => None,
     }
 }
@@ -310,28 +315,16 @@ fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
         Some(prototype) => heap_value(image, vm, prototype)?,
         None => Value::NULL,
     };
-    let constructor = match recipe.constructor {
-        Some(constructor) => Some(heap_value(image, vm, constructor)?),
-        None => None,
-    };
-    let fields = recipe.fields.iter()
-        .map(|&(atom, attributes)| Some((vm.intern_atom(image.atoms.get(atom as usize)?), attributes)))
-        .collect::<Option<Vec<_>>>()?;
-    Some(built_shape(vm, prototype, constructor, fields))
-}
-
-/// The shape an object of `prototype` takes once a construction by `constructor` (`constructed_root_shape`) has made
-/// it and `fields` (atoms with their attribute bits) are added in order: the one rule every constructed shape
-/// of a recipe, and of a class's instances (`class_layout`), derives from.
-fn built_shape(vm: &mut Vm, prototype: Value, constructor: Option<Value>, fields: impl IntoIterator<Item = (quench_runtime::bytecode::Atom, u8)>) -> u32 {
     let mut shape = Vm::empty_object(prototype).shape();
-    if let Some(constructor) = constructor {
+    if let Some(constructor) = recipe.constructor {
+        let constructor = heap_value(image, vm, constructor)?;
         shape = vm.constructed_root_shape(shape, constructor);
     }
-    for (atom, attributes) in fields {
+    for &(atom, attributes) in recipe.fields.iter() {
+        let atom = vm.intern_atom(image.atoms.get(atom as usize)?);
         shape = vm.transition_data_property_shape(shape, PropertyKey::string(atom), data_attributes(attributes));
     }
-    shape
+    Some(shape)
 }
 
 /// The link a holder that does not resolve names (`Symbol::HolderLink`): bits outside the link
@@ -516,23 +509,13 @@ fn holder_shape(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u16) -> Option
     (at == usize::from(slot)).then_some((shape, slot, ty))
 }
 
-/// The layout id of the instances of constructor `class` (`Symbol::ClassLayout`), in the program `vm` runs: the
-/// shape its initializer stores make of the constructed object (`constructions::image_plan`'s recipe, the shape the
-/// VM's construct plan of the closure makes), under its prototype's link, as `guarded_layout` interns it. The
-/// construction's fields are the initializer's stores, each once; a body whose stores are not an initializer, or
-/// whose fields may stay inline (`guarded_layout`), has no fixed instance shape here, so `None`.
-pub(crate) fn class_layout(vm: &mut Vm, class: u32) -> Option<u32> {
-    let names = {
-        let program = vm.programs.residual(vm.active_program)?;
-        let stores = program.function_get(class as usize)?.initializer_stores(&program.constants)?;
-        stores.iter().map(|store| program.atoms.get(store.atom as usize).map(Box::<str>::from)).collect::<Option<Vec<_>>>()?
-    };
-    if names.iter().enumerate().any(|(index, name)| names[..index].contains(name)) { return None; }
-    if names.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
-    let closure = closure_of(vm, class)?;
-    let prototype = prototype_of(vm, class)?;
-    let fields = names.iter().map(|name| (vm.intern_atom(name), ADDED_FIELD)).collect::<Vec<_>>();
-    let shape = built_shape(vm, prototype, Some(closure), fields);
+/// The layout id of the instances shape recipe `key` builds (`Symbol::ClassLayout`): the shape `shape` gives it,
+/// under its prototype's link, interned as `guarded_layout` does. Where its fields may stay inline, `None`.
+fn class_layout_id(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
+    let recipe = image.shapes.get(key as usize)?;
+    if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
+    let prototype = heap_value(image, vm, recipe.prototype?)?;
+    let shape = shape(image, vm, key)?;
     Some(quench_runtime::tier_surface::ProtoLink::of(prototype).arena_layout(shape))
 }
 

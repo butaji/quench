@@ -423,9 +423,9 @@ pub enum ImageWord {
     /// guard key: one compare of a record's own word with it proves the exact shape, the plain
     /// arena run and the prototype link (`ic::IcOp::GuardFormed` of an `ic::SYMBOLIC_SHAPE` id).
     Layout,
-    /// The layout id (`ProtoLink::arena_layout`) of the instances of constructor `class` (a function id), resolved
-    /// where the image links: the header word every instance of the class carries while its values are a plain
-    /// arena run, or an id no record has where the class has no fixed instance shape (`symbols::class_layout`).
-    /// A lowering names it by the class, `stage.image_word(ImageWord::ClassLayout, class)`.
+    /// The layout id (`ProtoLink::arena_layout`) of the instances a shape recipe builds, by the recipe's key in the
+    /// image's shape table, resolved where the image links: the header word those instances carry while their values
+    /// are a plain arena run, or an id no record has where the recipe may stay inline (`symbols::class_layout_id`).
+    /// A lowering names it by the recipe key, `stage.image_word(ImageWord::ClassLayout, key)`.
     ClassLayout,
 }

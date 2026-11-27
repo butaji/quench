@@ -41,8 +41,8 @@ pub(crate) enum RelocKind {
     /// The layout id of the objects a construction makes, by a field guard key
     /// (`staged::ImageWord::Layout`): an id no record has where the guard does not resolve.
     GuardLayout,
-    /// The layout id of the instances of constructor `key` (`staged::ImageWord::ClassLayout`): an id no record
-    /// has where the class has no fixed instance shape.
+    /// The layout id of the instances the shape recipe `key` builds (`staged::ImageWord::ClassLayout`): an id no
+    /// record has where the recipe's fields may stay inline.
     ClassLayout,
 }
 
