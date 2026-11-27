@@ -135,7 +135,7 @@ fn min_word<S: Stage>(stage: &mut S, a: S::Word, b: S::Word) -> S::Word {
 /// The integer `bound` within `0..=length`: a negative bound counts back from the end (`slice`,
 /// `substr`'s start, every relative index) or is zero (`substring`), a larger one is the length.
 #[inline(always)]
-pub fn bound_within<S: Stage>(stage: &mut S, length: S::Word, bound: S::Word, from_end: bool) -> S::Word {
+pub fn clamped_index<S: Stage>(stage: &mut S, length: S::Word, bound: S::Word, from_end: bool) -> S::Word {
     let below = negative(stage, bound);
     stage.choose(below, #[inline(always)] |stage| {
         let zero = stage.constant(0);
@@ -159,7 +159,7 @@ pub fn bound_within<S: Stage>(stage: &mut S, length: S::Word, bound: S::Word, fr
 pub fn cut_row<S: Stage>(stage: &mut S, method: CutMethod, length: S::Word, start: S::Word, end: S::Word) -> (S::Word, S::Word) {
     match method {
         CutMethod::Substr => {
-            let start = bound_within(stage, length, start, true);
+            let start = clamped_index(stage, length, start, true);
             let zero = stage.constant(0);
             let below = negative(stage, end);
             let count = stage.select(below, zero, end);
@@ -168,26 +168,26 @@ pub fn cut_row<S: Stage>(stage: &mut S, method: CutMethod, length: S::Word, star
             (start, stage.add(start, take))
         }
         CutMethod::Slice => {
-            let start = bound_within(stage, length, start, true);
-            let end = bound_within(stage, length, end, true);
+            let start = clamped_index(stage, length, start, true);
+            let end = clamped_index(stage, length, end, true);
             let empty = stage.ult(end, start);
             (start, stage.select(empty, start, end))
         }
         CutMethod::Substring => {
-            let start = bound_within(stage, length, start, false);
-            let end = bound_within(stage, length, end, false);
+            let start = clamped_index(stage, length, start, false);
+            let end = clamped_index(stage, length, end, false);
             let swapped = stage.ult(end, start);
             (stage.select(swapped, end, start), stage.select(swapped, start, end))
         }
     }
 }
 
-/// `bound_within` on `Concrete` counting a negative `bound` from the end: the relative index
+/// `clamped_index` on `Concrete` counting a negative `bound` from the end: the relative index
 /// (`slice`, `fill`, `copyWithin` and friends) of an integer `bound` in `0..=length`.
 #[inline(always)]
 pub(crate) fn relative_bound(bound: i64, length: usize) -> usize {
     let mut stage = super::Concrete::new(std::ptr::null());
-    bound_within(&mut stage, length as u64, bound as u64, true) as usize
+    clamped_index(&mut stage, length as u64, bound as u64, true) as usize
 }
 
 /// `cut_row` on `Concrete` for `native` (`slice`, `substring` or `substr`), as a units range.

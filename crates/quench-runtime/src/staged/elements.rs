@@ -514,10 +514,10 @@ fn fill_double_hole<S: super::NumericStage>(stage: &mut S, backing: Backing<S::W
     miss: S::Miss) -> Option<()> {
     let (double, int) = super::value::number_classes(stage, value);
     let number = stage.either(double, int);
-    stage.guard(number, miss)?;
     let holes = stage.load_u32(Region::Elements.mutable(), backing.values, crate::heap::OTHERS_FROM_VALUES);
     let counted = stage.ne_imm(holes, u64::from(crate::heap::OTHERS_UNKNOWN));
-    stage.guard(counted, miss)?;
+    let admitted = stage.both(number, counted);
+    stage.guard(admitted, miss)?;
     let all_holes = stage.eq(holes, backing.length);
     let widens = stage.both(int, all_holes);
     stage.guard_false(widens, miss)?;

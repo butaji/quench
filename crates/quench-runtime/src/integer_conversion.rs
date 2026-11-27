@@ -18,7 +18,7 @@ pub fn to_integer_or_infinity(number: f64) -> f64 {
 #[inline]
 pub fn relative_index(number: f64, len: usize) -> usize {
     // An infinity saturates to the widest integer, which clamps the same way
-    // (`staged::string_search::bound_within`).
+    // (`staged::string_search::clamped_index`).
     crate::staged::string_search::relative_bound(to_integer_or_infinity(number) as i64, len)
 }
 
