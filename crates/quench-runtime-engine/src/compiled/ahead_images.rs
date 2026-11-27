@@ -596,7 +596,7 @@ impl Vm {
     /// with no warm-up. A program with an image already (a staged `.qimg`), or one a recording lowers
     /// itself, gets no second one; a program that lowers no image runs as before.
     pub(crate) fn stage_images_at_load(&mut self, id: quench_runtime::vm::ProgramId, program: &ResidualProgram) {
-        if self.execution_mode != quench_runtime::vm::engine_types::ExecutionMode::Compiled || !self.programs.js_jit_lane_methods_enabled()
+        if self.execution_mode != quench_runtime::vm::engine_types::ExecutionMode::Compiled || !crate::compiled::admission::lane_bodies_enrolled(self)
             || recorded().is_some() || self.programs.ahead_images(id, program).is_some() { return; }
         #[cfg(feature = "jit")]
         match AheadImages::compile(program) {

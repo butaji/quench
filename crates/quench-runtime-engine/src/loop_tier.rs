@@ -173,9 +173,9 @@ impl LoopTier {
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    pub(crate) fn may_run(&self, tiers: &Tiers, policy: quench_runtime::MemoryPolicy) -> bool {
+    pub(crate) fn may_run(&self, tiers: &Tiers, vm: &Vm) -> bool {
         self.is_published()
-            || (self.compilations < tiers.loops.max_compilations && crate::compiled::loop_tier_compiles(policy))
+            || (self.compilations < tiers.loops.max_compilations && crate::compiled::admission::loop_regions_compile(vm))
     }
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
@@ -345,14 +345,13 @@ pub(crate) fn loop_compile_in_lane(
     let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds, typed_rows: &typed_rows,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
-    let policy = machine.heap_reads().memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     // A Cranelift region calls the callees its sites reached by their entries.
     let calls = program.as_deref().map(|program| if base { region_calls(cx, machine, program, function) }
         else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
-    let admitted = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Region(policy), facts: Default::default() }).compiled();
+    let admitted = crate::compiled::admission::region_unit(machine);
     let started = program.as_deref().zip(admitted).and_then(|(program, admitted)| crate::compiled::start_osr_region(region, tier.views,
         &observation, machine.programs.tiers(), program, function, helpers,
         &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base, admitted,

@@ -662,7 +662,7 @@ impl Vm {
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
+        let census = crate::compiled::admission::diagnosing(self).then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
             generic: generic.len(), direct: direct.len(), budget, observed, closed, plan_us });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };

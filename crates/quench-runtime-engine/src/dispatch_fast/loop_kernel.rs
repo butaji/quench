@@ -66,7 +66,7 @@ pub(crate) struct LoopKernel {
 /// that interprets its recurrences per iteration is not under `--b-jit`: the loop's stencils run
 /// it faster (crc), while a fold or chain runs faster than they do (sum, dot).
 fn pass(shape: &Shape) -> Option<recur::Recurrence> {
-    recur::Recurrence::of(shape).filter(|recurrence| !(crate::compiled::admission::stencil_only() && recurrence.interprets()))
+    recur::Recurrence::of(shape).filter(|recurrence| crate::compiled::admission::kernel_keeps_recurrence(recurrence.interprets()))
 }
 
 /// Drops the temps (registers the body writes before it reads them) dead where the loop exits:

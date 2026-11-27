@@ -351,8 +351,8 @@ impl LoopSite {
     /// Whether native code may still run the loop: its runs have paid for their entries, its
     /// entries are not declining, and it has code or may compile it. A site without it
     /// retires at its next backward jump (`loop_retire_in_lane`).
-    fn may_run_natively(&self, policy: quench_runtime::MemoryPolicy) -> bool {
-        self.enters() && self.tier.borrow().may_run(self.tiers, policy)
+    fn may_run_natively(&self, vm: &quench_runtime::vm::Vm) -> bool {
+        self.enters() && self.tier.borrow().may_run(self.tiers, vm)
     }
 
     fn enters(&self) -> bool {
@@ -4030,7 +4030,7 @@ script_handler! {
         }
         // A loop whose body is still to come keeps its backward jump, which a loop no region
         // runs would otherwise retire before the body is planned.
-        if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled() && site.body.borrow().pending() && site.region.get().is_none() {
+        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() && site.region.get().is_none() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
         // A loop no region runs takes its plain jump from now on.
@@ -4046,7 +4046,7 @@ script_handler! {
             loop_retire_in_lane(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        if !site.may_run_natively(unsafe { vm(cx) }.heap_reads().memory_policy()) {
+        if !site.may_run_natively(unsafe { vm(cx) }) {
             loop_retire_in_lane(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
@@ -4754,7 +4754,7 @@ impl Vm {
     fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
         let current = &self.lane_stack.script_targets.entries[index];
         // Where no tier runs, no region reads the record: the pair is marked only.
-        if self.tier_may_run(crate::compiled::admission::Tier::ANY) {
+        if crate::compiled::admission::vm_may_run(self, crate::compiled::admission::Tier::ANY) {
             self.note_site_callee(link, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(current.callee), function: current.function });
         }
@@ -4982,7 +4982,7 @@ impl Vm {
             && shape.entry == CallEntry::Activates
             && tier_may_claim
             // SAFETY: as below.
-            && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.tier_unclaimed_in_lane())
+            && (!crate::compiled::admission::lane_bodies_enrolled(self) || unsafe { &*view }.tier_unclaimed_in_lane())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow);
@@ -5049,7 +5049,7 @@ impl Vm {
     /// Whether a callee of another program (where `cross`) may take the tier prologue: a lane
     /// body runs in its own program's context, which the activation enters first.
     fn claims_across(&self, cross: bool) -> bool {
-        !cross || self.programs.js_jit_lane_methods_enabled()
+        !cross || crate::compiled::admission::lane_bodies_enrolled(self)
     }
 
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
@@ -5118,7 +5118,7 @@ impl Vm {
 
     /// Whether an AOT image's bodies run where the lane enters them: with lane bodies, or as the only code.
     pub(crate) fn images_run_in_lane(&self) -> bool {
-        self.programs.js_jit_lane_methods_enabled() || !self.execution_mode.allows_dynamic_execution()
+        crate::compiled::admission::lane_bodies_enrolled(self) || !self.execution_mode.allows_dynamic_execution()
     }
 
     pub(crate) fn admits_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {

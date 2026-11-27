@@ -1556,7 +1556,7 @@ impl VmFacts<'static> {
 impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
+        VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
             frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false,
             this_trusted: self.this_trust.get() == 1 }
     }
@@ -2746,7 +2746,7 @@ fn stitched_entry(
 ) -> Option<Vec<u8>> {
     let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
     // The indirect call row calls the non-diagnostic reference callout.
-    if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
+    if !admission::stitched_rows_admitted(vm) {
         return None;
     }
     // The program's image may hold the rows already (`wasm_image::linked`).
@@ -3230,9 +3230,10 @@ pub(crate) fn analyze_osr_region_detailed(
 }
 
 
-/// Whether the loop tier compiles regions under `policy`: `admission::may_compile` for a region.
+/// Whether the loop tier compiles regions under `policy` (`admission::region_unit_under`), for the tests that probe it.
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
-    admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Region(policy), facts: Default::default() }).compiled().is_some()
+    admission::region_unit_under(policy).is_some()
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -3804,7 +3805,7 @@ impl Vm {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap_reads().function_shapes());
         // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
-        let view = view.filter(|_| !crate::compiled::admission::stencil_regions());
+        let view = view.filter(|_| admission::view_names_field_forms());
         let sites = unit.instructions
             .iter()
             .enumerate()
@@ -4771,7 +4772,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 .copied()
         {
             let probe = vm.cached_field_hit(program, receiver, cache_site);
-            if vm.programs.js_jit_diagnostics_enabled() {
+            if admission::diagnosing(vm) {
                 vm.programs.record_js_jit_field_cache_probe(
                     dispatch.program_id,
                     vm.frames[dispatch.frame].function,
@@ -4827,7 +4828,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 value,
                 instruction.cache_site_index(),
             );
-            if vm.programs.js_jit_diagnostics_enabled() {
+            if admission::diagnosing(vm) {
                 vm.programs.record_js_jit_field_store_cache_probe(
                     dispatch.program_id,
                     vm.frames[dispatch.frame].function,
@@ -4850,7 +4851,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
         loop {
             let layout = current_instruction.op().control_flow_layout();
             let is_call = meaning_compiled::is_ordinary_call(current_instruction);
-            let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
+            let diagnostics_enabled = is_call && admission::diagnosing(vm);
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
                     .registers
@@ -7593,7 +7594,7 @@ impl Vm {
 
     /// Whether the process enrolled the lane-body tier (a mode selection, not realm state).
     #[cfg(test)]
-    pub(crate) fn methods_enrolled_in_lane(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
+    pub(crate) fn methods_enrolled_in_lane(&self) -> bool { admission::lane_bodies_enrolled(self) }
 
     /// Whether the runtime compiles Wasm modules whole at their first entry.
     pub(crate) fn wasm_compile_at_first_entry(&self) -> bool {
@@ -7639,24 +7640,14 @@ impl Vm {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether any compiled tier may run (`tier_may_run` of every tier), decided once per execution
+    /// Whether any compiled tier may run (`admission::vm_may_run` of every tier), decided once per execution
     /// mode and memory policy rather than at every lane entry.
     #[inline]
     pub(crate) fn tiers_run_in_lanes(&mut self) -> bool {
         match self.lane_tiers_run {
             Some(run) => run,
-            None => *self.lane_tiers_run.insert(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
+            None => *self.lane_tiers_run.insert(admission::vm_may_run(self, admission::Tier::ANY)),
         }
-    }
-
-    /// Whether any of `tiers` runs: compiled execution under a memory policy
-    /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
-    /// interpreted work exactly.
-    #[inline]
-    pub(crate) fn tier_may_run(&self, tiers: &[crate::compiled::admission::Tier]) -> bool {
-        !cfg!(quench_profiled)
-            && self.execution_mode == ExecutionMode::Compiled
-            && tier_policy::tier_may_run(self.memory_policy(), tiers)
     }
 
     /// Whether the entry paths claim `function`: a numeric candidate that pays for a native
@@ -7675,8 +7666,8 @@ impl Vm {
         }
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
-            cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT),
-            base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::compiled::admission::Tier::Base]),
+            cranelift_allowed: admission::vm_may_run(self, admission::Tier::CRANELIFT),
+            base_lane_allowed: admission::lane_bodies_enrolled(self) && admission::vm_may_run(self, &[admission::Tier::Base]),
             wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
         }
@@ -7687,7 +7678,7 @@ impl Vm {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
-        let lane_claims = self.programs.js_jit_lane_methods_enabled()
+        let lane_claims = admission::lane_bodies_enrolled(self)
             && program.function_get(function as usize).is_some_and(|body| body_may_amortize_in_lane(self.programs.tiers(), body));
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
@@ -7883,7 +7874,7 @@ impl Vm {
         }
         self.programs.record_js_jit_fallback_entry(program_id, function);
         if program.kind != quench_runtime::bytecode::ProgramKind::Wasm
-            && self.programs.js_jit_diagnostics_enabled()
+            && admission::diagnosing(self)
             && self.frames[frame].js_jit_interpreter_started.is_none()
         {
             self.frames[frame].js_jit_interpreter_started = Some(std::time::Instant::now());
@@ -7901,7 +7892,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: admission::vm_may_run(self, admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -7966,7 +7957,7 @@ impl Vm {
         }
         let residual = self.programs.get(program_id)?;
         self.keep_slot_representations();
-        let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
+        let compile_started = admission::diagnosing(self).then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
@@ -8039,15 +8030,15 @@ impl Vm {
         arguments: &[Value],
     ) -> Option<Value> {
         if returns
-            || !self.tier_may_run(crate::compiled::admission::Tier::ANY)
+            || !admission::vm_may_run(self, admission::Tier::ANY)
             || program_id != self.active_program
             || program.kind == quench_runtime::bytecode::ProgramKind::Wasm
         {
             return None;
         }
+        let diagnostics = admission::diagnosing(self);
         let (programs, interrupt) = (&mut self.programs, &self.execution_interrupt);
         let function = program.function_get(function_id as usize)?;
-        let diagnostics = programs.js_jit_diagnostics_enabled();
         let native_result = {
             let compiled = match programs.js_tier_ref(program_id, function_id)? {
                 quench_runtime::vm::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
@@ -8352,7 +8343,7 @@ impl Vm {
             })
             .flatten();
         // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = crate::compiled::admission::stencil_only();
+        let base_only = admission::wasm_module_stitched();
         let isa = if base_only {
             None
         } else {
