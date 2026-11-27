@@ -84,6 +84,9 @@ fn run(config: &Config) -> Vec<Outcome> {
 }
 
 fn main() -> ExitCode {
+    if let Some(code) = startup::measure_child() {
+        return code;
+    }
     let config = match Config::parse(std::env::args().skip(1)) {
         Ok(config) => config,
         Err(error) => {

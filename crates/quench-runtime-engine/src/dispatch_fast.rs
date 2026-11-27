@@ -885,8 +885,7 @@ fn requicken(ip: Ip, handler: Handler) {
     }
 }
 
-/// `this` trust (`Vm::this_trust`): undecided, trusted, retired for good.
-const THIS_UNDECIDED: u8 = 0;
+/// `this` trust (`Vm::this_trust`): trusted from the start, retired for good.
 const THIS_TRUSTED: u8 = 1;
 const THIS_RETIRED: u8 = 2;
 
@@ -898,9 +897,8 @@ const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
     (generated_row!(53, ACC_NONE, 8), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 8>),
 ];
 
-/// The handler a record takes for `handler`: its trusted form where the lane trusts `this`, decided at
-/// the first such row: trusted only where no compiled tier can run (`--no-jit`), so every activation's
-/// `this` is one the lane bound and checked (`note_lane_this`).
+/// The handler a record takes for `handler`: its trusted form while the lane trusts `this`: every
+/// activation's `this` is one a tier bound and checked once (`note_lane_this`, `CallFrame::call_this_bound`).
 #[inline]
 fn trusted_this_handler(handler: Handler) -> Handler {
     let Some(&(_, trusted)) = TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler as *const ()) else { return handler };
@@ -908,10 +906,6 @@ fn trusted_this_handler(handler: Handler) -> Handler {
     if cx.is_null() { return handler; }
     // SAFETY: the running lane's context.
     let vm = unsafe { vm(cx) };
-    if vm.this_trust.get() == THIS_UNDECIDED {
-        let trusted = !quench_runtime::jit_mode::tiers_allowed(quench_runtime::jit_mode::Tier::ANY);
-        vm.this_trust.set(if trusted { THIS_TRUSTED } else { THIS_RETIRED });
-    }
     if vm.this_trust.get() == THIS_TRUSTED { trusted } else { handler }
 }
 

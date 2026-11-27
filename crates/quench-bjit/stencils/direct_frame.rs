@@ -309,6 +309,16 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         self.places.call_registers(stage)
     }
 
+    /// A strict callee's receiver, bound as it is, enters only as a direct object: the lane's rows and a body
+    /// that holds the `this` trust take it as one (`Vm::this_trust`), so any other takes the generic call, whose
+    /// binding checks it once. A sloppy callee's binding made it one already; a lexical callee reads none.
+    #[inline(always)]
+    fn call_this_bound(&mut self, stage: &mut Concrete, this: u64, miss: ()) -> Option<()> {
+        if MODE != STRICT { return Some(()); }
+        let object = crate::staged::value::is_direct_object(stage, this);
+        stage.guard(object, miss)
+    }
+
     #[inline(always)]
     fn call_constants(&self, list: WordList) -> Option<&[u64]> {
         (list.count == 0).then_some(&[][..])

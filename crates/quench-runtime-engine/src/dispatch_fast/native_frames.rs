@@ -269,6 +269,7 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
         let (callee, body, window) = unsafe { let prefix = &*slot; (prefix.callee, prefix.body, prefix.window) };
         // The leave inside the callee's body counts on its cell's word, which no handler entry notes.
         unsafe { &*(*callee).target.view }.note_native_leave();
+        note_native_this(vm, callee, window);
         unsafe { (*slot).callee = std::ptr::null() };
         // Its skipped constructor, its descriptor's until now, rides in its side record from
         // here on (`LaneStack::record_sided`); the frames are the innermost, outermost first.
@@ -279,6 +280,7 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
     }
     // The plain headers that are native, innermost first: each is advanced into and its side names no
     // callee after (`Side::native`); the innermost's prefix is the one the lane continues in.
+    let mut advanced = smallvec::SmallVec::<[(*const DirectCallee, usize); 4]>::new();
     if headers != 0 {
         let stack = &mut vm.lane_stack;
         let depth = stack.plain.depth.get();
@@ -291,18 +293,28 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
             let desc = unsafe { &*(stack.native_table[index] as *const crate::compiled::DirectCallee) };
             unsafe { &*desc.target.view }.note_native_leave();
             let frame = (desc as *const DirectCallee, stack.body_table[index], window.0.addr());
+            advanced.push((frame.0, frame.2));
             if let Some(skipped) = desc.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
             side.native = super::lane_frames::NO_NATIVE;
             if above == 0 { innermost = Some(frame); }
             window = window.plain_caller().1;
         }
     }
+    for (callee, window) in advanced { note_native_this(vm, callee, window); }
     let (callee_at, body, window) = innermost?;
     CallerState::of_frame(callee_at, window).install(cx);
     // The body the call ran is the cell's at that moment, not the descriptor's; the caller's
     // code lease pins a named callee body through recovery, and the view pins every body it published.
     let callee = unsafe { &*callee_at };
     Some(unsafe { (&*callee.target.view, &*(body as *const crate::compiled::LaneMethod)) })
+}
+
+/// `note_lane_this` for a native frame of `callee` at `window` the lane takes over: compiled code bound its
+/// `this` (the b-jit's call row, the u-jit's push), and the interpreter's rows run the frame from here.
+fn note_native_this(vm: &Vm, callee: *const DirectCallee, window: usize) {
+    // SAFETY: a linked frame names the caller-owned callee, whose view outlives the run; its window holds its context words.
+    let (view, this) = unsafe { ((*callee).target.view, Registers(window as *mut Value).this()) };
+    crate::dispatch_fast::note_lane_this(vm, this, || unsafe { (*view).this_rows });
 }
 
 /// Drops the native frames a terminated run left, with their windows.
