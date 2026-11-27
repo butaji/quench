@@ -34,9 +34,9 @@
 use crate::bytecode::Operand;
 // A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
 // rows build their writes `strict: false`.
-use crate::layout::{CLASS_CELL_GRANULE_BYTES, CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD, JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE, JS_STEP_STUB_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_CLASS_CELL_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT, OBJECT_RECORD_STUB};
-use crate::layout::object_encoding::departed_header;
-use crate::layout::words::{DIRECT_ARRAY_TAG, DIRECT_OBJECT_TAG};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD, JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE, JS_STEP_STUB_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
+use crate::layout::words::DIRECT_ARRAY_TAG;
+use crate::staged::bump::{EmptyObject, claim_empty_object};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
@@ -315,40 +315,28 @@ fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
     if const { KIND == EMPTY_OBJECT_ROW } { empty_object_row::<D>(s, payload) } else { empty_array_row::<D>(s, payload) }
 }
 
-/// An empty ordinary object (`EMPTY_OBJECT_ROW`): while the object cursor has a record left and the region 0 stub cursor
-/// a granule left, the record id and the granule are bumped. The record gets the template's two words, its layout and its
-/// stub granule; the stub's cell gets `departed_header(id)` (`DEPARTED_CLASS` low, the record id high), which names the
-/// record. The destination (hole 0) takes the direct object `Value` of the granule, with no barrier: the object is fresh.
-/// Both runs were occupied and charged when claimed, so no occupancy is written. Any other case leaves with nothing written,
-/// so the helper makes the object (`Heap::publish_object_record`). Nothing here can panic.
+/// An empty ordinary object (`EMPTY_OBJECT_ROW`): the staged claim (`bump::claim_empty_object`) over the dispatch head's
+/// cursors, bases and template, run on `StencilStage`. Its answer is the direct object word of the claimed stub granule,
+/// delivered into the destination (hole 0); where a cursor is spent or a template absent it leaves with nothing written, so
+/// the helper makes the object (`Heap::publish_object_record`). Nothing here can panic.
 #[inline(always)]
 fn empty_object_row<const D: u8>(s: S, payload: usize) -> Out {
     // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
     if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
         return Out::Exit(s);
     }
-    let cursor = word_at(payload, JS_STEP_OBJECT_CURSOR) as usize;
-    let stubs = word_at(payload, JS_STEP_STUB_CURSOR) as usize;
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE) as usize;
-    let cells = word_at(payload, JS_STEP_CLASS_BASE) as usize;
-    let layout = word_at(payload, JS_STEP_EMPTY_OBJECT_LAYOUT);
-    if cursor == 0 || stubs == 0 || records == 0 || cells == 0 || layout == 0 {
-        return Out::Exit(s);
+    let object = EmptyObject {
+        object_cursor: word_at(payload, JS_STEP_OBJECT_CURSOR),
+        stub_cursor: word_at(payload, JS_STEP_STUB_CURSOR),
+        cells: word_at(payload, JS_STEP_CLASS_BASE),
+        records: word_at(payload, JS_STEP_OBJECT_RECORD_BASE),
+        layout: word_at(payload, JS_STEP_EMPTY_OBJECT_LAYOUT),
+        words: word_at(payload, JS_STEP_EMPTY_OBJECT_PAYLOAD),
+    };
+    match claim_empty_object(&mut StencilStage::from_hole(0), object, ()) {
+        Some(word) => deliver::<D>(s, word),
+        None => Out::Exit(s),
     }
-    let (next, limit) = (word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset), word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset));
-    let (granule, stub_limit) = (word32_at(stubs, NATIVE_RECORD_CURSOR_LAYOUT.next_offset), word32_at(stubs, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset));
-    if next >= limit || granule >= stub_limit {
-        return Out::Exit(s);
-    }
-    let words = word_at(payload, JS_STEP_EMPTY_OBJECT_PAYLOAD);
-    put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
-    put_word32(stubs, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, granule.wrapping_add(1));
-    put_word64(cells.wrapping_add((granule as usize).wrapping_mul(CLASS_CELL_GRANULE_BYTES)), NATIVE_CLASS_CELL_LAYOUT.header_offset, departed_header(next));
-    let record = records.wrapping_add((next as usize).wrapping_mul(NATIVE_OBJECT_LAYOUT.record_size));
-    put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
-    put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);
-    put_word32(record, OBJECT_RECORD_STUB, granule);
-    deliver::<D>(s, DIRECT_OBJECT_TAG | u64::from(granule))
 }
 
 /// An empty array (`EMPTY_ARRAY_ROW`): while the array cursor has a record left and its template is captured, the record of
