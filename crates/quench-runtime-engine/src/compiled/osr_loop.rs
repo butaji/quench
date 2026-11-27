@@ -2135,8 +2135,6 @@ pub(crate) struct Observation<'a> {
     /// an array read or written through one is viewed at that kind, one arm per access instead of
     /// `typed_elements::by_word`'s walk over every kind (`LoopArray::views`).
     pub(crate) typed_kinds: &'a [(Register, quench_runtime::tier_surface::TypedArrayKind)],
-    /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
-    pub(crate) entry_bounds: bool,
     /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its
     /// callee's environment (`Vm::callee_capture_slots`): where the frame's own capture reads
     /// load, its identity guard fixing the environment.

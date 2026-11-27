@@ -454,6 +454,18 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
     }
 
+    /// The register the index register `index` is below before the instruction at `pc`, where a comparison that held proves
+    /// `index < bound` (`lengths::refine`). A loop's entry compares the bound's reach with an array's length once (`bound_below`).
+    pub fn bound_below(&self, pc: u32, index: u16) -> Option<u16> {
+        self.facts.lengths.get(&self.function)?.bound_below(pc, index)
+    }
+
+    /// Whether the step at `pc` may resize an array of any class (a call that may write elements, a mutator, guest code, or an
+    /// element store the relations do not prove within its array). Where the solve recorded no lengths, the step may resize.
+    pub fn may_resize_length(&self, pc: u32) -> bool {
+        self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize(pc))
+    }
+
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
     pub(super) fn index_accessors_absent(&self) -> bool {
         self.facts.index_accessors_absent
@@ -484,6 +496,11 @@ impl<'a> FunctionFacts<'a> {
     pub fn may_write_elements_of(&self, pc: u32, array: ElementClass) -> bool {
         let writes = self.site_effects(pc).elements;
         writes == ElementWrites::Any || writes.entries().iter().any(|write| !self.facts.element_classes_distinct(write.class, array))
+    }
+
+    /// Whether the step at `pc` may write the elements of an array of any class (`may_write_elements_of` for every class).
+    pub(crate) fn may_write_any_elements(&self, pc: u32) -> bool {
+        self.site_effects(pc).elements != ElementWrites::Nothing
     }
 
     /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the

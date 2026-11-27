@@ -107,7 +107,6 @@ struct LoopFacts {
     /// The kind each loop array's register held at entry (`Observation::typed_kinds`).
     typed_kinds: Vec<(Register, quench_runtime::tier_surface::TypedArrayKind)>,
     frame_captures: Vec<(usize, usize)>,
-    entry_bounds: bool,
     /// By (function, PC) of each construction of the plans' units, the scalar plan its callee
     /// builds by (`Observation::construct_plans`).
     construct_plans: std::collections::BTreeMap<(u32, u32), super::ScalarConstructPlan>,
@@ -168,7 +167,7 @@ impl LoopJob {
                 global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), online, ..VmFacts::STATIC }, generic: &plan.generic,
                 direct: &plan.sites, frame_captures: &self.facts.frame_captures, isa: &*self.isa,
                 entry_fields: &plan.entry_fields,
-                plan: super::lane_region::RegionPlan { entry_bounds: self.facts.entry_bounds,
+                plan: super::lane_region::RegionPlan {
                     coverage: super::lane_region::Coverage::Loop { header: plan.span.0, backedge: plan.span.1, poll: true },
                     completion: super::lane_region::Completion::Body, views: self.views,
                 },

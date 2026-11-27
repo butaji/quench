@@ -22,9 +22,9 @@
 //!   `typed_ir::IntRange`'s `ordered_edge` and `without`, applied on the jump's edges by `aot_facts/flow.rs` `refine_ranges`.
 //! - `facts/immediates.rs` `constant_type`: `aot_facts/scope.rs` `constant_type`, re-exported here (an int32 constant is its
 //!   singleton range, `null`, `undefined` and Booleans their exact types). `immediate` stays: it denotes a `Value`, not a type.
-//! - Not portable to a non-relational cell: `facts/lengths.rs` (register-to-register length relations, `i < a.length`:
-//!   they belong to the typed residual graph's check deletion); `facts/written.rs` and `facts/widen.rs` (a lane body's
-//!   entry state); `facts/run.rs` relation tracking and the int32 inductions (`inductive`, `loop_int32`, lane contracts).
+//! - Not portable to a non-relational cell: length relations (`i < a.length`) are the solver's `length_settle` pass, not
+//!   this run's; `facts/written.rs` and `facts/widen.rs` (a lane body's entry state); the int32 inductions (`inductive`,
+//!   `loop_int32`, lane contracts).
 //!   `ranges.rs` `index_range`, `signless_range`, `zero_free` and `arithmetic_type` decode the operator and read its operands'
 //!   ranges; the rules over those ranges are `typed_ir::arithmetic`. `overflow_free` (run.rs) reads `ranges::exact`.
 
@@ -35,7 +35,6 @@ use quench_runtime::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind
 use quench_runtime::staged::{NumberOperation, Operation};
 use quench_runtime::typed_ir::Type;
 use std::num::NonZeroUsize;
-use lengths::Relations;
 
 /// Scratch storage spills for larger functions without limiting region size.
 const INLINE_ANALYSIS_ITEMS: usize = 16;
@@ -61,12 +60,6 @@ pub(crate) struct Facts {
     contracts: Vec<Contract>,
     /// The typed element reads (sorted PCs), each defining the element type its typed array's kind proves.
     typed_reads: Vec<TypedRead>,
-    /// The length relations at each row, parallel to its types (empty where the run tracks none).
-    length_of: Vec<Option<Register>>,
-    below: Vec<Option<Register>>,
-    under: Vec<Option<Register>>,
-    atmost: Vec<Option<Register>>,
-    twice: Vec<Option<Register>>,
     /// The replays `before` runs from each block leader, keyed by leader PC.
     replays: std::cell::RefCell<std::collections::BTreeMap<usize, Replay>>,
 }
@@ -92,28 +85,10 @@ impl Facts {
             contracts: seeds.contracts.to_vec(), typed_reads: seeds.typed_reads.to_vec(), ..Self::default() }
     }
 
-    /// Room for `rows` rows of types, and of length relations where the run tracks them.
-    fn reserve_rows(&mut self, rows: usize, relations: bool) {
-        // Capped: a unit whose rows outgrow it grows its buffers as before.
-        const MAX_RESERVED_WORDS: usize = 1 << 16;
-        let words = rows.saturating_mul(self.registers).min(MAX_RESERVED_WORDS);
-        self.types.reserve(words);
-        if relations {
-            self.length_of.reserve(words);
-            self.below.reserve(words);
-            self.under.reserve(words);
-            self.atmost.reserve(words);
-            self.twice.reserve(words);
-        }
-    }
-
     /// The state on entry to the block led by `pc`.
     fn point_at(&self, pc: usize) -> run::Point {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
-        let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
-        run::Point { types: smallvec::SmallVec::from_slice(&self.types[start..start + self.registers]),
-            relations: Relations::of_rows(relations(&self.length_of), relations(&self.below), relations(&self.under),
-                relations(&self.atmost), relations(&self.twice)) }
+        run::Point { types: smallvec::SmallVec::from_slice(&self.types[start..start + self.registers]) }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
@@ -192,7 +167,7 @@ impl Facts {
         self.replays.get_mut().clear();
         let Some(slot) = self.offsets.get(pc) else { return false };
         let Some(offset) = *slot else {
-            self.store_row(pc, incoming, [&[], &[], &[], &[], &[]]);
+            self.store_row(pc, incoming);
             let start = self.types.len() - incoming.len();
             hold_contracts(&self.contracts, pc, &mut self.types[start..]);
             return true;
@@ -203,16 +178,10 @@ impl Facts {
         changed
     }
 
-    /// Stores the row of the block led by `pc`, which has none: its types and the relations the
-    /// run keeps (empty where it tracks none).
-    fn store_row(&mut self, pc: usize, types: &[Type], [length_of, below, under, atmost, twice]: [&[Option<Register>]; 5]) {
+    /// Stores the row of the block led by `pc`, which has none: its types.
+    fn store_row(&mut self, pc: usize, types: &[Type]) {
         self.offsets[pc] = NonZeroUsize::new(self.types.len() + 1);
         self.types.extend_from_slice(types);
-        self.length_of.extend_from_slice(length_of);
-        self.below.extend_from_slice(below);
-        self.under.extend_from_slice(under);
-        self.atmost.extend_from_slice(atmost);
-        self.twice.extend_from_slice(twice);
     }
 }
 
@@ -226,20 +195,6 @@ fn join_types(known: &mut [Type], incoming: &[Type], widening: bool) -> bool {
         let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };
         changed |= joined != *known;
         *known = joined;
-    }
-    changed
-}
-
-/// Meets the relation rows `known` with `theirs`, those of an incoming state, where both hold
-/// rows: a relation the incoming state does not keep is lost; whether one was.
-fn meet_relations(known: [&mut Vec<Option<Register>>; 5], theirs: [&[Option<Register>]; 5]) -> bool {
-    let mut changed = false;
-    for (rows, theirs) in known.into_iter().zip(theirs) {
-        let Some(known) = rows.get_mut(..theirs.len()) else { continue };
-        if known == theirs { continue; }
-        for (known, theirs) in known.iter_mut().zip(theirs) {
-            changed |= lengths::meet(known, *theirs);
-        }
     }
     changed
 }

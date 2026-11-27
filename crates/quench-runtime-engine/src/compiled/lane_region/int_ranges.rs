@@ -5,9 +5,10 @@
 //!
 //! A thin view over the facts analysis: one run of it models the unit (`facts::Model`: its
 //! inlined frames, its dense accesses, the PCs a previous body left at) and takes the entry's
-//! guarded ranges (`Lowering::entering`), so the ranges, the length relations and the proofs
-//! are rows of the same fixpoint that types every register, which widens a range that keeps
-//! growing instead of assuming one and checking it on the back edge.
+//! guarded ranges (`Lowering::entering`), so the ranges and the proofs are rows of the same
+//! fixpoint that types every register, which widens a range that keeps growing instead of
+//! assuming one and checking it on the back edge. Length facts are the solver's
+//! (`Lowering::proven_below_length`, `Lowering::bound_below`, `Lowering::may_resize`).
 
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
@@ -23,7 +24,8 @@ pub(crate) struct IntRanges {
     /// The string reads whose index the point proves below the string's length (`string_in_bounds`), by PC.
     string_bounds: quench_runtime::dataflow::BitSet,
     /// The accesses whose indices their loop's entry compares with the array's length once
-    /// (`Lowering::version_loops`), by PC (ascending).
+    /// (`Lowering::version_loops`), by PC (ascending). Every loop whose body may resize an array
+    /// keeps none of its own, and the body of a loop keeps only the versions its own entries check.
     versioned: Vec<Version>,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
@@ -157,8 +159,7 @@ impl Lowering<'_, '_> {
         leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
         if self.entering.is_empty() { return Vec::new(); }
         let dense = |pc: usize| self.hoisted_access(pc);
-        let typed = |pc: usize| self.typed_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.typed_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, entering: &self.entering, model: Some(model),
@@ -175,8 +176,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
-        let typed = |pc: usize| self.typed_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.typed_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, entering: &self.entering, model: Some(model),
@@ -187,9 +187,7 @@ impl Lowering<'_, '_> {
         let mut seen = Seen::default();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));
         proved.signless = signless;
-        if self.entry_bounds {
-            self.prove_loops(&mut proved, &model, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
-        }
+        self.prove_loops(&mut proved, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
         proved
     }
 
@@ -200,7 +198,8 @@ impl Lowering<'_, '_> {
         let instruction = instructions[pc];
         if point.overflow_free(&self.program.constants, instruction) { proved.overflow_free.insert(pc); }
         let below = |index: Register, array: Register| self.proven_below_length(pc, index, array);
-        match point.index_proof(model, pc, instruction, &below) {
+        let bound_of = |index: Register| self.bound_below(pc, index);
+        match point.index_proof(model, pc, instruction, &below, &bound_of) {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
             proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
         }
@@ -276,17 +275,42 @@ impl Lowering<'_, '_> {
     }
 
     /// What the entries of `nest`'s loops prove of what `seen`: the operations each evaluates once, and
-    /// the accesses each proves within their arrays.
-    fn prove_loops(&self, proved: &mut IntRanges, model: &Model<'_>, nest: Nest<'_>, seen: &Seen) {
+    /// the accesses each proves within their arrays. A loop keeps its versions only where its body's
+    /// resizes are all checked by versions of its own entries (`settled_versions`).
+    fn prove_loops(&self, proved: &mut IntRanges, nest: Nest<'_>, seen: &Seen) {
         proved.hoisted = self.plan_hoists(nest, &seen.hoistable);
         proved.decisions = self.plan_decisions(nest, &seen.decisions);
         proved.bounds = self.plan_bounds(nest, &seen.bounds);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
-        for shape in &seen.shapes {
-            if let Some(resolved) = self.resolve((nest, &*proved), model, shape) { proved.keep(resolved); }
+        let resolved: Vec<Resolved> = seen.shapes.iter().filter_map(|shape| self.resolve((nest, &*proved), shape)).collect();
+        let candidates: Vec<Version> = resolved.iter().map(|resolved| resolved.version).collect();
+        let settled = self.settled_versions(nest.loops, candidates);
+        for resolved in resolved {
+            if settled.iter().any(|version| version.pc == resolved.version.pc && version.header == resolved.version.header) { proved.keep(resolved); }
         }
         proved.versioned.sort_by_key(|version| version.pc);
+    }
+
+    /// The versions that stay once every loop whose body may resize an array is settled: a loop with a resizing step keeps
+    /// its versions only where each such step is itself a version of an entry inside the loop (its reach is checked before
+    /// the loop's body runs, so the step never resizes), and a loop that fails the test drops all its versions, which can
+    /// only make other loops fail it too. Each round drops the failing loops until none fails.
+    fn settled_versions(&self, loops: &[(usize, usize)], mut versions: Vec<Version>) -> Vec<Version> {
+        loop {
+            let failing: Vec<usize> = versions.iter().map(|version| version.header).filter(|&header| {
+                let Some(&(_, back)) = loops.iter().find(|(at, _)| *at == header) else { return true };
+                !self.steady((header, back), &versions)
+            }).collect();
+            if failing.is_empty() { return versions; }
+            versions.retain(|version| !failing.contains(&version.header));
+        }
+    }
+
+    /// Whether the body `(header, back)` changes no array's length through a step that no version inside it checks.
+    fn steady(&self, (header, back): (usize, usize), versions: &[Version]) -> bool {
+        (header..=back).all(|at| !self.may_resize(at)
+            || versions.iter().any(|version| version.pc == at && (header..=back).contains(&version.header)))
     }
 }
 

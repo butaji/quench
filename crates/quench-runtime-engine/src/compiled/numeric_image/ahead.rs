@@ -14,7 +14,7 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &[], &Default::default(),
         VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
-        Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
+        Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
     let image = quench_runtime::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).unwrap();
@@ -146,7 +146,7 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
         let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &[], &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
-            Coverage::Full, Completion::Body, ElementViews::Dense, true).expect(source);
+            Coverage::Full, Completion::Body, ElementViews::Dense).expect(source);
         let image = quench_runtime::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).expect(source);

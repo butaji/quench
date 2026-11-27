@@ -26,7 +26,7 @@ fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
-        Coverage::PrefixFrom(header), Completion::Body, views, true).expect("a loop region").function
+        Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
 }
 
 /// The instructions of `function`'s loop blocks.
@@ -132,7 +132,7 @@ fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::
     let addresses = LaneHelper::addresses();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entries, &[], &[]), &[], &[],
-        Coverage::Loop { header, backedge, poll: false }, Completion::Body, views, true).expect("a loop region").function
+        Coverage::Loop { header, backedge, poll: false }, Completion::Body, views).expect("a loop region").function
 }
 
 /// Whether `value` is the sign extension of an int32.
@@ -230,10 +230,9 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
 }
 
 /// The region of the innermost loop of `source` over `views`, with the feedback a previous body left:
-/// `left_header` records that the loop's header is one a previous body left at (`generic`), and
-/// `entry_bounds` is false once its entries were declined (`LoopTier::missed_entry`): either way the
-/// loop's entry proves no index.
-fn region_with_feedback(source: &str, views: ElementViews, left_header: bool, entry_bounds: bool) -> ir::Function {
+/// `left_header` records that the loop's header is one a previous body left at (`generic`), whose
+/// types are unknown, so its entry proves no index.
+fn region_with_feedback(source: &str, views: ElementViews, left_header: bool) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
@@ -242,7 +241,7 @@ fn region_with_feedback(source: &str, views: ElementViews, left_header: bool, en
     let generic = if left_header { vec![header] } else { Vec::new() };
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
         &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
-        Coverage::PrefixFrom(header), Completion::Body, views, entry_bounds).expect("a loop region").function
+        Coverage::PrefixFrom(header), Completion::Body, views).expect("a loop region").function
 }
 
 #[test]
@@ -256,13 +255,10 @@ fn a_masked_index_compares_its_mask_with_the_array_length_once_and_not_per_acces
         .filter(|inst| !body.contains(inst)).collect();
     assert_eq!(bounds_compares(&function, &body), 0, "the masked accesses carry their proof: {function}");
     assert!(bounds_compares(&function, &before) >= 1, "the entry compares the mask's ceiling with the length: {function}");
-    // A loop a previous body left at its header, or whose entries were declined, keeps every access's own test.
-    let views = || ElementViews::Typed(Some(Kind::Float64));
-    for (left_header, entry_bounds) in [(true, true), (false, false)] {
-        let function = region_with_feedback(masked, views(), left_header, entry_bounds);
-        let body = loop_body(&function);
-        assert!(bounds_compares(&function, &body) >= 1, "left {left_header}, entry bounds {entry_bounds}: no index is proved: {function}");
-    }
+    // A loop a previous body left at its header keeps every access's own test: there is no second version to version it.
+    let function = region_with_feedback(masked, ElementViews::Typed(Some(Kind::Float64)), true);
+    let body = loop_body(&function);
+    assert!(bounds_compares(&function, &body) >= 1, "left at its header, no index is proved: {function}");
 }
 
 #[test]
