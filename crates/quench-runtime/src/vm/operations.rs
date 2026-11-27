@@ -724,10 +724,6 @@ impl Vm {
         match native {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
-            #[cfg(feature = "wasm")]
-            Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
-            #[cfg(not(feature = "wasm"))]
-            Native::WebAssemblyInitialize => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
             Native::IntlInitialize => {
                 let (global, object_prototype) = (self.realm.globals, self.object_proto);
                 layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)
@@ -2120,7 +2116,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
 /// The natives that enter before every other family: wasm exports and generator methods.
 fn head_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
-        Native::WasmExportedFunction => Some(enter_wasm_export),
+        Native::WasmExportedFunction => super::wasm_js::entry(native),
         Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => Some(enter_generator),
         _ => None,
     }
@@ -2149,11 +2145,7 @@ fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if Vm::is_collection_native(native) {
         return Some(enter_collection);
     }
-    #[cfg(feature = "wasm")]
-    if super::wasm_js::is_wasm_js_native(native) {
-        return Some(enter_wasm_js);
-    }
-    None
+    super::wasm_js::entry(native)
 }
 
 /// The realm-level families: ShadowRealm, weak references, typed arrays and Atomics.
@@ -2201,10 +2193,6 @@ fn value_entry(native: Native) -> Option<native_table::NativeFn> {
 
 // The entries `native_entry` names: each runs one family's dispatch, as the family match did.
 
-fn enter_wasm_export(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_wasm_exported_function(p, args)
-}
-
 fn enter_generator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.generator_prototype_method(p, native, this, args)
 }
@@ -2227,11 +2215,6 @@ fn enter_disposal(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value,
 
 fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_collection_native(p, native, this, args)
-}
-
-#[cfg(feature = "wasm")]
-fn enter_wasm_js(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_wasm_js_routed(p, native, this, args)
 }
 
 fn enter_shadow_realm(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
