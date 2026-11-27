@@ -92,3 +92,22 @@ pub(crate) struct RecordBlock {
     /// (`RecordSpace::withhold`).
     pub(crate) withheld: [u64; BLOCK_WORDS],
 }
+
+/// A class cell (`heap::class_space`) is a run of granules, one `CLASS_HEADER_BYTES` each. Its
+/// first granule is the header: the class id in the low half, and in the high half zero for a live
+/// cell or the departed object's record id (`CLASS_RECORD_SHIFT`).
+pub(crate) const CLASS_HEADER_BYTES: usize = size_of::<u64>();
+pub(crate) const CLASS_RECORD_SHIFT: u32 = u32::BITS;
+/// The reserved class id of a departed object's cell. It lies past the class table's capacity, so no
+/// class guard matches it.
+pub(crate) const DEPARTED_CLASS: u32 = u32::MAX;
+/// A class's capacity class (`heap::classes`): three bits of its auxiliary word from `CAPACITY_SHIFT`,
+/// as a mask in place.
+pub(crate) const CAPACITY_SHIFT: u32 = 27;
+pub(crate) const CAPACITY_MASK: u32 = 0b111 << CAPACITY_SHIFT;
+/// The class space's regions: region `k` starts at granule `k << REGION_SHIFT` and holds cells of
+/// `2^k` granules, so a granule's local cell index is `(g & REGION_MASK) >> k`.
+pub(crate) const REGION_SHIFT: u32 = 29;
+pub(crate) const REGION_MASK: u32 = (1 << REGION_SHIFT) - 1;
+/// The regions, one per capacity class `0..CAPACITY_CLASSES`.
+pub(crate) const CAPACITY_CLASSES: usize = 6;

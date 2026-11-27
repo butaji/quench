@@ -43,9 +43,8 @@ use crate::places_property::{Callout, planned_frame, receiver_read, receiver_set
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp};
 use crate::staged::ic_flat::own_field_flat;
-use crate::staged::object::{Form, direct_object_record, object_record_at};
+use crate::staged::object::{Form, direct_object_record, object_record_of};
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
-use crate::staged::value::direct_object_id;
 use crate::typed_ir::Representation;
 use crate::staged::{Stage, Step, op_kind, step_property_of};
 use crate::words::{hole, hole64};
@@ -109,13 +108,12 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
 }
 
 /// The record of the receiver at hole `H` (as `receiver`'s), which every path proved a direct object
-/// (`base_region::proofs`): its id masked and scaled into the record table, no family test.
+/// (`base_region::proofs`): its address in the record table (`object_record_of`), no family test.
 #[inline(always)]
 fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> u64 {
     let bits = if H == GET_RECEIVER { site_object(s) } else { word_at(s.frame, hole::<H>()) };
     let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    let id = direct_object_id(stage, bits);
-    object_record_at(stage, records, id)
+    object_record_of(stage, records, bits)
 }
 
 /// The own slot of the receiver known to be a direct object (`ic::own_field`: hole 2 the shape, hole 3 the

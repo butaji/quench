@@ -27,6 +27,8 @@ pub fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 }
 
 /// The id of the object record a direct object reference names, its low half (`Value::direct_object_index`).
+/// The id alone, for a caller that needs the id rather than the record's address (`object::object_record_of`).
+/// Every object-id read goes through here, so R4-B2b changes this one body.
 #[inline(always)]
 pub fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     stage.and_imm(bits, u64::from(u32::MAX))

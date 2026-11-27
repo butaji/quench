@@ -14,7 +14,7 @@ mod slots;
 use slots::{formed_slot, kept_slot, word_formed_slot};
 pub(super) use slots::guard_receiver_layout;
 use super::ic::{self, IcOp, Reached};
-use super::object::{object_record_at, Form, Layout};
+use super::object::{object_record_of, Form, Layout};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::typed_ir::Type;
@@ -507,8 +507,7 @@ pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, obj
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
-    Some(Reached::bare(object_record_at(stage, records, id)))
+    Some(Reached::bare(object_record_of(stage, records, object)))
 }
 
 /// The base of a field access: the activation's bound `this`, or a register's tagged word;

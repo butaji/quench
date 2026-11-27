@@ -990,8 +990,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let ok = stage.raw_binary(Binary::And, ok, has_properties);
     stage.branch_if(ok, (found, &[]), (done, &[]));
     stage.builder.switch_to_block(found);
-    let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
-    let address = quench_runtime::staged::object::object_record_at(&mut stage, records, record_id);
+    let address = quench_runtime::staged::object::object_record_of(&mut stage, records, this);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
     let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
     let inline = quench_runtime::staged::object::inline_storage(&mut stage, address);
@@ -3459,7 +3458,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
         match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
             Some(id) => {
-                let object = vm.heap_reads().object_record_by_id(id);
+                let object = vm.heap_reads().object_record_by_id(id.raw());
                 if object.plain_storage_start().is_some() { StoreStorage::Arena }
                 else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
                 else { StoreStorage::OtherRecord }

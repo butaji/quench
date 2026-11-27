@@ -2,6 +2,7 @@
 //! record keeps the words generated code reads, each derived from the storage types themselves.
 use super::{array_elements, cell, records, thin_slice};
 use crate::value::Value;
+use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, REGION_MASK, REGION_SHIFT};
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 
 /// The native reader's view of an ordinary array's fixed record and dense backing.
@@ -102,6 +103,30 @@ const _: () = assert!(
     std::mem::size_of::<records::RecordCursor>() == 8 && std::mem::align_of::<records::RecordCursor>() == 4,
     "generated code reads a record cursor as two u32 words"
 );
+
+/// The native view of the class space (`heap::class_space`): region `k` holds the cells of `2^k`
+/// granules, so a cell's address is `class_base + granule * granule_bytes` and its region is
+/// `granule >> region_shift`. Each region's allocation cursor is a `RecordCursor`, read as `cursor`.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeClassSpaceLayout {
+    pub region_count: usize,
+    pub region_shift: u32,
+    pub region_mask: u32,
+    pub granule_bytes: usize,
+    pub cell: crate::staged::layout_offsets::NativeClassCellLayout,
+    pub cursor: NativeRecordCursorLayout,
+}
+
+#[allow(dead_code)]
+pub const NATIVE_CLASS_SPACE_LAYOUT: NativeClassSpaceLayout = NativeClassSpaceLayout {
+    region_count: CAPACITY_CLASSES,
+    region_shift: REGION_SHIFT,
+    region_mask: REGION_MASK,
+    granule_bytes: CLASS_HEADER_BYTES,
+    cell: crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT,
+    cursor: NATIVE_RECORD_CURSOR_LAYOUT,
+};
 
 /// Which invariants an existing-slot store must preserve. Native views cannot
 /// replace property storage; typed native regions also leave on content widening.

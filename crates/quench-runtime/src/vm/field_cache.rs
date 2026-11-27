@@ -26,7 +26,7 @@ impl Vm {
     /// reads them.
     #[inline(always)]
     pub(super) fn inherited_receiver(&self, value: Value) -> Option<(&Object, InheritedReceiver)> {
-        if let Some(record_id) = value.direct_object_index() {
+        if let Some(record_id) = value.direct_object_index().map(|r| self.heap.record_id(r)) {
             return Some((self.heap.object_record_by_id(record_id), InheritedReceiver::Record));
         }
         if let Some(function) = self.heap.function(value) {
