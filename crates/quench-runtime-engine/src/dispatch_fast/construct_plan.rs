@@ -287,16 +287,26 @@ pub(crate) unsafe fn context_constructs_in_lane(context: *mut ()) -> bool {
     quench_runtime::staged::call_construct::concrete_admits_construct_run(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs })
 }
 
-/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, in `code`, the
-/// running residual: the callee's construct plan (`planned_construction`), else the receiver
-/// its initializing body's cached adds finish (`initializer_construction`), which leaves the
-/// plan; `None` (a construction the lane makes otherwise, or a collection due, which the lane
-/// runs) to leave the body at the construction, before any effect.
+/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, in `code`, the running
+/// residual, as `materialized_construction_in_lane`; `None` where a collection is due, which the
+/// lane runs, leaving the body at the construction before any effect.
 ///
 /// # Safety
 /// `arguments` are the body's `argc` registers.
 pub(crate) unsafe fn body_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.collection_due() {
+    if vm.collection_due() { return None; }
+    // SAFETY: the caller passes the body's argument registers.
+    unsafe { materialized_construction_in_lane(vm, code, callee, arguments, argc) }
+}
+
+/// `body_construction_in_lane` made whatever is due, for a materialization of a kept receiver
+/// (`lane_region::virtual_objects`), which has no leave to take (DESIGN 4.7): the callee's plan
+/// (`planned_construction`), else the cached adds of its initializing body (`initializer_construction`).
+///
+/// # Safety
+/// `arguments` are the body's `argc` registers.
+pub(crate) unsafe fn materialized_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.

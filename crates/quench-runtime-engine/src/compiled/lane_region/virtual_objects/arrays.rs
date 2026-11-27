@@ -122,11 +122,10 @@ impl Lowering<'_, '_> {
 
     /// Allocates each kept array live at `pc` from its element values, into its register, and drops the rest:
     /// what the instruction at `pc`, or the interpreter resuming there, reads as the array. Nothing allocates
-    /// between a construction and here (`keeps_virtuals`). Each `NewArray` is an allocation: it sets a collection
-    /// due and never runs one (DESIGN 4.7), so no poll is needed before it. Its helper refuses at entry where a
-    /// collection is already due, and the code traps there. Two kept arrays live at one point are two
-    /// allocations, so the second can find the first's due collection and trap. Kept receivers materialized at
-    /// the same point (`materialize_virtuals`) share that hazard.
+    /// between a construction and here (`keeps_virtuals`). Each array is made by `MaterializeArray`, which never
+    /// refuses for a due collection: an allocation sets a collection due and never runs one (DESIGN 4.7), and
+    /// the next safepoint collects (the lane's leave, or an allocating helper's refusal or poll). So any number
+    /// of kept arrays and receivers can be made at one point, and no poll is needed before them.
     pub(crate) fn materialize_arrays(&mut self, state: &mut State, pc: usize) {
         for kept in std::mem::take(&mut state.virtual_arrays) {
             if !self.is_live(pc, kept.register) { continue; }
@@ -154,13 +153,10 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The array `NewArray` makes of `length` from `elements` (a slot's address, or none for holes); its refusal
-    /// where a collection is due traps (`materialize_arrays`).
+    /// The array `MaterializeArray` makes of `length` from `elements` (a slot's address, or none for holes). It
+    /// never answers `DELETED`, so the result is the array with no check (`materialize_arrays`).
     fn new_kept_array(&mut self, payload: ir::Value, length: ir::Value, elements: ir::Value) -> ir::Value {
-        let this = self.helper_call(LaneHelper::NewArray, &[payload, length, elements]);
-        let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
-        self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
-        this
+        self.helper_call(LaneHelper::MaterializeArray, &[payload, length, elements])
     }
 
     /// A stack slot holding the bits of `elements` in index order, its address.
