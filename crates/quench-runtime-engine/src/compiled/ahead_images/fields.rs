@@ -1,9 +1,10 @@
 //! The field reads and stores an ahead lane body loads by the classes the solver names for them
 //! (`FunctionFacts::access_classes`: the closed set of classes of the object each access reads or
-//! stores). Each class of the set contributes its layout, as its construction makes the shape
-//! (`ShapeRecipe`: the function's `prototype`, then the fields it stores into `this`, in store order):
-//! the slot of the field in it (`own_load`), or, for a read of a method its `prototype` holds, the
-//! slot of the name there (`holder_load`). The guard names each shape by its symbol (`Symbol::GuardShape`),
+//! stores). Each class of the set contributes its proven layout (`AotFacts::class_layout`, the ordered
+//! named fields of every instance, which `ShapeRecipe` builds the shape from: the function's `prototype`,
+//! then those fields in slot order): the slot of the field in it (`own_load`), or, for a read of a method
+//! its `prototype` holds (`AotFacts::prototype_layout`), the slot of the name there (`holder_load`).
+//! The guard names each shape by its symbol (`Symbol::GuardShape`),
 //! which the loader resolves to the shape's id, or to an id no record has where the VM builds none or
 //! the slot's words are not tagged values. A miss asks the VM's caches (`NativeFieldLoad::probes_misses`),
 //! so a wrong layout costs a compare, never a leave. A store takes the class's shape with the one class
@@ -36,7 +37,7 @@ pub(crate) fn class_fields(program: &ResidualProgram, (unit, function): (&lane_u
             accesses.into_iter().map(move |access| (access, classes.clone()))
         }).filter_map(|((atom, site, store), classes)| {
             let mut loads = Vec::new();
-            for &class in &classes { loads.extend(class_loads(program, facts, &mut *symbols, class, atom, store)); }
+            for &class in &classes { loads.extend(class_loads(facts, &mut *symbols, class, atom, store)); }
             if loads.is_empty() || loads.len() > SHAPES_PER_SITE { return None; }
             Some((usize::from(site), loads))
         }).collect();
@@ -80,32 +81,28 @@ fn accessed(program: &ResidualProgram, instruction: WideInstruction) -> Vec<(u32
 }
 
 /// The loads of field `atom` (a store where `store`) of the objects of class `class` (a constructed
-/// function): the slot of its own field in the shape its construction makes (`own_load`), and, for a
-/// read, the slot its `prototype` holds the name at (`holder_load`).
-fn class_loads(program: &ResidualProgram, facts: &AotFacts, symbols: &mut SymbolTable, class: u32, atom: u32, store: bool) -> Vec<NativeFieldLoad> {
+/// function), by the class's proven layouts: the slot of its own field in its instances (`own_load`),
+/// and, for a read, the slot its prototype's layout holds the name at (`holder_load`). A class with no
+/// proven layout takes none: its access asks the VM's caches.
+fn class_loads(facts: &AotFacts, symbols: &mut SymbolTable, class: u32, atom: u32, store: bool) -> Vec<NativeFieldLoad> {
     let mut loads = Vec::new();
-    let fields = this_fields(program, class);
-    if let Some(slot) = fields.iter().position(|&field| field == atom).and_then(|slot| u16::try_from(slot).ok()) {
+    let Some(fields) = facts.class_layout(class) else { return loads };
+    if let Some(slot) = slot_of(fields, atom) {
         let (read, stored) = GuardAccess::of_field(facts.field_type_on(class, atom));
-        loads.extend(own_load(program, (class, slot), if store { stored } else { read }, symbols));
+        loads.extend(own_load((class, slot), fields, if store { stored } else { read }, symbols));
     }
-    let held = facts.prototype_fields(class);
-    if let Some(slot) = held.iter().position(|&name| name == atom).and_then(|index| u16::try_from(index + 1).ok()).filter(|_| !store) {
-        loads.extend(holder_load(program, (class, slot, held.len() + 1), atom, symbols));
+    if let (false, Some(held)) = (store, facts.prototype_layout(class)) {
+        // The prototype's slot 0 is its constructor, so a name it holds at index `i` is at slot `i + 1`.
+        if let Some(slot) = slot_of(held, atom).and_then(|index| index.checked_add(1)) {
+            loads.extend(holder_load(fields, (class, slot, held.len() + 1), atom, symbols));
+        }
     }
     loads
 }
 
-/// The names of the fields `function`'s body stores into `this`, each once, in the order its
-/// stores first name them: the shape a construction that runs every store makes.
-fn this_fields(program: &ResidualProgram, function: u32) -> Vec<u32> {
-    let Some(body) = program.function_get(function as usize) else { return Vec::new() };
-    let mut fields: Vec<u32> = Vec::new();
-    for instruction in body.instructions().filter(|instruction| instruction.stores_to_this()) {
-        let atom = instruction.imm();
-        if !fields.contains(&atom) { fields.push(atom); }
-    }
-    fields
+/// The slot of field `atom` in a layout of named fields (`AotFacts::class_layout`), where it has one.
+fn slot_of(fields: &[u32], atom: u32) -> Option<u16> {
+    fields.iter().position(|&field| field == atom).and_then(|slot| u16::try_from(slot).ok())
 }
 
 /// The read of method `atom` of an object a construction of `function` makes, which its
@@ -113,8 +110,7 @@ fn this_fields(program: &ResidualProgram, function: u32) -> Vec<u32> {
 /// shape (`GuardAccess::Inherited`), the holder's the prototype's shape where its slot holds the
 /// name (`GuardAccess::Holder`), both by symbol; the slot is read live, so a method stored again
 /// reads its new value, and a prototype given another layout misses its guard and asks the caches.
-fn holder_load(program: &ResidualProgram, (function, slot, len): (u32, u16, usize), atom: u32, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
-    let fields = this_fields(program, function);
+fn holder_load(fields: &[u32], (function, slot, len): (u32, u16, usize), atom: u32, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
     let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(function)) else { return None };
     let Symbol::HeapValue(constructor) = symbols.heap_value(HeapValueRecipe::ClosureOf(function)) else { return None };
     let receiver = ShapeRecipe { prototype: Some(prototype), constructor: Some(constructor), fields: fields.iter().map(|atom| (*atom, ADDED_FIELD)).collect() };
@@ -130,8 +126,7 @@ fn holder_load(program: &ResidualProgram, (function, slot, len): (u32, u16, usiz
 
 /// The load of `slot` of the shape a construction of `function` makes, its guard named by symbol:
 /// a read's of any value, a store's of the class of values `access` stores (`GuardAccess::stored`).
-fn own_load(program: &ResidualProgram, (function, slot): (u32, u16), access: GuardAccess, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
-    let fields = this_fields(program, function);
+fn own_load((function, slot): (u32, u16), fields: &[u32], access: GuardAccess, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
     let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(function)) else { return None };
     let Symbol::HeapValue(constructor) = symbols.heap_value(HeapValueRecipe::ClosureOf(function)) else { return None };
     let recipe = ShapeRecipe { prototype: Some(prototype), constructor: Some(constructor), fields: fields.iter().map(|atom| (*atom, ADDED_FIELD)).collect() };
