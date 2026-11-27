@@ -2,8 +2,10 @@
 //! parameter, return, receiver and element. A cell is the product of three lattices, joined
 //! component-wise:
 //!
-//! - `ty`: the semantic type (`Type`), which already carries the integer range (`TypeKind::Int`),
-//!   nullability and function identity;
+//! - `ty`: the semantic type (`Type`), which already carries the integer range (`TypeKind::Int`), the
+//!   NaN bit of a Number (`TypeKind::NotNaN` is a Number that is never NaN), nullability and function
+//!   identity. A field's or an element's `ty` is the join of every store's, so its range and NaN bit
+//!   are the join of the stores' and the widening of `staged::typing` keeps a grown range bounded;
 //! - `classes`: the constructed classes of the objects the value may hold (`Classes`), a closed
 //!   union of at most `MAX_CLASSES`, so a polymorphic call site (`this.task.run()`) is a switch on the
 //!   class word;

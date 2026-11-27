@@ -10,6 +10,11 @@ use crate::{Value, ValueType};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TypeKind {
     Language(u16),
+    /// A Number that is never NaN and has no integer range: the NaN-free refinement of `NUMBER`.
+    /// The NaN bit lives here and nowhere else. A Number that may be NaN is `Language(Number)`
+    /// (`NUMBER`) and an integer range is never NaN (`Int`), so equal types keep equal
+    /// representations and the solve's fixpoint compares them by `==`.
+    NotNaN,
     Int(IntRange),
     DirectObjectFamily,
     NullableDirectObjectFamily(u16),
@@ -81,7 +86,11 @@ impl Type {
     pub const IMMEDIATE: Self = Self(TypeKind::Language(
         Languages::of(ValueType::Number).union(Languages::of(ValueType::Boolean))
             .union(Languages::of(ValueType::Null)).union(Languages::of(ValueType::Undefined)).bits()));
+    /// A Number that may be NaN: every Number the language holds, and the top of the Number part.
     pub const NUMBER: Self = Self::language(ValueType::Number);
+    /// A Number that is never NaN (its infinities allowed). A Float64 holds it like any Number, and a
+    /// `Comparison` or `Math` over it needs no NaN case. Integers (`INT32`, `int`) are never NaN too.
+    pub const NOT_NAN_NUMBER: Self = Self(TypeKind::NotNaN);
     /// `undefined`, what `Type::immediate(Value::UNDEFINED)` is, as a constant the stencil build can name.
     pub(crate) const UNDEFINED: Self = Self::language(ValueType::Undefined);
     /// The integers of the whole int32 span, the widest range an int32-represented value holds.
@@ -112,7 +121,7 @@ impl Type {
     pub(super) const fn kinds(self) -> u16 {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
-            TypeKind::Int(_) => language_bit(ValueType::Number),
+            TypeKind::NotNaN | TypeKind::Int(_) => language_bit(ValueType::Number),
             TypeKind::DirectObjectFamily => language_bit(ValueType::Object),
             TypeKind::DirectObjectShape { nullish, .. } => language_bit(ValueType::Object) | nullish,
             TypeKind::NullableDirectObjectFamily(nullish) => language_bit(ValueType::Object) | nullish,
@@ -152,6 +161,14 @@ impl Type {
     #[inline(always)]
     pub const fn is_int(self) -> bool {
         matches!(self.0, TypeKind::Int(_))
+    }
+
+    /// Whether a value of this type may be NaN. Integer ranges and `NOT_NAN_NUMBER` never are; any other
+    /// type holding a Number may be. The NaN bit is the Number part's only refinement by NaN, so a type
+    /// without a Number alternative (`Boolean`, a direct object) is not NaN, and `NEVER` holds none.
+    #[inline(always)]
+    pub const fn may_be_nan(self) -> bool {
+        !matches!(self.0, TypeKind::Int(_) | TypeKind::NotNaN) && self.kinds() & language_bit(ValueType::Number) != 0
     }
 
     /// Whether every value of this type is of one of `other`'s language types (`within_languages`, public).
@@ -274,6 +291,7 @@ impl Type {
     fn same(self, other: Self) -> bool {
         match (self.0, other.0) {
             (TypeKind::Language(left), TypeKind::Language(right)) => left == right,
+            (TypeKind::NotNaN, TypeKind::NotNaN) => true,
             (TypeKind::Int(left), TypeKind::Int(right)) => left == right,
             (TypeKind::DirectObjectFamily, TypeKind::DirectObjectFamily) => true,
             (TypeKind::NullableDirectObjectFamily(left), TypeKind::NullableDirectObjectFamily(right)) => left == right,
@@ -291,6 +309,8 @@ impl Type {
         if self.is_any() { return expected.is_any(); }
         self.same(Self::NEVER) || self.same(expected)
             || matches!((self.0, expected.0), (TypeKind::Int(known), TypeKind::Int(allowed)) if allowed.contains(known))
+            // An integer is a Number that is never NaN, so it is a subtype of the NaN-free Number.
+            || (expected.same(Self::NOT_NAN_NUMBER) && (self.is_int() || self.same(Self::NOT_NAN_NUMBER)))
             || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }
                 if matches!(self.0, TypeKind::DirectObjectShape { shape: actual, nullish: alternatives }
                     if actual == shape && alternatives & !nullish == 0)
