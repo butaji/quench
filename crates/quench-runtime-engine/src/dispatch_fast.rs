@@ -122,6 +122,7 @@ macro_rules! returning_operator_row_of {
 
 
 use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
+use quench_runtime::staged::Form;
 use crate::compiled::tier_policy::Tiers;
 use quench_runtime::vm::tier_events::Event;
 use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
@@ -4677,6 +4678,50 @@ pub(crate) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site 
 /// refreshes the hint.
 pub(crate) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
 
+/// The formed nested sites: `NESTED_SITE`'s row with each hop's storage form fixed, the first hop's
+/// (the record's hint) and the second's (the intermediate object's), each a flat run or packed inline
+/// values (`nested_hop_class`). Indexes 43 to 46 are below the returning sites (from 59) and no other
+/// site fact uses them.
+const NESTED_PAIR_BASE: usize = OWN_FORMS.len() + 34;
+pub(crate) const NESTED_FLAT_FLAT: u8 = own_site(false, NESTED_PAIR_BASE);
+pub(crate) const NESTED_FLAT_INLINE: u8 = own_site(false, NESTED_PAIR_BASE + 1);
+pub(crate) const NESTED_INLINE_FLAT: u8 = own_site(false, NESTED_PAIR_BASE + 2);
+pub(crate) const NESTED_INLINE_INLINE: u8 = own_site(false, NESTED_PAIR_BASE + 3);
+
+/// Whether site `site` is a nested read, `NESTED_SITE` or one of its formed instances.
+pub(crate) const fn nested_site(site: u8) -> bool {
+    site == NESTED_SITE || site == NESTED_FLAT_FLAT || site == NESTED_FLAT_INLINE || site == NESTED_INLINE_FLAT
+        || site == NESTED_INLINE_INLINE
+}
+
+/// The storage form each hop of nested site `site` fixes, the record's hint's first: a flat run
+/// (`Form::Arena`) or packed inline values (`Form::Packed`) as its instance names; `Form::Either`
+/// where it names none (`NESTED_SITE`).
+pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
+    if site == NESTED_FLAT_FLAT { [Form::Arena, Form::Arena] }
+    else if site == NESTED_FLAT_INLINE { [Form::Arena, Form::Packed] }
+    else if site == NESTED_INLINE_FLAT { [Form::Packed, Form::Arena] }
+    else if site == NESTED_INLINE_INLINE { [Form::Packed, Form::Packed] }
+    else { [Form::Either, Form::Either] }
+}
+
+/// The storage-form class of a nested hop whose layout id is `layout`: `0` a flat run, `1` packed
+/// inline values; `None` for another form, whose hop keeps `NESTED_SITE`'s `Form::Either`. Reads the
+/// hint's form through `own_form_index`, which folds `FLOAT_SLOTS` at this requicken.
+fn nested_hop_class(layout: u32) -> Option<usize> {
+    match own_form_index(Some(layout)) {
+        1 | 6 => Some(0),
+        3 => Some(1),
+        _ => None,
+    }
+}
+
+/// The formed nested row of the classes `first` and `second` (`nested_hop_class`).
+fn nested_formed_handler(first: usize, second: usize) -> Handler {
+    macro_rules! row { ($site:expr) => { generated_row!(FIELD_LEAF_READ, ACC_NONE, $site) as Handler } }
+    [row!(NESTED_FLAT_FLAT), row!(NESTED_FLAT_INLINE), row!(NESTED_INLINE_FLAT), row!(NESTED_INLINE_INLINE)][first * 2 + second]
+}
+
 /// The site facts of the general read (`FieldPlan::Host`): the record names no plan the row
 /// runs, so its hit is the VM's cached read of the atom through the site's cache
 /// (`general_field_read`, the value `lane_get_field` made), of `this` and of a register. Its miss
@@ -5679,13 +5724,44 @@ fn own_length(vm: &Vm, object: Value) -> Option<Value> {
     })
 }
 
+/// Requickens the nested read at `ip` to the formed instance its two hops' layouts name: the record's hint
+/// is the first hop's layout, and the second hop's is the layout of the intermediate object the first step
+/// reads (`form_hint`'s, which the site's entry names by shape). A hop of another form, or a hop the
+/// record does not hold, leaves the generic row.
+///
+/// # Safety
+/// `cx` is the running lane's context and `i` a nested record of it naming its site, which `lane_nested_value`
+/// has just read.
+unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) {
+    // SAFETY: the context's program outlives the lane run; a nested record names its site.
+    let code = unsafe { &*(*cx).code };
+    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
+    let Some((_, cache)) = site.second else { return };
+    let Some(first) = (unsafe { lane_nested_hinted_first(cx, r, i, site) }) else { return };
+    let machine = unsafe { vm(cx) };
+    let entry = machine.field_cache_entry(cache);
+    let hint = i.field_hint();
+    let Some(record) = machine.heap_reads().record_object_value(first) else { return };
+    if hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER || entry.holder != quench_runtime::vm::NO_FIELD_HOLDER
+        || entry.receiver != record.exact_shape() {
+        return;
+    }
+    let second = machine.form_hint(entry, first);
+    let (Some(first_class), Some(second_class)) = (nested_hop_class(hint.receiver), nested_hop_class(second.receiver)) else { return };
+    requicken(ip, nested_formed_handler(first_class, second_class));
+}
+
 script_handler! {
     /// A nested `GetField` whose steps hit their entries without guest code
-    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`).
+    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`). A miss
+    /// retires a formed instance to `NESTED_SITE`, and a hit re-chooses the instance from the hops read
+    /// (`requicken_nested`).
     fn get_field_nested_miss<>(cx, r, ip, i, view) {
+        requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_SITE));
         let Some(value) = (unsafe { lane_nested_value(cx, r, ip, i) }) else {
             sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
         };
+        unsafe { requicken_nested(cx, r, ip, i) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }

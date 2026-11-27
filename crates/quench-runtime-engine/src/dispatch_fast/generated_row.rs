@@ -72,7 +72,7 @@ lane_handler! {
                 }
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::THIS.0);
-                } else if const { FLAG != crate::dispatch_fast::NESTED_SITE && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
+                } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
                     // A nested read's base is its site's, not the record's operand; a local's, its slot's.
                     std::hint::assert_unchecked(i.b <= quench_runtime::bytecode::REGISTER_MASK);
                 }
@@ -239,7 +239,7 @@ lane_handler! {
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let other = if others { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
-            } else if const { FLAG == crate::dispatch_fast::NESTED_SITE || crate::dispatch_fast::sink_site(FLAG) } {
+            } else if const { crate::dispatch_fast::nested_site(FLAG) || crate::dispatch_fast::sink_site(FLAG) } {
                 // A nested read's two own hops: the record's hint is the first step's layout and
                 // slot, the site's second entry the second, both primary own entries; the base is
                 // the site's (`PropertyFrame::nested_base`). A hop the record does not hold misses.
@@ -264,7 +264,8 @@ lane_handler! {
                     frame.stores = Some(FieldStores::of(script));
                 }
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot), (entry.receiver, entry.slot), site.base,
+                let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
+                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (entry.receiver, entry.slot, forms[1]), site.base,
                     machine.heap_reads().live_object_records() as u64));
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).

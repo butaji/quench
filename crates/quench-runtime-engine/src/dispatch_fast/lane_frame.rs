@@ -8,7 +8,7 @@ use super::lane_reads::Reads;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Form, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -656,10 +656,10 @@ pub(crate) struct RecordPlan {
     /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
     /// found inline, before any other family.
     functions: bool,
-    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout and slot,
-    /// the first from the record's hint and the second from its site's entry, and the base the
-    /// first reads (`PropertyFrame::nested_base`). `None` for every other plan.
-    nested: Option<([(u32, u16); 2], quench_runtime::bytecode::FieldBase)>,
+    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout, slot and the storage
+    /// form its site fixed, the first from the record's hint and the second from its site's entry, and the
+    /// base the first reads (`PropertyFrame::nested_base`). `None` for every other plan.
+    nested: Option<([(u32, u16, Form); 2], quench_runtime::bytecode::FieldBase)>,
     /// A read the frame's host answers (`FieldPlan::Geometry`, `FieldPlan::Length`), which addresses
     /// no record: the receiver's word is its operand. `None` for every other plan.
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
@@ -830,10 +830,11 @@ impl RecordPlan {
 
 impl RecordPlan {
     /// The nested read `a.b.c` of two own hops: `first` the record's hint (the layout and slot
-    /// of the first object), `second` the site's entry for the intermediate object, and `base`
-    /// the base the first hop reads. One layout compare and one slot load per hop.
+    /// of the first object), `second` the site's entry for the intermediate object, each with the
+    /// storage form its site fixed, and `base` the base the first hop reads. One shape compare and
+    /// one slot load per hop.
     #[inline(always)]
-    pub(crate) fn nested(first: (u32, u16), second: (u32, u16), base: quench_runtime::bytecode::FieldBase,
+    pub(crate) fn nested(first: (u32, u16, Form), second: (u32, u16, Form), base: quench_runtime::bytecode::FieldBase,
         records: u64) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardLayout(first.0);
         Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
@@ -854,7 +855,7 @@ impl RecordPlan {
 pub(crate) struct LanePlans {
     read: Option<([quench_runtime::staged::ic::IcOp<'static>; 2], usize)>,
     store: Option<quench_runtime::staged::property::StorePlan<'static>>,
-    nested: Option<[(u32, u16); 2]>,
+    nested: Option<[(u32, u16, Form); 2]>,
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
     entry: Option<quench_runtime::staged::property::EntryKind>,
     own: Option<(u32, u16)>,
@@ -874,7 +875,7 @@ impl quench_runtime::staged::property::PlanSource for LanePlans {
     }
     /// A nested read's two own hops, as the record holds them.
     #[inline(always)]
-    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { self.nested }
+    fn nested_hops(&self) -> Option<[(u32, u16, Form); 2]> { self.nested }
     #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<quench_runtime::staged::property::StorePlan<'_>> {
         // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`), and
@@ -3519,7 +3520,7 @@ lane_handler! {
         if const { FLAG == crate::dispatch_fast::NUMBER_SITE } {
             sibling!(crate::dispatch_fast::row_get_field_number_refresh, r, ip, Carried::script_in(script, view))
         }
-        if const { FLAG == crate::dispatch_fast::NESTED_SITE } {
+        if const { crate::dispatch_fast::nested_site(FLAG) } {
             // A nested read whose hops the record does not hold (or whose steps miss): the hand
             // read that refreshes the hint from the steps' entries.
             sibling!(get_field_nested_miss, r, ip, Carried::script_in(script, view))
