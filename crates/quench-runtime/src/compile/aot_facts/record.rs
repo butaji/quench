@@ -8,7 +8,7 @@ use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
-use super::value::{Key, Origin, Word};
+use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type};
 
@@ -39,6 +39,8 @@ pub(super) struct Record {
     quiet: Vec<(u32, Quiet)>,
     /// The integer bounds the replay puts on keys, in replay order (`flow::Solver::replay`, `FunctionFlow::bounds`).
     pub(super) bounds: Vec<(Key, i64)>,
+    accessors: Vec<Accessor>,
+    parents: Vec<(u32, u32)>,
 }
 
 impl Record {
@@ -66,6 +68,8 @@ impl Record {
             guest_runs: Vec::new(),
             quiet: Vec::new(),
             bounds: Vec::new(),
+            accessors: Vec::new(),
+            parents: Vec::new(),
         }
     }
 
@@ -151,7 +155,7 @@ impl Record {
                 self.plain_calls.push(match call.target {
                     Target::Known(function) => Some(function),
                     Target::Register => call.callee.cell.ty.body_index(),
-                    Target::Method(_) => None,
+                    Target::Method(_) | Target::Accessor { .. } => None,
                 });
             }
             if method.is_some_and(|atom| ctx.scope.passes_this(atom)) {
@@ -161,7 +165,14 @@ impl Record {
             if let Some(proof) = quiet::of_call(ctx.scope, &call) {
                 self.quiet.push((pc as u32, proof));
             }
+            if let Some(link) = super::accessors::heritage_link(ctx, &call) {
+                self.parents.push(link);
+            }
             self.calls.push(call);
+        }
+        // A named field read or store may run the accessor its receiver's class defines for the name (`Target::Accessor`).
+        if let Some(access) = super::accessors::accessor_call(ctx, pc as u32, instruction, state) {
+            self.calls.push(access);
         }
     }
 
@@ -175,6 +186,7 @@ impl Record {
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
+        self.accessors.extend(events.accessors);
         self.shapes.extend(events.shape);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -251,6 +263,8 @@ impl Record {
             handed: self.handed,
             closures: self.closures,
             bounds: self.bounds,
+            accessors: self.accessors,
+            parents: self.parents,
         }
     }
 }

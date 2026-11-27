@@ -1,6 +1,7 @@
 //! Which bindings are written exactly once, with a closure: the callee a binding-loaded register
 //! names.
 
+use super::accessors::Accessors;
 use super::flow::FunctionFlow;
 use super::gate::World;
 use super::value::{Word, Key, Origin, PrototypeBase};
@@ -88,6 +89,8 @@ pub(super) struct Census {
     members: BTreeMap<u32, BTreeSet<u32>>,
     /// Per class and property (static or prototype), the one closure every store of it writes.
     members_on: BTreeMap<(u32, bool, u32), Option<u32>>,
+    /// The accessors the program defines and what may shadow them (`accessors::Accessors`).
+    pub(super) accessors: Accessors,
 }
 
 impl Census {
@@ -114,7 +117,7 @@ impl Census {
                 _ => {}
             }
         }
-        Self {
+        let mut census = Self {
             world,
             member_wild: flows.iter().any(|flow| flow.member_wild),
             members,
@@ -122,7 +125,10 @@ impl Census {
             writes,
             global_wild: flows.iter().any(|flow| flow.global_wild || flow.computed_global),
             wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
-        }
+            accessors: Accessors::default(),
+        };
+        census.accessors = Accessors::of(flows, &census);
+        census
     }
 
     /// The closures stored under name `atom` (`members`): the closed set a method call of that name may
