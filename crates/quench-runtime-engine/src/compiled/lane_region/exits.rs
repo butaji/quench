@@ -183,12 +183,13 @@ impl Lowering<'_, '_> {
         // A guard after another that leaves at the same PC from the same facts shares its
         // block: the leave it builds is the same, and SSA joins the variables' values.
         if !self.vm.diagnostics && let Some(last) = self.pending.last()
-            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed && last.virtuals == state.virtuals {
+            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed && last.virtuals == state.virtuals
+            && last.virtual_arrays == state.virtual_arrays {
             return last.block;
         }
         let block = cold_block(&mut self.builder);
         self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(), virtuals: state.virtuals.clone(),
-            pc, line: std::panic::Location::caller().line(), fact });
+            virtual_arrays: state.virtual_arrays.clone(), pc, line: std::panic::Location::caller().line(), fact });
         block
     }
 
