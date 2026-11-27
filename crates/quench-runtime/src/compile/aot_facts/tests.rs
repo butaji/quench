@@ -42,9 +42,12 @@ fn a_binding_written_twice_names_no_call_target() {
 }
 
 #[test]
-fn a_program_that_can_eval_has_no_facts() {
+fn a_program_that_can_eval_keeps_its_facts_as_guesses() {
     let program = program("function f() { return 1; } f(); eval('1');");
-    assert!(analyze(&program).is_empty());
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.call_targets.values().any(|&target| target == f), "the global call is still solved");
+    assert!(facts.guessed_calls.iter().any(|key| facts.call_targets.get(key) == Some(&f)), "a live global's target is a guess");
 }
 
 #[test]
