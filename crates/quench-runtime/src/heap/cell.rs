@@ -1018,18 +1018,20 @@ impl ProtoLink {
         super::layouts::intern_class(shape, self, 0)
     }
 
-    /// The window link naming object record `id`; `None` past the object window, where the
-    /// record's link (if it is a prototype) is an overflow link (`heap::prototypes`).
+    /// The window link naming the ordinary object whose stub granule is `granule`; `None` past the
+    /// object window, where the object's link is an overflow link (`heap::prototypes`). The link
+    /// carries the granule itself, the same bits as the object's direct `Value`.
     #[inline(always)]
-    pub(crate) fn object_record(id: u32) -> Option<Self> {
-        ((id as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + id))
+    pub(crate) fn object_granule_link(granule: u32) -> Option<Self> {
+        ((granule as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + granule))
     }
 
-    /// The object record this link names, if it names one.
+    /// The stub granule of the ordinary object this link names in its window, if it names one. A
+    /// reader that needs the record id takes the header hop (`Heap::object_record_by_granule`).
     #[inline(always)]
-    pub fn object_record_id(self) -> Option<u32> {
+    pub fn object_granule(self) -> Option<u32> {
         // The object range starts at a power of two above its own power-of-two span, so a
-        // link in it holds the record id in its low bits: a mask, which addresses the record
+        // link in it holds the granule in its low bits: a mask, which addresses the granule
         // without the subtracted base as a 64-bit displacement.
         // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
         let span = OBJECT_PROTO_WINDOW as u32;

@@ -249,6 +249,13 @@ impl Heap {
         object.0
     }
 
+    /// The object record whose stub granule is `granule`: the stub header's hop, then the record. A
+    /// prototype link names its object by granule (`ProtoLink::object_granule`), so readers come here.
+    #[inline(always)]
+    pub fn object_record_by_granule(&self, granule: u32) -> &Object {
+        self.object_record_by_id(self.class_space.record_of(granule))
+    }
+
     /// The read view of the ordinary object `value` names (`object_view`). Same reach as `object`: a class
     /// cell or a record. Callers use this in place of `object` and keep the view's method calls.
     #[inline(always)]
@@ -952,8 +959,8 @@ impl Heap {
     /// stored link, an object record's without decoding it.
     #[inline(always)]
     pub(crate) fn record_prototype(&self, object: &Object) -> Option<&Object> {
-        match object.proto_link().object_record_id() {
-            Some(record_id) => Some(self.object_record_by_id(record_id)),
+        match object.proto_link().object_granule() {
+            Some(granule) => Some(self.object_record_by_granule(granule)),
             None => self.record_object(object.proto().heap_reference()?),
         }
     }

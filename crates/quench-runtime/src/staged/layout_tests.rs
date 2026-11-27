@@ -103,7 +103,7 @@ fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
     let edges = [0, OBJECT.proto_record_base, OBJECT.proto_record_end, OBJECT.proto_mask];
     for link in edges.iter().flat_map(|edge| [edge.wrapping_sub(1), *edge, edge + 1]).filter(|link| *link <= OBJECT.proto_mask) {
         let staged = super::object::proto_object_record_id(&mut Concrete::new(std::ptr::null()), u64::from(link), ());
-        let interpreter = crate::heap::ProtoLink::from_bits(link).object_record_id();
+        let interpreter = crate::heap::ProtoLink::from_bits(link).object_granule();
         assert_eq!(interpreter.map(u64::from), staged, "link {link:#x}");
     }
 }

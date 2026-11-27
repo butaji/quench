@@ -4,7 +4,7 @@
 //! word of its layout. The link space is carved into one window per record family (legacy,
 //! array, object, function, promise, iterator, collection), each a power of two aligned to its
 //! size, so the hot readers decode a link with a compare and a mask (`ProtoLink::
-//! object_record_id`, `staged/object.rs` `RECORD_LINKS`, the JIT's `NATIVE_OBJECT_PROTO_*`).
+//! object_granule`, `staged/object.rs` `RECORD_LINKS`, the JIT's `NATIVE_OBJECT_PROTO_*`).
 //!
 //! The windows used to cap the record spaces themselves: a record past its window could not be
 //! named by a link. Now a record space grows to the full `u32` id width, and a prototype whose
@@ -14,12 +14,14 @@
 //!
 //! - Hot paths are unchanged. Every prototype inside its window keeps its window link, so the
 //!   compare-and-mask readers and link-equality guards never see the table. An overflow link
-//!   simply fails `object_record_id` (it is outside the object window), so a fast path that
+//!   simply fails `object_granule` (it is outside the object window), so a fast path that
 //!   needs the record id falls back to the general decode, which loads from the table.
-//! - Links are bits, not meanings. A link already names a heap-local record id: the same meta
-//!   bits mean different prototypes in different heaps, and each heap decodes them in its own
-//!   record spaces. The table maps a link to `Value` bits, which every heap then reads in its
-//!   own spaces, so one process-wide table serves every heap, exactly as the window links do.
+//! - Links are bits, not meanings. A link names a heap-local identity: an object window link holds
+//!   the object's stub granule, the bits of its direct `Value`, and the same meta bits mean different
+//!   prototypes in different heaps. Each heap decodes them in its own spaces (an object's record is
+//!   its stub header's hop). The table maps a link to `Value` bits, which every heap then reads in
+//!   its own spaces, so one process-wide table serves every heap, exactly as the window links do.
+//!   The argument is the same for granules as it was for record ids.
 //!   Interning keys on the `Value` bits, so equal links always name equal bits.
 //! - No reuse. An index is never handed out twice. A layout id, a code dependency (holder
 //!   watch, construct plan) or a compiled guard may hold a link after its prototype died; if

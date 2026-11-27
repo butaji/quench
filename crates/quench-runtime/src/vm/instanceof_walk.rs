@@ -30,8 +30,8 @@ impl Vm {
             if link == ProtoLink::NULL {
                 return Some(false);
             }
-            object = match link.object_record_id() {
-                Some(id) => self.heap.object_record_by_id(id),
+            object = match link.object_granule() {
+                Some(granule) => self.heap.object_record_by_granule(granule),
                 None => self.ordinary_link_holder(object.proto())?,
             };
         }
@@ -63,7 +63,7 @@ impl Vm {
         }
         // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        Some((object, ProtoLink::object_record(self.heap.record_id(prototype.direct_object_index()?))?.bits(), slot))
+        Some((object, ProtoLink::object_granule_link(prototype.direct_object_index()?.granule())?.bits(), slot))
     }
 
     /// The encoded `prototype` link `instanceof constructor` tests a chain for, where the steady case proved
