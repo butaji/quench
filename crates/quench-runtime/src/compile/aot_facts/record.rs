@@ -64,6 +64,8 @@ pub(super) struct Record {
     captures: std::collections::BTreeSet<(u32, u16)>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
+    /// The keys each instruction reads, by PC (`FunctionFlow::key_reads`).
+    key_reads: Vec<(u32, Key)>,
     links: Vec<(ElementClass, ElementClass)>,
     wild_elements: bool,
     shapes: Vec<Shape>,
@@ -137,6 +139,7 @@ impl Record {
             captures: std::collections::BTreeSet::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
+            key_reads: Vec::new(),
             links: Vec::new(),
             wild_elements: false,
             shapes: Vec::new(),
@@ -194,12 +197,17 @@ impl Record {
             let joined = self.element_views.entry(pc as u32).or_insert(View::None);
             *joined = joined.join(view);
         }
+        // A by-name load reads the global of its name, whatever the scope it resolves in (`frozen`).
+        if instruction.op().loads_name() {
+            self.key_reads.push((pc as u32, Key::Global(instruction.atom_index())));
+        }
         // A capture of the parent's environment reads the parent's slot: its cell is the slot's settled cell, which the
         // function depends on as a `Key::Slot` (`AotFacts::captured_slot_cell`).
         if let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = decoded(instruction)
             && let Some(owner) = ctx.scope.owner(ctx.id, depth)
         {
             self.reads.insert(Key::Slot { owner, slot });
+            self.key_reads.push((pc as u32, Key::Slot { owner, slot }));
             if depth == 0 {
                 self.captures.insert((owner, slot));
             }
@@ -316,11 +324,13 @@ impl Record {
         // The key a defined value was read from, where its word names one (`Origin`).
         if let Some(defined) = instruction.defined_register() {
             match state[usize::from(defined)].origin {
-                Some(Origin::Binding(key)) => { self.reads.insert(key); }
-                Some(Origin::Member(atom)) => { self.reads.insert(Key::Member(atom)); }
+                Some(Origin::Binding(key)) => { self.reads.insert(key); self.key_reads.push((pc as u32, key)); }
+                Some(Origin::Member(atom)) => { self.reads.insert(Key::Member(atom)); self.key_reads.push((pc as u32, Key::Member(atom))); }
                 Some(Origin::MemberOn { class, instance, atom, .. }) => {
                     self.reads.insert(Key::MemberOn { class, instance, atom });
                     self.reads.insert(Key::MemberAny(atom));
+                    self.key_reads.push((pc as u32, Key::MemberOn { class, instance, atom }));
+                    self.key_reads.push((pc as u32, Key::MemberAny(atom)));
                 }
                 _ => {}
             }
@@ -421,6 +431,7 @@ impl Record {
             captures: self.captures,
             registers: self.registers,
             reads: self.reads,
+            key_reads: self.key_reads,
             links: self.links,
             shapes: self.shapes,
             guest_runs: self.guest_runs,

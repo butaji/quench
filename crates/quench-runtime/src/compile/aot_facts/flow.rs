@@ -95,6 +95,9 @@ pub(super) struct FunctionFlow {
     /// or the name's), element reads of an array's class. Its parameters, receiver and callees' returns are
     /// added by `AotFacts` (`dependencies`).
     pub(super) reads: std::collections::BTreeSet<Key>,
+    /// The keys each instruction reads, by PC, in PC order (`Record::observe`): what `frozen` checks a dominating store
+    /// against. A by-name load reads its global; a capture reads its environment slot; a value read from a key is that key's read.
+    pub(super) key_reads: Vec<(u32, Key)>,
     /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
     pub(super) links: Vec<(crate::typed_ir::ElementClass, crate::typed_ir::ElementClass)>,
     /// Whether the function writes elements of arrays it cannot name (`effects::Events::wild_elements`).
