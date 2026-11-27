@@ -736,9 +736,6 @@ mod tests {
     }
 }
 
-/// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
-/// more functions than this as straight-line code.
-pub const RECURSION_DEPTH: usize = 4;
 
 /// The machine bytes an inlined instruction of a lane body costs at most, with its guards and
 /// exits: what a unit's instruction budget (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) is
