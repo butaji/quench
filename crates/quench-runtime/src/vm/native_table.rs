@@ -6,7 +6,7 @@ use super::*;
 use std::sync::OnceLock;
 
 /// The entry that runs a native's call with its receiver and arguments.
-pub(super) type NativeFn = fn(&mut Vm, &ResidualProgram, Native, Value, &[Value]) -> Result<Value, JsError>;
+pub type NativeFn = fn(&mut Vm, &ResidualProgram, Native, Value, &[Value]) -> Result<Value, JsError>;
 
 /// Each native's entry, by discriminant.
 pub(super) struct NativeTable {
