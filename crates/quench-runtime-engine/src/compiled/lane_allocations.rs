@@ -122,6 +122,17 @@ pub(crate) unsafe extern "C" fn new_array_in_lane(vm: u64, _residual: u64, paylo
     array.to_bits()
 }
 
+/// The element `index` of `array`, a hole array a materialization of a kept array made (`new_array_in_lane`
+/// with no elements), defined as its literal's `DefineArrayElement` would (`Vm::define_literal_element`); `0`
+/// where the define refuses, which the code traps on.
+pub(crate) unsafe extern "C" fn define_kept_element_in_lane(vm: u64, _residual: u64, payload: u64, array: u64, index: u64, value: u64) -> u64 {
+    // SAFETY: as `compiled_new_object`; `array` is the hole array the materialization just made, held by no other.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
+    let defined = vm.define_literal_element(Value::from_bits(array), index as usize, Value::from_bits(value));
+    dispatch.refresh_object_bases(vm);
+    u64::from(defined)
+}
+
 /// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::regexp_literal_value_in_lane`):
 /// a fresh object of the site's compiled template; `DELETED` where a collection is due or the pattern
 /// fails to compile, which the interpreter raises at the instruction. A callee-argument site passes

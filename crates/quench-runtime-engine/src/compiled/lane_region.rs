@@ -3270,6 +3270,11 @@ impl Lowering<'_, '_> {
             self.native += 1;
             return true;
         }
+        // `new Array(k)` of a constant `k` is kept as its holes (`kept_array_new`).
+        if self.kept_array_new(state, pc, instruction) {
+            self.native += 1;
+            return true;
+        }
         // Kept receivers (`virtual_objects`): a dead one is dropped, a read of a field it keeps
         // is its value, and an instruction that needs it as an object allocates it first.
         if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() {
