@@ -21,6 +21,7 @@ mod effects;
 mod escapes;
 mod flow;
 mod gate;
+mod lengths;
 mod quiet;
 mod readers;
 mod record;
@@ -85,6 +86,9 @@ pub struct AotFacts {
     /// Per function, the cells and sources its registers hold at every point of the settled solve (`registers::RegisterCells`):
     /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
     pub(crate) registers: BTreeMap<u32, RegisterCells>,
+    /// Per function, the length relations each pc holds before its instruction (`lengths::Settled`): an index proven below
+    /// an array's length, which `FunctionFacts::below_length` answers.
+    pub(crate) lengths: BTreeMap<u32, lengths::Settled>,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
@@ -117,6 +121,7 @@ impl AotFacts {
             element_classes: BTreeMap::new(),
             access_classes: BTreeMap::new(),
             registers: BTreeMap::new(),
+            lengths: BTreeMap::new(),
             dependencies: BTreeMap::new(),
             call_keys: BTreeMap::new(),
             signatures: None,
@@ -368,6 +373,20 @@ impl<'a> FunctionFacts<'a> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
     }
 
+    /// Whether the index register `index` is below the length of the array register `array` before the instruction at
+    /// `pc`, so an access `array[index]` there needs no bounds test: a loop's test `index < array.length` proves it on the
+    /// body's edge, and a write to either register or a change to the array's length retires the proof (`lengths`).
+    pub fn below_length(&self, pc: u32, index: u16, array: u16) -> bool {
+        self.below_length_offset(pc, index, array, 0)
+    }
+
+    /// Whether `index + offset` is below the length of the array register `array` before the instruction at `pc`
+    /// (`below_length` at `offset` 0): the access `array[index + offset]` needs no bounds test there. A sum the index
+    /// register holds (`index = base + k`) is proven through its base.
+    pub fn below_length_offset(&self, pc: u32, index: u16, array: u16, offset: u32) -> bool {
+        self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
+    }
+
     /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the
     /// effects they have. The same settled facts that answer this file's queries decide it, and the same edges
     /// retire it. Top where the type solve did not settle.
@@ -501,6 +520,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             // The callees of this function's calls are settled now: its reads and escapes are scanned against them.
             field_readers.scan(program, id, &flow, &facts, &scope);
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
+            facts.lengths.insert(id, std::mem::take(&mut flow.lengths));
         }
         open_escapes = Some(escapes::escapes(&settled_flows, &facts, &census, &scope));
         // The class layouts read the settled shapes: each construction's classes are the settled ones.

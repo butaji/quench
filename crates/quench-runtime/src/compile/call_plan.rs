@@ -57,6 +57,12 @@ pub struct CallPlan {
     /// A construction is never a tail site (its value is the constructed object, which `construct_form` returns
     /// without a proper tail call), and an async or generator callee is not (its activation outlives the call).
     pub tail: bool,
+    /// The property name of a method call's arms (`Callee::Method`): each arm's function is the value of
+    /// that property on its class's prototype, which the edge that records the class's header reads
+    /// (`layer_hooks::planned_class_recorded`). None for any other plan.
+    pub method: Option<u32>,
+    /// The argument count the call passes (`Arguments::count`), which `call_plans` sets for every plan.
+    pub argc: u16,
 }
 
 /// The arms of a closed receiver union: each class in `ids` paired with the function `body` names for it
@@ -85,7 +91,7 @@ fn form_of(arms: &[Arm], inlinable: impl Fn(u32) -> bool, signature: impl Fn(u32
 fn single_target(function: u32, miss: Miss, signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
     let arms = vec![Arm { class: None, function }].into_boxed_slice();
     let form = form_of(&arms, inlinable, |function| signatures.of(function));
-    CallPlan { form, arms, miss, tail: false }
+    CallPlan { form, arms, miss, tail: false, method: None, argc: 0 }
 }
 
 /// Whether the call at `pc` of `function` is a tail site: `staged::effects::tail_site` of its record's return flag
@@ -131,7 +137,7 @@ fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, 
     let keys: Vec<FactKey> = ids.iter().map(|&class| FactKey::Field { class, instance: true, atom }).collect();
     let miss = miss_of(&keys, |key| facts.live(key));
     let form = form_of(&arms, &inlinable, |function| signatures.of(function));
-    Some(CallPlan { form, arms, miss, tail: false })
+    Some(CallPlan { form, arms, miss, tail: false, method: Some(atom), argc: 0 })
 }
 
 /// The plan of the call at `pc` of `caller` whose callee is in `register`, or None where the site keeps its own
@@ -192,6 +198,7 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
         };
         site_plan.map(|mut site_plan| {
             site_plan.tail = tail_of(program, function, pc, invocation.returns, construct, &site_plan.arms);
+            site_plan.argc = invocation.arguments.count();
             (pc, site_plan)
         })
     }).collect()
@@ -260,7 +267,7 @@ mod tests {
     fn a_single_target_plan_names_no_key() {
         let arms = vec![Arm { class: None, function: 7 }].into_boxed_slice();
         let form = form_of(&arms, |_| false, |_| Signature::NEVER);
-        let plan = CallPlan { form, arms, miss: Miss::None, tail: false };
+        let plan = CallPlan { form, arms, miss: Miss::None, tail: false, method: None, argc: 0 };
         assert_eq!(plan.form, CallForm::Frameless);
         assert_eq!(plan.arms[0].class, None);
         assert_eq!(plan.miss, Miss::None);

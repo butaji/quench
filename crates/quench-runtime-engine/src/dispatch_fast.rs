@@ -1423,8 +1423,6 @@ impl ScriptTargets {
         let Some(set) = self.set(target.callee) else {
             return;
         };
-        // The write below moves or replaces entries a planned arm may hold (`PlannedTarget`).
-        self.epoch = self.epoch.wrapping_add(1);
         if self.entries[set].callee != target.callee {
             if self.entries[set | 1].generation() == target.generation() {
                 self.displaced += 1;
@@ -1433,10 +1431,7 @@ impl ScriptTargets {
         }
         self.entries[set] = target;
         if self.displaced > self.entries.len() && self.entries.len() < most {
-            // Growth frees the entries' storage: the epoch carries on, so no arm holding the old storage matches it.
-            let epoch = self.epoch;
             *self = Self::with_len(self.entries.len() * SCRIPT_CALL_TARGETS_GROWTH);
-            self.epoch = epoch;
             self.remember(target, most);
         }
     }
@@ -1948,8 +1943,6 @@ impl LaneStack {
         for entry in self.script_targets.entries.iter_mut().filter(|entry| std::ptr::eq(entry.view, view)) {
             entry.admission.0 |= Admission::UNPROVEN;
         }
-        // A planned arm enters only proven targets: its resolutions of these entries retire with the proof.
-        self.script_targets.epoch = self.script_targets.epoch.wrapping_add(1);
     }
 
     /// Whether cached calls are refused (`set_refused`).
@@ -5109,7 +5102,7 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let facts = self.programs.aot_facts(id);
-                let planned = self.programs.planned_call_sites(id, function);
+                let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
                         self.programs.tiers(), facts.as_deref(), planned)
