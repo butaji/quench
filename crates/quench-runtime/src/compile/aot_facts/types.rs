@@ -22,7 +22,7 @@ use super::flow::FunctionFlow;
 use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, View, WIDENING_ROUNDS};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -181,7 +181,7 @@ impl Types {
         if self.wild_elements { return Elements::ANY; }
         self.elements.members(class)
             .filter_map(|member| self.cells.get(&Key::Element(member)))
-            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length }))
+            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None }))
     }
 
     /// The elements of the arrays of the unnamed class: an array no key names, and every array that may reach code the

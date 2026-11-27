@@ -5,6 +5,7 @@ use crate::Engine;
 use crate::bytecode::ResidualProgram;
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
+use crate::heap::TypedArrayKind;
 use crate::ValueType;
 
 fn program(source: &str) -> ResidualProgram {
@@ -490,4 +491,42 @@ fn an_index_plus_a_constant_below_the_length_is_below_it_through_its_sum() {
     for (pc, index, array) in accesses {
         assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the sum `i + 1` is below the length at {pc}");
     }
+}
+
+#[test]
+fn an_element_of_a_typed_array_of_one_kind_is_that_kind() {
+    let program = program("function f() { var a = new Float64Array(4); var s = 0; for (var i = 0; i < 4; i++) { s += a[i]; } return s; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop reads the typed array");
+    for (pc, _, _) in accesses {
+        assert_eq!(facts.function_facts(f as u32).element_view(pc), Some(TypedArrayKind::Float64), "the read at {pc} is a Float64 element");
+    }
+}
+
+#[test]
+fn an_element_of_an_array_that_may_be_plain_or_typed_has_no_view() {
+    let program = program("function f(c) { var a = c ? new Int32Array(2) : [1, 2]; return a[0]; } f(true);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        assert_eq!(facts.function_facts(f as u32).element_view(pc), None, "a plain array beside a typed one is no one kind at {pc}");
+    }
+}
+
+#[test]
+fn a_captured_slot_read_in_an_inner_function_takes_the_slots_settled_cell() {
+    let program = program("function outer() { var n = 0; function inner() { return n; } n = 3; return inner(); } outer();");
+    let facts = analyze(&program);
+    let inner = function_named(&program, "inner");
+    let outer = function_named(&program, "outer");
+    let captures = facts.function_facts(inner as u32).capture_cells();
+    assert_eq!(captures.len(), 1, "inner reads one captured slot of its parent");
+    let (slot, cell) = captures[0];
+    assert_eq!(cell, facts.captured_slot_cell(outer as u32, slot), "the read takes the slot's settled cell");
+    assert!(cell.ty.is_subtype(Type::NUMBER), "the owner's stores of the slot are Numbers");
+    assert!(facts.function_facts(inner as u32).dependencies().contains(&FactKey::Slot { owner: outer as u32, slot }), "the inner function depends on the slot");
 }

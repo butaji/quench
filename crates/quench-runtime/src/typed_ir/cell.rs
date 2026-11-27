@@ -20,6 +20,7 @@
 //! This module is the only home of a fact type: a `struct`/`enum` named `*Fact` elsewhere is a second
 //! home (census `fact_homes`).
 use super::{IntRange, Representation, Type};
+use crate::heap::TypedArrayKind;
 
 /// The most classes a closed union holds before it is `Classes::Many`: richards' four task classes.
 pub const MAX_CLASSES: usize = 4;
@@ -134,29 +135,88 @@ impl Length {
     }
 }
 
+/// Which kind of array a value holds, as the element reads of its arrays see it. A typed array's elements are its kind's
+/// (`view_element_type`), whatever is stored into it, so a read of a one-kind class takes that type and no store widens it.
+/// `None` holds no array at all (the solve's bottom); `Plain` holds only plain arrays, whose elements are the stores';
+/// `One` holds only typed arrays of that native kind; `Mixed` holds anything else, which no element read is proven to see.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View {
+    None,
+    Plain,
+    One(TypedArrayKind),
+    Mixed,
+}
+
+impl View {
+    /// The view of a value that may hold either: equal views stay, a bottom takes the other side, anything else is `Mixed`.
+    pub fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, other) | (other, Self::None) => other,
+            (Self::Plain, Self::Plain) => Self::Plain,
+            (Self::One(a), Self::One(b)) if a == b => self,
+            _ => Self::Mixed,
+        }
+    }
+
+    /// The one typed-array kind every array here is, if there is one.
+    pub fn kind(self) -> Option<TypedArrayKind> {
+        match self {
+            Self::One(kind) => Some(kind),
+            _ => None,
+        }
+    }
+}
+
+/// The type of an element of a typed array of `kind`: a Number for the float kinds, the integer range of the
+/// element for the integer kinds (ToInt32 modulo the width, the clamped byte). Float16 and the BigInt kinds have
+/// no native element and no `View::One`; their type is any value.
+pub fn view_element_type(kind: TypedArrayKind) -> Type {
+    match kind {
+        TypedArrayKind::Float32 | TypedArrayKind::Float64 => Type::NUMBER,
+        TypedArrayKind::Int8 => Type::int(IntRange { min: -128, max: 127 }),
+        TypedArrayKind::Int16 => Type::int(IntRange { min: -32_768, max: 32_767 }),
+        TypedArrayKind::Int32 => Type::INT32,
+        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Type::int(IntRange { min: 0, max: 255 }),
+        TypedArrayKind::Uint16 => Type::int(IntRange { min: 0, max: 65_535 }),
+        TypedArrayKind::Uint32 => Type::int(IntRange { min: 0, max: 4_294_967_295 }),
+        TypedArrayKind::Float16 | TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => Type::ANY,
+    }
+}
+
 /// What the arrays a value holds keep in their elements: the join of every element store's type and
-/// classes, a hole read as `undefined` included, and their length (`Length`).
+/// classes, a hole read as `undefined` included, their length (`Length`), and which kind of array they are (`View`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Elements {
     pub ty: Type,
     pub classes: Classes,
     pub length: Length,
+    pub view: View,
 }
 
 impl Elements {
     /// No array, or none with an element yet.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, length: Length::Never };
-    /// Arrays of anything, of any length.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, length: Length::Any };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, length: Length::Never, view: View::None };
+    /// Arrays of anything, of any length, of any kind.
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, length: Length::Any, view: View::Mixed };
 
     pub fn join(self, other: Self) -> Self {
-        Self { ty: self.ty.join(other.ty), classes: self.classes.join(other.classes), length: self.length.join(other.length) }
+        Self {
+            ty: self.ty.join(other.ty),
+            classes: self.classes.join(other.classes),
+            length: self.length.join(other.length),
+            view: self.view.join(other.view),
+        }
     }
 
-    /// The cell an element read takes (γ): the elements' type and classes. An index the range of which
-    /// the length does not cover may read a hole: the reader joins `undefined` itself.
+    /// The cell an element read takes (γ): the elements' type and classes, the type of a typed array's kind where its
+    /// view is one kind. An index the range of which the length does not cover may read a hole: the reader joins
+    /// `undefined` itself.
     pub fn element(self) -> Cell {
-        Cell { ty: self.ty, classes: self.classes, elements: Elements::ANY }
+        let ty = match self.view {
+            View::One(kind) => view_element_type(kind),
+            _ => self.ty,
+        };
+        Cell { ty, classes: self.classes, elements: Elements::ANY }
     }
 }
 

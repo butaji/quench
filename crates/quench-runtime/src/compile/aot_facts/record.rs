@@ -2,7 +2,7 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, this_fact};
+use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
@@ -11,7 +11,7 @@ use super::registers::RegisterCells;
 use super::shape::{self, Shape};
 use super::value::{Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type, View};
 
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
@@ -29,6 +29,10 @@ pub(super) struct Record {
     /// Per register, whether a read saw a value that is not a Number.
     unsafe_reads: Vec<bool>,
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    /// Per element access (a read or a store), by PC, the view of the array its base holds before it (`settled`).
+    element_views: std::collections::BTreeMap<u32, View>,
+    /// The capture slots the function reads from its parent's environment (depth 0), as (owner, slot).
+    captures: std::collections::BTreeSet<(u32, u16)>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
     links: Vec<(ElementClass, ElementClass)>,
@@ -59,6 +63,8 @@ impl Record {
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
+            element_views: std::collections::BTreeMap::new(),
+            captures: std::collections::BTreeSet::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
             links: Vec::new(),
@@ -96,6 +102,28 @@ impl Record {
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
             self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
+        }
+        // An element access (a read or a store) keeps the view of the array its base holds, so a tier reads a typed array's
+        // element by its kind (`FunctionFacts::element_view`).
+        let element_base = match decoded(instruction) {
+            Some(crate::staged::Operation::ElementWrite { base, .. }) => Some(base),
+            _ if instruction.op() == crate::bytecode::Op::GetIndex => Some(instruction.register_b()),
+            _ => None,
+        };
+        if let Some(base) = element_base {
+            let view = settled(ctx, state[usize::from(base)]).elements.view;
+            let joined = self.element_views.entry(pc as u32).or_insert(View::None);
+            *joined = joined.join(view);
+        }
+        // A capture of the parent's environment reads the parent's slot: its cell is the slot's settled cell, which the
+        // function depends on as a `Key::Slot` (`AotFacts::captured_slot_cell`).
+        if let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = decoded(instruction)
+            && let Some(owner) = ctx.scope.owner(ctx.id, depth)
+        {
+            self.reads.insert(Key::Slot { owner, slot });
+            if depth == 0 {
+                self.captures.insert((owner, slot));
+            }
         }
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
@@ -139,7 +167,7 @@ impl Record {
             // length (`Scope::is_array_mutator`).
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
-                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
@@ -244,6 +272,8 @@ impl Record {
             wild_elements: self.wild_elements,
             numbers,
             field_owners: self.field_owners,
+            element_views: self.element_views,
+            captures: self.captures,
             registers: self.registers,
             reads: self.reads,
             links: self.links,
