@@ -341,7 +341,7 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
             let layout = recipe.map(|recipe| symbols.class_layout(recipe))
                 .and_then(|symbol| match symbol { Symbol::ClassLayout(key) => Some(key), _ => None });
             // The method's selector: the index of its record in each class's method vector.
-            let selector = plan.and_then(|plan| plan.method).map(|atom| symbols.selector(atom));
+            let selector = plan.and_then(|plan| plan.method).and_then(|atom| symbols.selector(atom));
             let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));
             let inline = plan.is_some_and(quench_runtime::vm::tier_policy::arms_inline);
             lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed, selector, inline }
@@ -589,6 +589,40 @@ impl Vm {
         "bound"
     }
 
+
+    /// The `CallRecord` address of the closed-set arm of method `method` on class `class`, function `function`, bound to the
+    /// closure `closure` (resolved to `target`) at the class-header edge, for the class's method vector (`set_class_method`).
+    /// The record is the image's record of its one call site: a record holds its site's return words, so a record serves
+    /// one site, and only a method that one call site of the program calls on the class has one. `None` where the program
+    /// has no image, the method has another site or none, or the closure's call is not admitted.
+    pub(crate) fn class_method_record(&mut self, code: &ResidualProgram, program: quench_runtime::vm::ProgramId, class: u32, method: u32, function: u32,
+        closure: quench_runtime::Value, target: crate::dispatch_fast::ScriptCallTarget) -> Option<usize> {
+        let facts = self.programs.aot_facts(program)?;
+        let mut sites = Vec::new();
+        for caller in 0..code.function_count() {
+            for (pc, plan) in facts.call_plans(code, caller as u32) {
+                if plan.method != Some(method) { continue; }
+                for arm in plan.arms.iter().filter(|arm| arm.class == Some(class)) {
+                    sites.push((caller as u32, pc, plan.argc, arm.function));
+                }
+            }
+        }
+        if sites.len() != 1 { return None; }
+        let (caller, pc, argc, arm_function) = sites[0];
+        if arm_function != function { return None; }
+        let images = self.programs.ahead_images(self.active_program, code)?;
+        let live = images.linked.as_ref()?;
+        let key = live.calls.key((caller, pc, function))?;
+        if !live.calls.names(key, closure) {
+            let views = self.programs.views_in_lane(self.active_program)?;
+            let view = views.get(caller as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
+            let mut direct = crate::dispatch_fast::direct_callee_in_lane(self, view, caller, pc as usize, argc, target)?;
+            (direct.method, direct.body) = (None, None);
+            if !admits_proven(code, target.function, &direct) { return None; }
+            live.calls.bind(key, direct, self)?;
+        }
+        Some(live.calls.records().get(key)?.get().addr())
+    }
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.

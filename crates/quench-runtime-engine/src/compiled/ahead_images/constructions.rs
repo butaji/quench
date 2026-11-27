@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn an_initializer_of_parameters_and_immediates_is_kept_by_the_image() {
         let program = quench_runtime::Engine::specialize("function P(x, y) { this.x = x; this.y = y; this.z = 0; } new P(1, 2);", "plan.js").unwrap();
-        let mut symbols = SymbolTable::new(&program);
+        let mut symbols = SymbolTable::new(&program, Default::default());
         let plan = image_plan(&program, named(&program, "P"), &mut symbols).expect("a plan");
         assert!(matches!(plan.callee, PlanCallee::Image(_)));
         let fields: Vec<ScalarField> = plan.fields.iter().map(|(_, field)| *field).collect();
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn a_string_store_keeps_no_plan() {
         let program = quench_runtime::Engine::specialize("function S(x) { this.x = x; this.s = \"a\"; } new S(1);", "plan.js").unwrap();
-        let mut symbols = SymbolTable::new(&program);
+        let mut symbols = SymbolTable::new(&program, Default::default());
         assert!(image_plan(&program, named(&program, "S"), &mut symbols).is_none());
     }
 }

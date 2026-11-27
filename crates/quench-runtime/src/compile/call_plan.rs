@@ -274,3 +274,37 @@ mod tests {
         assert!(!plan.tail);
     }
 }
+
+/// The selectors of a program's method names: each method atom its call plans name (`CallPlan::method`) gets one dense
+/// number, program-wide, in first-seen order over the functions and their call sites. A method's selector indexes every
+/// class's method vector (`layouts::class_methods`), so the image and the interpreter number a name alike.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selectors {
+    ids: std::collections::BTreeMap<u32, u32>,
+}
+
+impl Selectors {
+    /// The selectors of `program`, from its AOT facts' call plans.
+    pub fn of(program: &ResidualProgram, facts: &AotFacts) -> Self {
+        let mut ids = std::collections::BTreeMap::new();
+        for function in 0..program.function_count() {
+            for (_, plan) in facts.call_plans(program, function as u32) {
+                if let Some(atom) = plan.method {
+                    let next = ids.len() as u32;
+                    ids.entry(atom).or_insert(next);
+                }
+            }
+        }
+        Self { ids }
+    }
+
+    /// The selector of method atom `atom`, where a call plan names it.
+    pub fn get(&self, atom: u32) -> Option<u32> {
+        self.ids.get(&atom).copied()
+    }
+
+    /// How many selectors the program has: the length of each class's method vector.
+    pub fn count(&self) -> usize {
+        self.ids.len()
+    }
+}

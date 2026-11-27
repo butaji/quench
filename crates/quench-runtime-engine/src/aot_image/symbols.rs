@@ -120,9 +120,9 @@ pub(crate) struct SymbolTable {
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
     calls: Interned<(u32, u32, u32)>,
-    /// The method atoms closed-set calls name, numbered densely program-wide: a method's selector indexes every class's
-    /// method vector (`layouts::class_methods`), so every arm of a call reads its record at the same index.
-    selectors: Interned<u32>,
+    /// The program's method selectors (`Selectors::of`, the same numbering the interpreter's store keeps): a method's
+    /// selector indexes every class's method vector (`layouts::class_methods`).
+    selectors: std::sync::Arc<quench_runtime::compile::call_plan::Selectors>,
 }
 
 /// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
@@ -138,15 +138,15 @@ pub(crate) struct Finished {
 impl SymbolTable {
     /// The table of `program`'s image: its atom texts by program atom number, the key `Symbol::Atom`
     /// and a recipe's field name carry (atom numbers are per VM, texts are not).
-    pub(crate) fn new(program: &ResidualProgram) -> Self {
+    pub(crate) fn new(program: &ResidualProgram, selectors: std::sync::Arc<quench_runtime::compile::call_plan::Selectors>) -> Self {
         let atoms = program.atoms.iter().map(Box::<str>::from).collect();
         Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(),
-            calls: Interned::default(), selectors: Interned::default() }
+            calls: Interned::default(), selectors }
     }
 
-    /// The selector of method atom `atom`: its dense number among the atoms closed-set calls name (`selectors`).
-    pub(crate) fn selector(&mut self, atom: u32) -> u32 {
-        self.selectors.key(atom)
+    /// The selector of method atom `atom` (`Selectors::get`), where a call plan names it.
+    pub(crate) fn selector(&self, atom: u32) -> Option<u32> {
+        self.selectors.get(atom)
     }
 
     /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
