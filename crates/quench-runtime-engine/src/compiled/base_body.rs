@@ -65,25 +65,6 @@ pub(super) unsafe extern "C" fn kernel_step_in_lane(_vm: u64, _residual: u64, co
     })
 }
 
-/// The `LoadConst` record at `call_pc` of the running body (`LaneHelper::ConstantStep`): the running program's constant as
-/// the VM materialized it (`ProgramStore::constant`), written to the record's register. `LANE_CALL_MISSED` for any other
-/// record, which nothing ran for. A body running as a native callee runs it in its own frame (`in_innermost_frame`).
-pub(super) unsafe extern "C" fn constant_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
-    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
-        // SAFETY: the context's program, records and registers are the running activation's (`in_innermost_frame`).
-        let (code, program, registers) = unsafe { (&*(*cx).code, (*cx).program, (*cx).registers) };
-        let body = code.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
-        let instruction = body.widened(body.code[call_pc as usize]);
-        let loaded = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) && instruction.result_flags() == 0;
-        // SAFETY: the VM is the running lane's.
-        match loaded.then(|| unsafe { &*(*cx).vm }.programs.constant(program, instruction.constant_index())).flatten() {
-            Some(value) => { registers.set(instruction.result_register(), value); super::LANE_CALL_COMPLETED }
-            None => super::LANE_CALL_MISSED,
-        }
-    })
-}
-
 /// The `throw` at `call_pc` of the running body (`LaneHelper::ThrowStep`): the error of the value in its register
 /// (`Vm::thrown_error`), raised where the record runs (`in_place_in_lane` stashes it for the general path, which the row
 /// then leaves to at the record); `LANE_CALL_MISSED` always, as for any raise.
@@ -101,26 +82,6 @@ pub(super) unsafe extern "C" fn throw_step(_vm: u64, _residual: u64, context: u6
         }
         super::LANE_CALL_MISSED
     })
-}
-
-/// The element define of an array literal at `call_pc` of the running body (`LaneHelper::DefineElementStep`): the value
-/// into the fresh dense array at its index (`Vm::define_literal_element`), which runs no guest code; where the array is
-/// no such array, the general step.
-pub(super) unsafe extern "C" fn define_element_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
-    use quench_runtime::vm::engine_types::LaneContext;
-    let cx = context as usize as *mut LaneContext;
-    let defined = crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
-        // SAFETY: the context's records are the running activation's (`in_innermost_frame`).
-        let body = unsafe { &*(*cx).code }.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
-        let Some(quench_runtime::staged::Operation::DefineElement { array, index, value }) = quench_runtime::staged::Operation::<(), ()>::decode_literal(body.widened(body.code[call_pc as usize]).without_return(), ())
-            else { return super::LANE_CALL_MISSED };
-        // SAFETY: the running lane's context.
-        let (r, vm) = unsafe { ((*cx).registers, &mut *(*cx).vm) };
-        if vm.define_literal_element(r.get(array), index as usize, r.get(value)) { super::LANE_CALL_COMPLETED } else { super::LANE_CALL_MISSED }
-    });
-    if defined == super::LANE_CALL_COMPLETED { return defined; }
-    // SAFETY: the caller's contract, which the general step shares.
-    unsafe { crate::dispatch_fast::body_general_step(vm, residual, context, call_pc) }
 }
 
 /// The staged call-out of the record at `call_pc` of the running body (`LaneHelper::CallOutStep`), made by the VM in place
@@ -144,40 +105,6 @@ pub(super) unsafe extern "C" fn allocation_step(vm: u64, residual: u64, context:
         super::LANE_CALL_MISSED => unsafe { crate::dispatch_fast::body_general_step(vm, residual, context, call_pc) },
         status => status,
     }
-}
-
-/// The closure the `MakeClosure` record at `call_pc` of the running body makes (`LaneHelper::ClosureStep`), over the binding
-/// environment its frame captures (`Vm::owner_closure`), written to the record's destination; `LANE_CALL_MISSED` for any
-/// other record, or where it raised (the error stashed for the general path). Making a closure runs no guest code, so the
-/// body goes on in place. A lane activation's closure is its window's environment (`window_environment`), which the
-/// general step's frames make for now.
-pub(super) unsafe extern "C" fn closure_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
-    use quench_runtime::vm::engine_types::LaneContext;
-    let cx = context as usize as *mut LaneContext;
-    // SAFETY: the running lane's context.
-    if unsafe { &*(*cx).vm }.lane_stack.has_frames() {
-        return unsafe { crate::dispatch_fast::vm_steps::body_general_step(vm, residual, context, call_pc) };
-    }
-    let status = crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
-        // SAFETY: the context's records are the running activation's (`in_innermost_frame`).
-        let body = unsafe { &*(*cx).code }.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
-        let instruction = body.widened(body.code[call_pc as usize]).without_return();
-        let Some((destination, quench_runtime::staged::Allocation::Closure { function })) = quench_runtime::staged::Allocation::decode(instruction, &[])
-            else { return super::LANE_CALL_MISSED };
-        // SAFETY: the running lane's context and a record of its body.
-        let (ip, frame) = unsafe { ((*cx).base.add(call_pc as usize), (*cx).frame()) };
-        let made = crate::dispatch_fast::in_place_in_lane(cx, ip, |vm, code| {
-            vm.owner_closure(code, quench_runtime::vm::var_owner::VarOwner::Frame(frame), function, call_pc as usize + 1)
-        });
-        let Some(closure) = made else { return super::LANE_CALL_MISSED };
-        // The owner's captured locals moved into its environment: the capture caches that named the old slots go.
-        crate::dispatch_fast::handler_edges::drop_environment_caches(cx);
-        // SAFETY: no guest code ran, so the lane's register file is the activation's still.
-        unsafe { (*cx).registers }.set(destination, closure);
-        super::LANE_CALL_COMPLETED
-    });
-    unsafe { crate::dispatch_fast::refresh_body_bases(context); crate::dispatch_fast::refresh_region_bases_of(context) };
-    status
 }
 
 /// The value step at `call_pc` of the running body (`LaneHelper::ValueStep`: a `Binary`, `Unary` or comparison jump over

@@ -6,7 +6,8 @@ use std::sync::OnceLock;
 use proc_macro2::{TokenStream, TokenTree};
 use syn::{Item, visit::Visit};
 
-use crate::catalog::{self, is_punct};
+use quench_opcodes::Row;
+
 use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
@@ -87,14 +88,14 @@ impl<'ast> Visit<'ast> for Arms<'_> {
     }
 }
 
-/// The opcodes the `opcodes!` table declares: one row each.
-pub fn opcode_variants(file: &syn::File) -> usize {
-    catalog::table(file).len()
+/// The opcodes the opcode table declares: one row each.
+pub fn opcode_variants(rows: &[Row]) -> usize {
+    rows.len()
 }
 
-/// The opcodes the catalog gives a staged operation: the rows that declare a `staged` decoder.
-pub fn staged_opcodes(file: &syn::File) -> usize {
-    catalog::table(file).iter().filter(|row| row.declares(catalog::STAGED)).count()
+/// The opcodes the table gives a staged operation: the rows that declare a `staged` decoder.
+pub fn staged_opcodes(rows: &[Row]) -> usize {
+    rows.iter().filter(|row| row.staged.is_some()).count()
 }
 
 /// Non-empty lines that are not `#` comments.
@@ -209,6 +210,11 @@ fn catalog_predicates() -> &'static BTreeSet<String> {
         });
         tables.flat_map(predicate_names).collect()
     })
+}
+
+/// Whether `tree` is the punctuation `mark`.
+fn is_punct(tree: Option<&TokenTree>, mark: char) -> bool {
+    matches!(tree, Some(TokenTree::Punct(punct)) if punct.as_char() == mark)
 }
 
 /// The identifiers an `op_predicates!` table names before a `=>`.
@@ -465,18 +471,11 @@ mod tests {
     }
 
     #[test]
-    fn opcode_table_entries_are_counted() {
-        let file = parse("opcodes!($; Nop => Effect::PURE; layout Scalar, @ R, Add => X::Y, @ R);");
-        assert_eq!(opcode_variants(&file), 2);
-    }
-
-    #[test]
-    fn staged_opcodes_are_the_rows_that_declare_a_decoder() {
-        let file = parse(
-            "opcodes!($; Nop => Effect::PURE; layout Scalar, @ R, Add => X::Y; layout Scalar; staged Flow; step Body, @ R,
-             Sub => X::Y; layout Scalar; staged Value, @ R);",
-        );
-        assert_eq!(staged_opcodes(&file), 2);
+    fn opcode_measures_count_the_table_rows() {
+        let rows = quench_opcodes::ROWS;
+        assert_eq!(opcode_variants(rows), rows.len());
+        let staged = staged_opcodes(rows);
+        assert!(staged > 0 && staged < rows.len());
     }
 
     #[test]

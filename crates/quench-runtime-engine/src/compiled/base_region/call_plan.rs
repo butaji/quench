@@ -98,16 +98,16 @@ impl CallForm {
         calls.then(|| Self::shaped(instruction))
     }
 
-    /// The form of a script call `instruction` (`of`).
+    /// The form of a script call `instruction` (`of`): the staged `Invocation` of it, a plain call through a callee register
+    /// and a window of arguments, or a construction of the same operands. A record that binds the caller's `this` or resolves
+    /// a dynamic scope (an eval) is the step helper's own step made in place, whatever its operands; every other form is stepped.
     fn shaped(instruction: WideInstruction) -> Self {
+        use quench_runtime::staged::{Arguments, Callee, DecodeContext, Invocation, Receiver};
         let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
-        if crate::compiled::meaning_compiled::is_call(instruction) && !in_place {
-            Self::Plain
-        } else if crate::compiled::meaning_compiled::is_construct(instruction) && !in_place && !crate::compiled::meaning_compiled::is_super_construct(instruction)
-            && !ImmediateLayout::construct_array_arguments(instruction.imm()) {
-            Self::Construct
-        } else {
-            Self::Stepped
+        match Invocation::of(instruction, DecodeContext::EMPTY) {
+            Some(Invocation { callee: Callee::Register(_), receiver: Receiver::Register(_), arguments: Arguments::Window { .. }, forwards: false, .. }) if !in_place => Self::Plain,
+            Some(Invocation { receiver: Receiver::Allocated, arguments: Arguments::Window { .. }, .. }) if !in_place => Self::Construct,
+            _ => Self::Stepped,
         }
     }
 

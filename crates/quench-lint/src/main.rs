@@ -7,13 +7,13 @@
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
 //! code tests a function's address for identity (`fn_identity`), when a fast path carries its
 //! slow path inline (`fast_paths`), when a fact type is declared outside its one home
-//! (`fact_types`), or when statements are packed
+//! (`fact_types`), when the opcode table is spelled outside its one home (`opcode_table`), or when
+//! statements are packed
 //! onto long lines (`line_packing`, reported by `--packing`, never gating).
 //!
 //! usage: quench-lint [--update | --lower] [--packing] [ROOT...]   |   quench-lint --census [--update-census]
 //! (default roots: crates quench-bench/src tools; `--lower` reads the whole tree only)
 
-mod catalog;
 mod census;
 mod concepts;
 mod census_metrics;
@@ -29,6 +29,7 @@ mod hot_path;
 mod line_packing;
 mod magic;
 mod native_forms;
+mod opcode_table;
 mod shape;
 mod test_paths;
 
@@ -105,6 +106,7 @@ fn scan(
         let syntax =
             syn::parse_file(&source).map_err(|error| format!("{file}:{}: {error}", error.span().start().line))?;
         repeated.scan(&file, &syntax);
+        opcode_table::scan(&file, &source, &mut oversized);
         line_packing::scan(&file, &source, &syntax, packed);
         shape::scan(&file, &source, &syntax, &mut oversized, &mut trees);
         fact_types::record(&file, &syntax, facts);
@@ -136,9 +138,12 @@ fn settle(oversized: &shape::Measures, request: &Request) -> usize {
     if request.lower {
         listing = lower(listing, oversized);
     }
-    // A guest-name test has no allowance: `oversized.txt` cannot grandfather one.
-    let recorded: shape::Measures =
-        shape::parse(&listing).into_iter().filter(|(subject, _)| !subject.starts_with(guest_names::MEASURE)).collect();
+    // A guest-name test and a stray opcode table have no allowance: `oversized.txt` cannot grandfather one.
+    let unallowed = [guest_names::MEASURE, opcode_table::MEASURE];
+    let recorded: shape::Measures = shape::parse(&listing)
+        .into_iter()
+        .filter(|(subject, _)| !unallowed.iter().any(|measure| subject.starts_with(measure)))
+        .collect();
     let mut shrunk: shape::Measures = recorded
         .iter()
         .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))

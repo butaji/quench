@@ -210,6 +210,8 @@ pub fn render(measures: &Measures) -> String {
 fn remedy(subject: &str) -> &'static str {
     if subject.starts_with("guest-name ") {
         "no special case for one program: derive the behavior from semantics, never from a guest name"
+    } else if subject.starts_with(crate::opcode_table::MEASURE) {
+        "one opcode table: take the rows from `quench-opcodes` (`with_opcode_table!` or `quench_opcodes::ROWS`), never spell or parse a second table"
     } else if subject.starts_with("dod-bool-array ") {
         "flags belong in a bitset: one bit per flag, scanned a word at a time"
     } else if subject.starts_with("dod-dense-hash ") {

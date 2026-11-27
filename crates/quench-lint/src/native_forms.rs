@@ -4,7 +4,7 @@
 //!   that no lane lowering (`vm/compiled/lane_region*`) names, so every instruction of it is
 //!   handed back to the interpreter at compile time. Wasm families belong to the Wasm lane.
 //!   The families the catalog gives a generic value step (`step LaneResult`, read from the same
-//!   catalog rows as the census, `catalog::table`) need no lowering of their own. A lowering
+//!   table rows as the census, `quench_opcodes::ROWS`) need no lowering of their own. A lowering
 //!   that dispatches on a row's denotation (`JsDenotation::X`, the `js` column) names every
 //!   family that row gives it, and a row of a lane decoder (`staged Flow|Value|Local`) or one
 //!   `staged/allocation.rs` decodes is lowered through its staged operation.
@@ -28,12 +28,15 @@ use std::{collections::{BTreeMap, BTreeSet}, fs, path::PathBuf};
 use proc_macro2::{TokenStream, TokenTree};
 use syn::visit::Visit;
 
-use crate::catalog;
+use quench_opcodes::{ROWS, Row};
 use crate::shape::{Measures, is_test};
 
 const CATALOG: &str = "bytecode/op_catalog.rs";
-/// The file of the `opcodes!` table.
-const TABLE: &str = "quench-runtime/src/bytecode.rs";
+/// The staged decoders (`staged` column) whose rows the lane steps by their definitions: the
+/// register, window and capture rows (`lane_region/register_rows.rs` and kin).
+const LANE_DECODERS: [&str; 3] = ["Flow", "Value", "Local"];
+/// The `step` value of a lane step whose result the lane writes back (a call-out row).
+const RESULT_STEP: &str = "LaneResult";
 const LANE_LOWERING: &str = "vm/compiled/lane_region";
 /// Where the JIT builds native code by hand: the directory of its files, and the file beside it.
 const JIT_DIRECTORY: &str = "vm/compiled/";
@@ -49,16 +52,17 @@ const INSTRUCTION_BUILDER: &str = "ins";
 const EXEMPT: &[&str] = &["Other", "Nop"];
 const EXEMPT_PREFIX: &str = "Wasm";
 
-/// Whether the measures read `file`: the catalog's families and table, the lane lowerings and
-/// the refusal declarations.
+/// Whether the measures read `file`: the catalog's families, the lane lowerings and the refusal
+/// declarations. The opcode table is read as data (`quench_opcodes::ROWS`).
 fn relevant(file: &str) -> bool {
-    [CATALOG, TABLE, REFUSALS, ALLOCATION].iter().any(|name| file.ends_with(*name)) || file.contains(LANE_LOWERING)
+    [CATALOG, REFUSALS, ALLOCATION].iter().any(|name| file.ends_with(*name)) || file.contains(LANE_LOWERING)
 }
 
 /// Records the native-form measures of the files: `native_form <Class>`, `native_refusals`
 /// and `native_ir <file>`.
 pub fn scan(files: &[PathBuf], measures: &mut Measures) {
     let mut facts = Facts::default();
+    facts.read_table(ROWS);
     for path in files {
         let file = path.display().to_string();
         hand_built(&file, path, measures);
@@ -92,19 +96,23 @@ struct Facts {
 }
 
 impl Facts {
-    /// Sorts what a parsed file contributes: the catalog's `Class` families, the classes and
-    /// denotations its table gives, or the names a lane lowering uses.
+    /// Sorts what the opcode table gives: the families with a generic step, and the class,
+    /// denotation and lane-stepped decoder of each row.
+    fn read_table(&mut self, rows: &[Row]) {
+        self.named.extend(generic_steps(rows));
+        for row in rows {
+            let Some(class) = row.class else { continue };
+            self.classes.insert(row.name.to_owned(), class.to_owned());
+            if let Some(denotation) = row.js { self.denotations.entry(denotation.to_owned()).or_default().push(class.to_owned()); }
+            if row.staged.is_some_and(|decoder| LANE_DECODERS.contains(&decoder)) { self.decoded.insert(class.to_owned()); }
+        }
+    }
+
+    /// Sorts what a parsed file contributes: the catalog's `Class` families, or the names a lane
+    /// lowering uses.
     fn read(&mut self, file: &str, syntax: &syn::File) {
         if file.ends_with(CATALOG) {
             self.families.extend(class_variants(syntax));
-        } else if file.ends_with(TABLE) {
-            self.named.extend(generic_steps(syntax));
-            for row in catalog::table(syntax) {
-                let Some(class) = row.value(catalog::CLASS) else { continue };
-                self.classes.insert(row.name.clone(), class.to_owned());
-                if let Some(denotation) = row.value(catalog::JS) { self.denotations.entry(denotation.to_owned()).or_default().push(class.to_owned()); }
-                if row.value(catalog::STAGED).is_some_and(|decoder| catalog::LANE_DECODERS.contains(&decoder)) { self.decoded.insert(class.to_owned()); }
-            }
         } else if file.ends_with(ALLOCATION) {
             self.ops.extend(path_names(syntax).into_iter().filter(|(owner, _)| owner == "Op").map(|(_, name)| name));
         } else {
@@ -181,10 +189,10 @@ fn refusals(source: &str) -> usize {
 
 /// The families the catalog gives the generic native form of a value step (`step LaneResult`,
 /// `Vm::call_out`), each lowered by one helper of the interpreter's definition.
-fn generic_steps(syntax: &syn::File) -> Vec<String> {
-    catalog::table(syntax).iter()
-        .filter(|row| row.value(catalog::STEP) == Some(catalog::RESULT_STEP))
-        .filter_map(|row| row.value(catalog::CLASS).map(str::to_owned))
+fn generic_steps(rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .filter(|row| row.step == Some(RESULT_STEP))
+        .filter_map(|row| row.class.map(str::to_owned))
         .collect()
 }
 
