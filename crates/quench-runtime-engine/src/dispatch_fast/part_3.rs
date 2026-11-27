@@ -1130,7 +1130,6 @@ pub(super) fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
-    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, || !matches!(exit, crate::compiled::LaneExit::Returned { .. }) || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }

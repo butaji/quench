@@ -342,10 +342,6 @@ pub struct LaneView {
     /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
     /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
     pub name_records: Box<[u32]>,
-    /// The operator records whose proven form reads a speculative register, each with that proven handler and its
-    /// checked form: what `retire_int_speculation` restores once an update overflowed one. Empty: the solve's int32
-    /// cells type no speculative register, so no record takes a speculative form.
-    pub int_speculating: Box<[(u32, *const (), *const ())]>,
     /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
     pub proven_counters: Box<[(u32, u16)]>,
 }
@@ -4699,30 +4695,8 @@ impl LaneView {
         self.clear_hints(&self.name_records);
     }
 
-    /// Gives every operator record that reads a speculative int32 register its checked form
-    /// (`int_kinds`): an update overflowed such a register, so it may hold a double from now on.
-    /// A record whose handler changed since (`operator_row` widened it) already runs a checked one;
-    /// a loop header's handler is held by its site.
-    pub fn retire_int_speculation(&self) {
-        for &(pc, proven, checked) in &self.int_speculating {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: the lane runs on the view's thread, and no reference to a handler field is
-            // live while the VM's increment runs.
-            unsafe {
-                if (*record).handler == proven {
-                    (*record).handler = checked;
-                }
-            }
-            for site in &self.loops {
-                if site.header == pc && site.header_handler.get() == proven {
-                    site.header_handler.set(checked);
-                }
-            }
-        }
-    }
-
     /// Gives every record whose handler `map` names another that one, the loop headers' held
-    /// handlers too: a retired speculation's rows take their checked forms.
+    /// handlers too: a retired `this` trust's rows take their checked forms.
     pub fn rewrite_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
         for cell in self.records.cells.iter() {
             let record = std::cell::UnsafeCell::raw_get(cell);

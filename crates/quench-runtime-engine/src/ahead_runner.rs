@@ -79,7 +79,6 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         osr_rejections: None,
         field_records: Box::new([]),
         name_records: Box::new([]),
-        int_speculating: Box::new([]),
     }
 }
 
