@@ -305,12 +305,14 @@ pub trait TargetIsa: fmt::Display + Send + Sync {
     /// Get the ISA-dependent maximum vector register size, in bytes.
     fn dynamic_vector_bytes(&self, dynamic_ty: ir::Type) -> u32;
 
-    /// Compile the given function.
+    /// Compile the given function. With `release_ir`, the function's instructions are dropped once
+    /// they are lowered, before register allocation: only its parameters (relocation names) remain.
     fn compile_function(
         &self,
-        func: &Function,
+        func: &mut Function,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
+        release_ir: bool,
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil>;

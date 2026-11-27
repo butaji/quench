@@ -13,7 +13,8 @@ use regalloc2::{Algorithm, RegallocOptions};
 /// Compile the given function down to VCode with allocated registers, ready
 /// for binary emission.
 pub fn compile<B: LowerBackend + TargetIsa>(
-    f: &Function,
+    f: &mut Function,
+    release_ir: bool,
     domtree: &DominatorTree,
     regalloc_ctx: &mut regalloc2::Ctx,
     b: &B,
@@ -40,6 +41,12 @@ pub fn compile<B: LowerBackend + TargetIsa>(
         let _tt = timing::vcode_lower();
         lower.lower(b, ctrl_plane)?
     };
+    // The lowered code holds everything emission needs: the instructions are dropped before
+    // register allocation, the compile's largest phase, so the two never hold memory together.
+    if release_ir {
+        f.dfg = crate::ir::DataFlowGraph::new();
+        f.layout = crate::ir::Layout::new();
+    }
 
     log::debug!(
         "Number of lowered vcode instructions: {}",

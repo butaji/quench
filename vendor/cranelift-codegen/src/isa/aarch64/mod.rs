@@ -52,7 +52,8 @@ impl AArch64Backend {
     /// finalizes branches. The result is ready for binary emission.
     fn compile_vcode(
         &self,
-        func: &Function,
+        func: &mut Function,
+        release_ir: bool,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
         ctrl_plane: &mut ControlPlane,
@@ -62,6 +63,7 @@ impl AArch64Backend {
         let abi = abi::AArch64Callee::new(func, self, &self.isa_flags, &sigs)?;
         compile::compile::<AArch64Backend>(
             func,
+            release_ir,
             domtree,
             regalloc_ctx,
             self,
@@ -76,13 +78,14 @@ impl AArch64Backend {
 impl TargetIsa for AArch64Backend {
     fn compile_function(
         &self,
-        func: &Function,
+        func: &mut Function,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
+        release_ir: bool,
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
+        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
 
         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;
         let value_labels_ranges = emit_result.value_labels_ranges;

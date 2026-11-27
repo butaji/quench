@@ -51,7 +51,8 @@ impl S390xBackend {
     /// finalizes branches. The result is ready for binary emission.
     fn compile_vcode(
         &self,
-        func: &Function,
+        func: &mut Function,
+        release_ir: bool,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
         ctrl_plane: &mut ControlPlane,
@@ -61,6 +62,7 @@ impl S390xBackend {
         let abi = abi::S390xCallee::new(func, self, &self.isa_flags, &sigs)?;
         compile::compile::<S390xBackend>(
             func,
+            release_ir,
             domtree,
             regalloc_ctx,
             self,
@@ -75,14 +77,15 @@ impl S390xBackend {
 impl TargetIsa for S390xBackend {
     fn compile_function(
         &self,
-        func: &Function,
+        func: &mut Function,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
+        release_ir: bool,
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
         let flags = self.flags();
-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
+        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
 
         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, flags, ctrl_plane)?;
         let value_labels_ranges = emit_result.value_labels_ranges;

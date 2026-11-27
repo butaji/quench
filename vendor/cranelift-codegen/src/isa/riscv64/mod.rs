@@ -66,7 +66,8 @@ impl Riscv64Backend {
     /// finalizes branches. The result is ready for binary emission.
     fn compile_vcode(
         &self,
-        func: &Function,
+        func: &mut Function,
+        release_ir: bool,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
         ctrl_plane: &mut ControlPlane,
@@ -76,6 +77,7 @@ impl Riscv64Backend {
         let abi = abi::Riscv64Callee::new(func, self, &self.isa_flags, &sigs)?;
         compile::compile::<Riscv64Backend>(
             func,
+            release_ir,
             domtree,
             regalloc_ctx,
             self,
@@ -90,13 +92,14 @@ impl Riscv64Backend {
 impl TargetIsa for Riscv64Backend {
     fn compile_function(
         &self,
-        func: &Function,
+        func: &mut Function,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
+        release_ir: bool,
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
+        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
 
         let want_disasm = want_disasm || log::log_enabled!(log::Level::Debug);
         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;
