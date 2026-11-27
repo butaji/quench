@@ -116,12 +116,11 @@ impl Lowering<'_, '_> {
         self.hoist_bounds(state, header);
         // Before the views: a scalar native's allocation reloads the arena the views' bases come from.
         self.hoist_scalar_calls(state, header);
-        self.hoist_arrays(state, header, false);
+        self.hoist_arrays(state, header);
         self.hoist_strings(state, header);
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);
         self.hoist_reads(state, header);
-        self.hoist_arrays(state, header, true);
         self.version_loops(state, header);
         self.start_inductions(state, header);
         self.hoist_constructions(header);
@@ -131,7 +130,7 @@ impl Lowering<'_, '_> {
     /// of the array they index, on its entering edge: leaves at the header where it passes the
     /// array's length (a bound that leaves no iteration to test passes).
     fn version_loops(&mut self, state: &mut State, header: usize) {
-        let mut compared: Vec<(ArraySource, Reach)> = Vec::new();
+        let mut compared: Vec<(Register, Reach)> = Vec::new();
         let mut exit = None;
         let versions: Vec<Version> = self.ranges.versioned().iter().copied().filter(|version| version.header == header).collect();
         for version in versions {

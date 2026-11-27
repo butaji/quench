@@ -1569,10 +1569,6 @@ pub struct InlinedCall {
     pub target: CallTarget,
     /// The register holding the callee, guarded at the call.
     pub callee_register: Register,
-    /// An OSR region's entry word holding the callee, which the region resolved at compile
-    /// time and dropped the caller's read for; the marker reads it there instead of the
-    /// register, which the loop may reuse.
-    pub callee_entry_word: Option<u32>,
     /// The register holding the call's receiver, the callee's `this`.
     pub receiver: Register,
     /// The call's first argument register.
