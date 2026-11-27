@@ -3085,12 +3085,18 @@ impl Lowering<'_, '_> {
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
-        if let Some(held) = self.loop_held_atom(atom) { return held; }
+        self.emit_store_atom_admission(atom).0
+    }
+
+    /// `emit_store_atom_admitted`, with its two parts where it tests both at the store
+    /// (`store_atom_admission`).
+    fn emit_store_atom_admission(&mut self, atom: Atom) -> (ir::Value, Option<(ir::Value, ir::Value)>) {
+        if let Some(held) = self.loop_held_atom(atom) { return (held, None); }
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
         let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
-        if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
+        if let Some(held) = self.store_held_unnamed(atom, specialized) { return (held, None); }
         let free = self.atom_unnamed(atom);
-        self.raw_binary(Binary::And, specialized, free)
+        (self.raw_binary(Binary::And, specialized, free), Some((specialized, free)))
     }
 
     /// Conform the entry's state to the facts at `pc`. A lane body's failed input proof
@@ -4986,10 +4992,13 @@ impl Lowering<'_, '_> {
         (atom, site, ty): (Atom, u16, Type), exit: ir::Block) -> Option<()> {
         let (arms, join) = self.site_store_plan(site, ty);
         let plan = StorePlan::of(&arms, join);
-        let admitted = (!arms.is_empty() || join == StoreJoin::Bound).then(|| self.store_atom_admitted(state, atom, exit));
+        let (admitted, split) = if !arms.is_empty() || join == StoreJoin::Bound {
+            let (admitted, split) = self.store_atom_admission(state, atom, exit);
+            (Some(admitted), split.filter(|_| !arms.is_empty()))
+        } else { (None, None) };
         let leaves = join == StoreJoin::Host && self.store_leaves();
         state.proofs.write_field(atom);
-        self.store_step(state, operation, (plan, HeldRead { admitted, leaves, ..HeldRead::default() }), exit)?;
+        self.store_step(state, operation, (plan, HeldRead { admitted, split, leaves, ..HeldRead::default() }), exit)?;
         if leaves { return Some(()); }
         self.after_store(state, join);
         Some(())
@@ -5009,7 +5018,8 @@ impl Lowering<'_, '_> {
     /// `site`, which the row runs (`StorePlan::of`): one arm for each of the site's own shapes
     /// whose layout the plan admits and whose slot the value's type fits or widens by a test
     /// (`StoreArm::of`); the VM's own-field hit where no arm takes the store, through the slot
-    /// the entry bound for the site where there is one; and in a body that completes through
+    /// the entry bound for the site where there is one, with no arm whose test the value's type
+    /// never passes; and in a body that completes through
     /// the VM's polymorphic entries (`status_and_pc`) a site of several shapes ends in its
     /// adding entry.
     fn site_store_plan(&self, site: u16, ty: Type) -> (Vec<StoreArm>, StoreJoin) {
@@ -5017,7 +5027,11 @@ impl Lowering<'_, '_> {
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         let arms = own.iter().filter(|load| load.valid())
             .filter_map(|load| StoreArm::of_rep((load.shape, load.slot), load.ty, ty,
-                (load.raw_double, quench_runtime::staged::Form::of(load.storage, load.storage_len)))).collect();
+                (load.raw_double, quench_runtime::staged::Form::of(load.storage, load.storage_len))))
+            // An arm whose test no value of `ty` passes would take its shape's store and miss: a
+            // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
+            // class the value may be.
+            .filter(|arm: &StoreArm| arm.holds.is_none_or(|holds| holds.is_subtype(ty))).collect();
         let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
             else if bound { StoreJoin::Bound } else { StoreJoin::Host };
         (arms, join)
@@ -5082,13 +5096,19 @@ impl Lowering<'_, '_> {
     /// cache that names the atom only after a call; one that does not tests it once, at
     /// entry (`Lowering::entry_facts`).
     fn store_atom_admitted(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> ir::Value {
-        if self.native_calls {
-            if let Some(held) = self.called_held_atom(state, atom, exit) { return held; }
-            if let Some(held) = self.online_store_held(state, atom, exit) { return held; }
-            self.emit_store_atom_admitted(atom)
-        } else {
-            self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])
+        self.store_atom_admission(state, atom, exit).0
+    }
+
+    /// `store_atom_admitted`, and where the run tests both at the store, its two parts: that its
+    /// stores specialize, and that no method cache names the atom (`HeldRead::split`), which an
+    /// in-place arm may do without for a quiet store (`store::admit_named`).
+    fn store_atom_admission(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> (ir::Value, Option<(ir::Value, ir::Value)>) {
+        if !self.native_calls {
+            return (self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom]), None);
         }
+        if let Some(held) = self.called_held_atom(state, atom, exit) { return (held, None); }
+        if let Some(held) = self.online_store_held(state, atom, exit) { return (held, None); }
+        self.emit_store_atom_admission(atom)
     }
 
     /// `+source` or `-source` of a Number: the shared Number unary denotation, with the
