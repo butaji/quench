@@ -83,6 +83,7 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
     let operands: Vec<Cell> = match number {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
         | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => vec![fact(left), fact(right)],
+        NumberOperation::Power { base, exponent, .. } => vec![fact(base), fact(exponent)],
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => vec![fact(source)],
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![register(source)],
         _ => Vec::new(),
@@ -95,6 +96,7 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
         NumberOperation::Extreme { left, right, maximum, .. } if both(left, right) => Cell::of(extreme(maximum, ty(left), ty(right))),
         NumberOperation::Bitwise { left, right, operation, .. } if both(left, right) => Cell::of(bitwise(operation, ty(left), ty(right))),
         NumberOperation::Imul { left, right, .. } if both(left, right) => Cell::of(Type::INT32),
+        NumberOperation::Power { base, exponent, .. } if both(base, exponent) => Cell::of(Type::NUMBER),
         NumberOperation::Unary { source, operation, .. } if one(source) => Cell::of(unary(operation, ty(source))),
         NumberOperation::Math { source, operation, .. } if one(source) => Cell::of(math(operation, ty(source))),
         NumberOperation::BitwiseNot { source, .. } if one(source) => Cell::of(Type::INT32),
