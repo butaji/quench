@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# The x86_64 Linux linker driver (`.cargo/config.toml`): `cc`, with a trained symbol order whose
+# names carry no crate hashes (TOD-171).
+#
+# The order (`-Wl,--symbol-ordering-file=FILE`, from crates/link_layout.rs) names functions as
+# tools/link-order.sh trained them, every crate hash `Cs<hash>_` written `Cs_`: a hash moves
+# whenever a crate's dependencies or features change, and lld silently ignores a name it does not
+# find. This links once without the order, reads the output's real names, writes the order in
+# them, and links again with it. Any other link runs `cc` as it is.
+set -euo pipefail
+args=() order="" output="" previous=""
+for argument in "$@"; do
+    case $argument in
+        -Wl,--symbol-ordering-file=*) order=${argument#-Wl,--symbol-ordering-file=} ;;
+        *) args+=("$argument") ;;
+    esac
+    [ "$previous" = -o ] && output=$argument
+    previous=$argument
+done
+if [ -z "$order" ] || [ -z "$output" ]; then
+    exec cc "$@"
+fi
+cc "${args[@]}"
+resolved="$output.order"
+nm --defined-only "$output" | awk -v order="$order" '
+    function stable(name) { gsub(/Cs[0-9A-Za-z]+_/, "Cs_", name); sub(/\.llvm\.[0-9]+$/, "", name); return name }
+    FILENAME == order { if (!($1 in rank)) rank[$1] = FNR; next }
+    { key = stable($NF); if (key in rank) print rank[key], $NF }
+' "$order" - | sort -n -k1,1 -s | awk '{ print $2 }' >"$resolved"
+exec cc "${args[@]}" "-Wl,--symbol-ordering-file=$resolved" -Wl,--no-warn-symbol-ordering
