@@ -664,6 +664,8 @@ struct ProgramEntry {
     js_entry_facts: JsEntryFactsTable,
     /// The program's AOT facts, solved once on the first lowering that reads them (`aot_facts`).
     aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
+    /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
+    call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -911,6 +913,16 @@ impl ProgramStore {
     pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
         let entry = self.entry(id)?;
         Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
+    }
+
+    /// The call graph of program `id` and its loop-or-cycle facts (`compile::call_graph::CallGraph`), solved on its first
+    /// call from the program's AOT facts and shared by every lane body that reads them after it.
+    pub fn call_graph(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::call_graph::CallGraph>> {
+        let entry = self.entry(id)?;
+        Some(std::sync::Arc::clone(entry.call_graph.get_or_init(|| {
+            let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
+            std::sync::Arc::new(crate::compile::call_graph::CallGraph::of(&entry.residual, &facts))
+        })))
     }
 
     pub fn len(&self) -> usize {
@@ -1328,6 +1340,7 @@ impl ProgramStore {
             raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             aot_facts: std::cell::OnceCell::new(),
+            call_graph: std::cell::OnceCell::new(),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),
