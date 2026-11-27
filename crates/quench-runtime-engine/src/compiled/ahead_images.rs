@@ -148,7 +148,10 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     // body binds and enters the callee's body: richards' IdleTask.run (`this.scheduler.release(packet)`)
     // cost 5x the whole run as a lane.
     // A member of a global name (`Math.sqrt`) is left out: the helper runs a native in place.
-    if calls_through_helper(&code) && calls_script(&unit, &proven) { return Err("calls through the VM's helper"); }
+    if calls_through_helper(&code) && calls_script(&unit, &proven) {
+        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, &unit, &proven); }
+        return Err("calls through the VM's helper");
+    }
     // A lane body that polls and makes a call the closed world does not prove enters its callee's body
     // through the VM's call helper, where the base body binds its callee directly: deltablue's drivers
     // cost 3.4x the base body as lanes (4.46G -> 15.3G Ir). A proven call reads its callee from the
@@ -210,6 +213,22 @@ fn calls_script(unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::Pr
     });
     unit.instructions.iter().enumerate().any(|(pc, instruction)| (means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall))
         && !proven.contains_key(&pc) && !global_member(pc, instruction.register_b()))
+}
+
+/// The `QUENCH_TRACE=aot-lanes` list of `unit`'s calls `proven` does not name, each with the name its callee was read by.
+#[cfg(feature = "jit")]
+fn trace_unproven_calls(program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, proven: &BTreeMap<usize, lane_region::ProvenCall>) {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    for (pc, instruction) in unit.instructions.iter().enumerate() {
+        if !(means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall)) || proven.contains_key(&pc) { continue; }
+        let callee = instruction.register_b();
+        let read = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == callee));
+        let name = read.and_then(|at| unit.instructions[at].field_lookup()).and_then(|lookup| match lookup {
+            quench_runtime::bytecode::FieldLookup::Atom { atom, .. } => program.atoms.get(atom as usize).map(|name| name.to_string()),
+            _ => None,
+        });
+        eprintln!("aot-lanes: function {function} unproven call at unit pc {pc} ({:?}) callee {}", unit.origins.get(pc), name.as_deref().unwrap_or("?"));
+    }
 }
 
 /// Whether `code` calls the VM's call helper (`LaneHelper::Call`), the lowering's own record of a
