@@ -174,6 +174,12 @@ impl Census {
         }
     }
 
+    /// Whether a named property is written through a computed key the analysis cannot name (`member_wild`): such a store may
+    /// write any object's property, instances' included.
+    pub(super) fn member_wild(&self) -> bool {
+        self.member_wild
+    }
+
     /// Whether a write the analysis cannot follow may reach the value a read off `origin` takes (`wild`).
     pub(super) fn wild_read(&self, origin: Origin) -> bool {
         match origin {
