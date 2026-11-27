@@ -5,6 +5,7 @@
 use super::{Concrete, Stage, Table};
 use super::region::Region;
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
+use super::object_encoding::CLASS_HEADER_BYTES;
 use crate::typed_ir::Representation;
 use crate::value::{NarrowLayout, ValueLayout};
 
@@ -318,12 +319,26 @@ pub fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) 
     stage.add(records, offset)
 }
 
-/// The address of the object record the direct object reference `bits` names (its low half), in the
-/// record table at `records`. The only staged resolver: R4-B2b makes it read the cell header.
+/// The address of the object record the direct object reference `bits` names, in the record table at
+/// `records`. The only staged resolver (`object_record_id_of` is its hop's first half).
 #[inline(always)]
 pub fn object_record_of<S: Stage>(stage: &mut S, records: S::Word, bits: S::Word) -> S::Word {
-    let id = super::value::direct_object_id(stage, bits);
+    let id = object_record_id_of(stage, bits);
     object_record_at(stage, records, id)
+}
+
+/// The record id the direct object reference `bits` names: its granule `g` is a class cell's (at
+/// `class_base + g * CLASS_HEADER_BYTES`), whose header's high half is the id of the record the cell
+/// stands for (`heap::class_space::departed_header`). The hop is `hdr = load_u64 [class_base + g*8];
+/// id = hdr >> 32`. Every ordinary object claims a stub, so its header names its record.
+#[inline(always)]
+pub fn object_record_id_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+    let granule = super::value::direct_object_id(stage, bits);
+    let base = stage.table(Table::ClassSpace);
+    let offset = stage.mul_imm(granule, CLASS_HEADER_BYTES as u64);
+    let cell = stage.add(base, offset);
+    let header = stage.load_u64(Region::ShapeWord.mutable(), cell, 0);
+    stage.shr_imm(header, u64::from(u32::BITS))
 }
 
 /// The id and address of the object record the direct object reference `bits` names, in the
@@ -337,7 +352,7 @@ pub(crate) fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, recor
     stage.guard(object, miss)?;
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
-    let id = super::value::direct_object_id(stage, bits);
+    let id = object_record_id_of(stage, bits);
     Some((id, object_record_at(stage, records, id)))
 }
 

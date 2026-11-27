@@ -124,6 +124,13 @@ pub(super) const fn locate(g: u32) -> (u32, u32) {
     (region, (g & REGION_MASK) >> region)
 }
 
+impl super::Heap {
+    /// The class space's base: granule `g`'s cell is at this plus `g * CLASS_HEADER_BYTES`. Zero until the
+    /// space is reserved. Read per heap (`staged::Table::ClassSpace`), never a fixed address.
+    #[inline(always)]
+    pub fn class_space_base(&self) -> usize { self.class_space.base }
+}
+
 /// The fields a cell at granule `granule` holds: its region's capacity, `2^k - 1` for region `k`. A
 /// cell's capacity class is its address's region, so no class word records it.
 pub(crate) const fn region_capacity(granule: u32) -> u32 {

@@ -1036,6 +1036,13 @@ impl ProtoLink {
         (self.0 & !(span - 1) == PROTO_OBJECT_RECORD_BASE).then_some(self.0 & (span - 1))
     }
 
+    /// The stub granule of the ordinary object this link names (R4-B2b, option B: an object window link
+    /// encodes its granule, so the link and the object's Value carry the same bits). A reader that needs
+    /// the record hops from it: `hdr = class_base[g]; id = hdr >> 32`, or `Heap::object_record` of the
+    /// direct Value the granule makes.
+    #[inline(always)]
+    pub fn object_granule(self) -> Option<u32> { self.object_record_id() }
+
     /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).
     #[inline(always)]
     pub(crate) fn prototype(self) -> Value {
@@ -1097,7 +1104,7 @@ pub enum PlainPropertyStorage {
 /// Layout facts for the generated read-only ordinary-object field path. Keep these derived
 /// from the authoritative storage declarations; native code checks the object and extras
 /// representation bits before using any offset below.
-pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = std::mem::size_of::<Object>();
+pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = crate::staged::layout_offsets::OBJECT_RECORD_BYTES;
 pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object>();
 /// Where a record keeps its layout id; the header words are in the layout's table entry
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at

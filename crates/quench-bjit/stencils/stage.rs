@@ -6,7 +6,7 @@
 
 use crate::layout::{
     JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
-    JS_STEP_STORES_SPECIALIZED,
+    JS_STEP_STORES_SPECIALIZED, JS_STEP_CLASS_BASE,
     LAYOUT_TABLE_BASE, PROPERTY_BUFFER_BASE,
 };
 use crate::staged::barrier::{held_unlogged, store_unlogged, MarkList};
@@ -306,6 +306,8 @@ impl Stage for StencilStage {
             }
             // A static of the runtime at a fixed address: no field to load.
             Table::Layouts => LAYOUT_TABLE_BASE,
+            // The heap's class space base, which the dispatch head holds per heap (`JsStepHead::class_base`).
+            Table::ClassSpace => self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_CLASS_BASE as i32),
             // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a stencil row stores through the VM"),
         }

@@ -41,6 +41,11 @@ pub(crate) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, pay
 }
 
 /// The object record reservation's base (`object_table`).
+/// The class space's base the dispatch head holds (`JsStepHead::class_base`), which a direct object's cell is read at.
+pub(crate) fn class_table_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> ir::Value {
+    emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base))
+}
+
 pub(crate) fn object_table_base(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ir::Value {
     match object_table(builder, entry, payload) {
         ObjectTable::Checked(table) => table.base(),
@@ -102,10 +107,12 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             readable = true;
             let records = object_table_base(builder, entry, payload);
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
-            ObjectHeader::prove_readable(builder, bits, records, functions, exit)
+            let class_base = class_table_base(builder, payload);
+            ObjectHeader::prove_readable(builder, bits, records, class_base, functions, exit)
         } else {
             let records = object_table(builder, entry, payload);
-            ObjectHeader::prove(builder, bits, records, fact, exit)
+            let class_base = class_table_base(builder, payload);
+            ObjectHeader::prove(builder, bits, records, class_base, fact, exit)
         };
         if kept.is_none_or(|(.., was_readable)| was_readable && !readable) {
             state.proofs.records.retain(|(word, ..)| *word != bits);
