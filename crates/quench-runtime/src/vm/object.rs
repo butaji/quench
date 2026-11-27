@@ -2029,8 +2029,10 @@ impl Vm {
             return false;
         }
         let Some(record_id) = object.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
-            // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
-            return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
+            // A live class cell takes its store by its class key; an object without a record, as a
+            // RegExp's `lastIndex` store reaches, is out of line.
+            return self.primary_class_cell_store_hit::<LOGS>(object, value, site)
+                || (LOGS && self.primary_cell_field_store_hit(object, value, site, layout));
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
@@ -2136,6 +2138,32 @@ impl Vm {
         };
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         unsafe { crate::staged::store::concrete_narrow_store(&mut self.heap, record_id, hint.receiver, hint.slot, value) }
+    }
+
+    /// The store of `value` through the site's primary entry into the field of a live class cell whose class
+    /// key the entry names (`Heap::live_class_key`), in place (`Heap::class_cell_store`). Without `LOGS`, `false`
+    /// also leaves a store the barrier would log, or any store while slot representations are tracked: the
+    /// class cell's store takes no Number-slot conversion (`staged::slot_store::class_word`).
+    #[inline(always)]
+    fn primary_class_cell_store_hit<const LOGS: bool>(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let Some(granule) = self.heap.live_class_cell(object) else {
+            return false;
+        };
+        let cache = self.field_cache_entry(site);
+        if self.heap.live_class_key(object) != Some(cache.receiver) || cache.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        let open = if LOGS {
+            !self.heap.tracks_slot_values()
+        } else {
+            self.heap.store_unlogged(crate::staged::StagedRecordSpace::Class, granule, value)
+        };
+        if !open {
+            return false;
+        }
+        self.heap.class_cell_store(granule, usize::from(cache.slot), value);
+        self.profile.field_cache_hit(0, 0);
+        true
     }
 
     /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
