@@ -192,9 +192,11 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     if matches!(outcome, LaneBodyOutcome::Unpaid) { site.body_wait.set(body_due(vm, site).saturating_sub(site.body_iterations())); }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+    }
 }
 
 /// The iterations that pay for a body of `site`'s loop at its planned size, or at its span's before a plan.
+#[cfg(feature = "jit")]
 fn body_due(vm: &Vm, site: &LoopSite) -> u64 {
     let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), site.function, Some(site.header)))
         .unwrap_or_else(|| crate::compiled::lane_facts::unplanned_ir(&vm.programs.tiers().loops, site.span()));
