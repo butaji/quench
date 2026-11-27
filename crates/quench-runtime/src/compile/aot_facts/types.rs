@@ -192,7 +192,7 @@ impl Types {
         if self.wild_elements { return Elements::ANY; }
         self.elements.members(class)
             .filter_map(|member| self.cells.get(&Key::Element(member)))
-            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None }))
+            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None, holes: stored.elements.holes }))
     }
 
     /// The elements of the arrays of the unnamed class: an array no key names, and every array that may reach code the

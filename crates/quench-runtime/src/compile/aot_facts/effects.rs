@@ -161,7 +161,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
-            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None, holes: false });
     }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -252,14 +252,14 @@ fn value_of(
         return Word::closure(function);
     }
     // An array of `length` elements: its length is fixed by its literal, and its element type is what the
-    // definitions that follow join in (`step`). A literal that leaves an index undefined holds a hole, which reads `undefined`.
+    // definitions that follow join in (`step`). A literal that leaves an index out holds a hole, which reads `undefined`.
     // The array is its own element class, named by its allocation site (`Origin::Alloc`).
     if ctx.types.is_some() && let Some((_, Allocation::Array { length, .. })) = Allocation::decode(instruction, &[]) {
-        let hole = if ctx.whole_literals.get(pc).copied().unwrap_or(false) { Type::NEVER } else { Type::language(crate::ValueType::Undefined) };
+        let holes = !ctx.whole_literals.get(pc).copied().unwrap_or(false);
         let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
-            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
+            elements: Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain, holes },
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -303,15 +303,15 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
     let crate::staged::Callee::Register(register) = invocation.callee else { return None };
     if !ctx.scope.is_array_constructor(state[usize::from(register)].origin) { return None; }
     let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
-    let holes = match arguments.as_slice() {
-        [] => Type::NEVER,
-        [length] if length.is_number() => Type::language(crate::ValueType::Undefined),
-        _ => Type::ANY,
+    let (stored, holes) = match arguments.as_slice() {
+        [] => (Type::NEVER, false),
+        [length] if length.is_number() => (Type::NEVER, true),
+        _ => (Type::ANY, false),
     };
     let cell = Cell {
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
-        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
+        elements: Elements { ty: stored, classes: Classes::Never, length: Length::Any, view: View::Plain, holes },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -331,6 +331,7 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
             classes: Classes::Never,
             length: Length::Any,
             view: View::One(kind),
+            holes: false,
         },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
@@ -417,9 +418,9 @@ impl Abstract for Before<'_, '_> {
 }
 
 /// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
-/// changes an array, an index store past the length, a `delete`.
+/// changes an array, an index store past the length, a `delete`. A length change may leave a hole.
 fn length_change(class: ElementClass) -> (Key, Word) {
-    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: true };
     (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
@@ -463,7 +464,7 @@ fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operati
             let length = settled(ctx, array).elements.length;
             let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
             let length = if in_bounds { Length::Never } else { Length::Any };
-            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None, holes: !in_bounds };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));
