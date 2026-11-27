@@ -82,7 +82,7 @@ mod spread;
 mod admission;
 mod delete;
 mod operation;
-pub use operation::Operation;
+pub use operation::{HandlerEdge, Operation};
 pub mod c_twins;
 pub use c_twins::{CKernel, CTwin};
 pub use operation::kind as op_kind;
