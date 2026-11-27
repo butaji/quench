@@ -147,6 +147,14 @@ impl Vm {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
+        // A run's start is where the lane resumes an activation it did not bind: its `this` is checked here (`note_lane_this`).
+        crate::dispatch_fast::note_lane_this(self, this, || match root {
+            LaneRoot::Frame(frame) => self.programs.views_in_lane(program)
+                .and_then(|views| views.get(self.frames[frame].function as usize))
+                .and_then(quench_runtime::vm::program_store::derived_lane_view)
+                .is_none_or(|view| view.this_rows),
+            LaneRoot::Job(_) => true,
+        });
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());

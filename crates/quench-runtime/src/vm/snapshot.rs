@@ -101,7 +101,7 @@ impl Vm {
             step_native_proofs: _,
             with_stack: _,
             startup_intrinsics,
-            with_scope_entered, scope_names: _,
+            with_scope_entered, this_trust: _, scope_names: _,
             test262_agent: _,
             shared_async_waiters: _,
             programs,

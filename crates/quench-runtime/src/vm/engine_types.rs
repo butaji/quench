@@ -287,6 +287,9 @@ pub struct LaneView {
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
     pub activation: Option<ActivationShape>,
+    /// Whether its records may read a field through the activation's `this` (a `this` site), so a
+    /// row of it may trust `this` (`dispatch_fast::note_lane_this`); conservative.
+    pub this_rows: bool,
     /// The facts of its body a frameless call target records (`TargetBody`), found on its
     /// first resolution: every closure of the function shares them.
     pub target_body: std::cell::OnceCell<TargetBody>,
@@ -4749,6 +4752,21 @@ impl LaneView {
                     site.header_handler.set(checked);
                 }
             }
+        }
+    }
+
+    /// Gives every record whose handler `map` names another that one, the loop headers' held
+    /// handlers too: a retired speculation's rows take their checked forms.
+    pub fn rewrite_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
+        for cell in self.records.cells.iter() {
+            let record = std::cell::UnsafeCell::raw_get(cell);
+            // SAFETY: the lane runs on the view's thread, and no reference to a handler field is live.
+            unsafe {
+                if let Some(checked) = map((*record).handler) { (*record).handler = checked; }
+            }
+        }
+        for site in &self.loops {
+            if let Some(checked) = map(site.header_handler.get()) { site.header_handler.set(checked); }
         }
     }
 

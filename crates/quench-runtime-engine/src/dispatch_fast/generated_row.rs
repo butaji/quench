@@ -162,6 +162,7 @@ view_handler! {
             Concrete::storing_in(unsafe { vm(view.memory.bytes.cast::<LaneContext>()) })
         } else { Concrete::new(property_values) };
         let mut frame = row_frame::<OP, ACC, FLAG>(cx, r, ip, i, view);
+        frame.trust_this = TRUSTS_THIS;
         // A numeric local target: the frame's slot the value moves to, and the register of that number the
         // row writes, put back once it has (`FLAG_LOCAL_RESULT`). A record outside a frame run takes the
         // general step.
