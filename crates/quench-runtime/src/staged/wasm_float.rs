@@ -16,7 +16,7 @@ pub enum Float {
 }
 
 impl Float {
-    pub(crate) const fn of(ty: WasmType) -> Option<Self> {
+    pub const fn of(ty: WasmType) -> Option<Self> {
         match ty {
             WasmType::F32 => Some(Self::F32),
             WasmType::F64 => Some(Self::F64),
@@ -33,7 +33,7 @@ impl Float {
 
     /// The IEEE bits of the NaN every float operation produces from an unordered pair.
     #[inline]
-    pub(crate) const fn canonical_nan(self) -> u64 {
+    pub const fn canonical_nan(self) -> u64 {
         match self {
             Self::F32 => canonical_nan_bits(f32::MANTISSA_DIGITS, f32::INFINITY.to_bits() as u64),
             Self::F64 => canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits()),
@@ -51,7 +51,7 @@ pub struct Truncation {
 
 /// Whether `operator` compares: its result is an `I32` flag at either float width.
 #[inline]
-pub(crate) const fn is_float_comparison(operator: FloatBinary) -> bool {
+pub const fn is_float_comparison(operator: FloatBinary) -> bool {
     matches!(
         operator,
         FloatBinary::Equal
@@ -102,7 +102,7 @@ pub fn convert<S: WasmStage>(
 /// The float operator a tag names, as `binary_operator` (`wasm::integer`): a tag outside the family
 /// names no row.
 #[cfg(stencil_build)]
-pub(crate) const fn float_binary_operator(tag: u32) -> FloatBinary {
+pub const fn float_binary_operator(tag: u32) -> FloatBinary {
     match FloatBinary::from_tag(tag) {
         Some(operator) => operator,
         None => FloatBinary::Add,
@@ -111,7 +111,7 @@ pub(crate) const fn float_binary_operator(tag: u32) -> FloatBinary {
 
 /// The float unary operator a tag names, as `float_binary_operator`.
 #[cfg(stencil_build)]
-pub(crate) const fn float_unary_operator(tag: u32) -> crate::wasm::float::F64UnaryOperator {
+pub const fn float_unary_operator(tag: u32) -> crate::wasm::float::F64UnaryOperator {
     use crate::wasm::float::F64UnaryOperator as FloatUnary;
     match FloatUnary::from_tag(tag) {
         Some(operator) => operator,
@@ -122,7 +122,7 @@ pub(crate) const fn float_unary_operator(tag: u32) -> crate::wasm::float::F64Una
 /// The conversion a tag names. A tag outside the family names `WrapI64`, the family's first
 /// conversion that is not a trapping truncation.
 #[cfg(stencil_build)]
-pub(crate) const fn conversion_operator(tag: u32) -> ScalarConversionOperator {
+pub const fn conversion_operator(tag: u32) -> ScalarConversionOperator {
     match ScalarConversionOperator::from_tag(tag) {
         Some(operator) => operator,
         None => ScalarConversionOperator::WrapI64,
@@ -140,7 +140,7 @@ const EXPONENT_BIAS: u64 = (f64::MAX_EXP - 1) as u64;
 const MANTISSA_BITS: u32 = f64::MANTISSA_DIGITS - 1;
 
 /// `2^exponent` as f64 bits.
-pub(crate) const fn pow2_bits(exponent: u32) -> u64 {
+pub const fn pow2_bits(exponent: u32) -> u64 {
     (EXPONENT_BIAS + exponent as u64) << MANTISSA_BITS
 }
 
@@ -148,7 +148,7 @@ pub(crate) const fn pow2_bits(exponent: u32) -> u64 {
 /// constant, so the value is an integer immediate in a register (`movabs`, `movq`), not a
 /// constant-pool load.
 #[inline(always)]
-pub(crate) fn float_of_bits(bits: u64) -> f64 {
+pub fn float_of_bits(bits: u64) -> f64 {
     f64::from_bits(opaque(bits))
 }
 
@@ -166,7 +166,7 @@ pub fn truncation_limits(bits: u32, signed: bool) -> (f64, f64) {
 
 /// A float operand widened to f64, exactly.
 #[inline(always)]
-pub(crate) fn widen(float: Float, word: u64) -> f64 {
+pub fn widen(float: Float, word: u64) -> f64 {
     match float {
         Float::F32 => f64::from(f32::from_bits(word as u32)),
         Float::F64 => f64::from_bits(word),
@@ -177,7 +177,7 @@ pub(crate) fn widen(float: Float, word: u64) -> f64 {
 /// leaves: a NaN is 0, and a 32-bit result is its low word, zero-extended. The trapping
 /// truncations clamp too, once their range check has passed, where it is the same truncation.
 #[inline(always)]
-pub(crate) fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
+pub fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
     if value.is_nan() {
         return 0;
     }
@@ -210,7 +210,7 @@ pub(crate) fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
 /// signed. A larger one halves with its low bit kept as a sticky bit, converts as signed, and adds
 /// to itself: the same rounding, exact.
 #[inline(always)]
-pub(crate) fn unsigned_to_f64(value: u64) -> f64 {
+pub fn unsigned_to_f64(value: u64) -> f64 {
     if (value as i64) >= 0 {
         value as i64 as f64
     } else {
@@ -221,7 +221,7 @@ pub(crate) fn unsigned_to_f64(value: u64) -> f64 {
 
 /// `value as f32` for an unsigned 64-bit `value`: `unsigned_to_f64`'s halving, at f32.
 #[inline(always)]
-pub(crate) fn unsigned_to_f32(value: u64) -> f32 {
+pub fn unsigned_to_f32(value: u64) -> f32 {
     if (value as i64) >= 0 {
         value as i64 as f32
     } else {
@@ -232,7 +232,7 @@ pub(crate) fn unsigned_to_f32(value: u64) -> f32 {
 
 /// CopySign at `float`: A's bits below the sign, B's sign bit. An f32 word is zero-extended.
 #[inline(always)]
-pub(crate) fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
+pub fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
     match float {
         Float::F32 => (left & !SIGN32 & WORD32) | (right & SIGN32),
         Float::F64 => (left & !SIGN64) | (right & SIGN64),
@@ -243,7 +243,7 @@ pub(crate) fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
 /// load (a relocation stencils may not carry), so the word is hidden behind `black_box`. The
 /// interpreter and u-jit builds fold it freely.
 #[inline(always)]
-pub(crate) fn opaque(word: u64) -> u64 {
+pub fn opaque(word: u64) -> u64 {
     #[cfg(stencil_build)]
     {
         core::hint::black_box(word)
@@ -256,22 +256,21 @@ pub(crate) fn opaque(word: u64) -> u64 {
 
 // The interpreter's float records as a staged operation (`Decoder::WasmFloat`): runtime only.
 #[cfg(not(stencil_build))]
-pub(crate) use operation::{WasmFloatOperation, step};
+pub use operation::{WasmFloatOperation, step};
 #[cfg(not(stencil_build))]
 mod operation {
 use super::*;
 use crate::staged::machine::MachineStage;
 use crate::staged::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
 use crate::staged::wasm_concrete::ConcreteWasm;
-use crate::staged::wasm_operation::{WasmOperation, wasm_operation_of};
-use crate::staged::{Concrete, Operation};
-use crate::bytecode::{ImmediateLayout, Op, Register, WideInstruction};
+use crate::staged::Concrete;
+use crate::bytecode::Register;
 
 
 /// A float, conversion or select record's operation, decoded from its opcode, its operator tag
 /// and its operands. A raw f64 (`raw`) reads and writes its registers as plain machine words.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum WasmFloatOperation {
+pub enum WasmFloatOperation {
     /// `destination = left op right`; a comparison yields an i32 flag.
     Binary { destination: Register, left: Register, right: Register, operator: FloatBinary, float: Float, raw: bool },
     /// `destination = op source` on a float.
@@ -282,38 +281,12 @@ pub(crate) enum WasmFloatOperation {
     Select { destination: Register, condition: Register, chosen: Register, other: Register },
 }
 
-/// Whether opcode `op` is a raw f64 operator (`staged::raw_representation`): the raw and boxed forms
-/// share every rule, and differ only in the f64 representation.
-const fn raw_float(op: Op) -> bool {
-    crate::staged::raw_representation(op)
-}
-
 /// The representation a scalar of type `ty` takes, raw where the operator is raw.
 const fn rep_of(ty: WasmType, raw: bool) -> WasmRep {
     match ty {
         WasmType::I32 | WasmType::F32 => WasmRep::Int32,
         WasmType::F64 if raw => WasmRep::RawBits64,
         _ => WasmRep::Bits64,
-    }
-}
-
-impl WasmFloatOperation {
-    /// The float operation `instruction` denotes: its operator is the tag of `WasmOperation::of`,
-    /// and `WasmSelect`'s condition is the first register of its immediate pair.
-    pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
-        let op = instruction.op();
-        let (destination, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        if op == Op::WasmSelect {
-            let (condition, _) = ImmediateLayout::register_pair(instruction.imm());
-            return Some(Self::Select { destination, condition, chosen: b, other: c });
-        }
-        let raw = raw_float(op);
-        Some(match wasm_operation_of(op, instruction.imm())? {
-            WasmOperation::FloatBinary { operator, float } => Self::Binary { destination, left: b, right: c, operator, float, raw },
-            WasmOperation::FloatUnary { operator, float } => Self::Unary { destination, source: b, operator, float, raw },
-            WasmOperation::Convert { operator } => Self::Convert { destination, source: b, operator },
-            _ => return None,
-        })
     }
 }
 
@@ -364,7 +337,7 @@ fn computed_select<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
 /// written in each operand's `WasmRep`. An operand the frame does not hold so, and a trap, leave
 /// at the miss edge (`Step::Unresolved`), where the general path decides.
 #[inline(always)]
-pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Step<u64, F::Control> {
+pub fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Step<u64, F::Control> {
     let computed = match operation {
         WasmFloatOperation::Binary { .. } => computed_binary(stage, frame, operation),
         WasmFloatOperation::Unary { .. } => computed_unary(stage, frame, operation),
@@ -377,11 +350,10 @@ pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
         None => Step::Unresolved,
     }
 }
+}
 
-impl<W, P> Operation<W, P> {
-    /// The float operation `instruction` denotes (`Decoder::WasmFloat`).
-    pub fn decode_wasm_float(instruction: WideInstruction) -> Option<Self> {
-        WasmFloatOperation::decode(instruction).map(Self::WasmFloat)
-    }
-}
-}
+// The decoders read bytecode and sit in `glue.rs`; this module keeps the record and its rules.
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

@@ -39,7 +39,7 @@ use quench_runtime::staged::wasm_step::Step;
 use quench_runtime::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage};
 use quench_runtime::staged::Stage as _;
 use quench_runtime::staged::wasm::{Width, integer_binary};
-use quench_runtime::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
+use quench_runtime::staged::wasm_operation::{Form, Operand as Right, WasmOperation, wasm_operation_of};
 use quench_runtime::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
@@ -5868,7 +5868,7 @@ fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Op
     if instruction.a() != register {
         return None;
     }
-    match WasmOperation::of(instruction.op(), instruction.imm())? {
+    match wasm_operation_of(instruction.op(), instruction.imm())? {
         WasmOperation::Test { nonzero } => Some((value != 0) == nonzero),
         WasmOperation::Binary {
             operator,
