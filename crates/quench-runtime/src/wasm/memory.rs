@@ -1,5 +1,6 @@
 //! Memory layout and scalar access rules. Heap ownership stays in the VM.
 
+use super::simd::SimdOperatorSimdExt;
 use super::{WasmTrap, WasmType, WasmValue};
 use crate::bytecode::Register;
 use crate::staged::wasm_emit;
