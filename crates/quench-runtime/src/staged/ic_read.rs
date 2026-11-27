@@ -118,6 +118,16 @@ pub fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shap
     Some(Shaped::of_guard(at.record))
 }
 
+/// `IcOp::GuardShapeFormed`: continues where the reached record's whole auxiliary word is `shape` with no
+/// storage-form bit, the plain arena run (`object::proved_own_layout` of form bits 0).
+#[inline(always)]
+pub(super) fn guard_shape_formed<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+    let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::object::aux_word(stage, at.record));
+    let same = { let shape = stage.shape_site(shape); stage.eq_imm(word, shape) };
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
+}
+
 /// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
 #[inline(always)]
 pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
@@ -208,6 +218,18 @@ pub(super) fn prototype_constants<S: Stage>(stage: &mut S, receiver: Shaped<S::W
     }
     stage.guard(matched, miss)?;
     Some(read)
+}
+
+/// `IcOp::HolderConstant`: the value the image linked for holder `key`, where `receiver`'s
+/// prototype link is the holder's.
+#[inline(always)]
+pub(super) fn holder_constant<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, key: u32, miss: S::Miss) -> Option<S::Word> {
+    let link = proto_link(stage, receiver.record());
+    let holder = stage.image_word(super::stage::ImageWord::HolderLink, key);
+    let same = stage.eq_imm(link, holder);
+    stage.guard(same, miss)?;
+    let value = stage.image_word(super::stage::ImageWord::HolderValue, key);
+    Some(stage.imm_word(value))
 }
 
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.

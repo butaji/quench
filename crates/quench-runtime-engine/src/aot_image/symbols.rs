@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::GuardShape as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::HolderValue as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -66,6 +66,12 @@ pub(crate) enum Symbol {
     /// The shape of a field read's guard, keyed by its recipe and slot (`guard_key`): `NO_SHAPE`
     /// where the VM builds none, or where the slot's words are not tagged (`guarded_shape`).
     GuardShape(u32),
+    /// The prototype link of the holder a prototype method read guards by holder guard key `key`
+    /// (`GuardAccess::Holder`), where that holder holds the name as a plain data field at the
+    /// key's slot; a link no receiver has otherwise (`holder_constant`).
+    HolderLink(u32),
+    /// The value that holder's slot holds when the code links (`holder_constant`).
+    HolderValue(u32),
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
@@ -177,7 +183,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 10] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 12] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -188,6 +194,8 @@ const KEYED: [(u32, fn(u32) -> Symbol); 10] = [
     (RelocKind::HeapValue as u32, Symbol::HeapValue),
     (RelocKind::Shape as u32, Symbol::Shape),
     (RelocKind::GuardShape as u32, Symbol::GuardShape),
+    (RelocKind::HolderLink as u32, Symbol::HolderLink),
+    (RelocKind::HolderValue as u32, Symbol::HolderValue),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
@@ -208,6 +216,8 @@ impl Symbol {
             Self::HeapValue(_) => RelocKind::HeapValue as u32,
             Self::Shape(_) => RelocKind::Shape as u32,
             Self::GuardShape(_) => RelocKind::GuardShape as u32,
+            Self::HolderLink(_) => RelocKind::HolderLink as u32,
+            Self::HolderValue(_) => RelocKind::HolderValue as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -219,7 +229,8 @@ impl Symbol {
     fn key(self) -> u32 {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
-                | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key) => key,
+                | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
+                | Self::HolderLink(key) | Self::HolderValue(key) => key,
             Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
@@ -237,6 +248,8 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
         Symbol::HeapValue(key) => Some(heap_value(image, vm, key)?.to_bits()),
         Symbol::Shape(key) => Some(u64::from(shape(image, vm, key)?)),
         Symbol::GuardShape(key) => Some(u64::from(guarded_shape(image, vm, key).map_or(NO_SHAPE, |(shape, _, _)| shape))),
+        Symbol::HolderLink(key) => Some(holder_constant(image, vm, key).map_or(NO_LINK, |(_, link, _)| u64::from(link))),
+        Symbol::HolderValue(key) => Some(holder_constant(image, vm, key).map_or(Value::UNDEFINED, |(_, _, value)| value).to_bits()),
         _ => None,
     }
 }
@@ -293,6 +306,31 @@ fn shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
         shape = vm.transition_data_property_shape(shape, PropertyKey::string(atom), data_attributes(attributes));
     }
     Some(shape)
+}
+
+/// The link a holder that does not resolve names (`Symbol::HolderLink`): bits outside the link
+/// field, so no receiver's masked link equals it and the read asks the VM's caches.
+const NO_LINK: u64 = !quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.proto_mask as u64 & 0xffff_ffff;
+const _: () = assert!(NO_LINK != 0);
+
+/// The prototype method fact of holder guard key `key` (`GuardAccess::Holder`), proven in `vm`
+/// as the image links: the holder's exact shape, its prototype link, and the value its slot holds,
+/// where the holder holds the name as a plain data field at the key's slot. The holder is marked a
+/// prototype, so a write of its values retires the code that took the value
+/// (`ahead_images::holder_dependencies` subscribes it under the shape).
+pub(crate) fn holder_constant(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(u32, u32, Value)> {
+    let slot = (key & ((1 << GUARD_ACCESS_SHIFT) - 1)) as u16;
+    let access = *GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?;
+    if access != GuardAccess::Holder { return None; }
+    let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
+    let (Some(holder), [(atom, _)]) = (recipe.prototype, &recipe.fields[..]) else { return None };
+    let holder = heap_value(image, vm, holder)?;
+    let atom = vm.intern_atom(image.atoms.get(*atom as usize)?);
+    let (shape, at) = vm.holder_data_field(holder, atom)?;
+    if at != usize::from(slot) { return None; }
+    let value = vm.own_property(holder, atom).filter(|value| !value.is_deleted())?;
+    vm.mark_prototype(holder);
+    Some((shape, quench_runtime::tier_surface::ProtoLink::of(holder).bits(), value))
 }
 
 /// The bits of a guard key below its recipe (`guard_key`): the access, then the slot.

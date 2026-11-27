@@ -33,6 +33,21 @@ pub(crate) enum RelocKind {
     /// (`ic::SYMBOLIC_SHAPE`): where the VM that loads the code builds no such shape yet, an id no
     /// record has (`symbols::NO_SHAPE`), so the guard misses and the read asks the VM's caches.
     GuardShape,
+    /// The prototype link of the holder a prototype method read names by its guard key
+    /// (`staged::ImageWord::HolderLink`): a link no receiver has where the holder does not resolve.
+    HolderLink,
+    /// The value that holder's slot holds when the code links (`staged::ImageWord::HolderValue`).
+    HolderValue,
+}
+
+impl RelocKind {
+    /// The kind of an image word (`staged::ImageWord`).
+    pub(crate) const fn of_image_word(word: quench_runtime::staged::ImageWord) -> Self {
+        match word {
+            quench_runtime::staged::ImageWord::HolderLink => Self::HolderLink,
+            quench_runtime::staged::ImageWord::HolderValue => Self::HolderValue,
+        }
+    }
 }
 
 impl RelocKind {
