@@ -38,6 +38,8 @@ enum Source {
 enum Extract {
     Syntax(fn(&syn::File) -> usize),
     Text(fn(&str) -> usize),
+    /// Counts the opcode table's rows (`quench_opcodes::ROWS`), its data rather than its text.
+    Rows(fn(&[quench_opcodes::Row]) -> usize),
 }
 
 struct Metric {
@@ -50,6 +52,8 @@ struct Metric {
 const COMPILED: &str = "crates/quench-runtime-engine/src/compiled";
 const LOWERING_FRAGMENTS: &[&str] = &["lower", "region"];
 const RUNTIME: &str = "crates/quench-runtime/src";
+/// The opcode table's home: the source an `Extract::Rows` metric names (its rows are counted as data).
+const OPCODE_TABLE: &str = "crates/quench-opcodes/src/table.rs";
 const ENGINE: &str = "crates/quench-runtime-engine/src";
 /// The expensive fallbacks the corpus reaches (quench-gate step `fallbacks`), one `kind operation (reason)` per line.
 const FALLBACKS: &str = "crates/quench-tier-corpus/fallbacks.txt";
@@ -102,14 +106,14 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "opcodes",
         direction: Direction::Informational,
-        sources: &[Source::File("crates/quench-runtime/src/bytecode.rs")],
-        extract: Extract::Syntax(extract::opcode_variants),
+        sources: &[Source::File(OPCODE_TABLE)],
+        extract: Extract::Rows(extract::opcode_variants),
     },
     Metric {
         name: "opcodes_with_staged_operation",
         direction: Direction::Up,
-        sources: &[Source::File("crates/quench-runtime/src/bytecode.rs")],
-        extract: Extract::Syntax(extract::staged_opcodes),
+        sources: &[Source::File(OPCODE_TABLE)],
+        extract: Extract::Rows(extract::staged_opcodes),
     },
     Metric {
         name: "derivation_debt_lines",
@@ -316,6 +320,7 @@ fn count_file(path: &Path, how: Extract) -> Result<usize, String> {
     let name = path.display();
     let text = fs::read_to_string(path).map_err(|error| format!("{name}: {error}"))?;
     match how {
+        Extract::Rows(count) => Ok(count(quench_opcodes::ROWS)),
         Extract::Text(count) => Ok(count(&text)),
         Extract::Syntax(count) => syn::parse_file(&text)
             .map(|syntax| count(&syntax))
