@@ -60,7 +60,7 @@ use quench_runtime::bytecode::{ImmediateLayout, Register, WideInstruction};
 use quench_runtime::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_runtime::staged::frame::{ARGC_SHIFT, NATIVE_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
-use quench_bjit::call_record::{CalleeRecord, CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
+use quench_bjit::call_record::{CalleeRecord, CallRecord, DirectHole, HelperHole, NumericLeafHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
 use crate::aot_image::Symbol;
@@ -168,12 +168,40 @@ fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> R
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
 pub(crate) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+    chain(spills, helper_part(pc, helper, packed)?, reloads)
+}
+
+/// The float leaf row of a numeric operation at `pc`: the leaf's address in its hole (or its symbol), and the frame
+/// offsets of the operands and the destination (`NumericLeafHole`, `steps::leaf_holes`). A non-Number operand leaves at
+/// the pc: nothing is written.
+fn leaf_part(pc: u32, leaf: HelperPlace, [left, right, dst]: [u64; 3]) -> Result<CallPart, String> {
+    let (address, symbols) = match leaf {
+        HelperPlace::Address(0) => return Err("call: no leaf address".to_string()),
+        HelperPlace::Address(address) => (address as u64, NO_SYMBOLS),
+        HelperPlace::Symbol(helper) => (0, [Some((NumericLeafHole::Leaf as u8, Symbol::Helper(helper as u32))), None]),
+    };
+    let mut holes = [0; HOLES];
+    holes[NumericLeafHole::Destination as usize] = dst;
+    holes[NumericLeafHole::Left as usize] = left;
+    holes[NumericLeafHole::Right as usize] = right;
+    holes[NumericLeafHole::Leaf as usize] = address;
+    Ok(CallPart { symbols, ..part(call::stencil(CallRow::NumericLeaf)?, holes, vec![Exit::At(pc)]) })
+}
+
+/// The chain `middle` leads: the spills of the pinned registers live at it, `middle`, the reloads of those live after it.
+fn chain(spills: &[(Place, Register)], middle: CallPart, reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
     let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
-    parts.push(helper_part(pc, helper, packed)?);
+    parts.push(middle);
     for &(place, register) in reloads {
         parts.push(reload_part(place, register)?);
     }
     Ok(parts)
+}
+
+/// The chain of a float leaf call at `pc` (`Math.pow` of two registers, `CallRow::NumericLeaf`): the spills, the leaf row,
+/// the reloads, as `plan_step` for a helper step. `holes` are the frame offsets (`steps::leaf_holes`).
+pub(crate) fn plan_leaf(pc: u32, leaf: HelperPlace, holes: [u64; 3], spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+    chain(spills, leaf_part(pc, leaf, holes)?, reloads)
 }
 
 /// The chain of a call (see the module doc for its layout and successors). A polymorphic site's chain

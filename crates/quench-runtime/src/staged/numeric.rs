@@ -400,8 +400,9 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// `base ** exponent` of two Numbers: a program constant `power::SmallPower` names is its product on the base
-/// (`power::power_by`), any other exponent the power leaf (`NumericStage::float_power`). A stencil holds no call of
-/// the leaf, so there any other exponent leaves. A base or an exponent that is no Number leaves at the miss.
+/// (`power::power_by`), any other exponent the power leaf (`NumericStage::float_power`). A stencil's numeric row holds no
+/// call of the leaf, so there a constant exponent that is no `SmallPower` leaves (a register exponent is the b-jit's leaf
+/// call, `call_numeric_leaf`). A base or an exponent that is no Number leaves at the miss.
 #[inline(always)]
 fn power<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, base: Operand, exponent: Operand) -> Step<S::Word, F::Control> {
