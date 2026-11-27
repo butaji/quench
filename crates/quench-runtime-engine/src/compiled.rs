@@ -1562,27 +1562,6 @@ impl Vm {
     }
 }
 
-/// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
-/// `helpers` and `facts`: it runs from the first record and leaves at the first instruction
-/// it does not lower. `None` for the root and where nothing lowers.
-fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
-) -> Option<lane_region::LoweredRegion> {
-    use quench_runtime::vm::specializer::Specializer;
-    if function_id == 0 { return None; }
-    let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
-        &|callee| program.function_get(callee as usize))?;
-    let admitted = admission::ahead_unit(function_id)?;
-    lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
-        fields: &[], global_reads, facts, generic: &[], admitted,
-        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[],
-        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
-            completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
-        .specialize(program).ok().filter(|region| region.native != 0)
-}
-
 pub use quench_runtime::vm::engine_types::ExecutionMode;
 
 

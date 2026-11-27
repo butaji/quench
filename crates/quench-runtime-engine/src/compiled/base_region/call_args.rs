@@ -7,7 +7,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::facts::{self, Observed, Seeds, Text};
-use super::super::lane_region::{leaders, writes};
+use super::super::lane_region::writes;
 use super::call_plan::{CallForm, CallShape};
 use super::link::INT32_BIT;
 use super::plan::Homes;
@@ -34,7 +34,7 @@ pub(crate) fn proven_arguments(function: &Function, constants: &[Constant], numb
         return None;
     }
     let instructions: Vec<WideInstruction> = function.instructions().collect();
-    let blocks = leaders(&instructions);
+    let blocks = quench_runtime::bytecode::instruction_leaders(&instructions);
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
     for &register in numbers {
         initial[usize::from(register)] = Type::NUMBER;

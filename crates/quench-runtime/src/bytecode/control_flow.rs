@@ -270,6 +270,16 @@ impl Successors {
         table
     }
 
+    /// A table over code that is not a `Function`'s: each pc's successors at
+    /// `starts[pc]..starts[pc + 1]` in `targets`, with `edges` saying how each is reached.
+    pub fn from_parts(starts: &[usize], targets: &[usize], edges: &[ControlEdge]) -> Self {
+        Self {
+            starts: starts.iter().map(|&start| pc_index(start)).collect(),
+            targets: targets.iter().map(|&target| pc_index(target)).collect(),
+            edges: edges.to_vec(),
+        }
+    }
+
     /// The successor table of `function`'s code as it stands.
     pub(crate) fn of_code(function: &Function) -> Self {
         let mut table = Self::default();
@@ -286,16 +296,6 @@ impl Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
     pub(crate) fn starts(&self) -> &[u32] {
         &self.starts
-    }
-
-    /// How control reaches each of `targets`, in the same order.
-    pub(crate) fn edges(&self) -> &[ControlEdge] {
-        &self.edges
-    }
-
-    /// Every pc's successor targets, in pc order.
-    pub(crate) fn targets(&self) -> &[u32] {
-        &self.targets
     }
 
     /// Whether each pc of a function of `len` instructions (and its end, at `len`) starts a basic block:

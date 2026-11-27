@@ -161,7 +161,9 @@ impl Unit {
             quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |successor| successors.push(successor));
         }
         starts.push(successors.len());
-        let live = quench_runtime::compile::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
+        let edges = vec![quench_runtime::bytecode::ControlEdge::Normal; successors.len()];
+        let table = quench_runtime::bytecode::Successors::from_parts(&starts, &successors, &edges);
+        let live = quench_runtime::compile::liveness::analyze_graph(&transfers, &table, |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
 }
