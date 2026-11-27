@@ -73,7 +73,7 @@ impl Vm {
     fn prove_fuse(&mut self, fuse: IntactFuse, holder: Value) -> bool {
         self.heap.mark_prototype(holder);
         let slot = self.fuse_slot(fuse, holder);
-        if let Some(subject) = self.heap.object_ref(holder).and_then(|data| data.watched_subject()) {
+        if let Some(subject) = self.heap.object(holder).and_then(|data| data.watched_subject()) {
             let slot = slot.and_then(|slot| u32::try_from(slot).ok());
             self.heap.dependencies_mut().fuses_mut().prove(fuse, holder, subject, slot);
         }

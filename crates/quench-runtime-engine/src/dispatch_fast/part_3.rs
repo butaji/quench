@@ -309,7 +309,7 @@ pub(super) fn forwarded_resolution(
         return None;
     }
     let apply_holder = object.proto();
-    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?, method.apply.0)?;
+    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?.record(), method.apply.0)?;
     (found == apply
         && data(plan.prototype, method.method.0, usize::from(method_slot))
         && data(apply_holder, method.apply.0, usize::from(apply_slot)))

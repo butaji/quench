@@ -68,7 +68,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         _ => first,
     };
     for owner in owners {
-        assert_eq!(vm.heap.object_ref(owner).unwrap().record().inline_properties().is_none(), ARENA);
+        assert_eq!(vm.heap.object(owner).unwrap().record().inline_properties().is_none(), ARENA);
     }
     assert_eq!(vm.get_field_cached(&program, first, atom, site).unwrap(), second);
     if PRIMARY {
@@ -86,13 +86,13 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
     assert_eq!(vm.record_field_entry_hit(entry, probe), expected);
     if CASE == HOLDER_MISS {
         assert!(HOLDER);
-        assert_eq!(vm.heap.object_ref(probe).unwrap().exact_shape(), entry.receiver,
+        assert_eq!(vm.heap.object(probe).unwrap().exact_shape(), entry.receiver,
             "holder rejection must pass the receiver shape guard");
     }
     match CASE {
         PAIR_NON_OBJECT => vm.heap.property_set(owners[0], entry.slot as usize, Value::integer(0)),
         PAIR_SECOND_MISS => {
-            assert_ne!(vm.heap.object_ref(different_receiver).unwrap().exact_shape(), entry.receiver);
+            assert_ne!(vm.heap.object(different_receiver).unwrap().exact_shape(), entry.receiver);
             vm.heap.property_set(owners[0], entry.slot as usize, different_receiver);
         }
         _ => {}
@@ -146,7 +146,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         assert_eq!(super::super::dispatch_fast::nested_own_field_hit(&mut vm, &program, &field, probe), expected);
     }
     for owner in owners {
-        assert_eq!(vm.heap.object_ref(owner).unwrap().record().inline_properties().is_none(), ARENA);
+        assert_eq!(vm.heap.object(owner).unwrap().record().inline_properties().is_none(), ARENA);
     }
 }
 

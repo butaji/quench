@@ -4805,7 +4805,7 @@ impl Vm {
             return;
         }
         self.heap.mark_prototype(prototype);
-        let Some(holder) = self.heap.object_ref(prototype) else { return };
+        let Some(holder) = self.heap.object(prototype) else { return };
         if holder.record().has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
             return;
         }
@@ -4910,14 +4910,14 @@ impl Vm {
         // The holder is `hops` links up from the promise.
         let mut holder = promise;
         for _ in 0..hops {
-            let Some(link) = self.heap.object_ref(holder) else { return };
+            let Some(link) = self.heap.object(holder) else { return };
             holder = link.proto();
         }
         let (Some(chain), Some(own)) = (self.chain_cell(prototype, hops), self.chain_cell(constructor, 1)) else {
             *self.promise_species_proof.borrow_mut() = None;
             return;
         };
-        let watch = |object| self.heap.object_ref(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
+        let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
             .map(|(holder, constructor)| PromiseSpeciesProof {
                 layout,

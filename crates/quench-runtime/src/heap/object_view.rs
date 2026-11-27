@@ -1,10 +1,9 @@
-//! The views through which callers reach an ordinary object. `Heap::object_ref` and `Heap::object_mut_ref`
+//! The views through which callers reach an ordinary object. `Heap::object` and `Heap::object_mut`
 //! return an `ObjectRef` or `ObjectMut`: either a class cell (`heap/class_space.rs`, fixed class, fields
 //! inline) or a record (`&Object`, the record table, the form every object has today).
 //!
 //! The read and mutation methods here are the ones callers use on an object: class, shape, prototype and
-//! flags. Each forwards to the `Object` method of the same name, so a caller converts by changing
-//! `heap.object(v)` to `heap.object_ref(v)` and keeps its method calls. Anything else (extras, elements,
+//! flags. Each forwards to the `Object` method of the same name, so a caller keeps its method calls on the view. Anything else (extras, elements,
 //! arena runs, inline values, payload words) is reached through `record()`: on a cell that takes the
 //! departure edge (R4-C4), so the record view is always the full object.
 //!

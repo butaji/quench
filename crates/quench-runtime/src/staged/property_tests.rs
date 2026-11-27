@@ -137,7 +137,7 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
     for (index, value) in values.iter().enumerate() {
         heap.property_add(object, *value, index as u32 + 1);
     }
-    let shape = heap.object_ref(object).unwrap().exact_shape();
+    let shape = heap.object(object).unwrap().exact_shape();
     (object, shape)
 }
 

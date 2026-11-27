@@ -24482,7 +24482,7 @@ fn declared_number_fields_seed_their_slot_type_at_the_first_add() {
     };
     let v = global(&mut vm, "v");
     let x = vm.intern_atom("x");
-    let shape = vm.heap.object_ref(v).unwrap().shape();
+    let shape = vm.heap.object(v).unwrap().shape();
     let slot = vm.shape_slot(shape, x).unwrap();
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
 
@@ -24514,7 +24514,7 @@ fn declared_null_fields_seed_their_slot_type_at_the_first_add() {
     };
     let v = global(&mut vm, "v");
     let next = vm.intern_atom("next");
-    let shape = vm.heap.object_ref(v).unwrap().shape();
+    let shape = vm.heap.object(v).unwrap().shape();
     let slot = vm.shape_slot(shape, next).unwrap();
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::language(crate::ValueType::Null));
 
@@ -24729,7 +24729,7 @@ fn a_prototype_change_retires_only_the_chains_that_hold_it() {
     };
     let prototype = |vm: &mut Vm, name: &str| {
         let object = global(vm, name);
-        vm.heap.object_ref(object).unwrap().proto()
+        vm.heap.object(object).unwrap().proto()
     };
     let (a_proto, b_proto, c_proto) = (prototype(&mut vm, "a"), prototype(&mut vm, "b"), prototype(&mut vm, "c"));
     let cells = |vm: &mut Vm| {
