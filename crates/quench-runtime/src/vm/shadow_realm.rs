@@ -133,22 +133,6 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn shadow_realm_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::ShadowRealmEvaluate => self.shadow_realm_evaluate(p, this, args),
-            Native::ShadowRealmImportValue => self.shadow_realm_import_value(p, this, args),
-            Native::ShadowRealmImportValueFulfilled => self.shadow_realm_import_fulfilled(p, args),
-            Native::ShadowRealmWrappedFunction => self.call_shadow_wrapped_function(p, args),
-            _ => Err(JsError("invalid ShadowRealm native".into())),
-        }
-    }
-
     fn shadow_realm_evaluate(
         &mut self,
         p: &ResidualProgram,
@@ -603,4 +587,37 @@ impl Vm {
         };
         error.unwrap_or_else(|error| error)
     }
+}
+
+/// The ShadowRealm natives' entries, one standalone function per native.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::ShadowRealm => shadow_realm_called,
+        Native::ShadowRealmEvaluate => shadow_realm_evaluate_native,
+        Native::ShadowRealmImportValue => shadow_realm_import_value_native,
+        Native::ShadowRealmImportValueFulfilled => shadow_realm_import_value_fulfilled_native,
+        Native::ShadowRealmWrappedFunction => shadow_realm_wrapped_function_native,
+        _ => return None,
+    };
+    Some(entry)
+}
+
+fn shadow_realm_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "ShadowRealm constructor requires 'new'".into()))
+}
+
+fn shadow_realm_evaluate_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_evaluate(p, this, args)
+}
+
+fn shadow_realm_import_value_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_import_value(p, this, args)
+}
+
+fn shadow_realm_import_value_fulfilled_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_import_fulfilled(p, args)
+}
+
+fn shadow_realm_wrapped_function_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_shadow_wrapped_function(p, args)
 }

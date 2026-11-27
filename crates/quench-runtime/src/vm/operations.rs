@@ -742,10 +742,6 @@ impl Vm {
             }
             Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
             Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
-            Native::WeakRefInitialize => self.install_weak_ref(p).map(|()| Value::UNDEFINED),
-            Native::FinalizationRegistryInitialize => {
-                self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
-            }
             Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
             Native::TemporalInitialize
             | Native::IntlNumberFormat
@@ -1431,11 +1427,12 @@ impl Vm {
             | Native::WeakRef
             | Native::DisposableStack
             | Native::AsyncDisposableStack => self.construct_native(p, native, args),
+            Native::Object | Native::Array | Native::Map | Native::Set => {
+                self.construct_native(p, native, args)
+            }
+            Native::RegExp => self.construct_regexp_native(p, args, None),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
-            }
-            Native::FinalizationRegistry => {
-                Err(self.type_error(p, "Constructor FinalizationRegistry requires 'new'".into()))
             }
             Native::FunctionCaller => {
                 if self.function_caller_is_restricted(this) {
@@ -2144,11 +2141,11 @@ fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if let Some(entry) = super::array_builtins::entry(native) {
         return Some(entry);
     }
-    if Vm::is_finalization_native(native) {
-        return Some(enter_finalization);
+    if let Some(entry) = super::finalization::finalization_entry(native) {
+        return Some(entry);
     }
-    if Vm::is_disposal_native(native) {
-        return Some(enter_disposal);
+    if let Some(entry) = super::finalization::disposal_entry(native) {
+        return Some(entry);
     }
     if let Some(entry) = super::collections::entry(native) {
         return Some(entry);
@@ -2158,14 +2155,11 @@ fn method_entry(native: Native) -> Option<native_table::NativeFn> {
 
 /// The realm-level families: ShadowRealm, weak references, typed arrays and Atomics.
 fn realm_entry(native: Native) -> Option<native_table::NativeFn> {
-    match native {
-        Native::ShadowRealmEvaluate
-        | Native::ShadowRealmImportValue
-        | Native::ShadowRealmImportValueFulfilled
-        | Native::ShadowRealmWrappedFunction => return Some(enter_shadow_realm),
-        Native::ShadowRealm => return Some(enter_shadow_realm_called),
-        Native::WeakMap | Native::WeakSet | Native::WeakRef => return Some(enter_weak_called),
-        _ => {}
+    if let Some(entry) = super::shadow_realm::entry(native) {
+        return Some(entry);
+    }
+    if let Some(entry) = super::finalization::weak_entry(native) {
+        return Some(entry);
     }
     if native.is_typed_array_method() || native.is_typed_array_iterator() {
         return Some(enter_typed_array);
@@ -2220,6 +2214,8 @@ fn enter_finalization(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Va
 
 fn enter_disposal(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_disposal_native(p, native, this, args)
+fn enter_string_html(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_html_method(p, native, this, args).expect("an HTML method's family is its own")
 }
 
 fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
@@ -2227,23 +2223,6 @@ fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Valu
 #[cfg(feature = "wasm")]
 fn enter_wasm_js(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_wasm_js_routed(p, native, this, args)
-}
-
-fn enter_shadow_realm(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.shadow_realm_native(p, native, this, args)
-}
-
-fn enter_shadow_realm_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Err(vm.type_error(p, "ShadowRealm constructor requires 'new'".into()))
-}
-
-fn enter_weak_called(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    let constructor = match native {
-        Native::WeakMap => "WeakMap",
-        Native::WeakSet => "WeakSet",
-        _ => "WeakRef",
-    };
-    Err(vm.type_error(p, format!("Constructor {constructor} requires 'new'")))
 }
 
 fn enter_typed_array(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {

@@ -6950,7 +6950,7 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
         .find(|value| *value == token)
         .expect("freed token slot is reused");
     assert_eq!(
-        vm.call_finalization_registry_native(
+        vm.call_native(
             &program,
             Native::FinalizationRegistryUnregister,
             registry,
