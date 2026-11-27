@@ -689,7 +689,7 @@ impl Vm {
 
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
-    fn call_native_dispatch(
+    pub(super) fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -723,7 +723,6 @@ impl Vm {
     ) -> Result<Value, JsError> {
         match native {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
-            Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
             #[cfg(feature = "wasm")]
             Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
             #[cfg(not(feature = "wasm"))]
@@ -738,7 +737,6 @@ impl Vm {
             Native::FinalizationRegistryInitialize => {
                 self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
             }
-            Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
             Native::TemporalInitialize
             | Native::IntlNumberFormat
             | Native::IntlNumberFormatSupportedLocalesOf
@@ -1041,7 +1039,6 @@ impl Vm {
             | Native::TemporalNowZonedDateTimeISO => super::layer_hooks::intl_temporal_call(self, p, native, this, args),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
-            Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
             Native::AbstractModuleSourceToStringTag => {
                 Ok(self.abstract_module_source_to_string_tag(this))
             }
@@ -2171,16 +2168,7 @@ fn realm_entry(native: Native) -> Option<native_table::NativeFn> {
         Native::WeakMap | Native::WeakSet | Native::WeakRef => return Some(enter_weak_called),
         _ => {}
     }
-    if native.is_typed_array_method() || native.is_typed_array_iterator() {
-        return Some(enter_typed_array);
-    }
-    if native.is_typed_array_constructor() {
-        return Some(enter_typed_array_called);
-    }
-    if native.is_atomics_native() {
-        return Some(enter_atomics);
-    }
-    None
+    super::typed_array::entry(native).or_else(|| super::atomics::entry(native))
 }
 
 /// The value families: Test262's agent, BigInt, Promise, async reactions, Object statics, lazy
@@ -2198,8 +2186,7 @@ fn value_entry(native: Native) -> Option<native_table::NativeFn> {
         _ if native.is_object_static() => return Some(enter_object_static),
         Native::LazyDataProperty => return Some(enter_lazy_data_property),
         Native::ProxyRevoke => return Some(enter_proxy_revoke),
-        _ if native.is_data_view_native() => return Some(enter_data_view),
-        _ => None,
+        _ => super::data_view::entry(native),
     }
 }
 
@@ -2255,18 +2242,6 @@ fn enter_weak_called(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Va
     Err(vm.type_error(p, format!("Constructor {constructor} requires 'new'")))
 }
 
-fn enter_typed_array(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.maybe_call_typed_array_native(p, native, this, args).expect("a typed array method's family is its own")
-}
-
-fn enter_typed_array_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Err(vm.type_error(p, "typed array constructor requires new".into()))
-}
-
-fn enter_atomics(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.atomics_native(p, native, args)
-}
-
 fn enter_test262_agent(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_test262_agent(p, args)
 }
@@ -2296,10 +2271,6 @@ fn enter_proxy_revoke(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this:
         .active_native_callable()
         .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
     vm.proxy_revoke(callee)
-}
-
-fn enter_data_view(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.data_view_native(p, native, this, args)
 }
 
 fn enter_table(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {

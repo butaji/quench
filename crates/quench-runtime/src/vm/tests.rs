@@ -6312,7 +6312,7 @@ fn typed_fill_and_assignment_roots_release_after_coercion() {
                     values.push(vm.own_property(vm.realm.globals, atom).unwrap());
                 }
                 let roots = vm.heap.root_count_for_test();
-                let result = vm.typed_array_native(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
+                let result = vm.call_native_dispatch(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
                 assert_eq!(result.is_err(), fails, "{constructor}: {setup}");
                 assert_eq!(vm.heap.root_count_for_test(), roots);
             }
@@ -6375,7 +6375,7 @@ fn typed_sort_snapshot_roots_release_after_comparator_errors() {
                     let comparator_atom = vm.intern_atom("comparator");
                     let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
                     let roots_before = vm.heap.root_count_for_test();
-                    let outcome = vm.typed_array_native(&program, native, source, &[comparator]);
+                    let outcome = vm.call_native_dispatch(&program, native, source, &[comparator]);
                     assert_eq!(
                         outcome.is_err(),
                         fails && native != Native::TypedArrayToReversed

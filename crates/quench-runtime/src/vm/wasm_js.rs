@@ -1397,7 +1397,7 @@ impl Vm {
                     arguments[1].as_number().unwrap_or_default()
                         + arguments[2].as_number().unwrap_or_default(),
                 );
-                self.typed_array_native(
+                self.call_native_dispatch(
                     &program,
                     Native::Uint8ArrayCopyWithin,
                     view,
