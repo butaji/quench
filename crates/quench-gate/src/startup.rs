@@ -5,7 +5,10 @@
 //! first two: `wait4`'s `ru_maxrss` of the child (Linux, in kilobytes).
 //!
 //! It also holds the peak resident set of each V8-v7 fixture in `--no-jit` and the default mode, the
-//! median of three runs (`V8_SUITE`).
+//! median of three runs (`V8_SUITE`), and the focus fixtures' touched text (`TEXT_FIXTURES`): the kilobytes of the host's
+//! own functions the run executes (cachegrind's functions with instructions, sized by `nm`). Peak
+//! resident set moves with the box's page cache and the link layout; touched text moves only when
+//! a change makes a run execute more of the binary.
 //!
 //! Each measurement is held to `crates/quench-tier-corpus/startup_budgets.txt`, one row per
 //! `<case> <mode> <metric> <ceiling>`. More than 2% over its ceiling fails. More than 10% under it
@@ -23,7 +26,6 @@ use std::{
     ffi::{c_int, c_long},
     fmt::Write as _,
     fs::{self, File},
-    io,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
@@ -48,13 +50,20 @@ const V8_SUITE: &str = "quench-bench/js-engine-benchmark/v8-v7";
 const V8_FIXTURES: [&str; 8] = ["richards", "deltablue", "crypto", "raytrace", "earley-boyer", "regexp", "splay", "navier-stokes"];
 const V8_MODES: [&str; 2] = [INTERPRETER, DEFAULT];
 const V8_RUNS: usize = 3;
+/// The fixtures whose touched text is held: the bench the plan works on (a cachegrind run of a
+/// fixture takes about a minute).
+const TEXT_FIXTURES: [&str; 1] = ["v8-richards"];
 const V8_RUNNER: &str = "BenchmarkSuite.RunSuites({ NotifyError(name, error) { throw error; } });\n";
 const IR: &str = "ir";
 const RSS: &str = "rss_kb";
+const TEXT: &str = "text_kb";
 /// Functions in the generated module the `module` case requires.
 const FUNCTIONS: usize = 200;
 /// A measurement more than this many percent over its ceiling fails.
 const OVER_PERCENT: u64 = 2;
+/// The over limit of a V8-v7 fixture's peak resident set: its default mode compiles on a background
+/// thread, and when that compile's scratch peaks against the run moves the peak 3-4% between runs.
+const V8_RSS_OVER_PERCENT: u64 = 5;
 /// A measurement more than this many percent under its ceiling fails, so the ceiling is lowered.
 const UNDER_PERCENT: u64 = 10;
 /// `1` rewrites the budget file from the measurements instead of failing on them.
@@ -82,9 +91,14 @@ enum Judgement {
 }
 
 /// Judges `measured` against `ceiling` with integer arithmetic, so the limits are exact.
-fn judge(measured: u64, ceiling: Option<u64>) -> Judgement {
+/// How many percent over its ceiling a measurement may go.
+fn over_percent(key: &Key) -> u64 {
+    if key.0.starts_with("v8-") && key.2 == RSS { V8_RSS_OVER_PERCENT } else { OVER_PERCENT }
+}
+
+fn judge(measured: u64, ceiling: Option<u64>, over: u64) -> Judgement {
     let Some(ceiling) = ceiling else { return Judgement::Unrecorded };
-    if measured * 100 > ceiling * (100 + OVER_PERCENT) {
+    if measured * 100 > ceiling * (100 + over) {
         Judgement::Over
     } else if measured * 100 < ceiling * (100 - UNDER_PERCENT) {
         Judgement::Under
@@ -112,10 +126,11 @@ fn settle(measured: &Ceilings, ceilings: &Ceilings, write: bool) -> Settled {
         let ceiling = ceilings.get(key).copied();
         next.insert(key.clone(), ceiling.map_or(value, |ceiling| ceiling.min(value)));
         let name = label(key);
-        match (judge(value, ceiling), ceiling) {
+        let over = over_percent(key);
+        match (judge(value, ceiling, over), ceiling) {
             (Judgement::Over, Some(ceiling)) => {
                 let percent = (value as f64 - ceiling as f64) / ceiling as f64 * 100.0;
-                failures.push(format!("{name}: {value} is {percent:.1}% over its ceiling {ceiling} (limit {OVER_PERCENT}%)"));
+                failures.push(format!("{name}: {value} is {percent:.1}% over its ceiling {ceiling} (limit {over}%)"));
             }
             (Judgement::Under, Some(_)) if !write => failures.push(format!("{name}: {value} is more than {UNDER_PERCENT}% under its ceiling; lower the ceiling to {value}")),
             (Judgement::Unrecorded, _) if !write => failures.push(format!("{name}: {value} with no ceiling in {BUDGETS} (record it with {DEBT_WRITE}=1)")),
@@ -245,6 +260,65 @@ fn instructions(config: &Config, host: &Path, mode: &str, script: &Path, scratch
     parse_totals(&text).ok_or_else(|| format!("{}: no totals line", out.display()))
 }
 
+/// The size in bytes of each function symbol of `host`, by mangled name (symbols sharing a name
+/// add up).
+fn function_sizes(config: &Config, host: &Path) -> Result<BTreeMap<String, u64>, String> {
+    let listing = process::run(config.command("nm").arg("-S").arg("--defined-only").arg(host))?;
+    if !listing.success {
+        return Err(listing.excerpt());
+    }
+    let mut sizes = BTreeMap::new();
+    for line in listing.stdout.lines() {
+        if let [_, size, kind, name] = line.split_whitespace().collect::<Vec<_>>()[..]
+            && matches!(kind, "t" | "T" | "w" | "W")
+            && let Ok(size) = u64::from_str_radix(size, 16)
+        {
+            *sizes.entry(name.to_owned()).or_insert(0) += size;
+        }
+    }
+    Ok(sizes)
+}
+
+/// The functions with instructions in a cachegrind output file.
+fn executed_functions(text: &str) -> std::collections::BTreeSet<&str> {
+    let mut executed = std::collections::BTreeSet::new();
+    let mut function = None;
+    for line in text.lines() {
+        if let Some(name) = line.strip_prefix("fn=") {
+            function = Some(name);
+        } else if let (Some(name), Some(count)) = (function, line.split_whitespace().nth(1))
+            && line.starts_with(|c: char| c.is_ascii_digit())
+            && count != "0"
+        {
+            executed.insert(name);
+        }
+    }
+    executed
+}
+
+/// The kilobytes of `host`'s own functions one run of `host mode script` executes, under cachegrind.
+fn touched_text_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch: &Path, sizes: &BTreeMap<String, u64>) -> Result<u64, String> {
+    let out = scratch.join("cachegrind.out");
+    let mut command = config.command("valgrind");
+    command
+        .arg("--tool=cachegrind")
+        .arg("--cache-sim=no")
+        .arg("--demangle=no")
+        .arg(format!("--cachegrind-out-file={}", out.display()))
+        .args((mode != INTERPRETER).then_some("--smc-check=all"))
+        .arg(host)
+        .args((mode != DEFAULT).then_some(mode))
+        .arg(script);
+    environment(&mut command, mode, scratch);
+    let run = process::run(&mut command)?;
+    if !run.success {
+        return Err(format!("{} {mode} {} failed under cachegrind\n{}", host.display(), script.display(), run.excerpt()));
+    }
+    let text = fs::read_to_string(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let _ = fs::remove_file(&out);
+    Ok(executed_functions(&text).into_iter().filter_map(|name| sizes.get(name)).sum::<u64>() / 1024)
+}
+
 /// The `rusage` of a finished child, laid out as glibc's `struct rusage` on 64-bit Linux.
 #[repr(C)]
 #[derive(Default)]
@@ -259,26 +333,42 @@ unsafe extern "C" {
     fn wait4(pid: c_int, status: *mut c_int, options: c_int, rusage: *mut Rusage) -> c_int;
 }
 
-/// The peak resident set of one run of `host mode script`, in kilobytes: the child's `ru_maxrss`
-/// from `wait4`. The child's output goes to files in `scratch`, so nothing blocks on a full pipe.
+/// Set on a re-run of this gate binary that measures one child: the file to write its peak to.
+const RSS_OUT: &str = "QUENCH_GATE_RSS_OUT";
+
+/// The peak resident set of one run of `host mode script`, in kilobytes. A child's `ru_maxrss`
+/// starts at the high-water mark of the process that spawned it (Linux carries it through `exec`),
+/// and this gate grows past the runs it measures (35 MB after reading cachegrind output), so a fresh
+/// copy of this binary spawns the run (`measure_child`). The output goes to files in `scratch`.
 fn peak_rss_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch: &Path) -> Result<u64, String> {
     let open = |name: &str| File::create(scratch.join(name)).map_err(|error| format!("{}: {error}", scratch.join(name).display()));
-    let mut command = config.command(host);
-    command.args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
+    let out = scratch.join("peak_rss_kb");
+    let gate = env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
+    let mut command = config.command(gate);
+    command.env(RSS_OUT, &out).arg(host).args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
     environment(&mut command, mode, scratch);
-    let child = command.spawn().map_err(|error| format!("cannot run {}: {error}", host.display()))?;
+    let status = command.status().map_err(|error| format!("cannot run {}: {error}", host.display()))?;
+    if !status.success() {
+        return Err(format!("{} {mode} {} exited with {status}", host.display(), script.display()));
+    }
+    let text = fs::read_to_string(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    text.trim().parse().map_err(|error| format!("{}: {error}", out.display()))
+}
+
+/// In a copy of this binary started by `peak_rss_kb` (`RSS_OUT` set): runs the arguments as a
+/// command, writes its `ru_maxrss` (kilobytes) to the `RSS_OUT` file, and exits with its status.
+pub fn measure_child() -> Option<std::process::ExitCode> {
+    let out = env::var_os(RSS_OUT)?;
+    let args = env::args_os().skip(1).collect::<Vec<_>>();
+    let child = Command::new(&args[0]).args(&args[1..]).env_remove(RSS_OUT).spawn();
+    let Ok(child) = child else { return Some(std::process::ExitCode::from(127)) };
     let (mut status, mut usage): (c_int, Rusage) = (0, Rusage::default());
     // SAFETY: `child` is an unwaited child of this process, and `status` and `usage` are valid
     // for writes for the duration of the call.
-    let reaped = unsafe { wait4(child.id() as c_int, &mut status, 0, &mut usage) };
-    if reaped < 0 {
-        return Err(format!("wait4: {}", io::Error::last_os_error()));
+    if unsafe { wait4(child.id() as c_int, &mut status, 0, &mut usage) } < 0 || fs::write(out, usage.maxrss.to_string()).is_err() {
+        return Some(std::process::ExitCode::from(126));
     }
-    let exit = ExitStatus::from_raw(status);
-    if !exit.success() {
-        return Err(format!("{} {mode} {} exited with {exit}", host.display(), script.display()));
-    }
-    Ok(usage.maxrss as u64)
+    Some(std::process::ExitCode::from(if ExitStatus::from_raw(status).success() { 0 } else { 1 }))
 }
 
 /// The measurements as a table: name, measured value, ceiling.
@@ -308,8 +398,12 @@ pub fn run(config: &Config) -> Verdict {
             measured.insert(key(case, mode, RSS), kilobytes);
         }
     }
+    let sizes = function_sizes(config, &host)?;
     for (case, script) in write_v8_scripts(&config.root, &scratch)? {
         for mode in V8_MODES {
+            if TEXT_FIXTURES.contains(&case.as_str()) {
+                measured.insert(key(&case, mode, TEXT), touched_text_kb(config, &host, mode, &script, &scratch, &sizes)?);
+            }
             let mut runs = (0..V8_RUNS).map(|_| peak_rss_kb(config, &host, mode, &script, &scratch)).collect::<Result<Vec<_>, _>>()?;
             runs.sort_unstable();
             measured.insert(key(&case, mode, RSS), runs[V8_RUNS / 2]);
@@ -345,6 +439,12 @@ mod tests {
     }
 
     #[test]
+    fn executed_functions_are_those_with_instructions() {
+        let text = "events: Ir\nfl=a.rs\nfn=_RNv1\n3 0\nfn=_RNv2\n4 0\n5 7\nfn=_RNv3\n1 0\n";
+        assert_eq!(executed_functions(text).into_iter().collect::<Vec<_>>(), ["_RNv2"]);
+    }
+
+    #[test]
     fn totals_come_from_the_last_totals_line() {
         let text = "summary: 5\nfn=(1) main\n1 3\ntotals: 42\n";
         assert_eq!(parse_totals(text), Some(42));
@@ -374,12 +474,15 @@ mod tests {
 
     #[test]
     fn the_judge_draws_its_bands_exactly() {
-        assert_eq!(judge(1000, None), Judgement::Unrecorded);
-        assert_eq!(judge(1000, Some(1000)), Judgement::Within);
-        assert_eq!(judge(1020, Some(1000)), Judgement::Within);
-        assert_eq!(judge(1021, Some(1000)), Judgement::Over);
-        assert_eq!(judge(900, Some(1000)), Judgement::Within);
-        assert_eq!(judge(899, Some(1000)), Judgement::Under);
+        assert_eq!(judge(1000, None, OVER_PERCENT), Judgement::Unrecorded);
+        assert_eq!(judge(1000, Some(1000), OVER_PERCENT), Judgement::Within);
+        assert_eq!(judge(1020, Some(1000), OVER_PERCENT), Judgement::Within);
+        assert_eq!(judge(1021, Some(1000), OVER_PERCENT), Judgement::Over);
+        assert_eq!(judge(900, Some(1000), OVER_PERCENT), Judgement::Within);
+        assert_eq!(judge(899, Some(1000), OVER_PERCENT), Judgement::Under);
+        assert_eq!(judge(1050, Some(1000), V8_RSS_OVER_PERCENT), Judgement::Within);
+        assert_eq!(over_percent(&key("v8-richards", DEFAULT, RSS)), V8_RSS_OVER_PERCENT);
+        assert_eq!(over_percent(&key("v8-richards", DEFAULT, TEXT)), OVER_PERCENT);
     }
 
     #[test]
