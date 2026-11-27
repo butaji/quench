@@ -200,7 +200,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether `instruction` is `counter++`.
-    fn steps_by_one(&self, instruction: WideInstruction, counter: Register) -> bool {
+    pub(crate) fn steps_by_one(&self, instruction: WideInstruction, counter: Register) -> bool {
         use quench_runtime::staged::{DecodeContext, NumberOperation, Operation};
         instruction.result_flags() == 0
             && matches!(Operation::<ir::Value, EmitProof>::decode(instruction, DecodeContext::of(self.program)),

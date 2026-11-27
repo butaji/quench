@@ -86,6 +86,15 @@ pub(crate) struct Unit {
 }
 
 impl Unit {
+    /// The effect row of the whole unit: the join of each instruction's row (`performed`), where an instruction
+    /// names no operation its row is ANY.
+    pub(crate) fn effects(&self) -> quench_runtime::staged::Effects {
+        self.instructions.iter().fold(quench_runtime::staged::Effects::NONE, |row, instruction| {
+            let effects = crate::compiled::performed(instruction).map_or(quench_runtime::staged::Effects::ANY, |operation| operation.effects());
+            row.join(effects)
+        })
+    }
+
     /// `frame` and the frames around it, outermost first: the activations a leave inside it
     /// makes.
     pub(crate) fn chain(&self, frame: usize) -> Vec<usize> {
