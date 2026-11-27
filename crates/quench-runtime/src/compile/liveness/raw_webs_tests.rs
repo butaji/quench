@@ -3,6 +3,7 @@
 use super::*;
 use crate::{Engine, WasmCallableType, WasmFunctionBody, WasmTypes};
 use wasmparser::{BinaryReaderError, FuncType, Operator, ValType};
+use crate::staged::wasm_operation::{FormWasmOperationExt, wasm_operation_of};
 
 fn body(ty: u32, locals: Vec<ValType>, operators: Vec<Operator<'static>>) -> WasmFunctionBody<Vec<Result<Operator<'static>, BinaryReaderError>>> {
     WasmFunctionBody { ty: WasmCallableType::Declared(ty), locals, operators: operators.into_iter().map(Ok).collect() }
@@ -55,7 +56,7 @@ fn an_i64_loop_runs_raw_and_its_counter_and_parameter_stay_boxed() {
 
 /// The register of the first i32 equality's right operand: the parameter `n`.
 fn function_parameter_register(instructions: &[crate::bytecode::WideInstruction]) -> usize {
-    instructions.iter().find_map(|instruction| match WasmOperation::of(instruction.op(), instruction.imm()) {
+    instructions.iter().find_map(|instruction| match wasm_operation_of(instruction.op(), instruction.imm()) {
         Some(WasmOperation::Binary { form, width: crate::staged::wasm::Width::I32, .. }) => match form.right(*instruction) {
             Operand::Register(register) => Some(usize::from(register)),
             Operand::Constant(_) => None,
