@@ -313,9 +313,7 @@ fn compile(options: Options) -> Result<(), String> {
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
-    // A core image's closed world: the realm and engine entries its catalog names, which its saved realm is built on.
-    let closed = realm.as_ref().map(|realm| (realm, demand.execution_table()));
-    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, closed, &mut report)?;
+    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -355,7 +353,11 @@ fn compile(options: Options) -> Result<(), String> {
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
     report["retained_mechanisms"] = json!(audit.footprint.retained_mechanisms);
-    let dumps = super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
+    let dumps = if core {
+        super::core_rest::dump(&staged, &work.0, &mut report)
+    } else {
+        super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report)
+    };
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
@@ -364,7 +366,7 @@ fn compile(options: Options) -> Result<(), String> {
         report["payload_reduction"] = json!(payload);
     }
     if !dumps.is_empty() {
-        super::image_dump::append(&staged, &dumps)?;
+        quench_runtime::native_link::image_dump::append(&staged, &dumps)?;
     }
     report["native_dependencies"] = json!(super::image::native_dependencies(&staged)?);
     report["status"] = json!("compiled");
