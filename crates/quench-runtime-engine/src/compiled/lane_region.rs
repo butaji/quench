@@ -4024,8 +4024,11 @@ impl Lowering<'_, '_> {
                     _ => None,
                 };
                 let returned = typed.map(|(_, returned)| returned);
+                // A sibling tail call of the one body the site calls (`sibling_tail_arguments`): its frame is the body's own.
+                let tail = owned.filter(|_| proven.is_none() && callees.len() == 1)
+                    .and_then(|callee| self.sibling_tail_arguments(pc, record, &site, callee));
                 let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, returned, missed, raised,
-                    stop: self.call_out_stop(), leave: self.leave_site(), initializing };
+                    stop: self.call_out_stop(), leave: self.leave_site(), initializing, tail };
                 self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
             }
         }
@@ -4117,13 +4120,13 @@ impl Lowering<'_, '_> {
             self.branch_if(matched, (arm, &[]), (next, &[]));
             self.builder.switch_to_block(arm);
             let miss = cold_block(&mut self.builder);
-            let call = CallSite { callee: Some(DirectSite::Owned(callee)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
+            let call = CallSite { callee: Some(DirectSite::Owned(callee)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None };
             self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         }
         // No candidate's identity: the VM's call alone, as a site with no direct entry makes it.
         self.builder.switch_to_block(fallback);
         let miss = cold_block(&mut self.builder);
-        let call = CallSite { callee: None, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
+        let call = CallSite { callee: None, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 
@@ -4233,7 +4236,7 @@ impl Lowering<'_, '_> {
         use quench_runtime::staged::{CallOperation, Operation};
         let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
         let miss = cold_block(&mut self.builder);
-        let call = CallSite { callee, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
+        let call = CallSite { callee, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 

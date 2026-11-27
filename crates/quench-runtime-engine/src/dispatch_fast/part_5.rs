@@ -564,7 +564,7 @@ pub(crate) fn derive_lane_view<'live>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier: std::cell::OnceCell::new(),
-        entry: crate::compiled::entry_cell::EntryCell::new(),
+        entry: crate::compiled::entry_cell::EntryCell::new(crate::compiled::lane_body_abi::entry_stub()),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()

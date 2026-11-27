@@ -71,7 +71,7 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         prologue: std::cell::UnsafeCell::new(Records::blank()),
         tier_direct: std::cell::Cell::new(None),
         tier: std::cell::OnceCell::new(),
-        entry: crate::compiled::entry_cell::EntryCell::new(),
+        entry: crate::compiled::entry_cell::EntryCell::new(crate::compiled::lane_body_abi::entry_stub()),
         accumulator_registers: vec![crate::dispatch_fast::NO_ACCUMULATOR; count].into_boxed_slice(),
         plain_backward_jump_sites: 0,
         osr_rejections: None,

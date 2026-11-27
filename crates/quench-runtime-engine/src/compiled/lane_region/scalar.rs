@@ -93,11 +93,12 @@ impl Completion {
     /// Whether a run returns a Number by its status and a result word (a numeric region, or a scalar entry).
     pub(crate) fn numeric(self) -> bool { self != Self::Body }
 
-    /// The signature the run's function has.
+    /// The signature the run's function has: a scalar entry's under `call_conv` (the default), every other run's the
+    /// lane body convention.
     pub(crate) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         match self {
             Self::Scalar(abi) => abi.signature(pointer, call_conv),
-            _ => body_signature_in_lane(pointer, call_conv),
+            _ => body_signature_in_lane(pointer),
         }
     }
 

@@ -11,18 +11,28 @@ pub(crate) use quench_runtime::vm::engine_types::BodyEntry;
 /// The namespace of the body shim's function name.
 const BODY_SHIM_NAMESPACE: u32 = u32::from_be_bytes(*b"QBSH");
 
-/// The lane body ABI: the shared native-entry ABI without the result pointer, whose word the
+/// The namespace of the entry stub's function name.
+const ENTRY_STUB_NAMESPACE: u32 = u32::from_be_bytes(*b"QBES");
+
+/// The lane body ABI under `call_conv`: the shared native-entry ABI without the result pointer, whose word the
 /// body returns beside its status (`BodyReturn`).
-pub(crate) fn body_signature_in_lane(
-    pointer: ir::Type,
-    call_conv: cranelift_codegen::isa::CallConv,
-) -> Signature {
+pub(crate) fn body_signature_under(pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
     call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer], &[types::I32, types::I64])
 }
 
+/// The lane body ABI of a body and its callers: the body convention (`BODY_CALL_CONV`), so a body may tail call another.
+pub(crate) fn body_signature_in_lane(pointer: ir::Type) -> Signature {
+    body_signature_under(pointer, BODY_CALL_CONV)
+}
+
+/// The convention of the body shim, which Rust and the trampoline call: the host's default, not the body's.
+fn shim_call_conv() -> cranelift_codegen::isa::CallConv {
+    cranelift_codegen::isa::CallConv::triple_default(&target_lexicon::Triple::host())
+}
+
 /// The signature of the body shim: a lane body's arguments, then the body it calls.
-pub(crate) fn body_shim_signature(pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
-    call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32, types::I64])
+pub(crate) fn body_shim_signature(pointer: ir::Type) -> Signature {
+    call_signature::typed_signature(shim_call_conv(), &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32, types::I64])
 }
 
 /// The address of the body shim: one SysV function for every lane body, which calls the body it
@@ -30,30 +40,59 @@ pub(crate) fn body_shim_signature(pointer: ir::Type, call_conv: cranelift_codege
 /// so a body's convention is the shim's alone. Zero where the host has no native code.
 pub(crate) fn body_shim() -> usize {
     static SHIM: std::sync::OnceLock<Option<(CodeMemory, usize)>> = std::sync::OnceLock::new();
-    SHIM.get_or_init(|| {
-        let isa = quench_runtime::vm::jit_backend::target_isa()?;
-        let code = super::compile_entry(&*isa, build_body_shim(&*isa))?;
-        let memory = CodeMemory::new(&code)?;
-        let address = memory.pointer().addr();
-        Some((memory, address))
-    })
-    .as_ref()
-    .map_or(0, |(_, address)| *address)
+    SHIM.get_or_init(|| published(build_body_shim))
+        .as_ref()
+        .map_or(0, |(_, address)| *address)
+}
+
+/// The address of the entry stub: the entry of every unpublished cell (`EntryCell::stub`). It has the lane body
+/// convention, as a body does, and calls `entry_stub_in_lane`, which enters nothing so its caller restarts the call.
+/// Zero where the host has no native code.
+pub(crate) fn entry_stub() -> usize {
+    static STUB: std::sync::OnceLock<Option<(CodeMemory, usize)>> = std::sync::OnceLock::new();
+    STUB.get_or_init(|| published(build_entry_stub))
+        .as_ref()
+        .map_or(0, |(_, address)| *address)
+}
+
+/// Compiles the function `build` makes for the host and publishes its code, which the returned memory keeps alive.
+fn published(build: fn(&dyn cranelift_codegen::isa::TargetIsa) -> ir::Function) -> Option<(CodeMemory, usize)> {
+    let isa = quench_runtime::vm::jit_backend::target_isa()?;
+    let code = super::compile_entry(&*isa, build(&*isa))?;
+    let memory = CodeMemory::new(&code)?;
+    let address = memory.pointer().addr();
+    Some((memory, address))
+}
+
+/// The entry stub's function: it takes a lane body's arguments and calls `entry_stub_in_lane` with them, which the
+/// host's default convention takes, and returns its status and word.
+fn build_entry_stub(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Function {
+    let pointer = isa.pointer_type();
+    let mut func = ir::Function::with_name_signature(ir::UserFuncName::user(ENTRY_STUB_NAMESPACE, 0), body_signature_in_lane(pointer));
+    let mut builder_context = quench_runtime::vm::jit_backend::builder::take_context();
+    let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
+    let (block, parameters) = quench_runtime::vm::jit_backend::builder::enter(&mut builder);
+    builder.seal_block(block);
+    let target = builder.import_signature(body_signature_under(pointer, isa.default_call_conv()));
+    let address = builder.ins().iconst(pointer, quench_runtime::vm::engine_types::entry_stub_in_lane as BodyEntry as usize as i64);
+    let call = builder.ins().call_indirect(target, address, &parameters);
+    let results = builder.inst_results(call).to_vec();
+    builder.ins().return_(&results);
+    builder.finalize(isa.frontend_config());
+    quench_runtime::vm::jit_backend::builder::keep_context(builder_context);
+    func
 }
 
 /// The body shim's function: it calls the body at its fifth parameter with the four lane body arguments,
 /// and returns the body's status and word.
 fn build_body_shim(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Function {
     let pointer = isa.pointer_type();
-    let mut func = ir::Function::with_name_signature(
-        ir::UserFuncName::user(BODY_SHIM_NAMESPACE, 0),
-        body_shim_signature(pointer, isa.default_call_conv()),
-    );
+    let mut func = ir::Function::with_name_signature(ir::UserFuncName::user(BODY_SHIM_NAMESPACE, 0), body_shim_signature(pointer));
     let mut builder_context = quench_runtime::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
     let (block, parameters) = quench_runtime::vm::jit_backend::builder::enter(&mut builder);
     builder.seal_block(block);
-    let body = builder.import_signature(body_signature_in_lane(pointer, isa.default_call_conv()));
+    let body = builder.import_signature(body_signature_in_lane(pointer));
     let call = builder.ins().call_indirect(body, parameters[4], &parameters[..4]);
     let results = builder.inst_results(call).to_vec();
     builder.ins().return_(&results);

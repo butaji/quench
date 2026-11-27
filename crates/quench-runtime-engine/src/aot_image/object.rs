@@ -44,7 +44,8 @@ struct Targets<'a> {
     imports: &'a BTreeMap<(u32, u32), u32>,
     /// The declaration index of each function's base body, by function.
     bases: &'a [u32],
-    conv: CallConv,
+    /// The convention of the lane bodies' code (`BODY_CALL_CONV`).
+    body_conv: CallConv,
 }
 
 /// The object of `image`, its symbols named under `namespace`.
@@ -59,10 +60,10 @@ pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarge
     let helpers = helper_data(namespace, image, &imports);
     let first = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let bases = base_declarations(image, first)?;
-    let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
+    let targets = Targets { image, imports: &imports, bases: &bases, body_conv: crate::compiled::BODY_CALL_CONV };
     let definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
     functions.extend(definitions);
-    let regexps = regexp_data(namespace, image, &mut functions, targets.conv)?;
+    let regexps = regexp_data(namespace, image, &mut functions, isa.default_call_conv())?;
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), (file.len(), image.regexps.len()))?;
     let data = vec![image_data(namespace, file), table, call_data(namespace, image), helpers, regexps];
@@ -129,7 +130,7 @@ fn definition(name: String, code: &RelocatableCode, targets: &Targets<'_>) -> Re
     }).collect::<Result<Vec<_>, String>>()?;
     Ok(NativeFunction::Code(NativeCode {
         name,
-        signature: ir::Signature::new(targets.conv),
+        signature: ir::Signature::new(targets.body_conv),
         code: code.code.to_vec(),
         alignment: CODE_ALIGNMENT,
         relocations,

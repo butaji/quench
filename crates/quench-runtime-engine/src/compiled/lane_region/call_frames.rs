@@ -65,6 +65,10 @@ pub(crate) struct CallSite<'a> {
     /// `LaneHelper::Construct` (`lane_body_construction`), which is the construction's result; its body is
     /// not entered (`call_enter`), as the VM's own construction does not run it (`initializes()`).
     pub(crate) initializing: Option<(Register, u16)>,
+    /// A sibling tail call (DESIGN.md 4.4) of an owned body: the window of the call's arguments (`first`, `count`). The
+    /// running frame becomes the callee's, and the body returns through the callee's entry (`tail_call`); the call's
+    /// completion is the callee's. `None` where the call pushes its own frame.
+    pub(crate) tail: Option<(Register, u16)>,
 }
 
 /// The callee a body calls by its entry: one the body owns (a JIT plan's `DirectCallee`), or a call of an image the
@@ -309,6 +313,38 @@ impl EmitFrame<'_> {
         Some(Room { cell, top, next, shadow: index })
     }
 
+    /// The callee's descriptor word: the owned callee's constant, or its record's (`CalleeRecord::descriptor`).
+    fn callee_descriptor(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
+        match callee {
+            DirectSite::Owned(owned) => Some(address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64)),
+            DirectSite::Proven(_) | DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, descriptor)),
+        }
+    }
+
+    /// The callee identity word of a native header: the owned callee's constant, or its bound closure's where the call
+    /// rebinds, or its record's (`CalleeRecord::callee`).
+    fn callee_identity(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
+        match callee {
+            DirectSite::Owned(owned) if self.rebinds.get() => Some(self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
+            DirectSite::Owned(owned) => Some(stage.constant(owned.callee.to_bits())),
+            DirectSite::Proven(_) | DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, callee)),
+        }
+    }
+
+    /// The packed word of a native header: the callee's function with the plain and native flags. An indirect callee's
+    /// record holds its function, so the header takes those bits and the flags.
+    fn callee_packed(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
+        let flags = quench_runtime::staged::frame::PLAIN_FLAG | quench_runtime::staged::frame::NATIVE_FLAG;
+        match callee.function() {
+            Some(function) => Some(stage.constant(u64::from(function) | flags)),
+            None => {
+                let word = self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, function))?;
+                let function = stage.and_imm(word, u64::from(u32::MAX));
+                Some(stage.or_imm(function, flags))
+            }
+        }
+    }
+
     /// The callee's native header (one-frame-one-call.md F5), written below its window with NATIVE_FLAG:
     /// its receiver, the caller's registers, the callee's constant words and the packed word. Its body and
     /// descriptor go in the tables at its index, the plain depth is bumped and the window set as the innermost.
@@ -317,34 +353,19 @@ impl EmitFrame<'_> {
         use quench_runtime::staged::{frame::CONTEXT_THIS, protocol};
         let window = room.top;
         let at = Region::Frame.mutable();
-        // The words the callee's identity fixes are constants (its function's packed word); the words the binding
-        // makes are the records' (a proven callee's, an indirect callee's), a constant of the owned callee's own.
-        let (descriptor, call, caller_base, callee_word) = match callee {
-            DirectSite::Owned(owned) => (
-                address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64),
-                stage.constant(owned.call as u64),
-                stage.constant(owned.caller_base as u64),
-                if self.rebinds.get() { self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee)) } else { stage.constant(owned.callee.to_bits()) },
-            ),
+        // The words the callee's identity fixes are constants; the words the binding makes are the records' (a
+        // proven callee's, an indirect callee's).
+        let (call, caller_base) = match callee {
+            DirectSite::Owned(owned) => (stage.constant(owned.call as u64), stage.constant(owned.caller_base as u64)),
             DirectSite::Proven(_) | DirectSite::Indirect { .. } => (
-                self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, descriptor))?,
                 self.site_word(stage, callee, std::mem::offset_of!(CallRecord, call))?,
                 self.site_word(stage, callee, std::mem::offset_of!(CallRecord, caller_base))?,
-                self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, callee))?,
             ),
         };
+        let descriptor = self.callee_descriptor(stage, callee)?;
+        let callee_word = self.callee_identity(stage, callee)?;
+        let packed = self.callee_packed(stage, callee)?;
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
-        let flags = quench_runtime::staged::frame::PLAIN_FLAG | quench_runtime::staged::frame::NATIVE_FLAG;
-        // A proven callee's packed word is its function's constant; an indirect callee's record holds its function, so the
-        // header takes those bits and the flags.
-        let packed = match callee.function() {
-            Some(function) => stage.constant(u64::from(function) | flags),
-            None => {
-                let word = self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, function))?;
-                let function = stage.and_imm(word, u64::from(u32::MAX));
-                stage.or_imm(function, flags)
-            }
-        };
         // Unlike the b-jit call row, which writes the receiver only where the body's `uses_this` cell word says it
         // reads `this`, this writes it always: loading that word here would add a load and a branch to the
         // emitted header, and an unread receiver word is harmless.
@@ -393,3 +414,6 @@ mod frame_trait;
 
 #[path = "call_frames/self_tail.rs"]
 mod self_tail;
+
+#[path = "call_frames/tail_call.rs"]
+mod tail_call;
