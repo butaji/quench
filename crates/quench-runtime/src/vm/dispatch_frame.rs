@@ -2373,7 +2373,6 @@ impl Vm {
                         ins.boolean_flag().expect("validated boolean immediate"),
                     ) =>
                 {
-                    self.note_int_update(self.read(frame, ins.register_b()), value);
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }

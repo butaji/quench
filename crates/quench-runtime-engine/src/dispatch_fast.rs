@@ -7954,9 +7954,6 @@ use crate::jit_routes::handler_in_lane;
 
 
 pub(crate) mod int_steps;
-// Bridge until `compiled/admission.rs` (`speculation_allowed`, `retire_after_native`) and `engine_calls.rs`
-// (`note_retired`) name `int_steps` directly: the speculation latch lives there, the int32 kinds are gone.
-pub(crate) use int_steps as int_kinds;
 
 
 

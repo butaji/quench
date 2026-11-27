@@ -2602,16 +2602,6 @@ impl ProgramStore {
         }
     }
 
-    /// Gives every lane view's operator records that read a speculative int32 register their
-    /// checked forms (`LaneView::retire_int_speculation`): an update of one overflowed.
-    pub(super) fn retire_int_speculation(&self) {
-        for entry in self.programs.iter().flatten() {
-            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
-                view.retire_int_speculation();
-            }
-        }
-    }
-
     /// `LaneView::rewrite_handlers` on every lane view of every program.
     pub fn rewrite_lane_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
         for entry in self.programs.iter().flatten() {

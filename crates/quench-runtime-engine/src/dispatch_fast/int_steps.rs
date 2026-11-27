@@ -1,7 +1,5 @@
 //! Loop steps the solve's int32 cells prove (`int32_at`): an `i++` back edge over a register-register test takes
 //! its `PROVEN_STEP` form, at load (`prove_loop_steps`) or when the loop site holding it retires (`retired_step`).
-//! Also the speculation latch `compiled/admission.rs` and `engine_calls.rs` name (`int_kinds`, a re-export of this
-//! module): no register speculates now, so the latch only records that an earlier retirement ran.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{checked_step, int32_at, Handler, Ip, LaneContext, LaneInstruction, LoopSite, Operand};
@@ -9,21 +7,6 @@ use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::staged::meaning::{means, Meaning};
 use quench_runtime::vm::engine_types::LaneView;
-
-/// Whether speculation stands on this thread. Nothing speculates (the solve's cells type no int32 that an update may
-/// overflow), so this only records a retirement; the one latch of the speculative kinds' retirement.
-#[thread_local]
-static SPECULATION_RETIRED: std::cell::Cell<bool> = std::cell::Cell::new(false);
-
-/// Whether a view may speculate: none overflowed on this thread yet.
-pub(crate) fn speculation_allowed() -> bool {
-    !SPECULATION_RETIRED.get()
-}
-
-/// Notes that a speculative kind overflowed; returns whether it was the first time.
-pub(crate) fn note_retired() -> bool {
-    !SPECULATION_RETIRED.replace(true)
-}
 
 /// The counter of `step` where it is a flagless `i++` in place, when the solve's cell proves it int32 before the step.
 fn int_counter(step: WideInstruction, pc: u32, facts: Option<&AotFacts>, function: u32) -> Option<u16> {
@@ -65,10 +48,4 @@ pub(crate) fn retired_step(cx: *mut LaneContext, site: &LoopSite, update: Ip, te
     let Ok(pc) = u32::try_from(unsafe { crate::dispatch_fast::pc_in_view(view.records(), update) }) else { return fused };
     let proved = view.proven_counters.iter().any(|&(at, counter)| at == pc && Operand(test.b).register_index() == Some(counter));
     if proved { proven } else { fused }
-}
-
-/// Whether native code the lane left handed it doubles (`admission::retire_after_native`): native frames it left. No
-/// register is speculated, so no register can hold a double the solve did not expect.
-pub(crate) fn native_handed_doubles(cx: *mut LaneContext) -> bool {
-    super::native_frames::left_native_frames(cx)
 }

@@ -471,26 +471,11 @@ pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
 pub(crate) struct RecordPlan {
     /// Loop records keep tier sites (`install_loop_sites`) and their jumps stay visible to them.
     pub(crate) loop_sites: bool,
-    /// The int32 kinds may speculate: the interpreter retires a speculation whose `IncDec`
-    /// overflows, and the lane retires them once native code, whose updates retire nothing,
-    /// hands it an activation (`retire_after_native`).
-    pub(crate) speculates: bool,
 }
 
 /// The record plan of a function whose tiers may run (`tiers_run`: `vm_may_run`, any tier).
 pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
-    RecordPlan { loop_sites: tiers_run, speculates: crate::dispatch_fast::int_kinds::speculation_allowed() }
-}
-
-/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code handed the lane what it may have
-/// stepped as doubles (`handed`: frames it left, or an activation it ran on with a speculative register no longer an
-/// int32, `int_steps::native_handed_doubles`): a native tier steps a register as a double without the interpreter's
-/// retirement (a widened stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
-#[inline(always)]
-pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, handed: impl FnOnce() -> bool) {
-    if crate::dispatch_fast::int_kinds::speculation_allowed() && handed() {
-        vm.retire_int_speculation();
-    }
+    RecordPlan { loop_sites: tiers_run }
 }
 
 /// Where a function's lane body comes from (`route_for_lane`).
