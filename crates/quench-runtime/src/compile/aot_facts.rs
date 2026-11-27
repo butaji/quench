@@ -105,6 +105,11 @@ impl AotFacts {
         }
     }
 
+    /// The composed effect signatures the solve settled (`signatures`), none where the type solve did not settle.
+    pub fn signatures(&self) -> Option<&Signatures> {
+        self.signatures.as_ref()
+    }
+
     /// Whether new code (`World`) can move `key`. A tier that trusts a live key's fact subscribes to
     /// the key (its `code_dependencies` cell readers), and an edge retires those readers. A key that is
     /// not live needs no subscription and no recovery: a closed unit has no exits.
