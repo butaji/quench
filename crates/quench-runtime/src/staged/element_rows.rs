@@ -14,7 +14,7 @@
 
 use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
-use super::typed_elements::{typed_read, typed_read_integer, typed_read_value, typed_write, typed_write_int, TypedView};
+use super::typed_elements::{typed_read, typed_read_value, typed_write, typed_write_int, TypedView};
 use super::{Concrete, ElementFrame, NumericFrame, NumericStage, Operation, Stage, Step};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
@@ -108,10 +108,7 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
         // An integer element that fits int32 is the int itself (`typed_read_integer`: the load,
         // with no Number made of it), so a consumer that wants an int -- a `switch`'s
         // `IntCaseIndex`, which otherwise converts a double on every dispatch -- reads it as one.
-        ElementView::Typed(view) => match typed_read_integer(stage, view, index, miss) {
-            Some(integer) => Some(frame.int_result(stage, integer)),
-            None => typed_read(stage, view, index, miss),
-        },
+        ElementView::Typed(view) => typed_read(stage, view, index, miss),
         ElementView::Dense(view) => frame.element_probed(stage, miss,
             #[inline(always)] |stage, _, absent| read_element(stage, view, index, absent),
             #[inline(always)] |stage, frame, miss| {
