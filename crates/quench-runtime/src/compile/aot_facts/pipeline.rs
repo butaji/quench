@@ -239,6 +239,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
+        field_readers.accessor_names(&accessor_names);
         field_readers.finish(&facts.cells, &open_escapes);
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
