@@ -965,7 +965,10 @@ pub(super) fn body_inlined_activation_in_lane(
         // Cache eviction is not invalidation of an immutable callee binding: a lifecycle
         // edge retires the body first (`ProgramStore::retire_dead_native_calls`). Resolve
         // only when recovery needs the activation, rather than scanning at entry.
-        let callee = call.target.identity().expect("a lane body's inlined callee has its identity");
+        // A frame bound by its function (closed world) names no closure: its callee register holds it,
+        // live through the frame (`lane_region`'s liveness).
+        let parent = call.parent_base(frames);
+        let callee = call.target.identity().unwrap_or_else(|| registers.get(call.callee_register - parent));
         let target = vm.script_call_entry(callee)
             // SAFETY: copy the current cache row before any cache mutation.
             .map(|target| unsafe { *target })
@@ -973,7 +976,6 @@ pub(super) fn body_inlined_activation_in_lane(
             .expect("an inlined callee resolves");
         // SAFETY: the record is the call's in its parent's view.
         let (target, record) = (&target, unsafe { records.add(call.call as usize) });
-        let parent = call.parent_base(frames);
         let this = call_this_in_lane(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
         // The frame's own window and count: a call through `call` passes past its receiver
         // (`lane_unit::InlinedCall::function_call`).
