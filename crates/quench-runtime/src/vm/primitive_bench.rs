@@ -159,7 +159,7 @@ fn property_store(b: &mut Bencher, tracking: bool, initial: Value) {
             let arena = black_box(&mut arena);
             arena.note_shape_value(SHAPE, slot, value);
             // SAFETY: setup allocated all BATCH_VALUES slots in this flat vector.
-            unsafe { arena.set_flat_unchecked(vector, slot, value, arena.word_type(SHAPE, slot)) };
+            unsafe { arena.set_flat_unchecked(vector, slot, value) };
         }
     });
     for slot in 0..BATCH_VALUES {

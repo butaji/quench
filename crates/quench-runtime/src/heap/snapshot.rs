@@ -49,7 +49,7 @@ impl Heap {
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         // Every small string was written out above: each is kept as its text.
         write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
-        self.properties.write_snapshot(writer, self.tracked_runs());
+        self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
         self.write_sparse_arrays(writer);
         Ok(())

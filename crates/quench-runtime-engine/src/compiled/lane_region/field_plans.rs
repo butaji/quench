@@ -131,7 +131,7 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
     match load.holder {
         None => vec![IcOp::LoadSlot { slot: load.slot,
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), quench_runtime::staged::ic::form_of_layout),
-            storage_len: load.storage_len, rep: if load.raw_double { Representation::Float64 } else { Representation::Tagged } }],
+            storage_len: load.storage_len, rep: Representation::Tagged }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
         // An ahead image's guessed holder (`ic::SYMBOLIC_SHAPE`): the value the holder holds when
         // the image links, a fact the loader proves and the holder's prototype-value watch retires

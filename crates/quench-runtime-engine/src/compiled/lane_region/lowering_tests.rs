@@ -41,7 +41,7 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
     let mut fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
             shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-            ty: Type::INT32, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+            ty: Type::INT32, inherited: None, function_shape: false, formed: None, holder_id: None,
         }])));
     assert_eq!(fields.iter().flatten().count(), 1, "the test must exercise a profiled store");
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
@@ -76,7 +76,7 @@ fn a_loop_of_leaving_stores_reads_the_invalidation_word_once_on_its_entering_edg
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
-            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: Type::INT32, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: Type::INT32, inherited: None, function_shape: false, formed: None, holder_id: None,
         }])));
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let (backedge, header) = unit.instructions.iter().enumerate()
@@ -108,7 +108,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
         if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
@@ -133,7 +133,7 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
-            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false, formed: None, holder_id: None,
         }])));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
@@ -165,7 +165,7 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
-                storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
+                storage: None, ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
@@ -199,7 +199,7 @@ fn own_field_reads_take_no_arena_bound() {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
-                ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
+                ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();

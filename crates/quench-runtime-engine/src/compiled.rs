@@ -3457,16 +3457,11 @@ unsafe extern "C" fn truthy_in_lane(vm: u64, _residual: u64, bits: Value) -> u64
 /// Admit a bound slot's write domain before any guest effect or raw store.
 unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
-    let raw_double = domain & RAW_DOUBLE_WRITES != 0;
-    let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
+    let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    u64::from(vm.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
+    u64::from(vm.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
 }
-
-/// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
-/// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
-pub(crate) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
@@ -10422,7 +10417,7 @@ mod tests {
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
             assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
-            assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
+            assert!(vm.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
             assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);

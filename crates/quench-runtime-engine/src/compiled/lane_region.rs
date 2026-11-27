@@ -3134,21 +3134,16 @@ impl Lowering<'_, '_> {
         admitted
     }
 
-    /// Admits at entry the writes `writes` to `slot` of `shape`, failing through `exit`; a slot whose
-    /// words are raw doubles where `raw_double`, which the unit's in-place arms store as such
-    /// (`Heap::admit_slot_writes_as`).
-    pub(crate) fn admit_slot_writes_as(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, raw_double: bool, exit: ir::Block) {
-        let (admitted, _) = self.slot_writes_admitted_as(shape, slot, writes, raw_double);
+    /// Admits at entry the writes `writes` to `slot` of `shape`, failing through `exit`
+    /// (`Heap::admit_slot_writes`).
+    pub(crate) fn admit_slot_writes(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, exit: ir::Block) {
+        let (admitted, _) = self.slot_writes_admitted(shape, slot, writes);
         emit_js_guard(&mut self.builder, admitted, exit);
     }
 
     fn slot_writes_admitted(&mut self, shape: ir::Value, slot: ir::Value, writes: Type) -> (ir::Value, Type) {
-        self.slot_writes_admitted_as(shape, slot, writes, false)
-    }
-
-    fn slot_writes_admitted_as(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, raw_double: bool) -> (ir::Value, Type) {
         let domain = quench_runtime::typed_ir::SlotType::from_type(writes);
-        let encoded = self.raw_const(Lane::I64, domain as i64 | if raw_double { RAW_DOUBLE_WRITES as i64 } else { 0 });
+        let encoded = self.raw_const(Lane::I64, domain as i64);
         let helper = self.helpers.target(&mut self.builder, LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         (self.raw_compare_imm(Relation::NotEqual, admitted, 0), domain.ty())
@@ -4420,7 +4415,8 @@ impl Lowering<'_, '_> {
                     self.cell_before(*store, self.unit.instructions[*store].register_a()).ty.is_int32()
                 })
             } else { int32 };
-            let number = carried && !int32 && self.carries_number(&self.loop_fields[field.unwrap()], instruction);
+            // No own slot holds raw doubles (invariant I), so no loop field is carried as one.
+            let number = false;
             if int32 {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
@@ -4498,10 +4494,9 @@ impl Lowering<'_, '_> {
                     let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
                         &mut self.builder, self.payload, site, exit, None));
                     if number {
-                        // The slot keeps raw doubles, which the carried Number stores as they are.
                         let shape = self.raw_unary(Unary::ZeroExtend(Lane::I64), binding.receiver);
                         let slot = binding.slot.read(&mut self.builder);
-                        self.admit_slot_writes_as((shape, slot), Type::NUMBER, true, exit);
+                        self.admit_slot_writes((shape, slot), Type::NUMBER, exit);
                     } else {
                         self.admit_field_writes(&mut binding, Type::INT32, exit);
                     }
@@ -5120,8 +5115,7 @@ impl Lowering<'_, '_> {
         let own: Vec<&NativeFieldLoad> = site_loads(self.fields, site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         let arms = own.iter().filter(|load| load.valid())
-            .filter_map(|load| StoreArm::of_rep((load.shape, load.slot), load.ty, ty,
-                (load.raw_double, quench_runtime::staged::Form::of(load.storage, load.storage_len)))
+            .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)
                 .map(|arm| if load.image_layout() { arm.as_layout() } else { arm }))
             // An arm whose test no value of `ty` passes would take its shape's store and miss: a
             // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
