@@ -1461,20 +1461,11 @@ pub(crate) struct ScalarConstructPlan {
     pub(crate) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
 }
 
-/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: a closure
-/// the VM made, or in an ahead image the `Symbol::HeapValue` key of the closure the closed world
-/// proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
+/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: the `Symbol::HeapValue` key of
+/// the closure the closed world proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PlanCallee {
-    Live(Value),
     Image(u32),
-}
-
-impl PlanCallee {
-    /// The closure, where the VM made it.
-    pub(crate) fn live(self) -> Option<Value> {
-        match self { Self::Live(callee) => Some(callee), Self::Image(_) => None }
-    }
 }
 
 /// Where a field of a `ScalarConstructPlan` takes its value.
@@ -10324,7 +10315,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+            &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
@@ -10398,7 +10389,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| matches!(quench_runtime::staged::Operation::<u64, ()>::of(*i),
                 Some(quench_runtime::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+                &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
             let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
@@ -10632,8 +10623,7 @@ mod tests {
             "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
             "nested-poll-binding.js").unwrap();
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
-            &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
+        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = frame_in_lane();
         // The real outer landing must survive an inner trampoline overwriting it.

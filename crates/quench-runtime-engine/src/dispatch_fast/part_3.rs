@@ -824,15 +824,6 @@ pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, pc: u32) -> Vec<cra
     }
 }
 
-/// `site_targets_in_lane` of any function of the running program, by its view.
-pub(super) fn unit_targets_in_lane(cx: *mut LaneContext, function: u32, pc: u32) -> Vec<crate::compiled::CallTarget> {
-    // SAFETY: the program's views outlive the lane run.
-    let Some(view) = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else {
-        return Vec::new();
-    };
-    site_targets_in_lane(unsafe { vm(cx) }, view, pc)
-}
-
 /// The dense capture slots of `callee`'s environment (`Vm::callee_capture_slots`).
 pub(super) fn callee_captures_in_lane(cx: *mut LaneContext, callee: Value) -> (usize, usize) {
     unsafe { vm(cx) }.callee_capture_slots(callee)

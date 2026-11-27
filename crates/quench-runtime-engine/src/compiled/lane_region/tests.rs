@@ -56,7 +56,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
     let caller = named("run");
     let other = named("other") as u32;
     let targets = static_call_targets(&program);
-    let unit_for = |polymorphic| super::super::lane_unit::unit(&program, Some(&super::super::lane_unit::test_graph(&program)), caller as u32,
+    let unit_for = |polymorphic| super::super::lane_unit::unit_planned(&program, Some(&super::super::lane_unit::test_graph(&program)), caller as u32,
         program.function(caller), &|function, pc| {
             let mut found: Vec<_> = targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
@@ -211,7 +211,7 @@ fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
     for name in ["fieldChoice", "calleeChoice"] {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-        let unit = super::super::lane_unit::unit(&program, Some(&super::super::lane_unit::test_graph(&program)), caller as u32, program.function(caller),
+        let unit = super::super::lane_unit::unit_planned(&program, Some(&super::super::lane_unit::test_graph(&program)), caller as u32, program.function(caller),
             &|function, pc| targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                 .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
@@ -284,7 +284,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let program = quench_runtime::Engine::specialize(
         "function predicate(x){let result;if(x<0)result=x===-1;else result=x===1;if(result)return 7;return 9;}",
         "boolean-join.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
@@ -335,7 +335,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
 fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     let program = quench_runtime::Engine::specialize(
         "function words(x){x=x|0;return x|0;}", "unboxed-word-input.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();

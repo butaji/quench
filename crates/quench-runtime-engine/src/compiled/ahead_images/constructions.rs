@@ -2,7 +2,7 @@
 //! a `new F(..)` the closed world proves constructs `F` (`AotFacts::construct_target`), where `F`'s
 //! body only stores its parameters and immediate constants into `this` (`initializer_stores`). The
 //! plan is the one the VM's construct plan of `F`'s closure makes of the same stores
-//! (`dispatch_fast::scalar_construct_plan`): its fields in store order, each a parameter as passed
+//! (the callee's `ScalarConstructPlan` the VM's construct plan makes): its fields in store order, each a parameter as passed
 //! or a constant. The code guards the callee by the image's symbol of `F`'s closure
 //! (`HeapValueRecipe::ClosureOf`) and asks the VM whether that closure's plan holds where the
 //! construction runs (`LaneHelper::ConstructPlanHolds`), so a closure whose plan the VM has not

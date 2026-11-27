@@ -373,7 +373,6 @@ fn frame(shape: &CallShape, callee: &Callee, base: Register) -> InlinedCall {
         base,
         registers: callee.registers,
         alternative: None,
-        function_call: None,
     }
 }
 

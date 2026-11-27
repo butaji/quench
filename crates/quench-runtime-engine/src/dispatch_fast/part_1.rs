@@ -1381,8 +1381,8 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let diagnostics = crate::compiled::admission::diagnosing(vm);
     let work = match work {
         // A looping caller's trips pay for the body as its own iterations do (`looped`).
-        crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: seen, called, caller, .. } =>
-            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller },
+        crate::compiled::LaneBodyWork::Start { generic, looped: seen, called, caller } =>
+            crate::compiled::LaneBodyWork::Start { generic, looped: looped.or(seen), called, caller },
         poll => poll,
     };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
@@ -1400,7 +1400,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
         crate::compiled::admission::LaneRoute::Lane => {}
     }
-    let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
+    let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
     if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
         if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
     }

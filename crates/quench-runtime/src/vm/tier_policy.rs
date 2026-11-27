@@ -201,10 +201,10 @@ pub const PROTOTYPE_UNROLL_LINKS: u32 = 4;
 pub const POLYMORPHISM: usize = 4;
 
 /// Whether a closed-set call's plan inlines its arms' bodies, so the call is lowered as the class-layout compare chain
-/// (`closed_set_by_layout`) rather than the indirect call through the class's method vector (`closed_set_indirect`).
-/// The inline rule of design decision 4.6 decides it; until that slice lands no plan inlines its arms.
-pub fn arms_inline(_plan: &crate::compile::call_plan::CallPlan) -> bool {
-    false
+/// (`closed_set_by_layout`) rather than the indirect call through the class's method vector (`closed_set_indirect`):
+/// at most three arms, each of which the rule `inlines` admits.
+pub fn arms_inline(plan: &crate::compile::call_plan::CallPlan, graph: &CallGraph, program: &ResidualProgram) -> bool {
+    plan.arms.len() <= 3 && plan.arms.iter().all(|arm| inlines(graph, program, arm.function))
 }
 
 /// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
@@ -483,9 +483,6 @@ pub const LOOP_BODY_POLL: u16 = 16;
 pub const MAX_ENTRY_BACKOFF: u32 = 16;
 
 // Lane bodies: compile admission (compiled/lane_compile, lane_region, lane_unit)
-/// A replanned body inlines with this fraction of the budget whose compile failed.
-pub const REPLAN_BUDGET_DIVISOR: usize = 2;
-
 /// The IR size above which a lane body's registers are allocated in one pass. The backtracking
 /// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
 /// units of 23k-28k IR instructions) set the process's peak resident size while its code
@@ -496,8 +493,8 @@ pub const REPLAN_BUDGET_DIVISOR: usize = 2;
 pub const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 
 /// The executable memory a lane body may take, a resource limit: the code and compile time a
-/// hot loop's inlined call graph (Richards' ~900 instructions) costs. A larger body is planned
-/// again with less inlined (`Vm::compile_lane_method`).
+/// hot loop's inlined call graph (Richards' ~900 instructions) costs. A body whose code exceeds it is declined: the
+/// static inlining cap (`INLINE_GROWTH_PERCENT`) decides the unit's size once, with no replanning.
 pub const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 
 /// The code one ahead-of-time image body may take. An image compiles once, offline, into a file
@@ -506,12 +503,10 @@ pub const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 /// the image. The bound stays a resource limit: the image is loaded whole.
 pub const AHEAD_BODY_MAX_CODE_BYTES: usize = 4 * LANE_BODY_MAX_CODE_BYTES;
 
-/// The callee instructions one unit inlines in all, the region's budget: what a lane body's
-/// code-size budget holds (`LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
-/// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
-/// sites in program order, each within what the budget has left.
-pub const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
-    LANE_BODY_MAX_CODE_BYTES / LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+/// The growth a unit's inlining may add, in percent of its root body's instructions (design decision 4.6): the callee
+/// instructions one unit copies in all are at most this share of the root's own size, spent on the call sites in
+/// program order (`lane_unit`'s planner). A callee with exactly one call site adds no growth (`charges_growth`).
+pub const INLINE_GROWTH_PERCENT: usize = 10;
 
 /// The longest body a callee with no call in it inlines: an accessor, an arithmetic helper. Its copy costs code at
 /// each site, and its call costs most relative to its work (design decision 4.6: 64).
@@ -525,8 +520,14 @@ pub const INLINE_SINGLE_SITE_MAX_INSTRUCTIONS: usize = 400;
 /// and the moves and returns around them, whose call is the whole of its cost.
 pub const INLINE_ACCESSOR_MAX_INSTRUCTIONS: usize = 12;
 
+/// Whether inlining `callee` adds code to its unit: a callee with one call site in the closed world moves its one body
+/// rather than copying it, so it adds no growth and is not charged to `INLINE_GROWTH_PERCENT`.
+pub fn charges_growth(graph: &CallGraph, callee: u32) -> bool {
+    !graph.single_call_site(callee)
+}
+
 /// Whether the callee `callee` of `program` inlines at a call site the planner has proved a single target for
-/// (its call plan's one arm, or the one callee a site linked). The one rule every tier asks, and it reads only static
+/// (an arm of its call plan). The one rule every tier asks, and it reads only static
 /// facts: the body's size and shape, and the program's call graph (`CallGraph::single_call_site`). A callee inlines
 /// where (a) it is a leaf, with no call, under `INLINE_LEAF_MAX_INSTRUCTIONS`; or (b) it has exactly one call site in
 /// the closed world, under `INLINE_SINGLE_SITE_MAX_INSTRUCTIONS`; or (c) it is accessor-shaped, under
@@ -770,7 +771,3 @@ mod tests {
 }
 
 
-/// The machine bytes an inlined instruction of a lane body costs at most, with its guards and
-/// exits: what a unit's instruction budget (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) is
-/// derived from its code-size budget by.
-pub const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;

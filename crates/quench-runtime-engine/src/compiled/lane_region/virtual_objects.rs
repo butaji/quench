@@ -58,18 +58,16 @@ pub(crate) struct ConstructReady {
 }
 
 impl Lowering<'_, '_> {
-    /// The word of a plan's callee: the closure's identity, which the code's roots keep, or the
-    /// symbol of the image's closure, which the loader resolves and roots (`aot_image::live`).
+    /// The word of a plan's callee: the symbol of the image's closure, which the loader resolves
+    /// and roots (`aot_image::live`).
     fn plan_callee_word(&mut self, callee: PlanCallee) -> ir::Value {
-        match callee {
-            PlanCallee::Live(callee) => self.identity_constant(callee),
-            PlanCallee::Image(key) => self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits()),
-        }
+        let PlanCallee::Image(key) = callee;
+        self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits())
     }
 
     /// The plan the construction at `pc` would build its receiver by, where the body may keep
     /// that receiver as its field values: a plain construction of registers whose site named one
-    /// callee with such a plan (`OnlineFacts::construct_plans`).
+    /// callee with such a plan (the compile context's `construct_plans`).
     pub(crate) fn virtual_construct_plan(&self, pc: usize, instruction: WideInstruction) -> Option<ScalarConstructPlan> {
         if self.completion.numeric() || instruction.result_flags() != 0 || !self.completion.status_and_pc() { return None; }
         if !self.is_construction(instruction) { return None; }

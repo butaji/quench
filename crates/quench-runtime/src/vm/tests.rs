@@ -20937,7 +20937,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: callee_id });
         let callee_captures = vm.callee_capture_slots(callee);
-        let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
+        let method = vm.compile_lane_method(&program, caller_id, &|_| callee_captures, Vec::new(), &[])
             .expect("legacy-observable inlined unit");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
@@ -20990,10 +20990,10 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         let other = method_of(&mut vm, "other");
         let crate::heap::FunctionKind::User(_, other_id) = vm.heap.function(other).unwrap().kind else { panic!("other") };
         targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: other_id });
-        assert!(vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).is_none(),
+        assert!(vm.compile_lane_method(&program, caller_id, &|_| (0, 0), Vec::new(), &[]).is_none(),
             "publication must reject a callee paired with the wrong function body");
         targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: callee_id });
-        let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).unwrap();
+        let method = vm.compile_lane_method(&program, caller_id, &|_| (0, 0), Vec::new(), &[]).unwrap();
         assert_eq!(method.inlined.len(), 1);
         let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         vm.collect_now(&program);
@@ -21004,7 +21004,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 // roots the callee, so a full collection keeps the locator its guard compares.
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(orphan), function: callee_id });
-                let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).unwrap();
+                let method = vm.compile_lane_method(&program, caller_id, &|_| (0, 0), Vec::new(), &[]).unwrap();
                 let rooted = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
                 vm.collect_now(&program);
                 assert!(vm.heap.is_live(orphan), "published code keeps the callee its guard names alive");
@@ -21102,7 +21102,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         targets[call] = Some(crate::vm::engine_types::CallTarget { callee: crate::vm::engine_types::CalleeBinding::Identity(callee), function: callee_id });
         let callee_captures = vm.callee_capture_slots(callee);
-        let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
+        let method = vm.compile_lane_method(&program, caller_id, &|_| callee_captures, Vec::new(), &[])
             .expect("closure capture unit compiles");
         assert_eq!(method.inlined.len(), 1, "callee captures must not retain a guest call");
         let total = vm.intern_atom("total");
@@ -22515,7 +22515,7 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         let instructions: Vec<_> = body.instructions().collect();
         let store_pc = instructions.iter().position(|instruction|
             matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)).unwrap();
-        let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).expect("warmed lane method");
+        let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).expect("warmed lane method");
         let atom = vm.intern_atom(object_name);
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -22563,7 +22563,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).expect("typed lane method");
+            let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).expect("typed lane method");
             let atom = vm.intern_atom(name);
             let function = vm.own_property(vm.realm.globals, atom).unwrap();
             for input in inputs {
@@ -22651,7 +22651,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let body = program.function(id);
         let instructions: Vec<_> = body.instructions().collect();
-        let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).expect("nullish lane method");
+        let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).expect("nullish lane method");
         let atom = vm.intern_atom(name);
         let function = vm.own_property(vm.realm.globals, atom).unwrap();
         for value_name in ["nullValue", "undefinedValue", "zeroValue", "nanValue", "booleanValue",
@@ -22687,7 +22687,7 @@ fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "exposed")).unwrap();
     let body = program.function(id);
-    let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).expect("native prefix");
+    let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).expect("native prefix");
     let parameter = usize::from(body.promoted_register(0).expect("promoted parameter"));
     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
     registers[parameter] = Value::integer(111);
@@ -22739,7 +22739,7 @@ fn typed_shape_edges_preserve_joins_reassignment_and_layout_fallback() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[])
+            let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[])
                 .expect("typed shape artifact");
             let function = global(&mut vm, name);
             let run = |vm: &mut Vm, arguments: &[Value]| {
@@ -22828,7 +22828,7 @@ fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).expect("own-slot native artifact");
+            let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).expect("own-slot native artifact");
             let function = global(&mut vm, name);
             let run = |vm: &mut Vm, receiver, arguments: &[Value]| {
                 let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -22927,7 +22927,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                     &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
                 (pc, registers)
             };
-            let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[])
+            let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[])
                 .unwrap_or_else(|| panic!("native {name}: {instructions:?}"));
             for object_name in ["packed", "arena"] {
                 let object = global(&mut vm, object_name);
@@ -22958,7 +22958,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             vm.collect_now(&program);
             let object = global(&mut vm, "arena");
             vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
-            let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+            let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).unwrap();
             let marked = |vm: &Vm, object: Value| {
                 let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
                 let id = vm.heap.record_id(object.direct_object_index().unwrap()) as usize;
@@ -22979,8 +22979,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let numeric_function = global(&mut vm, "writeNumber");
             vm.call_value(&program, numeric_function, Value::UNDEFINED, &[object, Value::number(1.5)]).unwrap();
             let numeric_body = program.function(numeric);
-            let numeric_method = vm.compile_lane_method(&program, numeric as u32, &|_, _| Vec::new(),
-                &|_| (0, 0), Vec::new(), &[]).unwrap();
+            let numeric_method = vm.compile_lane_method(&program, numeric as u32, &|_| (0, 0), Vec::new(), &[]).unwrap();
             for value in [Value::integer(7), Value::number(1.5), Value::number(-0.0),
                 Value::number(f64::NAN), Value::number(f64::INFINITY)] {
                 let (pc, _) = run(&mut vm, numeric_body, &numeric_method, object, value);
@@ -23020,7 +23019,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
         let body = program.function(id);
-        let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+        let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).unwrap();
         let replacement = global(&mut vm, "replacement");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         for (index, value) in [object, replacement].into_iter().enumerate() {
@@ -23051,7 +23050,7 @@ fn native_chain_append_completes_without_a_store_handoff() {
     let body = program.function(id);
     let instructions: Vec<_> = body.instructions().collect();
     assert!(instructions.iter().any(|instruction| instruction.op() == Op::SetField));
-    let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+    let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).unwrap();
     let left = vm.intern_atom("left");
     for (head_name, item_name) in [("head", "item"), ("arenaHead", "arenaItem")] {
         let atom = vm.intern_atom(head_name);
