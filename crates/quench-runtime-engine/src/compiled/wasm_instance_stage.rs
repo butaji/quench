@@ -7,7 +7,7 @@ use super::{Analysis, AnalysisState, Emitter, Kind, Region, Slot};
 use quench_runtime::bytecode::{Function, WideInstruction};
 use quench_runtime::staged::machine::{MachineAccess, MachineStage, MachineVector};
 use quench_runtime::staged::wasm::Width;
-use quench_runtime::staged::wasm_instance::{Instance, Storage, WasmInstance, global_get, global_set, local_register};
+use quench_runtime::staged::wasm_instance::{Instance, InstanceWasmInstanceExt, Storage, WasmInstance, global_get, global_set, local_register};
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
 use cranelift_codegen::ir;
 

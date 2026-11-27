@@ -232,7 +232,7 @@ pub fn allocate_step<S: WasmCall>(
     Ok(())
 }
 
-// The bytecode queries (`Call::of`, `callee`) and the canonical-signature entry read the runtime: `glue.rs`.
+// The bytecode queries (`call_of`, `callee`) and the canonical-signature entry read the runtime: `glue.rs`.
 #[cfg(not(stencil_build))]
 mod glue;
 #[cfg(not(stencil_build))]

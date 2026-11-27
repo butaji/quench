@@ -205,8 +205,8 @@ pub(crate) fn derive_lane_view<'live>(
             let op = instruction.op();
             let binds_memory =
                 quench_runtime::staged::wasm_instance_binding(op) && Some(instruction.a()) == memory_register;
-            let memory_access = MemoryLoad::from_direct_op(op).is_some()
-                || MemoryStore::from_direct_op(op).is_some();
+            let memory_access = quench_runtime::staged::wasm_memory::memory_load_from_direct_op(op).is_some()
+                || quench_runtime::staged::wasm_memory::memory_store_from_direct_op(op).is_some();
             let keeps_view = if memory_access {
                 Some(instruction.b()) == memory_register
             } else {

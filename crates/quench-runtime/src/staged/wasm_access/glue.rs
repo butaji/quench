@@ -26,12 +26,12 @@ impl WasmAccessOperationWasmAccessExt for WasmAccessOperation {
     fn decode<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         let op = instruction.op();
         let wide = instruction.wide();
-        if let Some(access) = MemoryLoad::from_direct_op(op).and_then(Access::of_load) {
+        if let Some(access) = wasm_memory::memory_load_from_direct_op(op).and_then(wasm_memory::access_of_load) {
             return Some(Self::Load { access, destination: wide.a(), address: wide.c(), offset: wide.imm() });
         }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
+        if let Some(store) = wasm_memory::memory_store_from_direct_op(op) {
             return Some(Self::Store {
-                access: Access::of_store(store),
+                access: wasm_memory::access_of_store(store),
                 source: wide.a(),
                 address: wide.c(),
                 offset: wide.imm(),
@@ -125,7 +125,7 @@ pub fn step<F: Frame<Concrete>>(
             }
         }
         WasmAccessOperation::GenericLoad { operator, destination, memory, address } => {
-            let access = match Access::of_load(operator) {
+            let access = match wasm_memory::access_of_load(operator) {
                 Some(access) => access,
                 None => return Step::Unresolved,
             };
@@ -144,7 +144,7 @@ pub fn step<F: Frame<Concrete>>(
             }
         }
         WasmAccessOperation::GenericStore { operator, source, memory, address } => {
-            let access = Access::of_store(operator);
+            let access = wasm_memory::access_of_store(operator);
             let Some(rep) = representation(access.ty) else { return Step::Unresolved };
             let Some(index) = frame.wasm_read(stage, address, WasmRep::Bits64) else {
                 return Step::Unresolved;

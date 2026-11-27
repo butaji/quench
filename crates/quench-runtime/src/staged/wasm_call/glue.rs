@@ -3,17 +3,16 @@ use super::*;
 use crate::bytecode::{Class, Op, WideInstruction};
 use crate::wasm::CanonicalSignature;
 
-impl Call {
-    /// The call step `op` is (`Decoder::WasmCall`), or none for an opcode that makes no call.
-    #[inline(always)]
-    pub const fn of(op: Op) -> Option<Self> {
-        match op.class() {
-            Class::CallKnown => Some(Self::Known),
-            Class::WasmIndirectTarget => Some(Self::IndirectTarget),
-            Class::WasmRefFunc => Some(Self::RefFunc),
-            Class::Call => Some(Self::Reference),
-            _ => None,
-        }
+/// The call step `op` is (`Decoder::WasmCall`), or none for an opcode that makes no call. A const
+/// fn, so a free fn: an inherent impl of `Call` cannot live outside quench-staged.
+#[inline(always)]
+pub const fn call_of(op: Op) -> Option<Call> {
+    match op.class() {
+        Class::CallKnown => Some(Call::Known),
+        Class::WasmIndirectTarget => Some(Call::IndirectTarget),
+        Class::WasmRefFunc => Some(Call::RefFunc),
+        Class::Call => Some(Call::Reference),
+        _ => None,
     }
 }
 

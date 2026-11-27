@@ -6,6 +6,8 @@
 use crate::ext_traits::*;
 use super::*;
 use super::lane_reads::Reads;
+#[allow(unused_imports)] use quench_runtime::staged::wasm_float::OperationWasmFloatExt;
+#[allow(unused_imports)] use quench_runtime::staged::wasm_simd::OperationWasmSimdExt;
 use super::completions::return_record_in_lane;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
