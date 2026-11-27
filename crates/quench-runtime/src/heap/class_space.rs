@@ -190,6 +190,11 @@ impl ClassSpace {
         std::mem::take(&mut self.holder_departed)
     }
 
+    /// Whether a holder cell departed and the VM has not yet cleared its field caches.
+    pub(super) fn holder_departure_pending(&self) -> bool {
+        self.holder_departed
+    }
+
     /// Maps the space's range and cuts its regions from it on the first call; `false` where that failed.
     pub(super) fn ensure_reserved(&mut self) -> bool {
         if self.range.is_some() {

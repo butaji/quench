@@ -110,6 +110,12 @@ impl Heap {
         self.class_space.take_holder_departure()
     }
 
+    /// Whether a holder cell departed and the field caches are not yet cleared (`take_holder_departure`).
+    #[inline(always)]
+    pub(crate) fn holder_departure_pending(&self) -> bool {
+        self.class_space.holder_departure_pending()
+    }
+
     /// The departure edge for a record-only view of `value` (`object_record_mut`, `object_and_arena_mut`,
     /// `object_record_mut`): a live class cell departs first, so the record the view names is the whole
     /// object. A record or a departed cell is unchanged, and a value that is no ordinary object is ignored.
