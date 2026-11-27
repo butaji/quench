@@ -513,7 +513,7 @@ fn execute_shared_on_worker(
     let execution = if resuming {
         runtime.resume_restored()
     } else if restored {
-        runtime.execute_restored(&program)
+        runtime.execute_restored(&program).map_err(quench_runtime::JsError::from)
     } else {
         runtime.execute_deferred_jobs(&program)
     };

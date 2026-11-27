@@ -98,7 +98,7 @@ fn run() -> Result<u8, String> {
     let Rest { runtime, program, resume } = &mut *rest;
     match resume.take() {
         Some(chain) => runtime.resume_input_chain(chain).map_err(|error| uncaught(&error))?,
-        None => runtime.execute_restored(program.residual()).map_err(|error| uncaught(&error))?,
+        None => runtime.execute_restored(program.residual()).map_err(|exit| uncaught(&quench_runtime::JsError::from(exit)))?,
     }
     runtime.run_host_jobs(program.residual()).map_err(|error| uncaught(&error))?;
     runtime.finish_deferred_execution(program.residual()).map_err(|error| uncaught(&error))?;

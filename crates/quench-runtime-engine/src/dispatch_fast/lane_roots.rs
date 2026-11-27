@@ -8,7 +8,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
 use quench_runtime::vm::activation::{FrameRecord, JobResume, JobRoot};
-use quench_runtime::vm::dispatch_frame::{ExecutingProgram, LaneExit};
+use quench_runtime::vm::dispatch_frame::{ExecutingProgram, LaneHandoff};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
 /// a job's lane excludes while its activations run.
@@ -426,7 +426,7 @@ impl Vm {
         let frame = context.frame();
         self.frames[frame].pc = pc;
         let raised = self.lane_completion.take_raised();
-        JobEnd::Frames(self.run_frames_after_lane_exit(code, frame, pending, LaneExit { executing, raised }))
+        JobEnd::Frames(self.run_frames_after_lane_exit(code, frame, pending, LaneHandoff { executing, raised }))
     }
 }
 

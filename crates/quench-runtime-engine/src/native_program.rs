@@ -283,7 +283,7 @@ impl Vm {
             let prepared = self.prepare_native_script(script.clone())?;
             self.evaluate_prepared_global_script(&prepared)?;
         }
-        self.run_main(&native.program, drain_jobs)
+        self.run_main(&native.program, drain_jobs).map_err(JsError::from)
     }
 }
 

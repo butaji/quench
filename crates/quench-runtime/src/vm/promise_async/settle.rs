@@ -109,6 +109,12 @@ impl Vm {
         owner: StopOwner,
         result: Result<super::FrameOutcome, JsError>,
     ) -> Stop {
+        // A captured run's frames are its chain already (`capture_chain_parked`): the stop has no
+        // frame to pop and no promise to reject, so the capture passes through.
+        let result = match result {
+            Err(error) if error.is_captured() => return Err(error),
+            result => result,
+        };
         let mut frame = self.frames.pop().expect("resumed frame exists");
         self.deactivate_frame(&mut frame, &result);
         let (popped, result) = split_stop(frame, result);
@@ -129,6 +135,9 @@ impl Vm {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.pool_stopped(popped);
+                if error.is_captured() {
+                    return Err(error);
+                }
                 return self.stop_threw(p, owner, error);
             }
         };

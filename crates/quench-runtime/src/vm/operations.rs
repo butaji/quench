@@ -691,15 +691,19 @@ impl Vm {
     }
 
     /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
-    /// native's call parked on the chain's top record, kept for the build. The native does not run;
-    /// the watched run ends here (`clock::store_input_capture`). Only the input natives' own entries
-    /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
-    pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value]) -> JsError {
-        let chain = self.capture_chain_parked(0, native, this, args);
-        crate::clock::store_input_capture(chain);
+    /// native's call parked on the chain's top record. The native does not run; the run ends with
+    /// the chain as its `Captured` exit (`JsError::captured`, read by `exit::Exit::of`). Only the
+    /// input natives' own entries reach it (Date call and construct, Date.now, Math.random), so no
+    /// other call pays for the edge. `new_target` is `Some` for a construction.
+    pub(super) fn capture_input_native(&mut self, native: Native, new_target: Option<Value>, this: Value, args: &[Value]) -> JsError {
+        let callee = self.native_value(native);
+        let chain = self.capture_chain_parked(0, callee, this, args.to_vec().into_boxed_slice(), new_target);
+        // The build's consumers still read the chain from the clock's handoff (`clock::take_input_capture`);
+        // this copy goes there until they read the run's exit.
+        crate::clock::store_input_capture(chain.clone());
         match self.check_execution_interrupt() {
             Err(error) => error,
-            Ok(()) => JsError("build-time input capture".into()),
+            Ok(()) => JsError::captured(chain),
         }
     }
 

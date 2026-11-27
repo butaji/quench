@@ -104,10 +104,10 @@ impl Vm {
     /// Runs the root activation `root` of `p` to completion, recorded in `active_roots` while it
     /// runs. The root's frame is pushed at the frame count taken here, so deferred lane activations
     /// are materialized first: they would otherwise land below the root.
-    pub(super) fn call_root(&mut self, p: &ResidualProgram, root: Value, this: Value) -> Result<Value, JsError> {
+    pub(super) fn call_root(&mut self, p: &ResidualProgram, root: Value, this: Value) -> Result<Value, super::exit::Exit> {
         self.materialize_deferred_lane();
         self.active_roots.push(self.frames.len());
-        let result = self.call_value(p, root, this, &[]);
+        let result = self.call_value(p, root, this, &[]).map_err(super::exit::Exit::of);
         self.active_roots.pop();
         result
     }
