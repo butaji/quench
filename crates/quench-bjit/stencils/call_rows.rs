@@ -38,6 +38,9 @@
 //! call's register and goes to TAKEN (the reloads); any other status leaves through EXIT0 with
 //! (status, word) in r14, r15, the callee's body frames kept for the lane to materialize.
 //!
+//! The fixed shard (`fixed_rows`) defines `leave_status`, the helper rows and `exit_here`; the direct and reload rows
+//! are the call shards' (`stencil_family = "call"`), each including its slice of them (`QUENCH_STENCIL_CALL_ROWS`).
+//!
 //! Exit row `exit_here`: leaves through EXIT0 with every register as it came, so the exit stub
 //! writes the live pinned registers back: the lowering of an instruction whose operation only
 //! the interpreter runs.
@@ -64,7 +67,7 @@ unsafe extern "C" {
 /// `leave_status`: the leave a (status, word) in r14, r15 ends in, as every leave routine ends
 /// (`entry.rs`): the word in rax and the status in rdx, which `entry_body` swaps into the lane
 /// body ABI's (eax, rdx) and `entry_thunk` reads the word of.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(fixed_rows, target_arch = "x86_64"))]
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_status() {
@@ -73,7 +76,7 @@ pub unsafe extern "C" fn leave_status() {
 
 /// AArch64 `leave_status`: the first two pinned ints (x22 status, x23 word, `entry_a64.rs`) into the
 /// leave routines' (x0 word, x1 status).
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(fixed_rows, target_arch = "aarch64"))]
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_status() {
@@ -172,6 +175,7 @@ macro_rules! helper_row {
     };
 }
 
+#[cfg(fixed_rows)]
 helper_row!(
     /// Helper row `call_helper`: holes V0 = the call record's pc (the fourth helper argument), V1 =
     /// the helper's address (`body_call_helper`); vm, residual and lane context come from the dispatch payload
@@ -181,6 +185,7 @@ helper_row!(
     /// at TAKEN, the reloads of the registers live at the jump's target.
     call_helper, false);
 
+#[cfg(fixed_rows)]
 helper_row!(
     /// Helper row `call_helper_packed`: `call_helper` with the instruction its planner decoded passed as holes
     /// V2 and V3, so the helper runs it without decoding the record again. Its successors and exits are `call_helper`'s.
@@ -227,6 +232,7 @@ macro_rules! direct_row {
 }
 
 /// The unconditional leave: every register is passed to the exit as it came.
+#[cfg(fixed_rows)]
 #[unsafe(no_mangle)]
 pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
     let s = match crate::words::exit_here(S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) {

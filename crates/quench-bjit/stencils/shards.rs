@@ -22,6 +22,15 @@ pub const ELEMENT_WEIGHT: usize = 14;
 /// backing's element read and write, and its 34-row shards each paid rustc's fixed 2.5 s).
 pub const INDEX_WEIGHT: usize = 2;
 
+/// A direct call row (`direct_row!`): it inlines the whole staged call path, 0.74 GB for four of them against 0.30 GB
+/// for none (Nov 27), ~110 MB a row, so 16 of them fill a shard. A reload row weighs a number row.
+pub const DIRECT_CALL_WEIGHT: usize = 96;
+
+/// The weight of one call row invocation (`build/call_rows.rs`).
+pub fn call_weight(invocation: &str) -> usize {
+    if invocation.starts_with("direct_row!") { DIRECT_CALL_WEIGHT } else { NUMBER_WEIGHT }
+}
+
 /// Most shard compilations running at once: four shards of `SHARD_WEIGHT` (near 10 GB together) fit a
 /// 16 GB, 4-core machine beside the linker and the other crates cargo builds in parallel. LLVM is about 90%
 /// of a shard's time (`-Z time-passes`), so the shards' codegen is what runs in parallel.

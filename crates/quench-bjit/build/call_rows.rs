@@ -1,6 +1,6 @@
 //! The invocations of `stencils/call_rows.rs`'s `direct_row!` and `reload_row!` macros, generated from the pinned
-//! places (`codes.rs`) instead of typed one per row. `build.rs` writes them to the file `QUENCH_STENCIL_CALL_ROWS`
-//! names, which `call_rows.rs` includes in place of its own lists. Only the fixed-rows shard compiles them.
+//! places (`codes.rs`) instead of typed one per row. `build.rs` writes them to the files `QUENCH_STENCIL_CALL_ROWS`
+//! names, which `call_rows.rs` includes in place of its own lists. `build.rs` splits them by weight into call shards (`Family::Call`), each compiling its slice.
 
 use crate::library::{DOUBLE_PINS, INT_PINS, PIN, PINF};
 
