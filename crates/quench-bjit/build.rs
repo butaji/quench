@@ -153,7 +153,8 @@ const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("
 /// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
 const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
 /// The files beyond the stencil sources (`stencil_sources`) whose change reruns the build script, relative to the crate.
-const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench-runtime/src/bytecode.rs"];
+/// The opcode table the list names is a build-dependency (`quench-opcodes`), so its change reruns the script too.
+const EXTRA_WATCHED: [&str; 2] = ["supernodes.txt", RUSTC_FLAGS_FILE];
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
 fn rustc_flags() -> Vec<String> {
@@ -200,7 +201,7 @@ fn main() {
         println!("cargo::rerun-if-changed={}", manifest.join(extra).display());
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let listed = supernodes::load(manifest);
+    let listed = supernodes::load();
     let generated = out.join("supernodes.rs");
     fs::write(&generated, &listed.text).unwrap();
     println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());

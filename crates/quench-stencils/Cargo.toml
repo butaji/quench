@@ -20,6 +20,8 @@ test-support = []
 quench-bjit = { path = "../quench-bjit" }
 
 [build-dependencies]
+# quench-bjit's build script reads the opcode table as data (`build/supernodes.rs`).
+quench-opcodes = { path = "../quench-opcodes" }
 iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder", "instr_info"] }
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
 

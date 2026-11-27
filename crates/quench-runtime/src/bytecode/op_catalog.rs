@@ -1,4 +1,4 @@
-//! The opcode catalog's column types. The `opcodes!` table (`bytecode.rs`) is the one row per
+//! The opcode catalog's column types. The opcode table (`quench-opcodes/src/table.rs`) is the one row per
 //! opcode, and each fact is a column of it: operand shape, effects, flow, its operation family
 //! (`Class`), its semantic source (`Decoder`: the staged operation every tier steps;
 //! `GenericStep`: the interpreter's step a lane or a body makes in place) and its orthogonal
