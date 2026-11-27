@@ -18,6 +18,7 @@ mod conformance;
 mod cparity;
 mod debug;
 mod fallbacks;
+mod image;
 mod ir_budget;
 mod ir_floor;
 mod ir_predict;
@@ -47,7 +48,10 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 18] = [
+/// Steps that run only when named with `--only`: a full or `--quick` run never includes them.
+const ON_REQUEST: [&str; 1] = ["image"];
+
+const STEPS: [Step; 19] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "link-order", quick: true, blocking: false, run: link_order::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
@@ -66,12 +70,16 @@ const STEPS: [Step; 18] = [
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
     Step { name: "aot", quick: false, blocking: false, run: aot::run },
     Step { name: "startup", quick: false, blocking: false, run: startup::run },
+    Step { name: "image", quick: false, blocking: false, run: image::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
 fn run(config: &Config) -> Vec<Outcome> {
     let mut outcomes = Vec::new();
-    let selected = |step: &&Step| match &config.only { Some(only) => step.name == only, None => step.quick || !config.quick };
+    let selected = |step: &&Step| match &config.only {
+        Some(only) => step.name == only,
+        None => (step.quick || !config.quick) && !ON_REQUEST.contains(&step.name),
+    };
     for step in STEPS.iter().filter(selected) {
         let outcome = step.execute(config);
         let stop = step.blocking && !outcome.passed;

@@ -8,7 +8,6 @@ fn compile(directory: &std::path::Path, entry: &std::path::Path, name: &str) -> 
     let binary = directory.join(name);
     let report = directory.join(format!("{name}.json"));
     let output = Command::new(env!("CARGO_BIN_EXE_quench"))
-        .env("QUENCH_AUDIT_WARN", "1")
         .args(["compile"]).arg(entry).arg("-o").arg(&binary)
         .args(["--profile", "experiment", "--report"]).arg(&report)
         .output().unwrap();
