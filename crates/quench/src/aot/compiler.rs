@@ -2,7 +2,7 @@ use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
 use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime};
-use quench_layers::engine::{Demand, emit_native_module_for, lower_native_js_module_for};
+use quench_layers::engine::{Demand, ExecutionTableSpec, emit_native_module_for, lower_native_js_module_for};
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
@@ -161,6 +161,7 @@ impl CompiledSources {
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
+        if host == ImageHost::Core { write_execution_table(&mut catalog, &demand.execution_table())?; }
         if host.carries_modules() { write_module_assets(&mut catalog, &directory, &self.assets, &pool)?; }
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
@@ -220,6 +221,25 @@ fn write_builtin_table(catalog: &mut fs::File, families: quench_runtime::Builtin
         installer(F::REGEXP, "REGEXP"), installer(F::TYPED_MEMORY, "TYPED_MEMORY"), installer(F::COLLECTIONS, "COLLECTIONS"),
         installer(F::DATE, "DATE"), installer(F::JSON, "JSON"),
         installer(F::PROMISE_ASYNC, "PROMISE_ASYNC"), installer(F::SHADOW_REALM, "SHADOW_REALM"))
+        .map_err(|error| error.to_string())
+}
+
+/// The engine entries the image links (`ExecutionTable`). Each demand flag gates its group: a group
+/// the closed world does not reach is `None` in the image, and the engine code behind it drops out
+/// of the link; the entries it does reach are the runtime's own (`ExecutionTable::ALL`).
+fn write_execution_table(catalog: &mut fs::File, spec: &ExecutionTableSpec) -> Result<(), String> {
+    let groups = [
+        (spec.interpret, &["interpret"][..]),
+        (spec.tier_up, &["js_tier_frame_entry", "offer_compiled", "run_offered", "js_jit_compiled_call", "tier_may_run"][..]),
+        (spec.compile_source, &["prepare_native_script"][..]),
+        (spec.link_live, &["stage_images_at_load", "attach_native_js"][..]),
+        (spec.wasm, &["install_wasm_instance", "bind_wasm_instance", "run_compiled", "wasm_table_step", "wasm_instance_address", "compile_wasm_eagerly"][..]),
+    ];
+    let unlinked: String = groups.iter().filter(|(linked, _)| !linked)
+        .flat_map(|(_, names)| names.iter())
+        .map(|name| format!("{name}: None, "))
+        .collect();
+    writeln!(catalog, "static EXECUTION: quench_runtime::ExecutionTable = quench_runtime::ExecutionTable {{ {unlinked}..quench_runtime::ExecutionTable::ALL }};")
         .map_err(|error| error.to_string())
 }
 

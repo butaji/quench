@@ -6261,11 +6261,11 @@ fn typed_initialization_roots_release_after_iterator_and_conversion_errors() {
                     let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
                     let roots = vm.heap.root_count_for_test();
                     let outcome = if from {
-                        vm.array_modern_native(
+                        vm.array_from_native(
                             &program,
-                            Native::TypedArrayFrom,
                             constructor,
                             &[source],
+                            super::array_modern::ArrayFromTarget::TypedArray,
                         )
                     } else {
                         vm.construct_typed_array_native(&program, &[source], kind, name)
@@ -6312,7 +6312,7 @@ fn typed_fill_and_assignment_roots_release_after_coercion() {
                     values.push(vm.own_property(vm.realm.globals, atom).unwrap());
                 }
                 let roots = vm.heap.root_count_for_test();
-                let result = vm.typed_array_native(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
+                let result = vm.call_native_dispatch(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
                 assert_eq!(result.is_err(), fails, "{constructor}: {setup}");
                 assert_eq!(vm.heap.root_count_for_test(), roots);
             }
@@ -6375,7 +6375,7 @@ fn typed_sort_snapshot_roots_release_after_comparator_errors() {
                     let comparator_atom = vm.intern_atom("comparator");
                     let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
                     let roots_before = vm.heap.root_count_for_test();
-                    let outcome = vm.typed_array_native(&program, native, source, &[comparator]);
+                    let outcome = vm.call_native_dispatch(&program, native, source, &[comparator]);
                     assert_eq!(
                         outcome.is_err(),
                         fails && native != Native::TypedArrayToReversed
@@ -6459,7 +6459,7 @@ fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
                 let comparator_atom = vm.intern_atom("comparator");
                 let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
                 let roots_before = vm.heap.root_count_for_test();
-                let outcome = vm.array_modern_native(&program, native, source, &[comparator]);
+                let outcome = vm.array_sort_native(&program, source, &[comparator], native == Native::ArraySort);
                 assert_eq!(outcome.is_err(), fails);
                 assert_eq!(vm.heap.root_count_for_test(), roots_before);
                 if native == Native::ArrayToSorted
@@ -6950,7 +6950,7 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
         .find(|value| *value == token)
         .expect("freed token slot is reused");
     assert_eq!(
-        vm.call_finalization_registry_native(
+        vm.call_native(
             &program,
             Native::FinalizationRegistryUnregister,
             registry,
@@ -12492,7 +12492,7 @@ fn weak_ref_targets_are_kept_until_host_checkpoint() {
             if dereference {
                 vm.clear_kept_objects();
                 let value = vm
-                    .call_collection_native(&program, Native::WeakRefDeref, weak, &[])
+                    .call_native_dispatch(&program, Native::WeakRefDeref, weak, &[])
                     .unwrap();
                 assert!(!value.is_undefined());
             }

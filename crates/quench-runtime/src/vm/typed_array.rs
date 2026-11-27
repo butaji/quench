@@ -122,24 +122,6 @@ impl Vm {
         matches!(self.heap.get(value), Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
     }
 
-    pub(super) fn maybe_call_typed_array_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Option<Result<Value, JsError>> {
-        if native.is_typed_array_method() {
-            if native.is_uint8_array_base64_method() {
-                return Some(self.typed_array_base64_native(p, native, this, args));
-            }
-            Some(self.typed_array_native(p, native, this, args))
-        } else if native.is_typed_array_iterator() {
-            Some(self.array_iterator_native(p, native, this))
-        } else {
-            None
-        }
-    }
     pub(super) fn install_typed_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let uint8_array = self.native_value(Native::Uint8Array);
         let typed_array = self.native_value(Native::TypedArray);
@@ -262,249 +244,6 @@ impl Vm {
             },
         );
         Ok(())
-    }
-    pub(super) fn typed_array_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if native == Native::TypedArrayLastIndexOf {
-            return self.typed_array_last_index_of_native(p, this, args);
-        }
-        if native == Native::TypedArraySort {
-            return self.typed_array_sort_native(p, this, args);
-        }
-        if native == Native::TypedArrayToLocaleString {
-            let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
-                return Err(self.type_error(p, "typed array receiver is invalid".into()));
-            };
-            if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(*buffer) {
-                return Err(self.type_error(p, "typed array receiver is invalid".into()));
-            }
-            let length = self.typed_array_length(this).unwrap_or_default();
-            return self.array_to_locale_string_with_length(p, this, length, args);
-        }
-        if native == Native::Uint8ArraySet {
-            return self.typed_array_set_native(p, this, args);
-        }
-        if native == Native::Uint8ArraySubarray {
-            return self.typed_array_subarray_native(p, this, args);
-        }
-        if matches!(
-            native,
-            Native::TypedArrayAt
-                | Native::TypedArrayToReversed
-                | Native::TypedArrayToSorted
-                | Native::TypedArrayWith
-        ) {
-            return self.typed_array_modern_native(p, native, this, args);
-        }
-        if let Some(array_native) = super::native_rows::shared_array_native(native) {
-            return self.typed_array_callback_native(p, array_native, this, args);
-        }
-        if native == Native::ArrayBufferIsView {
-            let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-            return Ok(Value::boolean(self.is_array_buffer_view(value)));
-        }
-        let buffer = self.validate_typed_array_method(p, native, this)?;
-        let length = self.typed_array_length(this).unwrap_or_default();
-        if matches!(
-            native,
-            Native::Uint8ArrayReverse | Native::Uint8ArrayFill | Native::Uint8ArrayCopyWithin
-        ) && matches!(
-            self.heap.get(buffer),
-            Some(Cell::ArrayBuffer {
-                immutable: true,
-                ..
-            })
-        ) {
-            return Err(self.type_error(p, "typed array backing buffer is immutable".into()));
-        }
-        match native {
-            Native::Uint8ArrayReverse => {
-                for index in 0..length / 2 {
-                    let other = length - index - 1;
-                    let left = self
-                        .typed_array_get(this, index)
-                        .unwrap_or(Value::UNDEFINED);
-                    let right = self
-                        .typed_array_get(this, other)
-                        .unwrap_or(Value::UNDEFINED);
-                    self.typed_array_set(p, this, index, right)?;
-                    self.typed_array_set(p, this, other, left)?;
-                }
-                Ok(this)
-            }
-            Native::Uint8ArrayFill => self.typed_array_fill_native(p, this, args, length),
-            Native::Uint8ArrayCopyWithin => {
-                let target = self.typed_array_relative_index(p, args.first(), length)?;
-                let start = self.typed_array_relative_index(p, args.get(1), length)?;
-                let end_arg = args.get(2).filter(|value| !value.is_undefined());
-                let end = match end_arg {
-                    Some(value) => self.typed_array_relative_index(p, Some(value), length)?,
-                    None => length,
-                };
-                let count = end.saturating_sub(start).min(length - target);
-                if count > 0 {
-                    self.typed_array_validate_current_write(p, this)?;
-                    let current_length = self.typed_array_length(this).unwrap_or_default();
-                    let count = count
-                        .min(current_length.saturating_sub(target))
-                        .min(current_length.saturating_sub(start));
-                    let (buffer, offset, width) = match self.heap.get(this) {
-                        Some(Cell::TypedArray { buffer, object, .. }) => (*buffer, object.offset, object.native.kind().width()),
-                        _ => unreachable!("typed array receiver was validated"),
-                    };
-                    let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
-                        unreachable!("typed array backing buffer was validated");
-                    };
-                    let from = offset + start * width;
-                    let to = offset + target * width;
-                    // Copy backing bytes directly to preserve NaN payloads and overlap.
-                    if count > 0 {
-                        bytes.make_mut().copy_within(from..from + count * width, to);
-                    }
-                }
-                Ok(this)
-            }
-            Native::Uint8ArraySet => unreachable!("set handled before common validation"),
-            Native::Uint8ArraySubarray => unreachable!("subarray handled before common validation"),
-            Native::Uint8ArraySlice => {
-                let begin = self.typed_array_relative_index(p, args.first(), length)?;
-                let end_arg = args.get(1).filter(|value| !value.is_undefined());
-                let end = self.typed_array_relative_index(p, end_arg, length)?;
-                let end = if end_arg.is_none() { length } else { end };
-                let start = begin.min(end);
-                let count = end.saturating_sub(begin);
-                let target = self.typed_array_species_create_for_writing(p, this, count)?;
-                let target_buffer = match self.heap.get(target) {
-                    Some(Cell::TypedArray { buffer, .. }) => *buffer,
-                    _ => unreachable!("species result was validated as a typed array"),
-                };
-                let current_length = self.typed_array_length(this).unwrap_or_default();
-                if count > 0
-                    && (self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer))
-                {
-                    return Err(self.type_error(p, "typed array receiver is invalid".into()));
-                }
-                let copy_count = count.min(current_length.saturating_sub(start));
-                let source_kind = self.typed_array_kind(this).unwrap();
-                if copy_count > 0 && self.typed_array_kind(target) == Some(source_kind) {
-                    let source_offset =
-                        self.typed_array_byte_offset(this).unwrap() + start * source_kind.width();
-                    let target_offset = self.typed_array_byte_offset(target).unwrap();
-                    let byte_count = copy_count * source_kind.width();
-                    if buffer == target_buffer {
-                        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer)
-                        else {
-                            unreachable!("validated typed array backing buffer");
-                        };
-                        let mut bytes = bytes.make_mut();
-                        // Slice copies forward even when species returns an overlapping view.
-                        for index in 0..byte_count {
-                            bytes[target_offset + index] = bytes[source_offset + index];
-                        }
-                    } else {
-                        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
-                            unreachable!("validated typed array backing buffer");
-                        };
-                        let source_bytes = bytes.read()[source_offset..source_offset + byte_count].to_vec();
-                        let Some(Cell::ArrayBuffer { bytes, .. }) =
-                            self.heap.get_mut(target_buffer)
-                        else {
-                            unreachable!("validated species backing buffer");
-                        };
-                        bytes.make_mut()[target_offset..target_offset + byte_count]
-                            .copy_from_slice(&source_bytes);
-                    }
-                } else {
-                    for index in 0..copy_count {
-                        let value = self
-                            .typed_array_get(this, start + index)
-                            .unwrap_or(Value::UNDEFINED);
-                        self.typed_array_set(p, target, index, value)?;
-                    }
-                }
-                Ok(target)
-            }
-            Native::Uint8ArrayIncludes | Native::Uint8ArrayIndexOf => {
-                if length == 0 {
-                    return Ok(if native == Native::Uint8ArrayIncludes {
-                        Value::FALSE
-                    } else {
-                        Value::number(-1.0)
-                    });
-                }
-                let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let from = self.typed_array_relative_index(p, args.get(1), length)?;
-                let invalid_view =
-                    self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer);
-                if native == Native::Uint8ArrayIndexOf && invalid_view {
-                    return Ok(Value::number(-1.0));
-                }
-                let current_length = if native == Native::Uint8ArrayIncludes {
-                    length
-                } else {
-                    self.typed_array_length(this)
-                        .unwrap_or_default()
-                        .min(length)
-                };
-                // A Number search over a Number kind is the staged search over the elements
-                // (`typed_array_find_number`); any other search takes the general comparison.
-                let found = match search.as_number() {
-                    Some(number) if self.typed_array_kind(this).is_some_and(|kind| !kind.is_bigint()) => {
-                        self.typed_array_find_number(this, from, current_length, number, native == Native::Uint8ArrayIncludes)
-                    }
-                    _ => (from..current_length).find(|index| {
-                        let Some(value) = self.typed_array_get(this, *index) else {
-                            return false;
-                        };
-                        if native == Native::Uint8ArrayIncludes {
-                            self.same_value_zero(value, search)
-                        } else {
-                            self.strict_equal(value, search)
-                        }
-                    }),
-                };
-                if native == Native::Uint8ArrayIncludes {
-                    Ok(if found.is_some() {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    })
-                } else {
-                    Ok(Value::number(found.map_or(-1.0, |index| index as f64)))
-                }
-            }
-            Native::Uint8ArrayJoin | Native::Uint8ArrayToString => {
-                let separator = if native == Native::Uint8ArrayToString {
-                    ",".to_owned()
-                } else {
-                    match args.first().copied() {
-                        Some(value) if !value.is_undefined() => self.to_string(p, value)?,
-                        None => ",".to_owned(),
-                        Some(_) => ",".to_owned(),
-                    }
-                };
-                let mut result = String::new();
-                for index in 0..length {
-                    if index > 0 {
-                        result.push_str(&separator);
-                    }
-                    let value = self
-                        .typed_array_get(this, index)
-                        .unwrap_or(Value::UNDEFINED);
-                    if value.is_null() || value.is_undefined() {
-                        continue;
-                    }
-                    result.push_str(&self.to_string(p, value)?);
-                }
-                Ok(self.heap.alloc_string(result.into()))
-            }
-            _ => unreachable!(),
-        }
     }
 
     fn typed_array_fill_native(
@@ -782,115 +521,6 @@ impl Vm {
         })
     }
 
-    fn typed_array_modern_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(this) else {
-            return Err(self.type_error(p, "typed array receiver is invalid".into()));
-        };
-        let (buffer, kind) = (*buffer, object.native.kind());
-        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) {
-            return Err(self.type_error(p, "typed array receiver is invalid".into()));
-        }
-        let length = self.typed_array_length(this).unwrap_or_default();
-        if native == Native::TypedArrayAt {
-            let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let index = crate::units::to_integer_or_infinity(index);
-            return Ok(crate::staged::typed_elements::element_at(index, length)
-                .and_then(|position| self.typed_array_get(this, position))
-                .unwrap_or(Value::UNDEFINED));
-        }
-        if native == Native::TypedArrayWith {
-            let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let index = crate::units::to_integer_or_infinity(index);
-            let relative = if index < 0.0 {
-                length as f64 + index
-            } else {
-                index
-            };
-            let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            let converted = if kind.is_bigint()
-            {
-                let value = self.to_bigint(p, value)?;
-                self.heap.alloc(Cell::bigint(value))
-            } else {
-                Value::number(self.to_number(p, value)?)
-            };
-            let current_length = self.typed_array_length(this).unwrap_or_default();
-            if relative < 0.0 || relative >= current_length as f64 || !relative.is_finite() {
-                return Err(self.range_error(p, "typed array index is out of range".into()));
-            }
-            let values = (0..length)
-                .map(|item| {
-                    if item == relative as usize {
-                        converted
-                    } else {
-                        self.typed_array_get(this, item).unwrap_or(Value::UNDEFINED)
-                    }
-                })
-                .collect::<Vec<_>>();
-            let target = self.new_typed_array_of_kind(p, kind, length)?;
-            for (item, value) in values.into_iter().enumerate() {
-                self.typed_array_set(p, target, item, value)?;
-            }
-            return Ok(target);
-        }
-
-        let comparator = args.first().copied().filter(|value| !value.is_undefined());
-        if native == Native::TypedArrayToSorted
-            && let Some(value) = comparator
-            && !self.is_function(value)
-        {
-            return Err(self.type_error(p, "sort comparator is not callable".into()));
-        }
-        let source = self.heap.root(this);
-        let comparator = if native == Native::TypedArrayToSorted {
-            comparator.map(|value| self.heap.root(value))
-        } else {
-            None
-        };
-        let mut values = Vec::new();
-        let mut target = None;
-        let outcome = (|| {
-            for index in 0..length {
-                let this = self.heap.root_value(source).unwrap();
-                let value = self
-                    .typed_array_get(this, index)
-                    .unwrap_or(Value::UNDEFINED);
-                values.push(self.heap.root(value));
-            }
-            if native == Native::TypedArrayToReversed {
-                values.reverse();
-            } else {
-                self.typed_array_sort_values(p, &mut values, comparator)?;
-            }
-            let result = self.new_typed_array_of_kind(p, kind, length)?;
-            let result = self.heap.root(result);
-            target = Some(result);
-            for (index, value) in values.iter().enumerate() {
-                let target = self.heap.root_value(result).unwrap();
-                let value = self.heap.root_value(*value).unwrap();
-                self.typed_array_set(p, target, index, value)?;
-            }
-            Ok(self.heap.root_value(result).unwrap())
-        })();
-        if let Some(target) = target {
-            self.heap.release_root(target);
-        }
-        for value in values {
-            self.heap.release_root(value);
-        }
-        if let Some(root) = comparator {
-            self.heap.release_root(root);
-        }
-        self.heap.release_root(source);
-        outcome
-    }
-
     fn new_typed_array_of_kind(
         &mut self,
         p: &ResidualProgram,
@@ -1079,4 +709,453 @@ impl Vm {
     pub(super) fn uint32_from_value(number: f64) -> u32 {
         crate::value::number_to_u32(number)
     }
+}
+
+/// The entry of each typed array method, typed array iterator and typed array constructor, by
+/// its native. The base64 methods are the last group, in `typed_array_base64`.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::Uint8ArraySet => Some(uint8_array_set),
+        Native::Uint8ArraySubarray => Some(uint8_array_subarray),
+        Native::Uint8ArrayReverse => Some(uint8_array_reverse),
+        Native::Uint8ArrayFill => Some(uint8_array_fill),
+        Native::Uint8ArrayCopyWithin => Some(uint8_array_copy_within),
+        Native::Uint8ArraySlice => Some(uint8_array_slice),
+        Native::Uint8ArrayIncludes | Native::Uint8ArrayIndexOf => Some(uint8_array_search),
+        Native::Uint8ArrayJoin | Native::Uint8ArrayToString => Some(uint8_array_join),
+        Native::TypedArrayForEach => Some(typed_array_for_each),
+        Native::TypedArrayMap => Some(typed_array_map),
+        Native::TypedArrayFilter => Some(typed_array_filter),
+        Native::TypedArraySome => Some(typed_array_some),
+        Native::TypedArrayEvery => Some(typed_array_every),
+        Native::TypedArrayFind => Some(typed_array_find),
+        Native::TypedArrayFindIndex => Some(typed_array_find_index),
+        Native::TypedArrayFindLast => Some(typed_array_find_last),
+        Native::TypedArrayFindLastIndex => Some(typed_array_find_last_index),
+        Native::TypedArrayReduce => Some(typed_array_reduce),
+        Native::TypedArrayReduceRight => Some(typed_array_reduce_right),
+        Native::TypedArrayLastIndexOf => Some(typed_array_last_index_of),
+        Native::TypedArraySort => Some(typed_array_sort),
+        Native::TypedArrayAt => Some(typed_array_at),
+        Native::TypedArrayWith => Some(typed_array_with),
+        Native::TypedArrayToReversed => Some(typed_array_to_reversed),
+        Native::TypedArrayToSorted => Some(typed_array_to_sorted),
+        Native::TypedArrayToLocaleString => Some(typed_array_to_locale_string),
+        Native::ArrayBufferIsView => Some(array_buffer_is_view),
+        Native::Uint8ArrayKeys | Native::Uint8ArrayValues | Native::Uint8ArrayEntries => Some(typed_array_iterator),
+        Native::TypedArray | Native::Uint8Array | Native::Uint8ClampedArray | Native::Uint16Array | Native::Uint32Array | Native::Int8Array | Native::Int16Array | Native::Int32Array | Native::BigInt64Array | Native::BigUint64Array | Native::Float16Array | Native::Float32Array | Native::Float64Array => Some(typed_array_constructor_called),
+        _ => super::typed_array_base64::entry(native),
+    }
+}
+
+/// The live typed array a modern method reads: its element kind and length.
+fn typed_array_live_view(vm: &mut Vm, p: &ResidualProgram, this: Value) -> Result<(TypedArrayKind, usize), JsError> {
+    let Some(Cell::TypedArray { buffer, object, .. }) = vm.heap.get(this) else {
+        return Err(vm.type_error(p, "typed array receiver is invalid".into()));
+    };
+    let (buffer, kind) = (*buffer, object.native.kind());
+    if vm.typed_array_out_of_bounds(this) || vm.array_buffer_detached(buffer) {
+        return Err(vm.type_error(p, "typed array receiver is invalid".into()));
+    }
+    let length = vm.typed_array_length(this).unwrap_or_default();
+    Ok((kind, length))
+}
+
+/// The validated receiver of a typed array method: its backing buffer and length.
+fn typed_array_validated_view(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value) -> Result<(Value, usize), JsError> {
+    let buffer = vm.validate_typed_array_method(p, native, this)?;
+    let length = vm.typed_array_length(this).unwrap_or_default();
+    Ok((buffer, length))
+}
+
+/// The validated receiver of a method that writes: its length, once its backing buffer is mutable.
+fn typed_array_mutable_view(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value) -> Result<usize, JsError> {
+    let (buffer, length) = typed_array_validated_view(vm, p, native, this)?;
+    if matches!(vm.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. })) {
+        return Err(vm.type_error(p, "typed array backing buffer is immutable".into()));
+    }
+    Ok(length)
+}
+
+fn uint8_array_set(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_set_native(p, this, args)
+}
+
+fn uint8_array_subarray(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_subarray_native(p, this, args)
+}
+
+fn uint8_array_reverse(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let length = typed_array_mutable_view(vm, p, native, this)?;
+    for index in 0..length / 2 {
+        let other = length - index - 1;
+        let left = vm
+            .typed_array_get(this, index)
+            .unwrap_or(Value::UNDEFINED);
+        let right = vm
+            .typed_array_get(this, other)
+            .unwrap_or(Value::UNDEFINED);
+        vm.typed_array_set(p, this, index, right)?;
+        vm.typed_array_set(p, this, other, left)?;
+    }
+    Ok(this)
+}
+
+fn uint8_array_fill(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let length = typed_array_mutable_view(vm, p, native, this)?;
+    vm.typed_array_fill_native(p, this, args, length)
+}
+
+fn uint8_array_copy_within(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let length = typed_array_mutable_view(vm, p, native, this)?;
+    let target = vm.typed_array_relative_index(p, args.first(), length)?;
+    let start = vm.typed_array_relative_index(p, args.get(1), length)?;
+    let end_arg = args.get(2).filter(|value| !value.is_undefined());
+    let end = match end_arg {
+        Some(value) => vm.typed_array_relative_index(p, Some(value), length)?,
+        None => length,
+    };
+    let count = end.saturating_sub(start).min(length - target);
+    if count > 0 {
+        vm.typed_array_validate_current_write(p, this)?;
+        let current_length = vm.typed_array_length(this).unwrap_or_default();
+        let count = count
+            .min(current_length.saturating_sub(target))
+            .min(current_length.saturating_sub(start));
+        let (buffer, offset, width) = match vm.heap.get(this) {
+            Some(Cell::TypedArray { buffer, object, .. }) => (*buffer, object.offset, object.native.kind().width()),
+            _ => unreachable!("typed array receiver was validated"),
+        };
+        let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get_mut(buffer) else {
+            unreachable!("typed array backing buffer was validated");
+        };
+        let from = offset + start * width;
+        let to = offset + target * width;
+        // Copy backing bytes directly to preserve NaN payloads and overlap.
+        if count > 0 {
+            bytes.make_mut().copy_within(from..from + count * width, to);
+        }
+    }
+    Ok(this)
+}
+
+fn uint8_array_slice(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (buffer, length) = typed_array_validated_view(vm, p, native, this)?;
+    let begin = vm.typed_array_relative_index(p, args.first(), length)?;
+    let end_arg = args.get(1).filter(|value| !value.is_undefined());
+    let end = vm.typed_array_relative_index(p, end_arg, length)?;
+    let end = if end_arg.is_none() { length } else { end };
+    let start = begin.min(end);
+    let count = end.saturating_sub(begin);
+    let target = vm.typed_array_species_create_for_writing(p, this, count)?;
+    let target_buffer = match vm.heap.get(target) {
+        Some(Cell::TypedArray { buffer, .. }) => *buffer,
+        _ => unreachable!("species result was validated as a typed array"),
+    };
+    let current_length = vm.typed_array_length(this).unwrap_or_default();
+    if count > 0
+        && (vm.typed_array_out_of_bounds(this) || vm.array_buffer_detached(buffer))
+    {
+        return Err(vm.type_error(p, "typed array receiver is invalid".into()));
+    }
+    let copy_count = count.min(current_length.saturating_sub(start));
+    let source_kind = vm.typed_array_kind(this).unwrap();
+    if copy_count > 0 && vm.typed_array_kind(target) == Some(source_kind) {
+        let source_offset =
+            vm.typed_array_byte_offset(this).unwrap() + start * source_kind.width();
+        let target_offset = vm.typed_array_byte_offset(target).unwrap();
+        let byte_count = copy_count * source_kind.width();
+        if buffer == target_buffer {
+            let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get_mut(buffer)
+            else {
+                unreachable!("validated typed array backing buffer");
+            };
+            let mut bytes = bytes.make_mut();
+            // Slice copies forward even when species returns an overlapping view.
+            for index in 0..byte_count {
+                bytes[target_offset + index] = bytes[source_offset + index];
+            }
+        } else {
+            let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get(buffer) else {
+                unreachable!("validated typed array backing buffer");
+            };
+            let source_bytes = bytes.read()[source_offset..source_offset + byte_count].to_vec();
+            let Some(Cell::ArrayBuffer { bytes, .. }) =
+                vm.heap.get_mut(target_buffer)
+            else {
+                unreachable!("validated species backing buffer");
+            };
+            bytes.make_mut()[target_offset..target_offset + byte_count]
+                .copy_from_slice(&source_bytes);
+        }
+    } else {
+        for index in 0..copy_count {
+            let value = vm
+                .typed_array_get(this, start + index)
+                .unwrap_or(Value::UNDEFINED);
+            vm.typed_array_set(p, target, index, value)?;
+        }
+    }
+    Ok(target)
+}
+
+fn uint8_array_search(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (buffer, length) = typed_array_validated_view(vm, p, native, this)?;
+    if length == 0 {
+        return Ok(if native == Native::Uint8ArrayIncludes {
+            Value::FALSE
+        } else {
+            Value::number(-1.0)
+        });
+    }
+    let search = args.first().copied().unwrap_or(Value::UNDEFINED);
+    let from = vm.typed_array_relative_index(p, args.get(1), length)?;
+    let invalid_view =
+        vm.typed_array_out_of_bounds(this) || vm.array_buffer_detached(buffer);
+    if native == Native::Uint8ArrayIndexOf && invalid_view {
+        return Ok(Value::number(-1.0));
+    }
+    let current_length = if native == Native::Uint8ArrayIncludes {
+        length
+    } else {
+        vm.typed_array_length(this)
+            .unwrap_or_default()
+            .min(length)
+    };
+    // A Number search over a Number kind is the staged search over the elements
+    // (`typed_array_find_number`); any other search takes the general comparison.
+    let found = match search.as_number() {
+        Some(number) if vm.typed_array_kind(this).is_some_and(|kind| !kind.is_bigint()) => {
+            vm.typed_array_find_number(this, from, current_length, number, native == Native::Uint8ArrayIncludes)
+        }
+        _ => (from..current_length).find(|index| {
+            let Some(value) = vm.typed_array_get(this, *index) else {
+                return false;
+            };
+            if native == Native::Uint8ArrayIncludes {
+                vm.same_value_zero(value, search)
+            } else {
+                vm.strict_equal(value, search)
+            }
+        }),
+    };
+    if native == Native::Uint8ArrayIncludes {
+        Ok(if found.is_some() {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        })
+    } else {
+        Ok(Value::number(found.map_or(-1.0, |index| index as f64)))
+    }
+}
+
+fn uint8_array_join(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (_, length) = typed_array_validated_view(vm, p, native, this)?;
+    let separator = if native == Native::Uint8ArrayToString {
+        ",".to_owned()
+    } else {
+        match args.first().copied() {
+            Some(value) if !value.is_undefined() => vm.to_string(p, value)?,
+            None => ",".to_owned(),
+            Some(_) => ",".to_owned(),
+        }
+    };
+    let mut result = String::new();
+    for index in 0..length {
+        if index > 0 {
+            result.push_str(&separator);
+        }
+        let value = vm
+            .typed_array_get(this, index)
+            .unwrap_or(Value::UNDEFINED);
+        if value.is_null() || value.is_undefined() {
+            continue;
+        }
+        result.push_str(&vm.to_string(p, value)?);
+    }
+    Ok(vm.heap.alloc_string(result.into()))
+}
+
+fn typed_array_for_each(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayForEach, this, args)
+}
+
+fn typed_array_map(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayMap, this, args)
+}
+
+fn typed_array_filter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayFilter, this, args)
+}
+
+fn typed_array_some(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArraySome, this, args)
+}
+
+fn typed_array_every(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayEvery, this, args)
+}
+
+fn typed_array_find(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayFind, this, args)
+}
+
+fn typed_array_find_index(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayFindIndex, this, args)
+}
+
+fn typed_array_find_last(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayFindLast, this, args)
+}
+
+fn typed_array_find_last_index(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayFindLastIndex, this, args)
+}
+
+fn typed_array_reduce(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayReduce, this, args)
+}
+
+fn typed_array_reduce_right(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_callback_native(p, Native::ArrayReduceRight, this, args)
+}
+
+fn typed_array_last_index_of(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_last_index_of_native(p, this, args)
+}
+
+fn typed_array_sort(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.typed_array_sort_native(p, this, args)
+}
+
+fn typed_array_at(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (_, length) = typed_array_live_view(vm, p, this)?;
+    let index = vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    let index = crate::units::to_integer_or_infinity(index);
+    Ok(crate::staged::typed_elements::element_at(index, length)
+        .and_then(|position| vm.typed_array_get(this, position))
+        .unwrap_or(Value::UNDEFINED))
+}
+
+fn typed_array_with(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (kind, length) = typed_array_live_view(vm, p, this)?;
+    let index = vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    let index = crate::units::to_integer_or_infinity(index);
+    let relative = if index < 0.0 {
+        length as f64 + index
+    } else {
+        index
+    };
+    let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+    let converted = if kind.is_bigint()
+    {
+        let value = vm.to_bigint(p, value)?;
+        vm.heap.alloc(Cell::bigint(value))
+    } else {
+        Value::number(vm.to_number(p, value)?)
+    };
+    let current_length = vm.typed_array_length(this).unwrap_or_default();
+    if relative < 0.0 || relative >= current_length as f64 || !relative.is_finite() {
+        return Err(vm.range_error(p, "typed array index is out of range".into()));
+    }
+    let values = (0..length)
+        .map(|item| {
+            if item == relative as usize {
+                converted
+            } else {
+                vm.typed_array_get(this, item).unwrap_or(Value::UNDEFINED)
+            }
+        })
+        .collect::<Vec<_>>();
+    let target = vm.new_typed_array_of_kind(p, kind, length)?;
+    for (item, value) in values.into_iter().enumerate() {
+        vm.typed_array_set(p, target, item, value)?;
+    }
+    Ok(target)
+}
+
+fn typed_array_to_reversed(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    typed_array_copy_ordered(vm, p, this, args, true)
+}
+
+fn typed_array_to_sorted(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    typed_array_copy_ordered(vm, p, this, args, false)
+}
+
+fn typed_array_copy_ordered(vm: &mut Vm, p: &ResidualProgram, this: Value, args: &[Value], reversed: bool) -> Result<Value, JsError> {
+    let (kind, length) = typed_array_live_view(vm, p, this)?;
+    let comparator = args.first().copied().filter(|value| !value.is_undefined());
+    if !reversed
+        && let Some(value) = comparator
+        && !vm.is_function(value)
+    {
+        return Err(vm.type_error(p, "sort comparator is not callable".into()));
+    }
+    let source = vm.heap.root(this);
+    let comparator = if !reversed {
+        comparator.map(|value| vm.heap.root(value))
+    } else {
+        None
+    };
+    let mut values = Vec::new();
+    let mut target = None;
+    let outcome = (|| {
+        for index in 0..length {
+            let this = vm.heap.root_value(source).unwrap();
+            let value = vm
+                .typed_array_get(this, index)
+                .unwrap_or(Value::UNDEFINED);
+            values.push(vm.heap.root(value));
+        }
+        if reversed {
+            values.reverse();
+        } else {
+            vm.typed_array_sort_values(p, &mut values, comparator)?;
+        }
+        let result = vm.new_typed_array_of_kind(p, kind, length)?;
+        let result = vm.heap.root(result);
+        target = Some(result);
+        for (index, value) in values.iter().enumerate() {
+            let target = vm.heap.root_value(result).unwrap();
+            let value = vm.heap.root_value(*value).unwrap();
+            vm.typed_array_set(p, target, index, value)?;
+        }
+        Ok(vm.heap.root_value(result).unwrap())
+    })();
+    if let Some(target) = target {
+        vm.heap.release_root(target);
+    }
+    for value in values {
+        vm.heap.release_root(value);
+    }
+    if let Some(root) = comparator {
+        vm.heap.release_root(root);
+    }
+    vm.heap.release_root(source);
+    outcome
+}
+
+fn typed_array_to_locale_string(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let Some(Cell::TypedArray { buffer, .. }) = vm.heap.get(this) else {
+        return Err(vm.type_error(p, "typed array receiver is invalid".into()));
+    };
+    if vm.typed_array_out_of_bounds(this) || vm.array_buffer_detached(*buffer) {
+        return Err(vm.type_error(p, "typed array receiver is invalid".into()));
+    }
+    let length = vm.typed_array_length(this).unwrap_or_default();
+    vm.array_to_locale_string_with_length(p, this, length, args)
+}
+
+fn array_buffer_is_view(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+    Ok(Value::boolean(vm.is_array_buffer_view(value)))
+}
+
+fn typed_array_iterator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.array_iterator_native(p, native, this)
+}
+
+fn typed_array_constructor_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "typed array constructor requires new".into()))
 }

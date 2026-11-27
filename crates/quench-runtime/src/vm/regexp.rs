@@ -14,6 +14,7 @@ mod literal;
 mod replacement;
 use replacement::{ReplaceResult, has_substitution, result_length};
 mod legacy;
+pub(super) mod natives;
 pub(super) use legacy::LegacyRegExpSnapshot;
 use legacy::{LegacyRegExpMatch, LegacyStatics};
 

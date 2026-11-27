@@ -92,9 +92,10 @@ impl<H: Host> Runtime<H> {
     pub fn new_static(host: H) -> Self { Self { vm: Vm::new_static(host), host: std::marker::PhantomData } }
     /// A static runtime that installs only the intrinsic families `builtins` names: an image
     /// whose program reaches none of a family's intrinsics keeps its realm objects, install
-    /// time and (through the table's `None` entries) its installer code out.
-    pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
-        Self { vm: Vm::new_static_with_builtins(host, builtins), host: std::marker::PhantomData }
+    /// time and (through the table's `None` entries) its installer code out. `execution` names
+    /// the engine entries the image's closed world reaches; the others are `None` and drop out.
+    pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable, execution: &'static crate::ExecutionTable) -> Self {
+        Self { vm: Vm::new_static_with_builtins(host, builtins, execution), host: std::marker::PhantomData }
     }
     /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
     /// `snapshot_at_rest`): it never installs its host.

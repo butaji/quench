@@ -11,13 +11,6 @@ pub(super) const fn finalization_native_length(native: Native) -> Option<f64> {
 }
 
 impl Vm {
-    pub(super) fn is_finalization_native(native: Native) -> bool {
-        matches!(
-            native,
-            Native::FinalizationRegistryRegister | Native::FinalizationRegistryUnregister
-        )
-    }
-
     pub(super) fn install_finalization_registry(
         &mut self,
         program: &ResidualProgram,
@@ -140,69 +133,103 @@ impl Vm {
             entries: Box::new(FinalizationEntries::default()),
         }))
     }
+}
 
-    pub(super) fn call_finalization_registry_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::FinalizationRegistryRegister => {
-                let target_value =
-                    self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let target = self
-                    .heap
-                    .weak_handle(target_value)
-                    .ok_or_else(|| JsError("FinalizationRegistry target is not live".into()))?;
-                let held = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                if self.same_value(target_value, held) {
-                    return Err(self.type_error(
-                        p,
-                        "FinalizationRegistry target and held value must differ".into(),
-                    ));
-                }
-                let token = match args.get(2).copied().filter(|value| !value.is_undefined()) {
-                    None => None,
-                    Some(value) => {
-                        let value = self.weak_key(p, value)?;
-                        Some(self.heap.weak_handle(value).ok_or_else(|| {
-                            JsError("FinalizationRegistry unregister token is not live".into())
-                        })?)
-                    }
-                };
-                let Some(Cell::FinalizationRegistry { entries, .. }) = self.heap.get_mut(this)
-                else {
-                    return Err(self.type_error(p, "invalid FinalizationRegistry receiver".into()));
-                };
-                entries.push(FinalizationEntry {
-                    target,
-                    held,
-                    token,
-                });
-                Ok(Value::UNDEFINED)
-            }
-            Native::FinalizationRegistryUnregister => {
-                let token = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let Some(token) = self.heap.weak_handle(token) else {
-                    return Ok(Value::FALSE);
-                };
-                let Some(Cell::FinalizationRegistry { entries, .. }) = self.heap.get_mut(this)
-                else {
-                    return Err(self.type_error(p, "invalid FinalizationRegistry receiver".into()));
-                };
-                let before = entries.len();
-                entries.retain(|entry| entry.token != Some(token));
-                Ok(if entries.len() != before {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            _ => Err(self.type_error(p, "invalid finalization native".into())),
-        }
+/// The finalization natives' entries: each `FinalizationRegistry` native, one standalone function
+/// per native.
+pub(super) fn finalization_entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::FinalizationRegistry => finalization_registry_called,
+        Native::FinalizationRegistryInitialize => finalization_registry_initialize,
+        Native::FinalizationRegistryRegister => finalization_registry_register,
+        Native::FinalizationRegistryUnregister => finalization_registry_unregister,
+        _ => return None,
+    };
+    Some(entry)
+}
+
+/// The weak references' entries: `WeakMap`, `WeakSet` and `WeakRef` called without `new`, and the
+/// lazy install of `WeakRef`.
+pub(super) fn weak_entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::WeakMap => weak_map_called,
+        Native::WeakSet => weak_set_called,
+        Native::WeakRef => weak_ref_called,
+        Native::WeakRefInitialize => weak_ref_initialize,
+        _ => return None,
+    };
+    Some(entry)
+}
+
+fn finalization_registry_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "Constructor FinalizationRegistry requires 'new'".into()))
+}
+
+fn finalization_registry_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.install_finalization_registry(p).map(|()| Value::UNDEFINED)
+}
+
+fn finalization_registry_register(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let target_value = vm.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    let target = vm
+        .heap
+        .weak_handle(target_value)
+        .ok_or_else(|| JsError("FinalizationRegistry target is not live".into()))?;
+    let held = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+    if vm.same_value(target_value, held) {
+        return Err(vm.type_error(p, "FinalizationRegistry target and held value must differ".into()));
     }
+    let token = match args.get(2).copied().filter(|value| !value.is_undefined()) {
+        None => None,
+        Some(value) => {
+            let value = vm.weak_key(p, value)?;
+            Some(vm.heap.weak_handle(value).ok_or_else(|| {
+                JsError("FinalizationRegistry unregister token is not live".into())
+            })?)
+        }
+    };
+    let Some(Cell::FinalizationRegistry { entries, .. }) = vm.heap.get_mut(this) else {
+        return Err(vm.type_error(p, "invalid FinalizationRegistry receiver".into()));
+    };
+    entries.push(FinalizationEntry {
+        target,
+        held,
+        token,
+    });
+    Ok(Value::UNDEFINED)
+}
+
+fn finalization_registry_unregister(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let token = vm.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    let Some(token) = vm.heap.weak_handle(token) else {
+        return Ok(Value::FALSE);
+    };
+    let Some(Cell::FinalizationRegistry { entries, .. }) = vm.heap.get_mut(this) else {
+        return Err(vm.type_error(p, "invalid FinalizationRegistry receiver".into()));
+    };
+    let before = entries.len();
+    entries.retain(|entry| entry.token != Some(token));
+    Ok(if entries.len() != before {
+        Value::TRUE
+    } else {
+        Value::FALSE
+    })
+}
+
+fn weak_map_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "Constructor WeakMap requires 'new'".into()))
+}
+
+fn weak_set_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "Constructor WeakSet requires 'new'".into()))
+}
+
+fn weak_ref_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "Constructor WeakRef requires 'new'".into()))
+}
+
+fn weak_ref_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.install_weak_ref(p).map(|()| Value::UNDEFINED)
 }
 
 include!("disposal.rs");

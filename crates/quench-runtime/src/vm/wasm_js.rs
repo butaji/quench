@@ -17,7 +17,6 @@ use wasmparser::ExternalKind;
 /// (`quench::host::enable_wasm`). An image that never installs them links none of the API.
 struct WasmJsRoutes {
     install: fn(&mut Vm, &ResidualProgram) -> Result<(), JsError>,
-    call: fn(&mut Vm, &ResidualProgram, Native, Value, &[Value]) -> Result<Value, JsError>,
     construct: fn(&mut Vm, &ResidualProgram, Native, &[Value]) -> Result<Value, JsError>,
 }
 
@@ -27,7 +26,6 @@ static WASM_JS_ROUTES: std::sync::OnceLock<WasmJsRoutes> = std::sync::OnceLock::
 pub fn enable_wasm_js() {
     WASM_JS_ROUTES.get_or_init(|| WasmJsRoutes {
         install: |vm, p| vm.install_webassembly(p),
-        call: |vm, p, native, this, args| vm.call_wasm_js_native(p, native, this, args),
         construct: |vm, p, native, args| vm.construct_wasm_js_native(p, native, args),
     });
 }
@@ -42,15 +40,235 @@ impl Vm {
         (self.wasm_js_routes(p)?.install)(self, p)
     }
 
-    /// A WebAssembly JS API native's call, through the installed API.
-    pub(super) fn call_wasm_js_routed(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-        (self.wasm_js_routes(p)?.call)(self, p, native, this, args)
-    }
-
     /// A WebAssembly JS API constructor's construction, through the installed API.
     pub(super) fn construct_wasm_js_routed(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
         (self.wasm_js_routes(p)?.construct)(self, p, native, args)
     }
+}
+
+/// The argument at `index`, or `undefined` when the call passes fewer.
+fn argument(args: &[Value], index: usize) -> Value {
+    args.get(index).copied().unwrap_or(Value::UNDEFINED)
+}
+
+/// The entry that runs a WebAssembly JS API native's call, or `None` when the API does not claim
+/// `native`. Each native has its own standalone function; `WebAssembly`'s lazy initializer and
+/// the Wasm constructors reached without `new` are included.
+pub(super) fn entry(native: Native) -> Option<super::native_table::NativeFn> {
+    Some(match native {
+        Native::WebAssemblyInitialize => webassembly_initialize,
+        Native::WebAssemblyValidate => webassembly_validate,
+        Native::WebAssemblyCompile => webassembly_compile,
+        Native::WebAssemblyInstantiate => webassembly_instantiate,
+        Native::WasmModule
+        | Native::WasmInstance
+        | Native::WasmMemory
+        | Native::WasmTable
+        | Native::WasmGlobal
+        | Native::WasmTag => constructor_without_new,
+        Native::WasmModuleExports => module_exports,
+        Native::WasmModuleImports => module_imports,
+        Native::WasmModuleCustomSections => module_custom_sections,
+        Native::WasmInstanceExportsGetter => instance_exports_getter,
+        Native::WasmMemoryGrow => memory_grow,
+        Native::WasmMemoryBufferGetter => memory_buffer_getter,
+        Native::WasmTableLengthGetter => table_length_getter,
+        Native::WasmTableGrow => table_grow,
+        Native::WasmTableGet => table_get,
+        Native::WasmTableSet => table_set,
+        Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => global_value_getter,
+        Native::WasmGlobalValueSetter => global_value_setter,
+        Native::WasmExportedFunction => exported_function,
+        _ => return None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn webassembly_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.install_webassembly_routed(p).map(|()| Value::UNDEFINED)
+}
+
+#[cfg(not(feature = "wasm"))]
+fn webassembly_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "WebAssembly is unavailable in this build".into()))
+}
+
+fn webassembly_validate(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let mode = vm.execution_mode;
+    let valid = vm.with_wasm_source(p, argument(args, 0), native, |host, bytes| {
+        !bytes.is_empty() && host.validate_wasm(bytes, mode)
+    })?;
+    Ok(Value::boolean(valid))
+}
+
+fn webassembly_compile(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let module = vm.wasm_compile_module(p, argument(args, 0), native);
+    vm.settled_promise(p, module)
+}
+
+fn webassembly_instantiate(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let result = vm.wasm_instantiate_source(p, argument(args, 0), argument(args, 1));
+    vm.settled_promise(p, result)
+}
+
+fn module_exports(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.wasm_module_export_descriptors(p, argument(args, 0))
+}
+
+fn module_imports(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let module = vm.wasm_module_of(p, argument(args, 0))?;
+    let descriptors = module
+        .import_kinds()
+        .into_iter()
+        .map(|(name, kind)| (name.module.clone(), name.name.clone(), kind))
+        .collect::<Vec<_>>();
+    let mut values = Vec::with_capacity(descriptors.len());
+    for (module, name, kind) in descriptors {
+        values.push(vm.wasm_descriptor(
+            p,
+            &[
+                ("module", &module),
+                ("name", &name),
+                ("kind", crate::WasmExternKind::from(kind).name()),
+            ],
+        )?);
+    }
+    Ok(vm.new_array(values))
+}
+
+fn module_custom_sections(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.wasm_module_custom_sections(p, args)
+}
+
+fn instance_exports_getter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    match vm.heap.get(this) {
+        Some(Cell::WasmObject {
+            slot: WasmObjectSlot::Instance { exports },
+            ..
+        }) => Ok(*exports),
+        _ => Err(vm.type_error(p, "receiver is not a WebAssembly.Instance".into())),
+    }
+}
+
+fn memory_grow(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.wasm_memory_receiver(p, this)?;
+    let delta = vm.wasm_descriptor_u32(p, argument(args, 0), "delta")?;
+    match vm.wasm_memory_grow(this, u64::from(delta))? {
+        Some(previous) => Ok(Value::number(previous as f64)),
+        None => Err(vm.range_error(
+            p,
+            "WebAssembly.Memory.grow(): maximum memory size exceeded".into(),
+        )),
+    }
+}
+
+fn memory_buffer_getter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.wasm_memory_receiver(p, this)?;
+    vm.wasm_memory_buffer(this).ok_or_else(|| {
+        vm.type_error(
+            p,
+            "receiver is not a WebAssembly.Memory".into(),
+        )
+    })
+}
+
+fn table_length_getter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let length = vm.wasm_table_receiver(p, this)?;
+    Ok(Value::number(length as f64))
+}
+
+fn table_get(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let length = vm.wasm_table_receiver(p, this)?;
+    let index = vm.wasm_js_table_index(p, argument(args, 0), length)?;
+    let value = vm.wasm_table_get(this, index as u64)?;
+    let ty = vm.wasm_table_element_type(this);
+    let declarations = vm.wasm_table_declarations(this);
+    vm.wasm_to_js(p, value, ty, declarations.as_ref())
+}
+
+fn table_set(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let length = vm.wasm_table_receiver(p, this)?;
+    let index = vm.wasm_js_table_index(p, argument(args, 0), length)?;
+    let ty = vm.wasm_table_element_type(this);
+    let declarations = vm.wasm_table_declarations(this);
+    let value = match args.get(1) {
+        Some(value) => vm.js_to_wasm(p, *value, ty, declarations.as_ref())?,
+        None => vm.wasm_table_default(ty),
+    };
+    let target = vm.wasm_element_target(value);
+    if let Some(Cell::WasmTable { elements, .. }) = vm.heap.get_mut(this) {
+        elements.fill(index..index + 1, value, target);
+    }
+    Ok(Value::UNDEFINED)
+}
+
+fn table_grow(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let length = vm.wasm_table_receiver(p, this)?;
+    let delta = vm.wasm_descriptor_u32(p, argument(args, 0), "delta")?;
+    let ty = vm.wasm_table_element_type(this);
+    let declarations = vm.wasm_table_declarations(this);
+    let value = match args.get(1) {
+        Some(value) => vm.js_to_wasm(p, *value, ty, declarations.as_ref())?,
+        None => vm.wasm_table_default(ty),
+    };
+    let target = vm.wasm_element_target(value);
+    let Some(Cell::WasmTable { elements, .. }) = vm.heap.get_mut(this) else {
+        unreachable!("checked table receiver");
+    };
+    let grown = usize::try_from(delta)
+        .ok()
+        .and_then(|delta| length.checked_add(delta))
+        .filter(|grown| {
+            elements
+                .maximum
+                .is_none_or(|maximum| *grown as u64 <= maximum)
+                && *grown as u64 <= DESCRIPTOR_LIMIT as u64
+        });
+    let Some(grown) = grown else {
+        return Err(vm.range_error(p, "WebAssembly.Table.grow(): failed to grow table".into()));
+    };
+    elements.resize(grown, value, target);
+    Ok(Value::number(length as f64))
+}
+
+fn global_value_getter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let (ty, _) = vm.wasm_global_receiver(p, this)?;
+    let value = vm.wasm_global_load(this)?;
+    let declarations = vm.wasm_global_declarations(this);
+    vm.wasm_to_js(p, value, ty, declarations.as_ref())
+}
+
+fn global_value_setter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (ty, mutable) = vm.wasm_global_receiver(p, this)?;
+    if !mutable {
+        return Err(vm.type_error(
+            p,
+            "cannot set the value of an immutable WebAssembly.Global".into(),
+        ));
+    }
+    let declarations = vm.wasm_global_declarations(this);
+    let value = vm.js_to_wasm(p, argument(args, 0), ty, declarations.as_ref())?;
+    let word = vm.wasm_global_bits(ty, value);
+    if let Some(Cell::WasmGlobal { bits, .. }) = vm.heap.get_mut(this) {
+        *bits = word;
+    }
+    Ok(Value::UNDEFINED)
+}
+
+fn exported_function(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_wasm_exported_function(p, args)
+}
+
+/// The Wasm constructors called without `new`: a TypeError naming the constructor.
+fn constructor_without_new(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let name = INTERFACES
+        .iter()
+        .find(|interface| interface.constructor == native)
+        .map_or("", |interface| interface.name);
+    Err(vm.type_error(
+        p,
+        format!("WebAssembly.{name}(): WebAssembly.{name} must be invoked with 'new'"),
+    ))
 }
 
 #[path = "wasm_js/copy_shape.rs"]
@@ -206,34 +424,6 @@ pub(super) const WASM_ERRORS: &[(&str, Native)] = &[
 
 /// The largest page count or element count a WebIDL `unsigned long` descriptor member holds.
 const DESCRIPTOR_LIMIT: f64 = u32::MAX as f64;
-
-pub(super) fn is_wasm_js_native(native: Native) -> bool {
-    matches!(
-        native,
-        Native::WebAssemblyValidate
-            | Native::WebAssemblyCompile
-            | Native::WebAssemblyInstantiate
-            | Native::WasmModule
-            | Native::WasmModuleExports
-            | Native::WasmModuleImports
-            | Native::WasmModuleCustomSections
-            | Native::WasmInstance
-            | Native::WasmInstanceExportsGetter
-            | Native::WasmMemory
-            | Native::WasmMemoryGrow
-            | Native::WasmMemoryBufferGetter
-            | Native::WasmTable
-            | Native::WasmTableLengthGetter
-            | Native::WasmTableGrow
-            | Native::WasmTableGet
-            | Native::WasmTableSet
-            | Native::WasmGlobal
-            | Native::WasmGlobalValueGetter
-            | Native::WasmGlobalValueSetter
-            | Native::WasmGlobalValueOf | Native::WasmTag
-            | Native::WasmExportedFunction
-    )
-}
 
 pub(super) fn is_wasm_js_constructor(native: Native) -> bool {
     matches!(
@@ -479,172 +669,6 @@ impl Vm {
             values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
         }
         Ok(self.new_array(values))
-    }
-
-    pub(super) fn call_wasm_js_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
-        match native {
-            Native::WebAssemblyValidate => {
-                let mode = self.execution_mode;
-                let valid = self.with_wasm_source(p, arg(0), native, |host, bytes| {
-                    !bytes.is_empty() && host.validate_wasm(bytes, mode)
-                })?;
-                Ok(Value::boolean(valid))
-            }
-            Native::WebAssemblyCompile => {
-                let module = self.wasm_compile_module(p, arg(0), native);
-                self.settled_promise(p, module)
-            }
-            Native::WebAssemblyInstantiate => {
-                let result = self.wasm_instantiate_source(p, arg(0), arg(1));
-                self.settled_promise(p, result)
-            }
-            Native::WasmModuleExports => self.wasm_module_export_descriptors(p, arg(0)),
-            Native::WasmModuleCustomSections => self.wasm_module_custom_sections(p, args),
-            Native::WasmModuleImports => {
-                let module = self.wasm_module_of(p, arg(0))?;
-                let descriptors = module
-                    .import_kinds()
-                    .into_iter()
-                    .map(|(name, kind)| (name.module.clone(), name.name.clone(), kind))
-                    .collect::<Vec<_>>();
-                let mut values = Vec::with_capacity(descriptors.len());
-                for (module, name, kind) in descriptors {
-                    values.push(self.wasm_descriptor(
-                        p,
-                        &[
-                            ("module", &module),
-                            ("name", &name),
-                            ("kind", crate::WasmExternKind::from(kind).name()),
-                        ],
-                    )?);
-                }
-                Ok(self.new_array(values))
-            }
-            Native::WasmInstanceExportsGetter => match self.heap.get(this) {
-                Some(Cell::WasmObject {
-                    slot: WasmObjectSlot::Instance { exports },
-                    ..
-                }) => Ok(*exports),
-                _ => Err(self.type_error(p, "receiver is not a WebAssembly.Instance".into())),
-            },
-            Native::WasmMemoryGrow => {
-                self.wasm_memory_receiver(p, this)?;
-                let delta = self.wasm_descriptor_u32(p, arg(0), "delta")?;
-                match self.wasm_memory_grow(this, u64::from(delta))? {
-                    Some(previous) => Ok(Value::number(previous as f64)),
-                    None => Err(self.range_error(
-                        p,
-                        "WebAssembly.Memory.grow(): maximum memory size exceeded".into(),
-                    )),
-                }
-            }
-            Native::WasmMemoryBufferGetter => {
-                self.wasm_memory_receiver(p, this)?;
-                self.wasm_memory_buffer(this).ok_or_else(|| {
-                    self.type_error(
-                        p,
-                        "receiver is not a WebAssembly.Memory".into(),
-                    )
-                })
-            }
-            Native::WasmTableLengthGetter => {
-                let length = self.wasm_table_receiver(p, this)?;
-                Ok(Value::number(length as f64))
-            }
-            Native::WasmTableGet => {
-                let length = self.wasm_table_receiver(p, this)?;
-                let index = self.wasm_js_table_index(p, arg(0), length)?;
-                let value = self.wasm_table_get(this, index as u64)?;
-                let ty = self.wasm_table_element_type(this);
-                let declarations = self.wasm_table_declarations(this);
-                self.wasm_to_js(p, value, ty, declarations.as_ref())
-            }
-            Native::WasmTableSet => {
-                let length = self.wasm_table_receiver(p, this)?;
-                let index = self.wasm_js_table_index(p, arg(0), length)?;
-                let ty = self.wasm_table_element_type(this);
-                let declarations = self.wasm_table_declarations(this);
-                let value = match args.get(1) {
-                    Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
-                    None => self.wasm_table_default(ty),
-                };
-                let target = self.wasm_element_target(value);
-                if let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) {
-                    elements.fill(index..index + 1, value, target);
-                }
-                Ok(Value::UNDEFINED)
-            }
-            Native::WasmTableGrow => {
-                let length = self.wasm_table_receiver(p, this)?;
-                let delta = self.wasm_descriptor_u32(p, arg(0), "delta")?;
-                let ty = self.wasm_table_element_type(this);
-                let declarations = self.wasm_table_declarations(this);
-                let value = match args.get(1) {
-                    Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
-                    None => self.wasm_table_default(ty),
-                };
-                let target = self.wasm_element_target(value);
-                let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) else {
-                    unreachable!("checked table receiver");
-                };
-                let grown = usize::try_from(delta)
-                    .ok()
-                    .and_then(|delta| length.checked_add(delta))
-                    .filter(|grown| {
-                        elements
-                            .maximum
-                            .is_none_or(|maximum| *grown as u64 <= maximum)
-                            && *grown as u64 <= DESCRIPTOR_LIMIT as u64
-                    });
-                let Some(grown) = grown else {
-                    return Err(self
-                        .range_error(p, "WebAssembly.Table.grow(): failed to grow table".into()));
-                };
-                elements.resize(grown, value, target);
-                Ok(Value::number(length as f64))
-            }
-            Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {
-                let (ty, _) = self.wasm_global_receiver(p, this)?;
-                let value = self.wasm_global_load(this)?;
-                let declarations = self.wasm_global_declarations(this);
-                self.wasm_to_js(p, value, ty, declarations.as_ref())
-            }
-            Native::WasmGlobalValueSetter => {
-                let (ty, mutable) = self.wasm_global_receiver(p, this)?;
-                if !mutable {
-                    return Err(self.type_error(
-                        p,
-                        "cannot set the value of an immutable WebAssembly.Global".into(),
-                    ));
-                }
-                let declarations = self.wasm_global_declarations(this);
-                let value = self.js_to_wasm(p, arg(0), ty, declarations.as_ref())?;
-                let word = self.wasm_global_bits(ty, value);
-                if let Some(Cell::WasmGlobal { bits, .. }) = self.heap.get_mut(this) {
-                    *bits = word;
-                }
-                Ok(Value::UNDEFINED)
-            }
-            Native::WasmExportedFunction => self.call_wasm_exported_function(p, args),
-            native if is_wasm_js_constructor(native) => {
-                let name = INTERFACES
-                    .iter()
-                    .find(|interface| interface.constructor == native)
-                    .map_or("", |interface| interface.name);
-                Err(self.type_error(
-                    p,
-                    format!("WebAssembly.{name}(): WebAssembly.{name} must be invoked with 'new'"),
-                ))
-            }
-            _ => unreachable!("not a WebAssembly native"),
-        }
     }
 
     pub(super) fn construct_wasm_js_native(
@@ -1397,7 +1421,7 @@ impl Vm {
                     arguments[1].as_number().unwrap_or_default()
                         + arguments[2].as_number().unwrap_or_default(),
                 );
-                self.typed_array_native(
+                self.call_native_dispatch(
                     &program,
                     Native::Uint8ArrayCopyWithin,
                     view,
