@@ -229,10 +229,10 @@ fn write_builtin_table(catalog: &mut fs::File, families: quench_runtime::Builtin
 /// of the link; the entries it does reach are the runtime's own (`ExecutionTable::ALL`).
 fn write_execution_table(catalog: &mut fs::File, spec: &ExecutionTableSpec) -> Result<(), String> {
     let groups = [
-        (spec.interpret, &["interpret"][..]),
-        (spec.tier_up, &["js_tier_frame_entry", "offer_compiled", "run_offered", "js_jit_compiled_call", "tier_may_run"][..]),
-        (spec.compile_source, &["prepare_native_script"][..]),
-        (spec.link_live, &["stage_images_at_load", "attach_native_js"][..]),
+        (spec.interpret, &["interpret", "native_execution_rejections", "record_native_execution_rejection"][..]),
+        (spec.tier_up, &["js_tier_frame_entry", "offer_compiled", "run_offered", "js_jit_compiled_call", "tier_may_run", "hot_loop_lane_view", "report_lane_plan"][..]),
+        (spec.compile_source, &["prepare_native_script", "store_native_module_program", "kept_native_module_program"][..]),
+        (spec.link_live, &["stage_images_at_load", "attach_native_js", "load_ahead_images"][..]),
         (spec.wasm, &["install_wasm_instance", "bind_wasm_instance", "run_compiled", "wasm_table_step", "wasm_instance_address", "compile_wasm_eagerly"][..]),
     ];
     let unlinked: String = groups.iter().filter(|(linked, _)| !linked)
