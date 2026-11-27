@@ -12,6 +12,40 @@ pub(super) enum Reservation {
     Unreserved,
     Reserved,
     Failed,
+    /// The range is a slice of another owner's (`RecordSpace::over`): this space neither maps
+    /// nor unmaps it.
+    #[allow(dead_code)]
+    Borrowed,
+}
+
+/// An address range its owner maps and releases, lazily backed as a record space's own range is.
+/// The class space maps one and cuts its regions from it (`RecordSpace::over`).
+#[allow(dead_code)]
+pub(in crate::heap) struct AddressRange {
+    base: NonNull<u8>,
+    layout: Layout,
+}
+
+#[allow(dead_code)]
+impl AddressRange {
+    /// Maps `bytes` bytes, page aligned; `None` where the mapping fails.
+    pub(in crate::heap) fn map(bytes: usize) -> Option<Self> {
+        let layout = Layout::from_size_align(bytes, page_bytes()).ok().filter(|layout| layout.size() != 0)?;
+        // SAFETY: the layout is nonzero-sized, and `unmap_range` in `Drop` releases it with the same layout.
+        let base = unsafe { map_range(layout) }?;
+        Some(Self { base, layout })
+    }
+
+    pub(in crate::heap) fn base(&self) -> NonNull<u8> {
+        self.base
+    }
+}
+
+impl Drop for AddressRange {
+    fn drop(&mut self) {
+        // SAFETY: the pair is the one `map` made, and the regions cut from it were dropped first.
+        unsafe { unmap_range(self.base, self.layout) };
+    }
 }
 
 /// Maps the address range of `layout`, lazily backed. On Linux the mapping is `MAP_NORESERVE`, so
@@ -93,16 +127,35 @@ unsafe fn unmap_range(base: NonNull<u8>, layout: Layout) {
 const MIN_RESERVED_RECORDS: usize = crate::staged::object_encoding::PROTO_RECORD_WINDOW;
 
 impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
+    /// A space of `records` records at `base`, a slice of an address range its owner maps and
+    /// releases (`ClassSpace`). The space neither maps nor unmaps the range, and no reservation
+    /// step runs: its records are addressable at once.
+    ///
+    /// # Safety
+    /// `base` addresses `records` records of `T` inside a range that outlives the space, and no
+    /// other space uses those records.
+    #[allow(dead_code)]
+    pub(in crate::heap) unsafe fn over(base: NonNull<MaybeUninit<T>>, records: usize) -> Self {
+        let mut space = Self {
+            base,
+            reservation: Reservation::Borrowed,
+            reserved: records,
+            ..Self::default()
+        };
+        space.blocks.reserve_exact(records.div_ceil(RECORDS_PER_BLOCK));
+        space
+    }
+
     /// Whether `base` names its address range.
     #[inline(always)]
     pub(super) fn is_reserved(&self) -> bool {
-        self.reservation == Reservation::Reserved
+        matches!(self.reservation, Reservation::Reserved | Reservation::Borrowed)
     }
 
     /// Reserves its address range on the first call; `false` where that failed.
     pub(super) fn ensure_reserved(&mut self) -> bool {
         match self.reservation {
-            Reservation::Reserved => return true,
+            Reservation::Reserved | Reservation::Borrowed => return true,
             Reservation::Failed => return false,
             Reservation::Unreserved => {}
         }
@@ -144,8 +197,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACI
         if !self.is_reserved() {
             return;
         }
-        let layout = Layout::array::<MaybeUninit<T>>(self.reserved)
-            .expect("record-space layout was validated at reservation");
         // The cursor's unallocated run is occupied but uninitialized: its ids are not dropped.
         let cursor = self.cursor;
         for (block_index, block) in self.blocks.iter().enumerate() {
@@ -173,7 +224,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACI
                 }
             }
         }
-        // SAFETY: this range was mapped by `ensure_reserved` with this layout.
-        unsafe { unmap_range(self.base.cast(), layout) };
+        // A borrowed range belongs to its owner, which unmaps it after the space is dropped.
+        if self.reservation == Reservation::Reserved {
+            let layout = Layout::array::<MaybeUninit<T>>(self.reserved)
+                .expect("record-space layout was validated at reservation");
+            // SAFETY: this range was mapped by `ensure_reserved` with this layout.
+            unsafe { unmap_range(self.base.cast(), layout) };
+        }
     }
 }

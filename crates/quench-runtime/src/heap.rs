@@ -269,6 +269,8 @@ mod rc_drop;
 pub mod rc;
 mod record_children;
 mod records;
+mod class_space;
+#[cfg(test)] mod class_space_tests;
 mod root;
 mod slots;
 mod snapshot;
@@ -667,6 +669,9 @@ fn release_freed_allocator_memory() {
 #[derive(Default)]
 pub struct Heap {
     slots: SlotArena,
+    /// Class cells (`class_space`): empty until a class cell is first allocated.
+    #[allow(dead_code)]
+    class_space: class_space::ClassSpace,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
     function_records: FunctionRecordSpace,
