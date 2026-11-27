@@ -3793,6 +3793,10 @@ impl Lowering<'_, '_> {
         // it cannot unwind from is made by the lane.
         let origin = self.unit.origins.get(pc).copied().filter(|_| self.raises_from(pc));
         let (Some(super::lane_unit::Origin::Caller(record)), Some(Operation::Call(CallOperation::Site(site)))) = (origin, decoded) else {
+            if quench_runtime::trace::Channel::AotLanes.on() {
+                eprintln!("aot-lanes: function {} call at unit pc {pc} leaves: origin {:?}, raises from {}, decoded as a call site {}", self.function_id,
+                    self.unit.origins.get(pc), self.raises_from(pc), matches!(decoded, Some(Operation::Call(CallOperation::Site(_)))));
+            }
             self.exit(state, pc as u32);
             return false;
         };
@@ -3957,6 +3961,9 @@ impl Lowering<'_, '_> {
         let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
         // A record is bound by the VM's call, which runs between this body's runs and inside its calls out: read it at each test.
         let record_flags = regions::flags(quench_runtime::staged::Region::EntryCell.mutable());
+        if quench_runtime::trace::Channel::AotLanes.on() {
+            eprintln!("aot-lanes: function {} closed-set call at record {record}: arms {:?}", self.function_id, arms.iter().map(|arm| arm.function).collect::<Vec<_>>());
+        }
         let Some((&last, tested)) = arms.split_last() else { return };
         for &arm in tested {
             let at = crate::symbol_words::symbol_address(&mut self.builder, arm.record.0, arm.record.1);

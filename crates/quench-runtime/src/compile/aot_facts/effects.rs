@@ -209,6 +209,28 @@ fn member_type(ctx: &Ctx<'_>, owner: Option<Fact>, atom: u32) -> (Type, Class) {
     (types.field(atom), on.unwrap_or_else(|| types.class(Key::Member(atom))))
 }
 
+/// The object a named field read or store at `instruction` reads or stores: a `GetField`'s base (a nested
+/// lookup's last owner, the value of its first field), a `SetField`'s base or the function's `this`.
+pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Fact]) -> Option<Fact> {
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
+        return match instruction.field_lookup()? {
+            crate::bytecode::FieldLookup::Atom { base, .. } => base_fact(ctx, base, state),
+            crate::bytecode::FieldLookup::Site(index) => {
+                let (base, first, second) = ctx.scope.site_paths.get(index).copied().flatten()?;
+                let owner = base_fact(ctx, base, state);
+                if second.is_none() { return owner; }
+                let (ty, class) = member_type(ctx, owner, first);
+                Some(Fact::of_class(ty, class))
+            }
+        };
+    }
+    match decoded(instruction) {
+        Some(Operation::SetField { base: Some(base), .. }) => state.get(usize::from(base)).copied(),
+        Some(Operation::SetField { base: None, .. }) if !ctx.is_root => Some(this_fact(ctx)),
+        _ => None,
+    }
+}
+
 /// The fact of a field lookup's base: its register's, or the function's own `this`.
 fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Fact]) -> Option<Fact> {
     match base.register_index() {

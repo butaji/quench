@@ -484,7 +484,11 @@ impl Vm {
             let name = program.functions.get(function as usize)
                 .and_then(|f| f.header().name.or(f.header().inferred_name))
                 .and_then(|atom| program.atoms.get(atom as usize)).map_or("", |name| &name[..]);
-            eprintln!("aot-lanes: install function {function} ({name}): lane body");
+            let mut facts = [0usize; quench_runtime::vm::fact_edge::ExitFact::NAMES.len()];
+            let sites = images.image.functions.get(function as usize).and_then(|f| f.lane.as_ref()).map_or(&[][..], |lane| &lane.exits.sites[..]);
+            for site in sites { facts[site.fact as usize] += 1; }
+            let census: Vec<_> = quench_runtime::vm::fact_edge::ExitFact::NAMES.iter().zip(facts).filter(|(_, count)| *count > 0).collect();
+            eprintln!("aot-lanes: install function {function} ({name}): lane body, {} exit sites {census:?}", sites.len());
         }
         let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
@@ -564,7 +568,7 @@ impl Vm {
     pub(crate) fn rebind_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, crate::dispatch_fast::ScriptCallTarget)) {
         let why = self.rebound_ahead_call(program, (function, pc), (argc, target));
         // The common answers (no proof of the site, the record already names the callee) are not traced: every helper call makes one.
-        if !matches!(why, "unproven-site" | "already-named") && quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_REBIND function={function} pc={pc} callee={} {why}", target.function); }
+        if (!matches!(why, "unproven-site" | "already-named") || quench_runtime::trace::Channel::AotLanes.on()) && quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_REBIND function={function} pc={pc} callee={} {why}", target.function); }
     }
 
     /// `rebind_ahead_call`, answering what it did.

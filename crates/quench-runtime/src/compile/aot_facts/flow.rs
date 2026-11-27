@@ -47,6 +47,8 @@ pub(super) struct FunctionFlow {
     pub(super) numbers: Box<[Option<Representation>]>,
     /// The named properties stored into a function's `prototype`, in code order.
     pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
+    /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
+    pub(super) field_owners: std::collections::BTreeMap<u32, super::value::Class>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -168,6 +170,7 @@ struct Record {
     defs: Vec<Option<Fact>>,
     /// Per register, whether a read saw a value that is not a Number.
     unsafe_reads: Vec<bool>,
+    field_owners: std::collections::BTreeMap<u32, super::value::Class>,
 }
 
 impl Record {
@@ -181,6 +184,7 @@ impl Record {
             prototype_writes: Vec::new(),
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
+            field_owners: std::collections::BTreeMap::new(),
         }
     }
 
@@ -190,6 +194,10 @@ impl Record {
             if !state[usize::from(register)].is_number() {
                 self.unsafe_reads[usize::from(register)] = true;
             }
+        }
+        if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
+            let joined = self.field_owners.entry(pc as u32).or_insert(super::value::Class::Never);
+            *joined = joined.join(owner.class);
         }
         let traits = instruction.op().traits();
         let construct = traits.has(Traits::CONSTRUCTION);
@@ -248,6 +256,7 @@ impl Record {
             member_wild: self.wild_member,
             numbers,
             prototype_writes: self.prototype_writes,
+            field_owners: self.field_owners,
             arity,
         }
     }
