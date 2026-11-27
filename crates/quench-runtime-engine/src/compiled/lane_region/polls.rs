@@ -70,6 +70,15 @@ fn specialize_interrupt_owner(function: &mut ir::Function, call: ir::Inst, polls
     cursor.func.effect_specializations.push(ir::function::EffectSpecialization { proof: call, gates });
 }
 
+/// Whether `instruction` makes no call and no allocation: a jump, a move, a local slot, or a Number operation.
+fn call_and_allocation_free(instruction: WideInstruction) -> bool {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    [Meaning::Move, Meaning::Nop, Meaning::Jump, Meaning::ConditionalJump, Meaning::TruthJump, Meaning::CompareJump,
+        Meaning::NumericBinary, Meaning::NumericArithmetic, Meaning::NumericUnary, Meaning::IncDec,
+        Meaning::LoadLocal, Meaning::StoreLocal, Meaning::BranchTable, Meaning::LoadConst]
+        .into_iter().any(|meaning| means(instruction, meaning))
+}
+
 impl Lowering<'_, '_> {
     pub(crate) fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
@@ -83,6 +92,23 @@ impl Lowering<'_, '_> {
         let interrupt = self.interrupt;
         let exit = self.guard_exit(state, pc);
         quench_runtime::staged::poll::back_edge_poll(&mut super::super::object_slots::emit(&mut self.builder), interrupt, exit).expect("a guard always emits");
+    }
+
+    /// The interrupt check of the back edge at `pc` to `target`. One poll per loop nest: a loop
+    /// whose body makes no call and no allocation, nested in a lowered loop, polls nothing, since the
+    /// enclosing loop's back edge polls once per iteration of that loop (`polled_by_enclosing_loop`).
+    pub(crate) fn back_edge_check(&mut self, state: &mut State, pc: usize, target: usize) {
+        if !self.polled_by_enclosing_loop(pc, target) { self.interrupt_check(state, pc as u32); }
+    }
+
+    /// Whether the loop of the back edge `pc` to `target` is call-free and allocation-free and lies
+    /// inside another lowered loop, whose back edge polls for it.
+    fn polled_by_enclosing_loop(&self, pc: usize, target: usize) -> bool {
+        let instructions = &self.unit.instructions;
+        let enclosed = quench_runtime::bytecode::back_edges_of(instructions.iter().copied())
+            .any(|(outer, header)| header <= target && pc <= outer && (header, outer) != (target, pc)
+                && self.coverage.lowered(header) && self.coverage.lowered(outer));
+        enclosed && instructions[target..=pc].iter().all(|instruction| call_and_allocation_free(*instruction))
     }
 
     pub(crate) fn emit_fault_poll(&mut self) {
