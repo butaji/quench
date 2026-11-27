@@ -2,6 +2,7 @@
 //! facts (`AotFacts`) at the function's own pcs, registers and keys.
 
 use super::accessors;
+use super::lengths::IndexRange;
 use super::record::ElementStore;
 use super::registers::Source;
 use super::AotFacts;
@@ -197,6 +198,14 @@ impl<'a> FunctionFacts<'a> {
     /// `index < bound` (`lengths::refine`). A loop's entry compares the bound's reach with an array's length once (`bound_below`).
     pub fn bound_below(&self, pc: u32, index: u16) -> Option<u16> {
         self.facts.lengths.get(&self.function)?.bound_below(pc, index)
+    }
+
+    /// The range of the index the element access at `pc` reads, where its floor and ceiling are forms over registers that no write in
+    /// a loop breaks: `header` is that loop's header pc. The lane evaluates `floor` and `ceiling` once on the loop's entering edge and
+    /// compares them with 0 and the array's length; `nan` says the index may be NaN, which the lane takes separately. The analysis
+    /// never checks the range in execution, and a read with no such loop has none.
+    pub fn index_ceiling(&self, pc: u32) -> Option<IndexRange> {
+        self.facts.lengths.get(&self.function)?.index_range(pc)
     }
 
     /// Whether the step at `pc` may resize an array of element class `array` (a call that may write its elements, a mutator, guest

@@ -158,6 +158,7 @@ pub(in crate::compile::aot_facts) fn refine(ctx: &Ctx<'_>, instruction: WideInst
     // The comparison holds on this edge when the jump's edge is not the one `negate` takes it on. A failing `<` proves
     // `left >= right`, and a holding `>=` does too: the loop's exit edge of `index < bound` reaches the bound.
     let holds = to_target != negate;
+    refined.refine_interval(ctx, left, right, relation, holds, words);
     if let (Some(index), Some(bound)) = (left.register_index(), right.register_index()) {
         let at_least = match relation {
             NumberRelation::LessThan => !holds,
