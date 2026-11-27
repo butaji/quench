@@ -299,7 +299,8 @@ fn compile(options: Options) -> Result<(), String> {
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    let (inputs, demand) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    report["closed_world"] = super::compiler::demand_report(&demand);
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
         inputs

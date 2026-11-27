@@ -339,6 +339,7 @@ pub mod api {
         NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
         lower_native_js_module_for,
     };
+    pub use crate::aot_image::demand::{Demand, ExecutionTableSpec};
     pub use crate::compiled::ahead_images::AheadImagesOps1;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1;
     pub use crate::native_program::NativeJsProgramOps1;
