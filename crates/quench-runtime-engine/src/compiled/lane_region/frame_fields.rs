@@ -156,11 +156,19 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             // constructor) reads its own record here, a store of it leaves.
             let receiver = &entry.receiver;
             let (object, shape, inline) = (stage.builder.use_var(receiver.object), stage.builder.use_var(receiver.shape), stage.builder.use_var(receiver.inline));
-            let present = stage.raw_compare_imm(Relation::NotEqual, object, 0);
-            if !readable {
-                emit_js_guard(stage.builder, present, miss);
+            // A register the solver types a direct object holds `this`, whose record is present (`tag_proofs::proves_object`).
+            let proven = match owner {
+                Owner::Register(register) => super::tag_proofs::proves_object(self.state.values[usize::from(register)].value.ty),
+                _ => false,
+            };
+            if !readable || proven {
+                if !proven {
+                    let present = stage.raw_compare_imm(Relation::NotEqual, object, 0);
+                    emit_js_guard(stage.builder, present, miss);
+                }
                 return Some(Reached { shape: Some(shape), inline: Some(inline), ..Reached::bare(object) });
             }
+            let present = stage.raw_compare_imm(Relation::NotEqual, object, 0);
             let (other, join) = (stage.builder.create_block(), stage.builder.create_block());
             stage.builder.set_cold_block(other);
             let [record, shape_at, inline_at] = [types::I64, types::I32, types::I8].map(|ty| stage.builder.append_block_param(join, ty));

@@ -83,8 +83,11 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
     if let Some(index) = state.proofs.headers.iter().position(|(word, ..)| *word == bits) {
         let (_, header, readable) = state.proofs.headers[index];
         if !read && readable {
-            let object = quench_runtime::staged::value::is_direct_object(&mut super::super::object_slots::emit(builder), bits);
-            emit_js_guard(builder, object, exit);
+            // A solver type that names a direct object already proves the family the store tests (`tag_proofs::proves_object`).
+            if !fact.is_some_and(|fact| super::tag_proofs::proves_object(fact.ty)) {
+                let object = quench_runtime::staged::value::is_direct_object(&mut super::super::object_slots::emit(builder), bits);
+                emit_js_guard(builder, object, exit);
+            }
             state.proofs.headers[index].2 = false;
             refine_owner(state, owner, fact);
             for record in state.proofs.records.iter_mut().filter(|(word, ..)| *word == bits) { record.2 = false; }
@@ -103,7 +106,7 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
         let header = if let Some((_, record, was_readable)) = kept.filter(|(.., was_readable)| !*was_readable || read) {
             readable = was_readable;
             record.header(builder, fact)
-        } else if read && !fact.is_some_and(|fact| fact.ty.is_direct_object_family()) {
+        } else if read && !fact.is_some_and(|fact| super::tag_proofs::proves_object(fact.ty)) {
             readable = true;
             let records = object_table_base(builder, entry, payload);
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
