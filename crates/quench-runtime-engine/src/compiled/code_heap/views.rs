@@ -74,7 +74,7 @@ impl Views {
         const REACH: usize = 1 << 31;
         const START: usize = 512 << 20;
         const ALIGN: usize = 2 << 20;
-        let anchor = Self::reserve as usize;
+        let anchor = Self::reserve as fn(usize) -> Result<Self, String> as usize;
         let span = bytes.next_multiple_of(ALIGN);
         (0..16).find_map(|step| {
             let hint = (anchor + START + step * span).next_multiple_of(ALIGN);
