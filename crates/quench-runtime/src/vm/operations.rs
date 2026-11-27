@@ -702,6 +702,18 @@ impl Vm {
         }
     }
 
+    /// Runs `native` through its table entry, for a caller that holds no native activation (a
+    /// pure String method's in-place fallback, the engine's primitive leaves).
+    pub fn call_native_entry(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_dispatch(p, native, this, args)
+    }
+
     /// The reaction natives of async iteration (`native_entry`'s async reaction entry), by kind.
     fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
         match native {
@@ -1324,7 +1336,6 @@ impl Vm {
             Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
                 self.array_iterator_native(p, native, this)
             }
-            Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args, false),
             Native::SharedArrayBufferSlice => self.array_buffer_slice_native(p, this, args, true),
             Native::ArrayBufferTransfer => {
@@ -1404,15 +1415,6 @@ impl Vm {
             | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
             Native::NumberFixed => self.number_format(p, this, args, native),
             Native::NumberPrecision => self.number_format(p, this, args, native),
-            Native::String => {
-                let argument = self.string_constructor_argument(args);
-                let text = if let Some(description) = self.heap.symbol_data(argument) {
-                    JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
-                } else {
-                    self.coerce_js_string(p, argument)?
-                };
-                Ok(self.heap.alloc_string(text))
-            }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString
             | Native::SymbolToPrimitive
@@ -2135,14 +2137,14 @@ fn head_entry(native: Native) -> Option<native_table::NativeFn> {
 
 /// The method families: string, array callbacks, HTML, the collections and the other keyed families.
 fn method_entry(native: Native) -> Option<native_table::NativeFn> {
+    if let Some(entry) = super::primitives::string_entry(native) {
+        return Some(entry);
+    }
     if native.is_string_regexp_or_math() {
         return Some(enter_table);
     }
     if native.is_array_callback() {
         return Some(enter_array_callback);
-    }
-    if super::string::is_string_html_method(native) {
-        return Some(enter_string_html);
     }
     if Vm::is_finalization_native(native) {
         return Some(enter_finalization);
@@ -2215,10 +2217,6 @@ fn enter_generator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value
 
 fn enter_array_callback(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.array_callback_native(p, native, this, args)
-}
-
-fn enter_string_html(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.string_html_method(p, native, this, args).expect("an HTML method's family is its own")
 }
 
 fn enter_finalization(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
