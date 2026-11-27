@@ -168,7 +168,20 @@ impl Vm {
         let start = object.shape();
         let this = self.heap.alloc_object(object);
         self.preshape_receiver(this, start, constructor, constructor);
+        self.record_class_header(constructor, this);
         this
+    }
+
+    /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
+    /// (`ProgramStore::class_header`). The header is recorded once per class: a class whose instances keep one layout
+    /// (`AotFacts::class_layout`) takes it from its first instance, and a planned call site (`planned_call_row`)
+    /// reads a receiver's class from that header. A class with no recorded header keeps its sites' own paths.
+    pub fn record_class_header(&mut self, constructor: Value, this: Value) {
+        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
+        let Some(layout) = self.object_data(this).map(|object| object.layout_id()) else { return };
+        if let Some(header) = self.programs.class_header(program, class).filter(|header| header.get() == 0) {
+            header.set(layout);
+        }
     }
 
     /// Gives `this`, a just-allocated empty receiver of template shape `start` that no code has

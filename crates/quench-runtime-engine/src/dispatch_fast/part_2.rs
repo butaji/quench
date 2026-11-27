@@ -676,10 +676,17 @@ pub(super) fn script_call_handler(imm: u32) -> Handler {
 
 /// Gives each call record the protocol row of its argument count, of a receiver that is the function's
 /// `undefined` register (`undefined`), and, where `admits_returns` (`concrete_admits_returning_call` for
-/// the function's strictness), of a returning record (`RETURN_REGISTER`), whose completion the row admits.
-pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool) {
+/// the function's strictness), of a returning record (`RETURN_REGISTER`), whose completion the row admits. A record of
+/// a planned site (`planned`, sorted by pc) takes `planned_call_row` instead, which reads its site from the record's `mode`.
+pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool,
+    planned: &[quench_runtime::vm::engine_types::PlannedSite]) {
     let general = script_call_row(ANY_ARGC, false, false) as *const ();
-    for record in records.iter_mut().filter(|record| record.handler == general) {
+    for (pc, record) in records.iter_mut().enumerate().filter(|(_, record)| record.handler == general) {
+        if let Ok(index) = planned.binary_search_by_key(&(pc as u32), |site| site.pc) {
+            record.handler = super::planned_calls::planned_call_row as Handler as *const ();
+            record.mode = std::ptr::from_ref(&planned[index]) as usize as u64;
+            continue;
+        }
         let plain = undefined.is_some_and(|register| u16::from(register) == record.c);
         let returns = admits_returns && record.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         let argc = ImmediateLayout::argument_count(record.imm());
