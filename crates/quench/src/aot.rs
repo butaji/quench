@@ -10,6 +10,7 @@ pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceVie
 pub(crate) use assets::ModuleAssetState;
 mod graph;
 mod host_operations;
+mod core_rest;
 mod image;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;

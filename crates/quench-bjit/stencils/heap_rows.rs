@@ -34,7 +34,9 @@
 use crate::bytecode::Operand;
 // A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
 // rows build their writes `strict: false`.
-use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD, JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE, JS_STEP_STUB_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
+use crate::layout::words::DIRECT_ARRAY_TAG;
+use crate::staged::bump::{EmptyObject, claim_empty_object};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
@@ -286,14 +288,81 @@ fn typed_length_row<const D: u8>(s: S) -> Out {
     finish(frame, done)
 }
 
-/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`). It leaves for the lane's helper or
-/// the interpreter, which make the object, with nothing written. R4-B2b: a fresh ordinary object's Value is its
-/// class-cell stub granule, claimed with its record (`Heap::publish_object_record`), and this row holds no
-/// region-0 cursor to claim one with, so it cannot deliver the object's word. Nothing here can panic.
+/// A `u32` word of the record at `base + offset`: a cursor's `next` or `limit`.
+#[inline(always)]
+fn word32_at(base: usize, offset: usize) -> u32 {
+    // SAFETY: a layout offset of a live cursor, read whole as `NATIVE_RECORD_CURSOR_LAYOUT` names it.
+    unsafe { ((base.wrapping_add(offset)) as *const u32).read_unaligned() }
+}
+
+/// Writes a `u32` word of a cursor or record the run owns, before any safepoint.
+#[inline(always)]
+fn put_word32(base: usize, offset: usize, value: u32) {
+    // SAFETY: a layout offset of a cursor or a fresh record of the run, which nothing else reads yet.
+    unsafe { ((base.wrapping_add(offset)) as *mut u32).write_unaligned(value) }
+}
+
+/// Writes a `u64` word of a fresh record or stub the run owns, before any safepoint.
+#[inline(always)]
+fn put_word64(base: usize, offset: usize, value: u64) {
+    // SAFETY: as `put_word32`.
+    unsafe { ((base.wrapping_add(offset)) as *mut u64).write_unaligned(value) }
+}
+
+/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`), with nothing written where it leaves.
 #[inline(always)]
 fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
-    let _ = (KIND, D, payload);
-    Out::Exit(s)
+    if const { KIND == EMPTY_OBJECT_ROW } { empty_object_row::<D>(s, payload) } else { empty_array_row::<D>(s, payload) }
+}
+
+/// An empty ordinary object (`EMPTY_OBJECT_ROW`): the staged claim (`bump::claim_empty_object`) over the dispatch head's
+/// cursors, bases and template, run on `StencilStage`. Its answer is the direct object word of the claimed stub granule,
+/// delivered into the destination (hole 0); where a cursor is spent or a template absent it leaves with nothing written, so
+/// the helper makes the object (`Heap::publish_object_record`). Nothing here can panic.
+#[inline(always)]
+fn empty_object_row<const D: u8>(s: S, payload: usize) -> Out {
+    // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
+    if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
+        return Out::Exit(s);
+    }
+    let object = EmptyObject {
+        object_cursor: word_at(payload, JS_STEP_OBJECT_CURSOR),
+        stub_cursor: word_at(payload, JS_STEP_STUB_CURSOR),
+        cells: word_at(payload, JS_STEP_CLASS_BASE),
+        records: word_at(payload, JS_STEP_OBJECT_RECORD_BASE),
+        layout: word_at(payload, JS_STEP_EMPTY_OBJECT_LAYOUT),
+        words: word_at(payload, JS_STEP_EMPTY_OBJECT_PAYLOAD),
+    };
+    match claim_empty_object(&mut StencilStage::from_hole(0), object, ()) {
+        Some(word) => deliver::<D>(s, word),
+        None => Out::Exit(s),
+    }
+}
+
+/// An empty array (`EMPTY_ARRAY_ROW`): while the array cursor has a record left and its template is captured, the record of
+/// the bumped id gets the template's two words, and the destination takes the direct reference of that id. Arrays have no
+/// stub. Any other case leaves with nothing written.
+#[inline(always)]
+fn empty_array_row<const D: u8>(s: S, payload: usize) -> Out {
+    if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
+        return Out::Exit(s);
+    }
+    let cursor = word_at(payload, JS_STEP_ARRAY_CURSOR) as usize;
+    let records = word_at(payload, JS_STEP_ARRAY_RECORD_BASE) as usize;
+    let layout = word_at(payload, JS_STEP_EMPTY_ARRAY_LAYOUT);
+    if cursor == 0 || records == 0 || layout == 0 {
+        return Out::Exit(s);
+    }
+    let next = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
+    if next >= word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset) {
+        return Out::Exit(s);
+    }
+    let words = word_at(payload, JS_STEP_EMPTY_ARRAY_PAYLOAD);
+    put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
+    let record = records.wrapping_add((next as usize).wrapping_mul(NATIVE_ARRAY_LAYOUT.record_size));
+    put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
+    put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);
+    deliver::<D>(s, DIRECT_ARRAY_TAG | u64::from(next))
 }
 
 /// `ArrayLength`: the `length` of the direct array at hole 1, defined into the destination. A string's

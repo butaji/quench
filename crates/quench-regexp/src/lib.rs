@@ -11,7 +11,7 @@ use std::{
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
-pub mod backtrack;
+pub mod backtrack; pub mod identifier;
 mod ascii_search;
 mod emoji_zwj;
 mod range_search;

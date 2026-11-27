@@ -5,26 +5,16 @@ edition = "2024"
 license = "MIT"
 description = "BaseJIT: rustc-built stencils copied and patched at run time"
 
-build = "build.rs"
+# The stencil build script is quench-stencils' (`build = "../quench-bjit/build.rs"`), which compiles every row; this
+# package has none, so the runtime crates that depend on it alone do not wait on the stencils.
+build = false
 
 [lib]
 doctest = false
 
-[features]
-# Never enabled here: quench-runtime's files this crate mounts name quench-runtime's feature of that
-# name (`quench_macros::test_visible`), which must be a known cfg value in this crate too.
-test-support = []
-
 [dependencies]
-
-[build-dependencies]
-# The opcode table as data: `build/supernodes.rs` checks the list's opcode names against its rows.
-quench-opcodes = { path = "../quench-opcodes" }
-# Decoder and block encoder only: `build/layout.rs` reorders each stencil's basic blocks.
-iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder", "instr_info"] }
-# The object-format constants (ELF and Mach-O numbers) `build/elf.rs` and `build/macho.rs` read; the version
-# quench-runtime locks, so Cargo.lock already has it.
-object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
+# The staged handler language. The stencil build compiles its sources; the library re-exports them after the move.
+quench-staged = { path = "../quench-staged" }
 
 [lints]
 workspace = true

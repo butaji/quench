@@ -38,7 +38,7 @@ macro_rules! number_relations {
             }
 
             /// A relational operator's answer for totally ordered operands; `None` for equality.
-            pub(crate) fn of_ordering(self, ordering: std::cmp::Ordering) -> Option<bool> {
+            pub fn of_ordering(self, ordering: std::cmp::Ordering) -> Option<bool> {
                 Some(match self {
                     Self::LessThan => ordering.is_lt(),
                     Self::LessEqual => ordering.is_le(),
@@ -90,7 +90,7 @@ macro_rules! number_arithmetic {
             fn $stage_method(&mut self, left: f64, right: f64) -> f64 { left $symbol right })+
         }
         crate::projection!(CheckedInt32Stage => Concrete);
-        pub(crate) struct CheckedInt32Stage;
+        pub struct CheckedInt32Stage;
         impl NumberArithmeticStage<i32> for CheckedInt32Stage {
             type Output = Option<i32>;
             $(#[inline(always)]
@@ -148,7 +148,7 @@ macro_rules! number_unary {
 
         impl NumberUnary {
             #[inline(always)]
-            pub(crate) fn apply<T, S: NumberUnaryStage<T>>(
+            pub fn apply<T, S: NumberUnaryStage<T>>(
                 self,
                 stage: &mut S,
                 value: T,
@@ -192,7 +192,7 @@ macro_rules! number_bitwise {
 
         impl NumberBitwise {
             #[inline(always)]
-            pub(crate) fn apply<T, S: NumberBitwiseStage<T>>(
+            pub fn apply<T, S: NumberBitwiseStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -222,7 +222,7 @@ macro_rules! number_bitwise_rows {
 pub(crate) use number_bitwise_rows;
 number_bitwise_rows!(number_bitwise);
 
-pub(crate) struct I32BitwiseStage;
+pub struct I32BitwiseStage;
 
 crate::projection!(I32BitwiseStage => Concrete);
 
@@ -259,7 +259,7 @@ impl NumberBitwise {
     /// Whether the int32 `bits` an operation computed are its Number: all but a zero-fill
     /// shift above `i32::MAX`, whose Number is its unsigned bits.
     #[inline(always)]
-    pub(crate) fn keeps_int32(self, bits: i32) -> bool {
+    pub fn keeps_int32(self, bits: i32) -> bool {
         self != Self::ShiftRightUnsigned || bits >= 0
     }
 }
@@ -271,7 +271,7 @@ pub fn int32_bitwise_bits(operation: NumberBitwise, left: i32, right: i32) -> i3
 }
 
 #[inline(always)]
-pub(crate) fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
+pub fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation.keeps_int32(bits) { f64::from(bits) } else { f64::from(bits as u32) }
 }
@@ -306,7 +306,7 @@ pub trait NumberTruthinessStage<T>: crate::projection::Sealed {
 }
 
 #[inline(always)]
-pub(crate) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
+pub fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
     stage: &mut S,
     value: T,
 ) -> S::Predicate {
@@ -382,7 +382,7 @@ pub const SAFE_INTEGER_LIMIT: i64 = 1 << 53;
 /// baseline) is one instruction with no constant pool, so a stencil may hold it, as it may not a saturating `as`.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-pub(crate) fn truncate_i64(value: f64) -> i64 {
+pub fn truncate_i64(value: f64) -> i64 {
     // SAFETY: SSE2 is the x86-64 baseline; the conversion touches no memory.
     unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(value)) }
 }
@@ -390,7 +390,7 @@ pub(crate) fn truncate_i64(value: f64) -> i64 {
 /// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN (the portable form).
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-pub(crate) fn truncate_i64(value: f64) -> i64 {
+pub fn truncate_i64(value: f64) -> i64 {
     if value.is_nan() || value.abs() >= 9.2e18 { i64::MIN } else { value as i64 }
 }
 
@@ -459,27 +459,27 @@ pub mod binary_operator {
     pub const Multiplication: u32 = 10;
     pub const Division: u32 = 11;
     pub const Remainder: u32 = 12;
-    pub(crate) const Exponential: u32 = 13;
+    pub const Exponential: u32 = 13;
     pub const ShiftLeft: u32 = 14;
     pub const ShiftRight: u32 = 15;
     pub const ShiftRightZeroFill: u32 = 16;
     pub const BitwiseOR: u32 = 17;
     pub const BitwiseXOR: u32 = 18;
     pub const BitwiseAnd: u32 = 19;
-    pub(crate) const In: u32 = 20;
-    pub(crate) const Instanceof: u32 = 21;
+    pub const In: u32 = 20;
+    pub const Instanceof: u32 = 21;
 }
 
 /// The unary operator codes (`binary_operator`'s).
 #[allow(non_upper_case_globals)]
-pub(crate) mod unary_operator {
-    pub(crate) const UnaryPlus: u32 = 0;
-    pub(crate) const UnaryNegation: u32 = 1;
-    pub(crate) const LogicalNot: u32 = 2;
-    pub(crate) const BitwiseNot: u32 = 3;
-    pub(crate) const Typeof: u32 = 4;
-    pub(crate) const Void: u32 = 5;
-    pub(crate) const Delete: u32 = 6;
+pub mod unary_operator {
+    pub const UnaryPlus: u32 = 0;
+    pub const UnaryNegation: u32 = 1;
+    pub const LogicalNot: u32 = 2;
+    pub const BitwiseNot: u32 = 3;
+    pub const Typeof: u32 = 4;
+    pub const Void: u32 = 5;
+    pub const Delete: u32 = 6;
 }
 
 /// The relations' operator codes: the first of each group (`Equal` and `NotEqual` name two operators each,

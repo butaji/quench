@@ -1453,6 +1453,8 @@ impl std::ops::DerefMut for FinalizationEntries {
 const _: () = assert!(std::mem::size_of::<Object>() == 12);
 /// An ordinary object's record is its object and its stub granule: sixteen bytes.
 const _: () = assert!(std::mem::size_of::<OrdinaryRecord>() == 16);
+/// The stub granule sits where the stencils' record head says (`OrdinaryRecordHead::stub`).
+const _: () = assert!(std::mem::offset_of!(OrdinaryRecord, stub) == crate::staged::layout_offsets::OBJECT_RECORD_STUB);
 /// The payload word holds every inline slot as a narrow value.
 const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as usize);
 

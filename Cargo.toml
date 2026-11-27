@@ -18,6 +18,7 @@ members = [
     "crates/quench-runtime-engine",
     "crates/quench-layers",
     "crates/quench-stack",
+    "crates/quench-staged",
     "crates/quench-tier-corpus",
     "crates/quench-bjit",
     "crates/quench-stencils",
@@ -37,7 +38,7 @@ members = [
 # suffices. `quench-lint` enforces the same law for duplicated functions and constants.
 [workspace.lints.rust]
 # `stencil_build` is set on the stencil crate's compile (`quench-bjit/build.rs`); the build script mounts the same files without it.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(stencil_build)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(stencil_build)", 'cfg(stencil_family, values("js", "wasm", "regexp", "call"))', "cfg(fixed_rows)"] }
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"
