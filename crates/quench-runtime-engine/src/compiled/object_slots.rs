@@ -336,7 +336,7 @@ impl NativeFieldLoad {
     /// asks the caches, so a wrong guess costs a compare, never a leave, unless the guess reads its
     /// slot as one class (`closed_typed`), whose miss leaves so the value keeps the class.
     pub(crate) fn probes_misses(loads: &[Self]) -> bool {
-        if loads.iter().any(|load| load.guessed() && !load.closed_typed()) { return true; }
+        if loads.iter().any(|load| load.guessed() && !load.closed_typed() && !load.image_layout()) { return true; }
         match loads {
             [load] => load.holder.is_some() && load.inherited.is_none(),
             loads => loads.iter().any(|load| load.holder.is_some()),
