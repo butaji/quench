@@ -114,12 +114,12 @@ fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
         && quench_runtime::staged::ic::layout_shape(id) == load.shape)
 }
 
-/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_id`), where it is
+/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_cell`), where it is
 /// a real id of the holder's exact shape: one compare of the prototype's own word then proves that
 /// shape and the storage form, as `formed_id` does for a receiver. Id 0 names no holder.
-fn holder_id(load: &NativeFieldLoad) -> Option<u32> {
+fn holder_cell(load: &NativeFieldLoad) -> Option<u32> {
     let holder = load.holder?;
-    load.holder_id.filter(|&id| id != 0 && (id as usize) < quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY
+    load.holder_cell.filter(|&id| id != 0 && (id as usize) < quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY
         && quench_runtime::staged::ic::layout_shape(id) == holder)
 }
 
@@ -139,8 +139,8 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
         Some(holder) if holder & quench_runtime::staged::ic::SYMBOLIC_SHAPE != 0 => vec![IcOp::HolderConstant(holder & !quench_runtime::staged::ic::SYMBOLIC_SHAPE)],
         Some(holder) => {
             // The prototype's layout id proves its shape (and storage form) in one compare where
-            // the entry kept it (`holder_id`); else its shape alone is compared.
-            let guard = match holder_id(load) {
+            // the entry kept it (`holder_cell`); else its shape alone is compared.
+            let guard = match holder_cell(load) {
                 Some(id) => IcOp::GuardLayout(id),
                 None => IcOp::GuardShape(holder),
             };

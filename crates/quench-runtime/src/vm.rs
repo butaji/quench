@@ -790,14 +790,24 @@ pub struct FieldCache {
     /// The layout id of the holder (`Object::layout_id`) where the holder object was at hand when
     /// the entry was recorded, else `NO_HOLDER_LAYOUT`. It names the holder's exact shape `holder`
     /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare.
-    holder_id: u32,
+    holder_cell: u32,
 }
 
 impl FieldCache {
+    /// The exact shape the receiver key names: a class key's class shape (`layouts::class_shape`), else the key itself.
+    #[inline(always)]
+    pub fn receiver_shape(&self) -> u32 {
+        if field_cache_layout::is_class_key(self.receiver) {
+            crate::heap::layouts::class_shape(self.receiver & !field_cache_layout::CLASS_KEY)
+        } else {
+            self.receiver
+        }
+    }
+
     /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
     #[inline(always)]
     pub const fn own(receiver: u32, slot: u16) -> Self {
-        Self { receiver, holder: NO_FIELD_HOLDER, slot, holder_id: field_cache_layout::NO_HOLDER_LAYOUT }
+        Self { receiver, holder: NO_FIELD_HOLDER, slot, holder_cell: field_cache_layout::NO_HOLDER_LAYOUT }
     }
 }
 /// The internal keys of a bound function's environment object.
@@ -805,7 +815,7 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 pub const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
-/// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_id`).
+/// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_cell`).
 const NO_FIELD_HOLDER_LAYOUT: u32 = field_cache_layout::NO_HOLDER_LAYOUT;
 use crate::staged::field_cache_layout::{self, FieldCacheWords};
 /// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
@@ -906,19 +916,19 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: field_cache_layout::EMPTY.receiver,
     holder: field_cache_layout::EMPTY.holder,
     slot: field_cache_layout::EMPTY.slot as u16,
-    holder_id: field_cache_layout::EMPTY.holder_id,
+    holder_cell: field_cache_layout::EMPTY.holder_cell,
 };
 /// Stored as its `FieldCacheWords`, which complement the entry against `EMPTY`, so the empty entry is zero words.
 impl site_table::SiteEntry for FieldCache {
     type Stored = FieldCacheWords;
     #[inline(always)]
     fn store(self) -> FieldCacheWords {
-        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot), self.holder_id)
+        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot), self.holder_cell)
     }
     #[inline(always)]
     fn load(stored: FieldCacheWords) -> Self {
-        let (receiver, holder, slot, holder_id) = stored.decode();
-        Self { receiver, holder, slot: slot as u16, holder_id }
+        let (receiver, holder, slot, holder_cell) = stored.decode();
+        Self { receiver, holder, slot: slot as u16, holder_cell }
     }
 }
 // SAFETY: four `u32` words, with no padding, and every bit pattern valid.

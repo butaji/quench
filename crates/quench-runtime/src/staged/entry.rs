@@ -9,6 +9,7 @@ use crate::typed_ir::Representation;
 use super::slot_store::store_slot;
 use super::Stage;
 use super::region::Region;
+use super::field_cache_layout::CLASS_KEY;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
 
@@ -252,41 +253,101 @@ pub(crate) fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shap
 /// the record (`own_entry_value`, `holder_entry_value`).
 #[inline(always)]
 fn site_read_in<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
-    let record = readable_record(stage, (records, functions), object, miss)?;
     let entry = stage.add_imm(entries, offset);
+    let direct = super::value::is_direct_object(stage, object);
+    stage.choose_leaving(direct, #[inline(always)] |stage| direct_read_in(stage, records, object, entry, miss), #[inline(always)] |stage| {
+        let record = function_object(stage, functions, object, miss)?;
+        record_read_in(stage, records, record, entry, miss)
+    })
+}
+
+/// The read of the direct object `object` through `entry`: an own entry reads the live cell's class key
+/// (`direct_own_value`); a prototype-held entry reads its holder through the object's record, which
+/// leaves at `miss` for a live cell (`holder_entry_value`).
+#[inline(always)]
+fn direct_read_in<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let own = own_entry(stage, entry);
+    stage.choose_leaving(own, #[inline(always)] |stage| direct_own_value(stage, object, entry, miss),
+        #[inline(always)] |stage| {
+            let record = super::object::object_record_of(stage, records, object, miss)?;
+            holder_entry_value(stage, records, record, entry, miss)
+        })
+}
+
+/// The read of the record `record` (a function's object) through `entry`: its own value (`own_entry_value`)
+/// or its prototype-held value (`holder_entry_value`).
+#[inline(always)]
+fn record_read_in<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let own = own_entry(stage, entry);
     stage.choose_leaving(own, #[inline(always)] |stage| own_entry_value(stage, record, entry, miss),
         #[inline(always)] |stage| holder_entry_value(stage, records, record, entry, miss))
 }
 
-/// The record whose own properties a read of `object` takes: a direct object's in the record table
-/// `records`, or, where the function record table `functions` is present, a function's `Object` (at
-/// `NATIVE_FUNCTION_LAYOUT.object_offset`), which a cache entry keys by its shape as any object's.
-/// `None` (leaving at `miss`) for any other word.
+/// The own value of the direct object `object` through the own entry `entry` (`class_own_value`), at the
+/// live cell its granule names. The caller proved `object` a direct object.
 #[inline(always)]
-fn readable_record<S: Stage>(stage: &mut S, (records, functions): (S::Word, S::Word), object: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let direct = super::value::is_direct_object(stage, object);
+fn direct_own_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let granule = super::value::direct_object_id(stage, object);
+    let cell = super::object::cell_at_granule(stage, granule);
+    class_own_value(stage, cell, entry, miss)
+}
+
+/// Guards that the live class cell `cell` holds the class key the own entry `entry` stores in its receiver
+/// word, complemented as `shape_matches` reads it. The live test stays: `DEPARTED_CLASS` and `NO_RECEIVER`
+/// are one word, so without it an empty entry would match a departed cell.
+#[inline(always)]
+fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<()> {
+    // `class + CLASS_KEY` in the 64-bit word: a live class (below `LAYOUT_CAPACITY`) gives its key
+    // `class | CLASS_KEY`; `DEPARTED_CLASS` (u32::MAX) gives a word past u32, which equals no
+    // stored entry, the empty one included. So the one compare is the class guard: no live test.
+    let class = super::object::cell_class(stage, cell);
+    let key = stage.add_imm(class, u64::from(CLASS_KEY));
+    let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
+    let complement = stage.constant(u64::from(ENTRY.receiver_complement));
+    let wanted = stage.sub(complement, key);
+    let difference = stage.sub(stored, wanted);
+    let same = stage.eq_imm(difference, 0u32);
+    stage.guard(same, miss)
+}
+
+/// The value at `slot` of the live class cell `cell` that the own entry `entry` names. The class key
+/// guards the cell, and its fields are one flat run at `fields_offset`, so the value is one load: no
+/// record, no payload test and no shape guard.
+#[inline(always)]
+fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    class_matches(stage, cell, entry, miss)?;
+    let slot = entry_slot(stage, entry);
+    let fields = stage.add_imm(cell, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
+    let offset = stage.mul_imm(slot, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.field_size as u64);
+    let address = stage.add(fields, offset);
+    Some(stage.load_u64(Region::ObjectSlots.mutable(), address, 0))
+}
+
+/// The object of the function `object` names, in the function record table `functions`
+/// (`NATIVE_FUNCTION_LAYOUT.object_offset`). `None` (leaving at `miss`) for any other word.
+#[inline(always)]
+fn function_object<S: Stage>(stage: &mut S, functions: S::Word, object: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let function = super::value::is_direct_function(stage, object);
+    stage.guard(function, miss)?;
+    let present = stage.ne_imm(functions, 0u32);
+    stage.guard(present, miss)?;
     let id = super::value::direct_object_id(stage, object);
-    stage.choose_leaving(direct, #[inline(always)] |stage| super::object::object_record_of(stage, records, object, miss), #[inline(always)] |stage| {
-        let function = super::value::is_direct_function(stage, object);
-        stage.guard(function, miss)?;
-        let present = stage.ne_imm(functions, 0u32);
-        stage.guard(present, miss)?;
-        let offset = stage.mul_imm(id, super::layout_offsets::NATIVE_FUNCTION_LAYOUT.record_size as u64);
-        let record = stage.add(functions, offset);
-        Some(stage.add_imm(record, super::layout_offsets::NATIVE_FUNCTION_LAYOUT.object_offset as u64))
-    })
+    let offset = stage.mul_imm(id, super::layout_offsets::NATIVE_FUNCTION_LAYOUT.record_size as u64);
+    let record = stage.add(functions, offset);
+    Some(stage.add_imm(record, super::layout_offsets::NATIVE_FUNCTION_LAYOUT.object_offset as u64))
 }
 
 /// `site_read_in` of an own entry alone: `None` (leaving at `miss`) for an entry that names a
 /// prototype holder, which the interpreter's own-field handlers (`Vm::primary_own_field_hit`) do
 /// not answer, since they keep the receiver's slot as their hint.
 #[inline(always)]
-fn site_own_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
-    let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
+fn site_own_in<S: Stage>(stage: &mut S, (entries, _): (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let entry = stage.add_imm(entries, offset);
     let own = own_entry(stage, entry);
     stage.guard(own, miss)?;
-    own_entry_value(stage, record, entry, miss)
+    direct_own_value(stage, object, entry, miss)
 }
 
 /// `site_read` of an own entry alone (`site_own_in`).

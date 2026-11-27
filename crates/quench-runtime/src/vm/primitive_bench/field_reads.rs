@@ -118,7 +118,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         receiver: black_box(entry.receiver),
         holder: if HOLDER { black_box(entry.holder) } else { super::super::NO_FIELD_HOLDER },
         slot: if FIXED { SLOT as u16 } else { black_box(entry.slot) },
-        holder_id: super::super::NO_FIELD_HOLDER_LAYOUT,
+        holder_cell: super::super::NO_FIELD_HOLDER_LAYOUT,
     };
     let mut cursor = first;
     b.iter(|| {

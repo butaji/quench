@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::dispatch_frame::this_is_fixed;
 use super::*;
+use crate::staged::field_cache_layout::is_class_key;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
@@ -590,6 +591,7 @@ impl Vm {
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         // A class cell departs first (R4-C4), so the record it becomes takes the dictionary class here.
         self.heap.depart_class_object(object);
+        self.drop_departed_holder_entries();
         let Some(shape) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
@@ -1069,6 +1071,14 @@ impl Vm {
         };
         self.heap.property_set(object, slot, value);
     }
+    /// Clears the field caches when a holder cell departed (`Heap::take_holder_departure`): a holder
+    /// cell is marked only where a field entry names it, so only such departures pay the reset.
+    pub(super) fn drop_departed_holder_entries(&mut self) {
+        if self.heap.take_holder_departure() {
+            self.invalidate_field_caches();
+        }
+    }
+
     pub(super) fn invalidate_field_caches(&mut self) {
         self.reset_field_cache_tables();
         self.symbol_write_proofs.clear();
@@ -1763,7 +1773,7 @@ impl Vm {
         }
         match receiver.proto_link().object_granule().map(|granule| self.heap.object_record_by_granule(granule)) {
             Some(holder) if cached_holder_matches(holder, entry.holder) =>
-                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_id: NO_FIELD_HOLDER_LAYOUT, ..entry },
+                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_cell: NO_FIELD_HOLDER_LAYOUT, ..entry },
             _ => entry,
         }
     }
@@ -1823,7 +1833,8 @@ impl Vm {
     #[inline(always)]
     pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
+        // A class key names a live cell, whose slots no shape-guarded native read reaches: no plan.
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER || is_class_key(cache.receiver) { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
         if usize::from(cache.slot) >= storage_len { return None; }
         let ty = self.heap.slot_type(cache.receiver, usize::from(cache.slot));
@@ -1832,7 +1843,7 @@ impl Vm {
             .and_then(Object::plain_property_storage);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage, ty,
-            inherited: None, function_shape: false, formed: None, holder_id: None,
+            inherited: None, function_shape: false, formed: None, holder_cell: None,
         })
     }
 
@@ -1894,7 +1905,7 @@ impl Vm {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 inherited: crate::vm::engine_types::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
-                formed: None, holder_id: None,
+                formed: None, holder_cell: None,
             });
         }
         loads
@@ -1946,13 +1957,13 @@ impl Vm {
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
         if usize::from(entry.slot) >= storage_len { return None; }
         let ty = self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot));
-        // The holder's layout id, where the entry kept one (`FieldCache::holder_id`); the plan
+        // The holder's layout id, where the entry kept one (`FieldCache::holder_cell`); the plan
         // checks it names the holder's shape before a read guards by it.
-        let holder_id = (holder.is_some() && entry.holder_id != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_id);
+        let holder_cell = (holder.is_some() && entry.holder_cell != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_cell);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None, ty,
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
-            formed: None, holder_id,
+            formed: None, holder_cell,
         })
     }
 
@@ -2276,6 +2287,7 @@ impl Vm {
                 return;
             }
             self.heap.depart_class_object(object);
+            self.drop_departed_holder_entries();
         }
         let record_id = self.heap.record_id(object.direct_object_index().expect("an add's receiver is an ordinary object")).expect("a departed receiver is a record");
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
@@ -2452,25 +2464,30 @@ impl Vm {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.specialized_operations_enabled(p));
-        let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
-        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        let value = unsafe { self.heap.property_get_flat(receiver.record_only()?, cache.slot as usize) };
+        debug_assert_eq!(cache.receiver_shape(), self.heap.object(object)?.exact_shape());
+        let value = self.heap.live_class_field(object, cache.slot as usize)?;
         self.profile.field_cache_hit(0, 0);
         Some(value)
+    }
+
+    /// The receiver key an own entry of `object`, whose exact shape is `shape`, records and matches:
+    /// the live class cell's class key (`Heap::live_class_key`), else the shape itself.
+    #[inline(always)]
+    pub(super) fn own_receiver_key(&self, object: Value, shape: u32) -> u32 {
+        self.heap.live_class_key(object).unwrap_or(shape)
     }
 
     /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
     /// object records, at `site`: the receiver's layout id and the slot, where the site's own
     /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
     pub fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
-        let receiver = self.heap.object(object)?;
         let cache = self.field_cache_entry(site);
-        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
         Some((self.receiver_layout_hint(object)?, cache.slot))
@@ -3445,10 +3462,10 @@ impl Vm {
                 self.record_field_cache(
                     site,
                     FieldCache {
-                        receiver: receiver.shape(),
+                        receiver: self.own_receiver_key(prototype, receiver.shape()),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
-                        holder_id: NO_FIELD_HOLDER_LAYOUT,
+                        holder_cell: NO_FIELD_HOLDER_LAYOUT,
                     },
                 );
             }
@@ -3765,27 +3782,30 @@ impl Vm {
                 self.record_field_cache(
                     site,
                     FieldCache {
-                        receiver: receiver.shape(),
+                        receiver: self.own_receiver_key(object, receiver.shape()),
                         holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
-                        holder_id: NO_FIELD_HOLDER_LAYOUT,
+                        holder_cell: NO_FIELD_HOLDER_LAYOUT,
                     },
                 );
             }
             return Some(value);
         }
-        if let Some((holder_shape, holder_id, slot, value)) = self.immediate_prototype_data_field(object, atom)
+        if let Some((holder_shape, holder_cell, slot, value)) = self.immediate_prototype_data_field(object, atom)
             && slot < FIELD_CACHE_SLOT_CAPACITY
         {
             #[cfg(feature = "profile-lane-exits")]
             self.record_field_probe_path(site, atom, 4);
+            if let Some(proto) = self.heap.object(object).map(|object| object.proto()) {
+                self.heap.note_holder_cell(proto);
+            }
             self.record_field_cache(
                 site,
                 FieldCache {
                     receiver: receiver.shape(),
                     holder: holder_shape,
                     slot: slot as u16,
-                    holder_id,
+                    holder_cell,
                 },
             );
             return Some(value);
@@ -4078,8 +4098,8 @@ impl Vm {
         if self.slot_holds_accessor(holder, slot) {
             return None;
         }
-        let holder_id = holder_layout_id(holder, holder_shape);
-        Some((holder_shape, holder_id, slot, self.heap.property_get(holder, slot)?))
+        let holder_cell = holder_layout_id(holder, holder_shape);
+        Some((holder_shape, holder_cell, slot, self.heap.property_get(holder, slot)?))
     }
     pub fn set_property(
         &mut self,
@@ -4917,7 +4937,7 @@ impl Vm {
                     receiver: data_shape,
                     holder: NO_FIELD_HOLDER,
                     slot: slot as u16,
-                    holder_id: NO_FIELD_HOLDER_LAYOUT,
+                    holder_cell: NO_FIELD_HOLDER_LAYOUT,
                 },
             );
         }
@@ -5625,7 +5645,7 @@ fn declared_field_type(p: &ResidualProgram, function: u32, atom: Atom) -> Option
 }
 
 /// The layout id of `holder` where it names exactly `shape`, else `NO_FIELD_HOLDER_LAYOUT`: the
-/// id a holder entry keeps (`FieldCache::holder_id`). Id 0 is the all-zero header and names no
+/// id a holder entry keeps (`FieldCache::holder_cell`). Id 0 is the all-zero header and names no
 /// holder, so it stays unset; `layouts::auxiliary` of an id is its shape (`layout_shape`).
 fn holder_layout_id(holder: &Object, shape: u32) -> u32 {
     let id = holder.layout_id();

@@ -28,6 +28,9 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 /// Distinct headers the table holds: 32 MiB of address space, resident only where written.
 pub const LAYOUT_CAPACITY: usize = 1 << 22;
 
+/// Class ids are below the capacity, so they never carry the class key bit (`staged::field_cache_layout::CLASS_KEY`).
+const _: () = assert!(LAYOUT_CAPACITY <= crate::staged::field_cache_layout::CLASS_KEY as usize);
+
 /// On x86-64 Linux the table sits at a fixed low address, mapped before `main`
 /// (`map_fixed_table`), so a read of an entry is one instruction with the address as its
 /// displacement: no base to load from the GOT, no register to hold it. The address sits above

@@ -149,11 +149,47 @@ pub(super) struct ClassSpace {
     /// The range's first address, which is region 0's base; 0 while unreserved.
     pub(super) base: usize,
     pub(super) regions: (Region0, Region1, Region2, Region3, Region4, Region5),
+    /// One bit per granule: set where a field entry names the cell as its holder (`Heap::note_holder_cell`),
+    /// cleared when the cell departs (`take_holder_cell`). Grown on demand, so an unmarked space costs nothing.
+    holder_cells: Vec<u64>,
+    /// Whether a holder cell departed since the VM last cleared its field caches (`take_holder_departure`).
+    holder_departed: bool,
     /// The range the regions are cut from. It is the last field, so it unmaps after them.
     range: Option<AddressRange>,
 }
 
 impl ClassSpace {
+    /// Sets granule `g`'s holder-cell bit.
+    pub(super) fn mark_holder_cell(&mut self, g: u32) {
+        let word = g as usize / u64::BITS as usize;
+        if self.holder_cells.len() <= word {
+            self.holder_cells.resize(word + 1, 0);
+        }
+        self.holder_cells[word] |= 1 << (g % u64::BITS);
+    }
+
+    /// Clears granule `g`'s holder-cell bit, returning whether it was set.
+    pub(super) fn take_holder_cell(&mut self, g: u32) -> bool {
+        let bit = 1u64 << (g % u64::BITS);
+        match self.holder_cells.get_mut(g as usize / u64::BITS as usize) {
+            Some(word) if *word & bit != 0 => {
+                *word &= !bit;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Records that a holder cell departed (`depart_class_cell`), for the VM to drain.
+    pub(super) fn note_holder_departure(&mut self) {
+        self.holder_departed = true;
+    }
+
+    /// Returns and clears the departed-holder flag.
+    pub(super) fn take_holder_departure(&mut self) -> bool {
+        std::mem::take(&mut self.holder_departed)
+    }
+
     /// Maps the space's range and cuts its regions from it on the first call; `false` where that failed.
     pub(super) fn ensure_reserved(&mut self) -> bool {
         if self.range.is_some() {

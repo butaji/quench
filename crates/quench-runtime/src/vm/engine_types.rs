@@ -3147,10 +3147,10 @@ pub struct NativeFieldLoad {
     /// proving the shape and the storage form, and reads that form's layout, a fact of the id,
     /// with no test (`IcOp::GuardLayout`).
     pub formed: Option<u32>,
-    /// For a holder read, the layout id of the holder (`FieldCache::holder_id`) where the entry
+    /// For a holder read, the layout id of the holder (`FieldCache::holder_cell`) where the entry
     /// kept one: a guard of it proves the holder's whole header, which names `holder` as its
     /// shape, so it replaces the holder's shape guard (`IcOp::GuardLayout`, `field_plans`).
-    pub holder_id: Option<u32>,
+    pub holder_cell: Option<u32>,
 }
 
 /// An inherited read's values, each fixed by the receiver's prototype link that names its
