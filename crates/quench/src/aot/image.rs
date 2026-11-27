@@ -53,6 +53,7 @@ pub(super) fn stage_image(
 ) -> Result<(NativeImageInputs, Option<BTreeSet<u32>>, Vec<SavedWait>), String> {
     if core {
         report["unlinked_host_operations"] = json!(0);
+        core_memory_policy(&inputs.catalog())?;
         return Ok((inputs, None, Vec::new()));
     }
     // A program whose build-time runs wait for input before reading any resumes the run whose
@@ -118,6 +119,19 @@ pub(super) fn stage_image(
         heaps.iter().flat_map(|heap| heap.0.iter().copied()).chain(lazy).chain(builders).chain(bindings).collect()
     });
     Ok((inputs, held, saved))
+}
+
+/// Writes a core image's memory policy into its catalog: the policy the build selects (the
+/// memory-first experiment, read here at compile time), and whether the image's allocator serves
+/// small requests (the throughput policy, unless the memory mix names the system allocator). The
+/// image reads these constants and no environment at run time.
+fn core_memory_policy(catalog: &Path) -> Result<(), String> {
+    let memory_first = quench_runtime::trace::Dev::MemoryFirst.on();
+    let policy = if memory_first { "MemoryFirst" } else { "Throughput" };
+    let allocator = !memory_first && !quench_runtime::memory_mix_has("alloc");
+    fs::OpenOptions::new().append(true).open(catalog)
+        .and_then(|mut file| file.write_all(format!("const MEMORY_POLICY: quench_runtime::MemoryPolicy = quench_runtime::MemoryPolicy::{policy};\nconst ALLOCATOR_SERVES_SMALL: bool = {allocator};\n").as_bytes()))
+        .map_err(|error| error.to_string())
 }
 
 /// The worker: runs the native entry's residual `program` with the build-time gate armed

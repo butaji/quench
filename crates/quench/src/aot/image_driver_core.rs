@@ -6,7 +6,7 @@
 #![no_main]
 
 use quench_runtime::native_link::image_dump;
-use quench_runtime::{ExecutionMode, MemoryPolicy, NativeJsProgram, Runtime, SystemHost};
+use quench_runtime::{ExecutionMode, NativeJsProgram, Runtime, SystemHost};
 
 // Every runtime layer (engine, intl, stencils) links through this facade: the core calls their
 // `extern "Rust"` symbols, so a binary that uses the core must name the crate.
@@ -23,31 +23,19 @@ include!(env!("QUENCH_NATIVE_CATALOG"));
 /// The state an image starts from: its runtime at rest and the entry it runs.
 type Rest = (Runtime<SystemHost>, NativeJsProgram);
 
-/// The policy this image runs: the default, or memory-first under the experiment the Node host
-/// also reads (`QUENCH_DEV=memory-first`).
-fn memory_policy() -> MemoryPolicy {
-    if quench_runtime::trace::Dev::MemoryFirst.on() {
-        MemoryPolicy::MemoryFirst
-    } else {
-        MemoryPolicy::default()
-    }
-}
-
-/// Serve small requests from Quench's allocator under the throughput policy, as the Node host's
-/// `allocator_policy` does; the memory-first policy keeps the system allocator.
-fn apply_allocator_policy(policy: MemoryPolicy) {
+/// Serve small requests from Quench's allocator where the build chose it (`ALLOCATOR_SERVES_SMALL`,
+/// written into the catalog at compile time), as the Node host's `allocator_policy` does.
+fn apply_allocator_policy() {
     #[cfg(unix)]
-    if policy == MemoryPolicy::Throughput && !quench_runtime::memory_mix_has("alloc") {
+    if ALLOCATOR_SERVES_SMALL {
         quench_alloc::QuenchAlloc::enable();
     }
-    #[cfg(not(unix))]
-    let _ = policy;
 }
 
 /// The state the image starts from: the dump its build made, mapped back where it was made. A
 /// build that dumps its state (`image_dump::requested_wait`) writes it here and ends. An image
 /// without a dump, or whose addresses are taken, builds the state it would have mapped.
-fn start_state(policy: MemoryPolicy) -> Result<Box<Rest>, String> {
+fn start_state() -> Result<Box<Rest>, String> {
     if let Some(root) = image_dump::adopt(0) {
         // SAFETY: the dump's root is the `Rest` its build leaked, mapped back at its address.
         return Ok(unsafe { Box::from_raw(root.cast::<Rest>()) });
@@ -56,7 +44,7 @@ fn start_state(policy: MemoryPolicy) -> Result<Box<Rest>, String> {
     let program = unsafe { bind_entry() }?;
     let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS, &EXECUTION);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
-    runtime.set_memory_policy(policy);
+    runtime.set_memory_policy(MEMORY_POLICY);
     runtime.install_native_at_rest(&program).map_err(|error| uncaught(&error))?;
     let rest = Box::new((runtime, program));
     if image_dump::requested_wait().is_some() {
@@ -66,9 +54,8 @@ fn start_state(policy: MemoryPolicy) -> Result<Box<Rest>, String> {
 }
 
 fn run() -> Result<u8, String> {
-    let policy = memory_policy();
-    apply_allocator_policy(policy);
-    let mut rest = start_state(policy)?;
+    apply_allocator_policy();
+    let mut rest = start_state()?;
     let (runtime, program) = &mut *rest;
     runtime.execute_restored(program.residual()).map_err(|error| uncaught(&error))?;
     runtime.run_host_jobs(program.residual()).map_err(|error| uncaught(&error))?;
