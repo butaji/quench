@@ -267,10 +267,13 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // The field, return, parameter and binding types, solved from the bottom (`types`): each pass reads
     // the types the one before found, and the call targets the passes above proved; the least solution is
     // the first pass that changes nothing. A solve that does not settle in `TYPE_PASSES` keeps no type.
+    // A pass whose integer range still grows after `WIDENING_ROUNDS` widens it (`Types::widen`), so a counter that
+    // climbs settles at int32's span rather than one step a pass.
     let mut found = types::Types::of(&flows, &facts, &census).bottom();
     let mut settled = false;
+    let mut grown = BTreeMap::new();
     for _ in 0..types::TYPE_PASSES {
-        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census);
+        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census).widen(&found, &mut grown);
         settled = next == found;
         found = next;
         if settled { break; }
