@@ -23,8 +23,8 @@
 //!
 //! A dynamic input is a runtime input the build may not make: a clock read (`Date`, `Date.now`),
 //! `Math.random`, the local time zone, or a host output. The edge is armed once at a watched run's
-//! start (`clock::watch_inputs`). The input natives carry the fact `reads_input`
-//! (`vm/native_effects.rs`), and their entry is the one place the capture happens. A host output that is not a native's own read still ends the run
+//! start (`clock::watch_inputs`). The input natives' own entries (Date call and
+//! construct, `Date.now`, `Math.random`) are the one place the capture happens (`Vm::capture_input_native`). A host output that is not a native's own read still ends the run
 //! (`clock::note_input`), but such a run has no chain and is `Unfinished`.
 
 use super::prefix::{self, Residual};

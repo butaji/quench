@@ -2,7 +2,6 @@
 #[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::*;
 use super::array_modern::ArrayFromTarget;
-use super::native_effects::native_effects;
 use crate::value::NumericPair;
 use crate::operator::{BinaryOperator, UnaryOperator};
 
@@ -654,12 +653,6 @@ impl Vm {
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
         crate::clock::note_step();
-        // The input edge (`clock::input_edge_armed`): an input native's entry captures the chain
-        // of its callers before it runs, and ends the watched run there. Only natives that read an
-        // input (`NativeEffects::reads_input`) reach the capture.
-        if crate::clock::input_edge_armed() && native_effects(native).reads_input {
-            return Err(self.capture_input_native(native, this, args));
-        }
         // A Number-only unary Math call neither allocates nor enters guest code. Its
         // ignored receiver and trailing arguments need no roots on that path.
         let result = if let Some(value) =
@@ -699,8 +692,9 @@ impl Vm {
 
     /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
     /// native's call parked on the chain's top record, kept for the build. The native does not run;
-    /// the watched run ends here (`clock::store_input_capture`).
-    fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value]) -> JsError {
+    /// the watched run ends here (`clock::store_input_capture`). Only the input natives' own entries
+    /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
+    pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value]) -> JsError {
         let chain = self.capture_chain_parked(0, native, this, args);
         crate::clock::store_input_capture(chain);
         match self.check_execution_interrupt() {
