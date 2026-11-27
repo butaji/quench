@@ -255,7 +255,7 @@ impl Vm {
         };
         // SAFETY: the context's program outlives the run; `ip` is a record of
         // the innermost activation's view.
-        let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+        let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, ip) as usize) };
         let Some(body) = code.function_get(activation.function() as usize) else {
             return;
         };
@@ -430,7 +430,7 @@ impl Vm {
         }
         // SAFETY: handlers only return records of the active view, which is the innermost
         // frame's, the lane's activations having become frames.
-        let pc = unsafe { ip.offset_from(context.base) } as usize;
+        let pc = unsafe { pc_in_view(context.base, ip) };
         let frame = context.frame();
         self.frames[frame].pc = pc;
         let raised = self.lane_completion.take_raised();

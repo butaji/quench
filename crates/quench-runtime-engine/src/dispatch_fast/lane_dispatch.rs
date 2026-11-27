@@ -16,7 +16,7 @@ pub(crate) fn dispatch_in_lane(cx: *mut LaneContext, mut ip: Ip) -> Ip {
             // the lane record keeps only the handler.
             let function = running_function_in_lane(cx);
             let code = unsafe { &*(*cx).code };
-            let pc = unsafe { ip.offset_from((*cx).base) as usize };
+            let pc = unsafe { record_pc(cx, ip) as usize };
             if let Some(body) = code.function_get(function as usize)
                 && let Some(packed) = body.code.get(pc)
             {

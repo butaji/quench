@@ -885,6 +885,29 @@ fn requicken(ip: Ip, handler: Handler) {
     }
 }
 
+/// The record index of `ip` in the running view: the PC its slow paths read the function's
+/// instruction, sites and frames at. The one place a record's PC is computed (`record_pc`), so a
+/// view whose records are not its function's one per PC (an inlining view, N7) maps them here.
+///
+/// # Safety
+/// `cx` is the running lane's context and `ip` a record of its view.
+#[inline(always)]
+pub(crate) unsafe fn record_pc(cx: *const LaneContext, ip: Ip) -> usize {
+    // SAFETY: the function's contract: the view's records start at the context's base.
+    unsafe { pc_in_view((*cx).base, ip) }
+}
+
+/// The PC of the record at `ip` of the view whose records start at `base` (`record_pc` for a view
+/// that is not the running one: an activation's caller, a region's).
+///
+/// # Safety
+/// `ip` is a record of the view whose records start at `base`.
+#[inline(always)]
+pub(crate) unsafe fn pc_in_view(base: Ip, ip: Ip) -> usize {
+    // SAFETY: the function's contract.
+    unsafe { ip.offset_from(base) as usize }
+}
+
 /// `this` trust (`Vm::this_trust`): trusted from the start, retired for good.
 const THIS_TRUSTED: u8 = 1;
 const THIS_RETIRED: u8 = 2;
@@ -1191,7 +1214,7 @@ impl Activation {
     /// (`caller_base`); `None` for a native frame, which keeps no link state.
     fn caller_pc(&self) -> Option<usize> {
         // SAFETY: a linked activation's call record lies in its caller's body.
-        (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { self.call.offset_from(self.caller_base) } as usize)
+        (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { pc_in_view(self.caller_base, self.call) })
     }
 
     /// The program and noted record of a Wasm activation (`LaneStack::note_wasm_pc`); `None`
@@ -2553,7 +2576,7 @@ fn profile_script_call_target(
         .map_or_else(|| vm.frames[unsafe { (*cx).frame() }].function, |activation| {
             activation.function()
         });
-    let pc = unsafe { ip.offset_from((*cx).base) } as u32;
+    let pc = unsafe { record_pc(cx, ip) } as u32;
     quench_runtime::vm::lane_exits::call_target(
         unsafe { (*cx).program.raw() },
         caller,
@@ -3134,7 +3157,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
         // active view, which is the running frame's.
         let (code, frame, pc) = unsafe {
-            (&*(*cx).code, (*cx).frame(), ip.offset_from((*cx).base) as usize)
+            (&*(*cx).code, (*cx).frame(), record_pc(cx, ip) as usize)
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
@@ -3280,7 +3303,7 @@ fn step_beside_activations_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip) -
     };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // innermost activation's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, ip) as usize) };
     let body = code.function(function as usize);
     let instruction = body.widened(body.code[pc]);
     // A record that returns its result completes its activation, which the general path does
@@ -3355,7 +3378,7 @@ fn raised_in_place(cx: *mut LaneContext, ip: Ip, error: JsError, made: InPlaceMa
     let unwinds = unwind && made != InPlaceMade::Materialized && handler_edges::unwinds_in_lane(&error);
     if made == InPlaceMade::Beside && !unwinds {
         // SAFETY: `ip` is a record of the running function's view.
-        let pc = unsafe { ip.offset_from((*cx).base) as usize };
+        let pc = unsafe { record_pc(cx, ip) as usize };
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
         vm.materialize_deferred_lane();
     }
@@ -3386,7 +3409,7 @@ fn made_in_place<T>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // running function's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, ip) as usize) };
     // A Wasm activation the operation runs beside is at `pc` while it runs (`extend_wasm_roots`).
     vm.lane_stack.note_wasm_pc(pc);
     let beside = vm.lane_stack.has_frames();
@@ -3934,7 +3957,7 @@ fn row_set_index_activation(cx: *mut LaneContext, r: Registers, ip: Ip, i: &Lane
     };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // innermost activation's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, ip) as usize) };
     let body = code.function(function as usize);
     let instruction = body.widened(body.code[pc]);
     if !quench_runtime::staged::writes_element(instruction.op()) {
@@ -6314,7 +6337,7 @@ fn field_store_at(cx: *mut LaneContext, ip: Ip) -> Option<FieldStore> {
     };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // innermost activation's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, ip) as usize) };
     let body = code.function(function as usize);
     match crate::compiled::decoded(body.widened(body.code[pc])) {
         // A store to `this` has no base register (`SetThisField`).
@@ -8397,7 +8420,7 @@ impl Vm {
                 saved
             });
             // SAFETY: a call record lies in its caller's view.
-            let mut call_pc = unsafe { activation.call().offset_from(activation.caller_base()) } as usize;
+            let mut call_pc = unsafe { pc_in_view(activation.caller_base(), activation.call()) };
             let (mut result, resume_pc) = activation.caller_resume(call_pc);
             self.resume_caller_frame(root, depth, caller, resume_pc);
             let count = usize::from(code.function(activation.function() as usize).registers);
@@ -11222,7 +11245,7 @@ fn call_result_dead_in_lane(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction) -
     // A leaf makes no call, so the innermost activation, or else the frame, runs `i`.
     let function = running_function_in_lane(cx);
     // SAFETY: `ip` is a record of the running view, which starts at the context's base.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let pc = unsafe { record_pc(cx, ip) } as usize;
     code.register_root_masks(function)
         .and_then(|masks| masks.get(pc + 1))
         .is_some_and(|after| quench_runtime::compile::liveness::register_dead(after, usize::from(i.a & quench_runtime::bytecode::REGISTER_MASK)))
@@ -11437,7 +11460,7 @@ fn call_native_out_in_lane(
     // roots only its receiver; any others (an `apply`'s elements) are rooted with it.
     let in_window = arguments_in_window(cx, args);
     // SAFETY: `ip` is a record of the active view, which is the running function's.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let call_pc = unsafe { record_pc(cx, ip) } as usize;
     // Without activations the window lies in the lane's frame's register file, which nothing
     // moves or writes while the frame is parked at the call: the native reads it in place.
     if in_window && !vm.lane_stack.has_frames() && registers_are_frames(vm, cx) {
@@ -11543,7 +11566,7 @@ fn call_from_frame_in_lane(
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: `ip` is a record of the active view, which is the running function's.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let call_pc = unsafe { record_pc(cx, ip) } as usize;
     vm.materialize_lane_activations(cx);
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
@@ -11592,7 +11615,7 @@ fn construct_native_in_lane(
     let arguments = quench_runtime::vm::call_arguments::CallArguments::from_slice(args);
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // running function's view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let call_pc = unsafe { record_pc(cx, ip) } as usize;
     // A native's construction runs beside the activations, as a native call beside them
     // runs (`call_native_in_lane`): the first point that observes frames makes them frames.
     let beside = vm.lane_stack.has_frames() && vm.constructs_beside_activations(callee);
@@ -13450,7 +13473,7 @@ fn raised_exit_in_lane(cx: *mut LaneContext, record: Ip) -> Ip {
     }
     if vm.lane_stack.has_frames() {
         // SAFETY: `record` is one of the running function's records.
-        let call_pc = unsafe { record.offset_from((*cx).base) } as usize;
+        let call_pc = unsafe { record_pc(cx, record) } as usize;
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
         vm.materialize_deferred_lane();
     }
@@ -15736,7 +15759,7 @@ fn start_async_call_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &Lane
     let arguments = quench_runtime::vm::call_arguments::CallArguments::from_slice(unsafe { std::slice::from_raw_parts(r.0.add(window), argc) });
     let this = r.get(i.c);
     // SAFETY: `ip` is a record of the active view, which is the running function's.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let call_pc = unsafe { record_pc(cx, ip) } as usize;
     let beside = park_async_caller_in_lane(vm, cx, call_pc);
     let context = CallContext::user_function(function, callee);
     let result = vm.start_async_call(code, function, env, this, arguments.as_slice(), context);
@@ -15871,7 +15894,7 @@ fn push_frame_call_in_lane(
     // The caller is now the innermost frame, its registers the frame's.
     let (frame, r) = unsafe { ((*cx).frame(), (*cx).registers) };
     // SAFETY: the call record lies in the running view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let call_pc = unsafe { record_pc(cx, ip) } as usize;
     // SAFETY: the call's window is registers of the caller frame, which the push neither
     // moves nor frees before it copies them; a list outlives the push.
     let arguments: *const [Value] = match passed {
@@ -18441,7 +18464,7 @@ impl Vm {
         });
         *frame = context.frame();
         // SAFETY: handlers only return records of the active view.
-        unsafe { ip.offset_from(context.base) as usize }
+        unsafe { pc_in_view(context.base, ip) }
     }
 
     /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
@@ -18560,7 +18583,7 @@ impl Vm {
             }
             None => {
                 // SAFETY: handlers only return records of the active view.
-                let pc = unsafe { exit.offset_from((*cx).base) } as usize;
+                let pc = unsafe { record_pc(cx, exit) } as usize;
                 // The callback's frame runs in its own program, which the general loop
                 // finishes it in.
                 let code = if crosses {
@@ -18687,7 +18710,7 @@ impl Vm {
             (returned, _) => {
                 let exit_pc = returned.is_none().then(|| {
                     // SAFETY: handlers only return records of the active view.
-                    let pc = unsafe { exit.offset_from((*cx).base) } as usize;
+                    let pc = unsafe { record_pc(cx, exit) } as usize;
                     self.lane_stack.boundary_frames = None;
                     self.materialize_lane_exit(cx);
                     if let Some(made) = std::mem::replace(&mut self.lane_stack.boundary_frames, outer_boundary_frames) {
@@ -19231,7 +19254,7 @@ impl Vm {
             }
             None => {
                 // SAFETY: handlers only return records of the active view.
-                let pc = unsafe { exit.offset_from((*cx).base) } as usize;
+                let pc = unsafe { record_pc(cx, exit) } as usize;
                 self.materialize_lane_exit(cx);
                 let frame = unsafe { (*cx).frame() };
                 debug_assert!(frame >= site.frames, "the callback's activation became a frame");
