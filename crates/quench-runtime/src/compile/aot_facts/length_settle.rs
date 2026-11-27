@@ -12,6 +12,7 @@ use super::value::{Key, Origin, Word};
 use super::FunctionFacts;
 use crate::bytecode::{Class, ControlEdge, FieldLookup, Function, Register, Successors, WideInstruction, used_registers};
 use crate::staged::{DecodeContext, Operation};
+use crate::typed_ir::ElementClass;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -40,8 +41,8 @@ impl Feedback {
 
 /// The relations of every point of a function, by the pc each holds them before (`flow::Record`): a point that holds none
 /// is absent. It also names the allocations the function's settled points prove filled, the element stores that write no hole
-/// and the element reads proven in bounds (`Settled::record`), and the pcs whose step may resize an array (`lengths::advance`),
-/// which a loop's length check must account for.
+/// and the element reads proven in bounds (`Settled::record`), and the (pc, class) pairs whose step may resize an array of that
+/// class (`lengths::advance`), which a loop's length check must account for.
 #[derive(Default)]
 pub(crate) struct Settled {
     points: Vec<(u32, Box<[Relation]>)>,
@@ -51,7 +52,7 @@ pub(crate) struct Settled {
     /// The allocations (pcs) the function's settled points use, and those a use of which needs the array complete.
     allocations: BTreeSet<u32>,
     unfilled: BTreeSet<u32>,
-    resizing: Vec<u32>,
+    resizing: BTreeSet<(u32, ElementClass)>,
 }
 
 impl Settled {
@@ -99,15 +100,14 @@ impl Settled {
         self.filled = self.allocations.difference(&self.unfilled).copied().collect();
     }
 
-    /// Records that the step at `pc` may resize an array.
-    pub(super) fn resize(&mut self, pc: u32) {
-        self.resizing.push(pc);
+    /// Records that the step at `pc` may resize an array of `class`.
+    pub(super) fn resize(&mut self, pc: u32, class: ElementClass) {
+        self.resizing.insert((pc, class));
     }
 
     /// Orders the points by pc, so the lookups binary-search them.
     pub(super) fn sort(&mut self) {
         self.points.sort_by_key(|(pc, _)| *pc);
-        self.resizing.sort_unstable();
     }
 
     /// Whether `index + offset < length(array)` holds before the instruction at `pc`.
@@ -125,9 +125,9 @@ impl Settled {
         })
     }
 
-    /// Whether the step at `pc` may resize an array of any class, as the settled solve reads it.
-    pub(crate) fn may_resize(&self, pc: u32) -> bool {
-        self.resizing.binary_search(&pc).is_ok()
+    /// Whether the step at `pc` may resize an array of `class`, as the settled solve reads it.
+    pub(crate) fn may_resize(&self, pc: u32, class: ElementClass) -> bool {
+        self.resizing.contains(&(pc, class))
     }
 }
 
@@ -204,9 +204,11 @@ fn replay(ctx: &Ctx<'_>, function: &Function, facts: &FunctionFacts<'_>, range: 
         if let Some(settled) = record.as_mut() {
             settled.record(ctx, pc as u32, instruction, &words, lengths.relations());
         }
-        let (_, may_resize) = advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
-        if let (Some(settled), true) = (record.as_mut(), may_resize) {
-            settled.resize(pc as u32);
+        let (_, resized) = advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
+        if let Some(settled) = record.as_mut() {
+            for class in resized {
+                settled.resize(pc as u32, class);
+            }
         }
     }
     (words, lengths)

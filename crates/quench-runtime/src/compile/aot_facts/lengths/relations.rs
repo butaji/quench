@@ -125,7 +125,7 @@ pub(in crate::compile::aot_facts) fn proves_below(relations: &[Relation], index:
 /// below the length one less. `depth` cuts off a cycle of links, which no consistent set holds.
 fn below(relations: &[Relation], index: Register, array: Register, offset: i64, depth: usize) -> bool {
     relations.iter().any(|relation| match *relation {
-        Relation::Within { index: held, array: held_array, reach } => held == index && held_array == array && reach > offset,
+        Relation::Within { index: held, array: held_array, reach } => same(relations, held, index) && held_array == array && reach > offset,
         Relation::Length { length: held, array: held_array } => same(relations, held, index) && held_array == array && offset < 0,
         Relation::Sum { sum, index: base, offset: by } => sum == index && depth > 0 && below(relations, base, array, by + offset, depth - 1),
         Relation::Less { index: held, bound } => held == index && depth > 0 && below(relations, bound, array, offset - 1, depth - 1),

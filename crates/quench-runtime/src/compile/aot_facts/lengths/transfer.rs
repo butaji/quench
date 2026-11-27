@@ -5,10 +5,10 @@
 use super::super::effects::{Ctx, Events, runs_guest_code};
 use super::super::value::{Key, Origin, Word};
 use super::super::FunctionFacts;
-use super::relations::{Relation, bound_of, complete_arrays, is_string, proves_below};
+use super::relations::{Relation, bound_of, complete_arrays, holds_array, is_string, proves_below};
 use super::Lengths;
 use crate::bytecode::{Operand, OperandKind, Register, WideInstruction};
-use crate::typed_ir::Length;
+use crate::typed_ir::{ElementClass, Length, Type};
 use crate::staged::{Callee, Comparison, Invocation, Operation};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
@@ -89,11 +89,12 @@ fn element_key(instruction: WideInstruction) -> Option<Register> {
 
 
 /// Advances `lengths` over the instruction at `pc`. `run` steps the register words over it (`effects::step`) and returns its events,
-/// with whether the step may resize an array: a call or guest code that may write an array's elements, a mutator, or an element
-/// store the relations do not prove within its array. The relations are read from the words before the instruction (a call's
+/// with the element classes of the arrays the step may resize: a call or guest code that may write an array's elements, a mutator,
+/// or an element store the relations do not prove within its array. Each class is one an array the registers hold (after the step)
+/// has, so the relations to it are retired (`Lengths::write`). The relations are read from the words before the instruction (a call's
 /// callee, the bounds an element store meets, a resize's keys and receivers) and after it (the arrays' kinds, the registers it defines).
 pub(in crate::compile::aot_facts) fn advance(ctx: &Ctx<'_>, facts: &FunctionFacts<'_>, pc: usize, instruction: WideInstruction, lengths: &mut Lengths,
-    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> (Events, bool) {
+    words: &mut [Word], run: impl FnOnce(&mut [Word]) -> Events) -> (Events, Vec<ElementClass>) {
     let resize = resize_of(ctx, facts, pc, instruction, words);
     let stored_below = match Operation::<u64, ()>::of(instruction) {
         Some(Operation::ElementWrite { base, key, .. }) => proves_below(lengths.relations(), key, base, 0),
@@ -125,7 +126,12 @@ pub(in crate::compile::aot_facts) fn advance(ctx: &Ctx<'_>, facts: &FunctionFact
     if let Some(length) = allocated_length(ctx, pc, instruction, words) {
         lengths.insert(length);
     }
-    (events, may_resize)
+    let resized = if may_resize {
+        words.iter().filter(|word| holds_array(word) && (grows || resize.touches(word))).map(|word| word.elements_key()).collect()
+    } else {
+        Vec::new()
+    };
+    (events, resized)
 }
 
 /// The Length relation a `new Array(n)` at `pc` gives its array: `n` holds the array's length. Read from the words after the call;
@@ -188,7 +194,7 @@ pub(in crate::compile::aot_facts) fn refine(ctx: &Ctx<'_>, instruction: WideInst
     }
     // `index < bound` between Numbers: `proves_below` follows it through the bound's own relations, and `bound_below` reads
     // the bound an index is below (a loop's counter against its bound, whichever length the bound is at most).
-    if slack == 1 && offset == 0 && words.get(usize::from(big)).is_some_and(|word| word.is_number()) {
+    if slack == 1 && offset == 0 && words.get(usize::from(big)).is_some_and(|word| word.cell.ty.is_subtype(Type::NUMBER)) {
         refined.insert(Relation::Less { index, bound: big });
     }
     refined
