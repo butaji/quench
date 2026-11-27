@@ -4,7 +4,7 @@ use crate::ext_traits::*;
 use super::*;
 use crate::compiled::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
-use quench_runtime::staged::{number_machine, Float64, Int32, IntFact, NumberFact, NumericStage, Stage};
+use quench_runtime::staged::{Float64, Int32, IntFact, NumberFact, NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
@@ -52,14 +52,15 @@ pub(crate) fn operand_long(builder: &mut FunctionBuilder<'_>, registers: &mut Re
 }
 
 /// `register` held as the 64-bit integer word of the integer type `target` (its Int64 view): an
-/// int32 sign-extended, or a Number whose exact integer lies in `target`'s range, else the guard
-/// leaves at `otherwise`. The word and its fact are defined here. An int32 keeps its own type, which
-/// the caller checks against the target; a Number is proved to lie in the target's range, so takes it.
+/// int32 sign-extended, or a Number's exact integer. An int32 keeps its own type, which the caller
+/// checks against the target. A Number held here has the solver's integer range within EXACT (the
+/// only type `Representation::Int64` takes, `Representation::accepts`), so its word is an int-tagged
+/// or exact double integer, and that range lies within `target`'s, which joins this edge's type. The
+/// word converts without a guard, and its fact is defined here.
 pub(crate) fn register_long_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, target: Type, otherwise: ir::Block) -> ir::Value {
     let index = usize::from(register);
     let fact = state.values[index].value;
-    let span = target.int_range().expect("an Int64 target is an integer range");
     let (ty, word) = match fact.representation {
         Representation::Int64 => {
             let variable = register_long(builder, registers, index);
@@ -71,11 +72,10 @@ pub(crate) fn register_long_value(builder: &mut FunctionBuilder<'_>, registers: 
             (fact.ty, emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
         }
         Representation::Float64 | Representation::Tagged => {
+            fact.ty.int_range().filter(|range| range.fits_exact_double())
+                .expect("a Number held as an Int64 has the solver's integer range within EXACT");
             let number = register_number_value(builder, registers, state, register, otherwise);
-            let (integer, exact) = quench_runtime::staged::value::exact_long(&mut emit(builder), number.word());
-            emit_js_guard(builder, exact, otherwise);
-            let within = number_machine::within_word(&mut emit(builder), integer, span.min, span.max);
-            emit_js_guard(builder, within, otherwise);
+            let (integer, _exact) = quench_runtime::staged::value::exact_long(&mut emit(builder), number.word());
             (target, integer)
         }
     };
