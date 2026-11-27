@@ -23179,7 +23179,7 @@ fn non_callable_call_sites_derive_from_source_at_the_first_error() {
         call(); call();\n\
         try { new o.a(); } catch (error) { print(error.message); }";
     let program = Engine::specialize(source, "call-sites.js").unwrap();
-    assert!(program.source.as_ref().unwrap().call_sites.get().is_none(), "compilation parses no call sites");
+    assert!(program.call_sites.get().is_none(), "compilation parses no call sites");
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&program).unwrap();

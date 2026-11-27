@@ -1,6 +1,6 @@
 use quench_runtime::native_link::{CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use quench_runtime::{
-    ExecutionMode, NativeProgramNamespace, NativeSourceCompilation, ResidualProgram, SourceKind,
+    ExecutionMode, ImageRetention, NativeProgramNamespace, NativeSourceCompilation, ResidualProgram, SourceKind,
 };
 use quench_test262::{HarnessCache, TestMetadata, TestVariant};
 use std::{
@@ -34,7 +34,7 @@ fn emit(
     objects.push(object);
     let metadata = root.join(format!("unit_{index}.bin"));
     if let Some(namespace) = namespace {
-        fs::write(&metadata, namespace.encode_with_external_source(program)?)
+        fs::write(&metadata, namespace.encode_with_external_source(program, ImageRetention::ALL)?)
             .map_err(|e| e.to_string())?;
     } else {
         program.write_binary(&metadata)?;

@@ -63,11 +63,10 @@ impl Vm {
         }
         let template = if construct { NOT_A_CONSTRUCTOR } else { NOT_A_FUNCTION };
         let rendered = program
-            .source_offset(function as u32, pc)
+            .call_offset(function as u32, pc)
             .and_then(|offset| {
-                let source = program.source.as_ref()?;
                 let span = program.functions[function].header().source_span;
-                call_site_callee(source, span, (offset, construct))
+                call_site_callee(program, span, (offset, construct))
             })
             .unwrap_or_else(|| self.default_call_site(value));
         Some(rendered + template)
@@ -143,25 +142,47 @@ fn call_kind(instruction: WideInstruction) -> Option<bool> {
 /// Freeze source-derived descriptions without opening or compiling lazy function bodies.
 /// A native-only build freezes them as it compiles; a dynamic one on their first read
 /// (`frozen_call_sites`) or before writing the program, so a load that raises no error
-/// parses its source once.
+/// parses its source once. A program without source freezes none.
 pub fn freeze_call_sites(program: &ResidualProgram) {
-    if let Some(source) = &program.source {
-        freeze_source_call_sites(source);
+    program.call_sites.get_or_init(|| {
+        program.source.as_ref().map_or_else(Vec::new, crate::compile::call_sites::source_call_sites).into()
+    });
+}
+
+/// Freezes the source offset of every call instruction (`ProgramRecord::call_pcs`), which a
+/// native image's error path reads in place of the position table. Needs the source's positions.
+pub fn freeze_call_pcs(program: &ResidualProgram) {
+    program.call_pcs.get_or_init(|| {
+        (0..program.function_count()).flat_map(move |function| {
+            program.function(function).instructions().enumerate()
+                .filter(|(_, instruction)| call_kind(*instruction).is_some())
+                .filter_map(move |(pc, _)| Some(crate::bytecode::CallPc {
+                    function: function as u32,
+                    pc: pc as u32,
+                    offset: program.source_offset(function as u32, pc as u32)?,
+                }))
+        }).collect::<Vec<_>>().into_boxed_slice()
+    });
+}
+
+impl ResidualProgram {
+    /// The source offset of the call instruction at `pc` of `function`: frozen (`freeze_call_pcs`),
+    /// or read from the position table while the program keeps it.
+    pub(crate) fn call_offset(&self, function: u32, pc: u32) -> Option<u32> {
+        match self.call_pcs.get() {
+            Some(calls) => calls.binary_search_by_key(&(function, pc), |call| (call.function, call.pc)).ok().map(|index| calls[index].offset),
+            None => self.source_offset(function, pc),
+        }
     }
 }
 
-/// The call-site descriptions of `source`: frozen ones, or, in a dynamic build, those its
+/// The call-site descriptions of `program`: frozen ones, or, in a dynamic build, those its
 /// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
-fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate::bytecode::CallSiteDescription]> {
+fn frozen_call_sites(program: &ResidualProgram) -> Option<&[crate::bytecode::CallSiteDescription]> {
     if crate::DYNAMIC_EXECUTION_ENABLED && let Some(routes) = crate::compile::source_routes::routes() {
-        (routes.freeze_call_sites)(source);
+        (routes.freeze_call_sites)(program);
     }
-    source.call_sites.get().map(|sites| &sites[..])
-}
-
-/// Freezes `source`'s call sites from its text, once (`compile::call_sites`).
-pub fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
-    source.call_sites.get_or_init(|| crate::compile::call_sites::source_call_sites(source).into());
+    program.call_sites.get().map(|sites| &sites[..])
 }
 
 /// The admitted source expression at an exact call position. Native-only execution
@@ -169,27 +190,28 @@ pub fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
 pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u32) -> Option<String> {
     let source = program.source.as_ref()?;
     let offset = source.byte_offset(crate::bytecode::SourcePosition { line, column })?;
-    let sites = frozen_call_sites(source)?;
+    let sites = frozen_call_sites(program)?;
     let index = sites.binary_search_by_key(&offset, |site| site.offset).ok()?;
     let span = sites[index].expression?;
     source.text.get(span.start as usize..span.end as usize).map(str::to_owned)
 }
 
 /// The callee text of the call at `site` of a function whose text is `span`. Before the
-/// source's call sites are frozen, a dynamic build reads them from the function's text alone
+/// program's call sites are frozen, a dynamic build reads them from the function's text alone
 /// (`compile::call_sites::unfrozen_call_sites`), so an error a load raises and catches costs
 /// its function, not its whole source.
-fn call_site_callee(source: &crate::bytecode::ProgramSource, span: Option<crate::bytecode::SourceSpan>, site: (u32, bool)) -> Option<String> {
+fn call_site_callee(program: &ResidualProgram, span: Option<crate::bytecode::SourceSpan>, site: (u32, bool)) -> Option<String> {
     let lookup = |sites: &[crate::bytecode::CallSiteDescription]| {
         sites.binary_search_by_key(&site, |found| (found.offset, found.construct)).ok().map(|index| sites[index].callee.clone())
     };
-    if crate::DYNAMIC_EXECUTION_ENABLED && source.call_sites.get().is_none()
+    if crate::DYNAMIC_EXECUTION_ENABLED && program.call_sites.get().is_none()
+        && let Some(source) = program.source.as_ref()
         && let Some(routes) = crate::compile::source_routes::routes()
         && let Some(callee) = (routes.unfrozen_call_sites)(source, span, site.0).and_then(|sites| lookup(&sites))
     {
         return Some(callee);
     }
-    lookup(frozen_call_sites(source)?)
+    lookup(frozen_call_sites(program)?)
 }
 
 #[cfg(test)]
@@ -214,7 +236,7 @@ mod tests {
             let program = crate::Engine::specialize(text, "assertion-source.js").unwrap();
             freeze_call_sites(&program);
             let source = program.source.as_ref().unwrap();
-            let site = source.call_sites.get().expect("facts are frozen from source").iter()
+            let site = program.call_sites.get().expect("facts are frozen from source").iter()
                 .find(|site| site.offset as usize == text.find(position).unwrap())
                 .expect("assertion call");
             let actual = site.expression.map(|span| &source.text[span.start as usize..span.end as usize]);
@@ -222,7 +244,7 @@ mod tests {
         }
         let program = crate::Engine::specialize("assert.ok((()=>{return false;})())", "semicolon-expression.js").unwrap();
         freeze_call_sites(&program);
-        let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
+        let sites = program.call_sites.get().unwrap();
         assert!(sites.iter().find(|site| site.callee == "assert.ok").unwrap().expression.is_none(),
             "Node's semicolon terminator yields an empty expression");
     }
@@ -234,29 +256,27 @@ mod tests {
         let released: Vec<_> = program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect();
         assert!(released.iter().any(|released| *released), "the fixture must keep a cold record");
         // A dynamic build defers the facts to their first read; a native-only one admits them.
-        assert_eq!(program.source.as_ref().unwrap().call_sites.get().is_some(), !crate::DYNAMIC_EXECUTION_ENABLED);
-        program.source.as_mut().unwrap().call_sites.take();
+        assert_eq!(program.call_sites.get().is_some(), !crate::DYNAMIC_EXECUTION_ENABLED);
+        program.call_sites.take();
         freeze_call_sites(&program);
         assert_eq!(program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect::<Vec<_>>(), released);
-        let source = program.source.as_ref().unwrap();
-        let sites = source.call_sites.get().unwrap();
-        let owner = sites.as_ptr();
+        let owner = program.call_sites.get().unwrap().as_ptr();
         let column = "function cold(value) { assert.".len() as u32 + 1;
         for _ in 0..2 {
             assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"));
-            assert_eq!(program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr(), owner);
+            assert_eq!(program.call_sites.get().unwrap().as_ptr(), owner);
         }
-        program.source.as_mut().unwrap().call_sites.take();
+        program.call_sites.take();
         if crate::DYNAMIC_EXECUTION_ENABLED {
             assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"), "a dynamic lookup derives them");
         } else {
             assert_eq!(source_expression(&program, 1, column), None, "lookup never derives missing facts");
-            assert!(program.source.as_ref().unwrap().call_sites.get().is_none());
+            assert!(program.call_sites.get().is_none());
         }
     }
 
     #[test]
-    fn frozen_expression_ranges_are_validated_by_binary_and_snapshot_readers() {
+    fn frozen_expression_ranges_are_validated_by_the_binary_reader() {
         use crate::bytecode::SourceSpan;
         let text = "const face='😀'; call();\nnext();";
         let offset = text.find("call").unwrap() as u32;
@@ -271,15 +291,9 @@ mod tests {
         ] {
             let mut program = crate::Engine::specialize(text, "invalid-expression.js").unwrap();
             program.freeze_native_diagnostics();
-            let source = program.source.as_mut().unwrap();
-            let mut sites = source.call_sites.take().unwrap().to_vec();
+            let mut sites = program.call_sites.take().unwrap().to_vec();
             sites.iter_mut().find(|site| site.offset == offset).unwrap().expression = Some(span);
-            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
-            let mut writer = crate::snapshot::Writer::new();
-            source.write_snapshot(&mut writer);
-            let bytes = writer.finish();
-            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
-            assert!(crate::bytecode::ProgramSource::read_snapshot(&mut reader).is_err(), "{span:?}");
+            program.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(program.encode_trusted())).unwrap();
             assert!(decoded.validate().unwrap_err().contains("call-site expression"), "{span:?}");
         }
@@ -297,11 +311,10 @@ mod tests {
             let mut program = crate::Engine::specialize_host_script(&text, "calls.js", &crate::compile::NoAtomPrefix,
                 crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::compile::ReleasedRecords::Encoded, false).unwrap();
             if let Some((prefix, body)) = retained {
+                program.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);
                 let source = program.source.as_mut().unwrap();
-                source.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);
                 (source.line_offset, source.column_offset) = origin.unwrap();
             }
-            let source = program.source.as_ref().unwrap();
             let mut calls = std::collections::BTreeSet::new();
             for function in 0..program.function_count() {
                 for (pc, instruction) in program.function(function).instructions().enumerate() {
@@ -311,7 +324,7 @@ mod tests {
                 }
             }
             program.freeze_native_diagnostics();
-            let actual: BTreeMap<_, _> = source.call_sites.get().unwrap().iter()
+            let actual: BTreeMap<_, _> = program.call_sites.get().unwrap().iter()
                 .map(|site| ((site.offset, site.construct), site.callee.clone())).collect();
             assert!(!calls.is_empty(), "typescript={typescript} retained={retained:?}");
             assert!(calls.iter().all(|call| actual.contains_key(call)), "typescript={typescript} retained={retained:?}");
@@ -319,14 +332,7 @@ mod tests {
                 assert!(actual.values().any(|rendered| rendered == callee), "{callee}: typescript={typescript} retained={retained:?}");
             }
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(program.encode_trusted())).unwrap();
-            assert_eq!(decoded.source.as_ref().unwrap().call_sites.get(), source.call_sites.get());
-            let mut writer = crate::snapshot::Writer::new();
-            source.write_snapshot(&mut writer);
-            let bytes = writer.finish();
-            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
-            let restored = crate::bytecode::ProgramSource::read_snapshot(&mut reader).unwrap();
-            reader.finish().unwrap();
-            assert_eq!(restored.call_sites.get(), source.call_sites.get());
+            assert_eq!(decoded.call_sites.get(), program.call_sites.get());
         }
     }
 
@@ -334,7 +340,7 @@ mod tests {
     fn invalid_frozen_descriptions_are_rejected_and_empty_facts_are_complete() {
         let program = crate::Engine::specialize("42;", "empty.js").unwrap();
         program.freeze_native_diagnostics();
-        assert!(program.source.as_ref().unwrap().call_sites.get().unwrap().is_empty());
+        assert!(program.call_sites.get().unwrap().is_empty());
         for sites in [
             vec![(0, "first"), (0, "duplicate")],
             vec![(2, "later"), (0, "earlier")],
@@ -342,7 +348,7 @@ mod tests {
             vec![(0, "")],
         ] {
             let mut invalid = crate::Engine::specialize("42;", "invalid.js").unwrap();
-            invalid.source.as_mut().unwrap().call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.into_iter()
+            invalid.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.into_iter()
                 .map(|(offset, callee)| crate::bytecode::CallSiteDescription { offset, construct: false, callee: callee.into(), expression: None })
                 .collect::<Vec<_>>()));
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(invalid.encode_trusted())).unwrap();
@@ -357,7 +363,7 @@ mod tests {
             "typed-calls.cts",
         ).unwrap();
         program.freeze_native_diagnostics();
-        let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
+        let sites = program.call_sites.get().unwrap();
         assert_eq!(sites.len(), 4);
         assert!(sites.iter().all(|site| site.callee == "f"), "{sites:?}");
     }

@@ -3757,10 +3757,14 @@ impl<'a> Compiler<'a> {
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
-                call_sites: Default::default(),
                 layout: Default::default(),
             })),
-            record: crate::bytecode::ProgramRecord { atoms, constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()) },
+            record: crate::bytecode::ProgramRecord {
+                atoms,
+                constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),
+                call_sites: Default::default(),
+                call_pcs: Default::default(),
+            },
             // Collected into a table of its own size: an in-place collect would keep the
             // records' larger allocation.
             functions: {

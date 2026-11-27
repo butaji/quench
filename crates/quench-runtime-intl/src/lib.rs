@@ -59,7 +59,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::bytecode::MAX_ARRAY_LENGTH;
     pub use quench_runtime::vm::pending_job::PendingJob;
     pub use quench_runtime::vm::atom_set::{AtomSet, IndexAtoms};
-    pub use quench_runtime::vm::call_printer::{freeze_call_sites, freeze_source_call_sites};
+    pub use quench_runtime::vm::call_printer::freeze_call_sites;
     pub use quench_runtime::vm::engine_types::{copy_arguments, fill_window as fill_registers};
     pub use quench_runtime::vm::group_by::GroupByKind;
     pub use quench_runtime::vm::property_definition::PropertyDefinitionKind;
