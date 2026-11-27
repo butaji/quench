@@ -11,6 +11,9 @@ const GLOBAL_OBJECT_NAMES: [&str; 2] = ["globalThis", "global"];
 /// Array methods that may change an array's elements or length, so a call of one on an array changes what its
 /// elements cell names (`effects`, `flow`). Any other method is taken to leave them as they are.
 const ARRAY_MUTATORS: [&str; 9] = ["push", "pop", "shift", "unshift", "splice", "fill", "copyWithin", "reverse", "sort"];
+/// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
+/// object, which the closed world must treat as changed (`shape::of_call`).
+const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
 
 /// The program-wide tables the per-function analyses read.
 pub(super) struct Scope {
@@ -18,6 +21,8 @@ pub(super) struct Scope {
     parents: Vec<Option<u32>>,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
+    /// The atoms of the builtins that add properties to the objects they are given (`PROPERTY_ADDERS`).
+    property_adders: Vec<u32>,
     /// The atom `prototype` interns to, if the program names it.
     pub(super) prototype: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
@@ -50,6 +55,13 @@ impl Scope {
                 .filter(|(_, name)| GLOBAL_OBJECT_NAMES.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
+            property_adders: program
+                .atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, name)| PROPERTY_ADDERS.contains(name))
+                .map(|(atom, _)| atom as u32)
+                .collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
             mutators: program
@@ -80,6 +92,11 @@ impl Scope {
     /// Whether `atom` names an array method that may change the array it is called on (`ARRAY_MUTATORS`).
     pub(super) fn is_array_mutator(&self, atom: u32) -> bool {
         self.mutators.contains(&atom)
+    }
+
+    /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).
+    pub(super) fn adds_properties(&self, atom: u32) -> bool {
+        self.property_adders.contains(&atom)
     }
 
     /// The function owning the environment `depth` levels out from `function`, which a capture reads.

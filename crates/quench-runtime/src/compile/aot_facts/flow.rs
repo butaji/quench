@@ -5,6 +5,7 @@ use super::blocks::Blocks;
 use super::effects::{Ctx, Events, operand_fact, step};
 use super::numeric;
 use super::scope::Scope;
+use super::shape::{self, Shape};
 use super::value::{Word, Key, Origin, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
@@ -58,6 +59,8 @@ pub(super) struct FunctionFlow {
     /// or the name's), element reads of an array field. Its parameters, receiver and callees' returns are
     /// added by `AotFacts` (`dependencies`).
     pub(super) reads: std::collections::BTreeSet<Key>,
+    /// The changes its instructions and calls make to named properties, in PC order (`shape`).
+    pub(super) shapes: Vec<Shape>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -365,6 +368,7 @@ struct Record {
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
+    shapes: Vec<Shape>,
 }
 
 impl Record {
@@ -381,6 +385,7 @@ impl Record {
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
+            shapes: Vec::new(),
         }
     }
 
@@ -440,7 +445,9 @@ impl Record {
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
             }
-            self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
+            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
+            self.calls.push(call);
         }
     }
 
@@ -450,6 +457,7 @@ impl Record {
         self.wild_global |= events.wild_global;
         self.wild_member |= events.wild_member;
         self.writes.extend(events.writes);
+        self.shapes.extend(events.shape);
         self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -487,6 +495,7 @@ impl Record {
             field_owners: self.field_owners,
             registers: self.registers,
             reads: self.reads,
+            shapes: self.shapes,
             arity,
         }
     }
