@@ -79,7 +79,7 @@ macro_rules! by_leaf {
 }
 
 /// Return `value` from the record `ip` as `Return` would: one op (`lane_return_one_op`), else the
-/// activation's completion, else the frame's return.
+/// activation's completion past its op (`complete_past_op_in_lane`), else the frame's return.
 macro_rules! lane_return_value {
     ($cx:expr, $ip:expr, $value:expr) => { lane_return_value!($cx, $ip, $value, NOT_LEAF) };
     ($cx:expr, $ip:expr, $value:expr, $leaf:expr) => {{
@@ -88,7 +88,7 @@ macro_rules! lane_return_value {
         if let Some((registers, next)) = by_leaf!($leaf, |L| crate::dispatch_fast::lane_return_one_op::<L>(cx, window, value)) {
             next!(cx, registers, next, Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) })
         }
-        if let Some(resumed) = by_leaf!($leaf, |L| crate::dispatch_fast::complete_plain_activation_in_lane::<L>(cx, value)) { resume!(cx, resumed) }
+        if let Some(resumed) = by_leaf!($leaf, |L| crate::dispatch_fast::complete_past_op_in_lane::<L>(cx, value)) { resume!(cx, resumed) }
         resume!(cx, crate::dispatch_fast::return_value_general_in_lane(cx, ip, value));
     }};
 }
@@ -14210,43 +14210,12 @@ lane_handler! {
     }
 }
 
-return_handler! {
-    /// Return from an inline call to its caller; returning from the loop's
-    /// entry frame belongs to the general loop.
-    /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
-    /// A plain activation's return (call protocol v2 stage C) is this record alone: its header
-    /// below `r` names the caller, and nothing else is read (`completions::lane_return_header`, the
-    /// first step of `complete_plain_activation_in_lane` for a record of no leaf). Every other
-    /// return takes `lane_return_records`, so this handler makes no call.
-    fn return_miss<LEAF: u8>(cx, r, ip, i, view) {
-        // A leaf's return (`LEAF`) completes the running leaf the same way, one op.
-        if let Some((registers, next)) = lane_return_one_op::<LEAF>(cx, r, r.get(i.a)) {
-            let carried = Carried { memory: MemoryView::script(cx), integers: quench_runtime::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
-            next!(cx, registers, next, carried)
-        }
-        sibling!(lane_return_records::<LEAF>, r, ip, view)
-    }
-}
-
 /// The return of the record of form `LEAF` with `value` as one op, making no call
 /// (`call_return::step_return_one_op_of`), from the running plain frame's `window`. `None`,
-/// which changes nothing, for any other, which `lane_return_records` decides.
+/// which changes nothing, for any other, which the past-op completion decides.
 #[inline(always)]
 fn lane_return_one_op<const LEAF: u8>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<(Registers, Ip)> {
     quench_runtime::staged::call_return::step_return_one_op_of(&mut LaneScriptReturn::<LEAF> { cx, window }, value)
-}
-
-return_handler! {
-    /// `return_miss` of an activation that is not a plain one past its header: a leaf's, a
-    /// record's (`complete_plain_activation_in_lane`), else the returns past the common one.
-    #[inline(never)]
-    fn lane_return_records<LEAF: u8>(cx, r, ip, i, view) {
-        let returned = quench_runtime::staged::call_return::step_activation_return_of(&mut LaneScriptReturn::<LEAF>::running(cx), r.get(i.a));
-        if let Some(returned) = returned {
-            resume!(cx, completions::resumed_script(cx, returned))
-        }
-        sibling!(return_general_in_lane, r, ip, view)
-    }
 }
 
 return_handler! {
@@ -14265,10 +14234,10 @@ return_handler! {
 }
 
 lane_handler! {
-    /// `return_miss` past the common return (`complete_plain_activation_in_lane`): another
+    /// The return past the common one (`complete_past_op_in_lane`): another
     /// program's activation, which a program that calls across programs returns from as
     /// often as the common return; any other completion takes `return_other_in_lane`. Out of
-    /// line, so `return_miss` keeps its registers.
+    /// line, so the lane's return row keeps its registers.
     #[inline(never)]
     fn return_general_in_lane<>(cx, r, ip, i, view) {
         let value = r.get(i.a);

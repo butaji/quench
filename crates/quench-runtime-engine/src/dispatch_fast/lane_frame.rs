@@ -2369,7 +2369,7 @@ pub(crate) const fn admits_row(op: Op) -> bool {
 
 /// Whether opcode `op` is a raw return's terminal row (`staged::raw_representation` on a `Terminal`
 /// flow): its `Return` completes the Wasm activation through `Frame::return_raw`, so the row runs in the
-/// lane with no hand handler. A JavaScript `Return` is not one: its completion stays `return_miss`.
+/// lane with no hand handler. A JavaScript `Return` is not one: its completion is `Frame::ret`, and its miss `return_general_in_lane`.
 pub(crate) const fn returns_raw_row(op: Op) -> bool {
     matches!(op.control_flow_layout(), quench_runtime::bytecode::ControlFlowLayout::Terminal)
         && quench_runtime::staged::raw_representation(op)
